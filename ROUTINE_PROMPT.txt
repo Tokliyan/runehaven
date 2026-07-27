@@ -1,0 +1,22 @@
+Build RuneHaven v16 exactly per the locked spec in README.md ("Confirmed,
+locked spec for the next build — v16"). Do not redesign the numbers or
+mechanic — implement exactly as written.
+
+Before touching any code: read runehaven-art-style/SKILL.md in full, then
+read the entire "Confirmed, locked spec" section of README.md.
+
+Follow the standard process documented in README.md without exception:
+surgical patches only, verify every find-and-replace anchor is unique before
+applying it, run debug/run3.js, debug/run4.js, and debug/run5.js after
+patching and require all three to report zero caught errors / zero FAIL
+lines before shipping anything.
+
+If any step fails, any patch anchor is ambiguous, or any part of the locked
+spec is unclear given the current state of runehaven.html: STOP. Do not
+guess, do not invent bible content, do not ship a broken or half-finished
+build. Instead write BUILD_FAILED.md at the repo root with a clear
+explanation of exactly what blocked you, then end the session.
+
+On success: commit the updated runehaven.html and runehaven-art-style/
+SKILL.md (with a new dated changelog entry, rendering-scope only) together.
+Do not start v17 or any further version — v16 is the only work for this run.
