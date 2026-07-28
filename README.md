@@ -73,11 +73,12 @@ then auto-recovers to full HP after ~75 seconds. Pets are never permanently
 lost to this. (Flag in `BUILD_FAILED.md` — not a failure, just a note — if
 you think this should change; do not silently alter it.)
 
-**Mounts:** the 9 bible-listed mountable species (Stag, Griffin, Crystal
-Golem, Water/Fire/Storm/Shadow Dragon, Shadowfox, Lightfox) grant **+18%
-movement speed while ridden**, independent of the combat stats below. Only
-build this for species that already exist in the current file; the rest
-apply automatically whenever their species ships later.
+**Mounts:** DEFERRED — do not build any riding/mount mechanic in v16.
+No mount/dismount system exists yet in runehaven.html, and designing one
+(trigger, camera, combat-while-mounted rules) is real design work that
+belongs in its own version, not smuggled into a pet-stats build. This
+ships properly alongside Arc C (full mounting, ~v20/21). Ignore all
+mount-related content for this version.
 
 **Stats table** — only the species currently implemented in `runehaven.html`
 get built this version (Sprites/Wolf/Golem/Shadowfox from early builds, plus
