@@ -1,0 +1,5 @@
+# The debug harnesses (debug/run3.js, run4.js, run5.js) require jsdom.
+# Install it locally with `npm install jsdom` — it is a test-only dependency
+# and never ships with the game, which stays a single self-contained
+# runehaven.html.
+node_modules/
