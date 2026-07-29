@@ -151,6 +151,25 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         }
       }
     }
+    // v16: pet combat render states — following, lunging, damaged, downed.
+    // Uses a stand-in host so the local-only overlays are exercised directly.
+    if (window.drawPet && window.petOverlays) {
+      const nowMs = 1000;
+      for (const sp of SPECIES) {
+        for (const st of ["idle", "lunge", "hurt", "downed"]) {
+          const pet = {
+            sp, x: 41, y: 51, ang: 0, moving: st === "idle",
+            maxHp: 40, hp: st === "hurt" ? 12 : st === "downed" ? 0 : 40,
+            atkAt: 0, downedUntil: st === "downed" ? nowMs + 40000 : 0,
+            swingT: st === "lunge" ? nowMs : 0, ax: 1, ay: 0,
+            flash: st === "hurt" ? nowMs : 0,
+          };
+          window.drawPet({ pet }, sp, 900);
+          window.petOverlays(pet, 60, 60, nowMs, st === "downed", 60, 62);
+          n += 2;
+        }
+      }
+    }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {

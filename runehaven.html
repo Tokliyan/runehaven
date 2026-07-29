@@ -555,6 +555,49 @@ const WILD_SPECIES = {
   phoenix:      { name: "Phoenix",      base: 0.30, flier: true,  alt: 28, biomes: [], fightToTame: true, bloodFavored: false, shunnedByBlood: false },
   shadowfox:    { name: "Shadowfox",    base: 0.35, flier: false, count: 2, biomes: [B.DARKFOREST], nightOnly: true, presenceRoll: 0.55, bloodFavored: true, shunnedByBlood: false },
 };
+/* v16: PET COMBAT — the locked spec table (see README "v16"). The bible gives
+   pet rarity, taming method and flavour but ZERO combat numbers, so every
+   value below is a designed TUNABLE, not bible content. Only species that
+   actually exist in this file get an entry; the rest of the locked table
+   stays unbuilt until its species ships. The four Sprites are absent on
+   purpose — Common pets have no combat role at all.
+   Targeting rule: Uncommon pets only ever hit hostile mobs. Rare and above
+   (pvp:true) may ALSO assist their owner against a player already in combat
+   with them. */
+const PET_COMBAT = {
+  /* Uncommon — hostile mobs only */
+  wolf:      { hp: 30, dmg: 4,  cdMs: 1500, pvp: false },
+  bear:      { hp: 55, dmg: 8,  cdMs: 2200, pvp: false },
+  boar:      { hp: 35, dmg: 6,  cdMs: 1300, pvp: false },
+  griffin:   { hp: 40, dmg: 7,  cdMs: 1600, pvp: false },
+  golem:     { hp: 60, dmg: 5,  cdMs: 2500, pvp: false },
+  /* Rare / Epic — may assist against an engaged player */
+  phoenix:   { hp: 50, dmg: 10, cdMs: 1500, pvp: true },
+  shadowfox: { hp: 50, dmg: 10, cdMs: 1300, pvp: true },
+};
+const PET_ATK_RADIUS = 2.6;    // tunable: the spec's "short radius"
+const PET_DOWNED_MS = 75000;   // spec: ~75s recovery — pets are never lost
+const PET_BM_BUFF = 1.2;       // bible: Beastmaster "pet stat buffs" = +20%
+const PET_LUNGE_MS = 200;      // pets have NO wind-up tell — just a lunge
+const PVP_ENGAGE_MS = 8000;    // tunable: how long a PvP exchange counts
+let pvpEngaged = new Map();    // username -> ms until they count as engaged
+
+/* Active-pet stats with the Beastmaster +20% applied. null = no combat role
+   (Sprites) or a species this build deliberately hasn't implemented. */
+function petCombatDef(species, cls) {
+  const base = PET_COMBAT[species];
+  if (!base) return null;
+  const k = (cls || (me && me.cls)) === "Beastmaster" ? PET_BM_BUFF : 1;
+  return { hp: Math.round(base.hp * k), dmg: Math.round(base.dmg * k), cdMs: base.cdMs, pvp: base.pvp };
+}
+function markPvpEngaged(name) {
+  if (!name || !others.has(name)) return;
+  pvpEngaged.set(name, performance.now() + PVP_ENGAGE_MS);
+}
+function isPvpEngaged(name) {
+  return (pvpEngaged.get(name) || 0) > performance.now();
+}
+
 const BLOCKED = new Set([B.DEEP, B.PEAK, B.LAVA]);
 const SLOW = new Set([B.WATER, B.SHALLOW, B.DARKFOREST]);
 
@@ -1504,7 +1547,10 @@ function updateMob(m, dt, t, now) {
       const d = Math.hypot(m.target.x - m.x, m.target.y - m.y) || 1;
       if (d <= def.atkRange * 1.35 && m.target === me && !dead && !inSafeZone(me.x, me.y)) {
         // mob damage runs the SAME pipeline as PvP — armor + block both work
-        applyDamage(def.dmg, def.name, { kx: (me.x - m.x) / d, ky: (me.y - m.y) / d, kb: 0.3 });
+        // v16: the pet is a body in the fight — if it is the closer target,
+        // it eats the blow instead of its owner (this is what pet HP is for)
+        if (petInterposes(m, def)) petTakeDamage(def.dmg);
+        else applyDamage(def.dmg, def.name, { kx: (me.x - m.x) / d, ky: (me.y - m.y) / d, kb: 0.3 });
       }
     }
   }
@@ -1882,6 +1928,7 @@ function dealHit(targetName, dmg, opts = {}) {
     kx: +(opts.kx || 0).toFixed(2), ky: +(opts.ky || 0).toFixed(2), kb: opts.kb || 0,
     rn: opts.ranged ? 1 : 0,
   } });
+  markPvpEngaged(targetName);   // v16: we are now in combat with them
   o.flash = performance.now();
   burst(o.x, o.y, opts.crit ? "#ffb340" : "#ffd8a0", opts.crit ? 12 : 8, 2.2);
   // v10: crits read amber with an "!" — unmistakably not a normal hit
@@ -1895,6 +1942,9 @@ function addFloat(wx, wy, txt, col, big = false) {
 
 function applyDamage(dmg, from, opts = {}) {
   if (inSafeZone(me.x, me.y)) return;
+  // v16: only a PLAYER attacker opens the pet-assist window (mobs pass a
+  // mob name here, which is never in `others` — markPvpEngaged ignores it)
+  markPvpEngaged(from);
   // v10: block — shield classes holding Shift reduce MELEE damage hard
   const blocked = isBlocking() && !opts.rn;
   if (blocked) dmg = Math.max(1, Math.ceil(dmg * 0.25));
@@ -2084,10 +2134,13 @@ function refreshPetPanel() {
   };
   list.innerHTML = myPets.map(pt => {
     const spName = WILD_SPECIES[pt.species]?.name || pt.species + " (retired)";
+    // v16: surface the pet's combat role right in the roster
+    const cdef = petCombatDef(pt.species);
+    const stat = cdef ? `${cdef.hp} HP • ${cdef.dmg} dmg` : "no combat role";
     return `
     <div class="inv-row weapon ${pt.active ? "equipped" : ""}" data-pet="${pt.id}">
       <span class="iconwrap"><span class="icon" style="background:${cols[pt.species] || "#8a94a2"}"></span><span>${pt.pet_name || spName}</span></span>
-      <span class="qty">${pt.active ? "following" : spName}</span>
+      <span class="qty">${pt.active ? "following" : spName} — ${stat}</span>
     </div>`;
   }).join("");
   list.querySelectorAll("[data-pet]").forEach(el => {
@@ -2285,6 +2338,7 @@ function update(dt, t) {
 
   // v11: active companions follow (species from roster / broadcast)
   updatePet(me, (activePet && activePet.species) || null, dt, t, iAmMoving);
+  updatePetCombat(mobNow);   // v16: local pet auto-attack / recovery tick
   for (const [, o] of others) if (!o.dead) updatePet(o, o.pe || null, dt, t, (o.speed || 0) > 0.02);
 
   cam.x += (me.x - cam.x) * Math.min(1, dt * 6);
@@ -3815,6 +3869,82 @@ function updatePet(h, species, dt, t, moving) {
   }
 }
 
+/* v16: pet combat tick — the LOCAL pet only. Remote clients render other
+   players' pets but never simulate them; pet damage reaches the world through
+   the same mobHit / dealHit broadcast pipelines the owner's own hits use. */
+function updatePetCombat(now) {
+  const species = (activePet && activePet.species) || null;
+  const pet = me && me.pet;
+  if (!pet || !species) return;
+  const def = petCombatDef(species);
+  if (!def) return;                      // Common pets: no combat role at all
+  if (pet.maxHp === undefined) {         // fresh pet object (roster swap)
+    pet.maxHp = def.hp; pet.hp = def.hp; pet.atkAt = 0; pet.downedUntil = 0;
+  }
+  // DOWNED, NOT DEAD — sits it out, then returns at full HP. Never lost.
+  if (pet.downedUntil) {
+    if (now >= pet.downedUntil) {
+      pet.downedUntil = 0;
+      pet.hp = pet.maxHp;
+      addFloat(pet.x, pet.y, "RECOVERED", "#7fd45a");
+      burst(pet.x, pet.y, "#7fd45a", 8, 2);
+    }
+    return;
+  }
+  if (dead || inSafeZone(me.x, me.y) || now < pet.atkAt) return;
+
+  // nearest valid target inside the short radius — mobs and (Rare+ only)
+  // already-engaged players compete on distance alone
+  let tgt = null, tgtD = PET_ATK_RADIUS, tgtName = null;
+  for (const m of mobs) {
+    if (m.dead) continue;
+    if (canWearDownTame(m)) continue;    // never finish off a tame candidate
+    const d = Math.hypot(m.x - pet.x, m.y - pet.y);
+    if (d < tgtD) { tgt = m; tgtD = d; tgtName = null; }
+  }
+  if (def.pvp) {
+    for (const [name, o] of others) {
+      if (o.dead || inSafeZone(o.x, o.y) || !isPvpEngaged(name)) continue;
+      const d = Math.hypot(o.x - pet.x, o.y - pet.y);
+      if (d < tgtD) { tgt = o; tgtD = d; tgtName = name; }
+    }
+  }
+  if (!tgt) return;
+
+  pet.atkAt = now + def.cdMs;
+  pet.swingT = now;                      // lunge only — pets get no wind-up
+  const dl = Math.hypot(tgt.x - pet.x, tgt.y - pet.y) || 1;
+  pet.ax = (tgt.x - pet.x) / dl; pet.ay = (tgt.y - pet.y) / dl;
+  if (tgtName) dealHit(tgtName, def.dmg, { kx: pet.ax, ky: pet.ay, kb: 0.15 });
+  else mobHit(tgt, def.dmg, { kx: pet.ax, ky: pet.ay, kb: 0.15 });
+}
+
+/* v16: a mob swinging at its owner connects with whichever of the two bodies
+   is closer. Pets never pull aggro on their own — they only take the hit they
+   are standing in front of. */
+function petInterposes(m, def) {
+  const pet = me && me.pet;
+  if (!pet || dead || pet.maxHp === undefined || pet.downedUntil) return false;
+  if (!petCombatDef((activePet && activePet.species) || null)) return false;
+  const pd = Math.hypot(pet.x - m.x, pet.y - m.y);
+  const md = Math.hypot(me.x - m.x, me.y - m.y);
+  return pd < md && pd <= def.atkRange * 1.35;
+}
+
+function petTakeDamage(dmg) {
+  const pet = me && me.pet;
+  if (!pet || pet.maxHp === undefined || pet.downedUntil) return;
+  pet.hp = Math.max(0, pet.hp - dmg);
+  pet.flash = performance.now();
+  burst(pet.x, pet.y, "#ff8060", 6, 2);
+  addFloat(pet.x, pet.y, `-${dmg}`, "#ff9078");
+  if (pet.hp <= 0) {
+    pet.downedUntil = performance.now() + PET_DOWNED_MS;
+    burst(pet.x, pet.y, "#8a94a2", 8, 2.2);
+    toast(`${(activePet && activePet.pet_name) || "Your companion"} is downed — it recovers in ${Math.round(PET_DOWNED_MS / 1000)}s`);
+  }
+}
+
 /* v11: species art — faceted low-poly, distinct from rabbits and each other.
    Shared by wild creatures and tamed followers. */
 function drawSpecies(species, sx, sy, t, moving) {
@@ -4085,23 +4215,74 @@ function drawSpecies(species, sx, sy, t, moving) {
   ctx.restore();
 }
 
-/* v11: tamed follower rendering — ground species walk, the owl flies */
+/* v11: tamed follower rendering — ground species walk, the owl flies
+   v16: + a short attack lunge (no wind-up tell — pets aren't mobs) and the
+   downed/recovery read. Combat overlays are LOCAL-ONLY; remote pet HP is
+   never synced, so other players' pets keep the plain v11 treatment. */
 function drawPet(h, species, t) {
   const pet = h.pet;
   if (!pet || !species) return;
   const sp = WILD_SPECIES[species];
   const flier = sp?.flier;
+  const nowMs = performance.now();
+  const mine = (h === me);
+  const downed = !!(mine && pet.downedUntil && nowMs < pet.downedUntil);
+  const lg = (mine && pet.swingT && nowMs - pet.swingT < PET_LUNGE_MS)
+    ? Math.sin((nowMs - pet.swingT) / PET_LUNGE_MS * Math.PI) * 0.3 : 0;
+  const px = pet.x + (pet.ax || 0) * lg, py = pet.y + (pet.ay || 0) * lg;
+  const [gx, gy] = worldToScreen(px, py, groundZ(px, py));
+  if (downed) ctx.globalAlpha = 0.55;          // dimmed + grounded = out of the fight
   if (flier) {
-    const alt = (sp.alt || 32) + Math.sin(t / 700) * 3;
-    const [gx, gy] = worldToScreen(pet.x, pet.y, groundZ(pet.x, pet.y));
+    const alt = downed ? 2 : (sp.alt || 32) + Math.sin(t / 700) * 3;
     ctx.fillStyle = `rgba(20,32,44,${SUN.alpha * 0.4})`;
     ctx.beginPath(); ctx.ellipse(gx, gy, 3.2, 1.4, 0, 0, Math.PI * 2); ctx.fill();
-    const [sx, sy] = worldToScreen(pet.x, pet.y, groundZ(pet.x, pet.y) + alt);
-    drawSpecies(species, sx, sy, t, true);
+    const [sx, sy] = worldToScreen(px, py, groundZ(px, py) + alt);
+    drawSpecies(species, sx, sy, t, !downed);
+    if (mine) petOverlays(pet, sx, sy, nowMs, downed, gx, gy);
   } else {
-    const bob = pet.moving ? Math.abs(Math.sin(t / 140)) * 1.6 : Math.sin(t / 800) * 0.4;
-    const [sx, sy] = worldToScreen(pet.x, pet.y, groundZ(pet.x, pet.y) + bob);
-    drawSpecies(species, sx, sy, t, pet.moving);
+    const bob = downed ? -1.4                  // sits/cowers — no walk bob
+      : pet.moving ? Math.abs(Math.sin(t / 140)) * 1.6 : Math.sin(t / 800) * 0.4;
+    const [sx, sy] = worldToScreen(px, py, groundZ(px, py) + bob);
+    drawSpecies(species, sx, sy, t, !downed && pet.moving);
+    if (mine) petOverlays(pet, sx, sy, nowMs, downed, gx, gy);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* v16: local-pet combat overlays — hit flash, an HP bar in the mob-bar
+   language (gold, not red: this is a friendly unit), and a slate recovery
+   arc while downed. Deliberately NOT the pale-green pulsing ring, which is
+   the tame-window advertisement and must keep meaning only that. */
+function petOverlays(pet, sx, sy, nowMs, downed, gx, gy) {
+  if (pet.maxHp === undefined) return;         // no local combat state yet
+  const kk = Math.max(1, SPECIES_K[pet.sp] || 1);
+  const ty = sy - 14 * kk;
+  if (pet.flash && nowMs - pet.flash < 160) {
+    ctx.fillStyle = "rgba(220,60,40,0.4)";
+    ctx.beginPath(); ctx.arc(sx, sy - 5 * kk, 7 * kk, 0, Math.PI * 2); ctx.fill();
+  }
+  if (downed) {
+    const left = Math.max(0, pet.downedUntil - nowMs);
+    const frac = Math.max(0, Math.min(1, 1 - left / PET_DOWNED_MS));
+    const rr = 9 * Math.min(kk, 1.5);
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = "rgba(138,148,162,0.35)";
+    ctx.beginPath(); ctx.ellipse(gx, gy + 1, rr, rr * 0.42, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = "rgba(190,224,120,0.85)";
+    ctx.beginPath();
+    ctx.ellipse(gx, gy + 1, rr, rr * 0.42, 0, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+    ctx.stroke();
+    ctx.font = "10px 'Barlow', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "rgba(170,182,196,0.9)";
+    ctx.fillText(`downed ${Math.ceil(left / 1000)}s`, sx, ty);
+    return;
+  }
+  if (pet.hp < pet.maxHp) {
+    ctx.fillStyle = "rgba(8,10,16,0.8)";
+    ctx.fillRect(sx - 9, ty, 18, 3.6);
+    ctx.fillStyle = "#d8a24c";
+    ctx.fillRect(sx - 8, ty + 0.8, 16 * Math.max(0, pet.hp / pet.maxHp), 2);
   }
 }
 
@@ -4801,7 +4982,8 @@ function updateHUD(dayT) {
     (Date.now() < tameBuffUntil
       ? `<br><span style="color:#bee078">Shrine blessing ${fmtLeft(tameBuffUntil)}</span>` : "") +
     (bloodDecayFrac() > 0
-      ? `<br><span style="color:#d0604c">Blooded +${Math.round(15 * bloodDecayFrac())}% (Shadowfox)</span>` : "");
+      ? `<br><span style="color:#d0604c">Blooded +${Math.round(15 * bloodDecayFrac())}% (Shadowfox)</span>` : "") +
+    petHudLine();
 
   const phase = dayT < 0.25 ? "Morning" : dayT < 0.5 ? "Afternoon" : dayT < 0.62 ? "Dusk" : "Night";
   const dayNum = Math.floor((Date.now() / 1000 - worldEpoch) / DAY_LENGTH) + 1;
@@ -4845,6 +5027,21 @@ function updateHUD(dayT) {
     const ss = String(Math.floor((left % 60000) / 1000)).padStart(2, "0");
     document.getElementById("deathTimer").textContent = `${mm}:${ss}`;
   }
+}
+
+/* v16: active-pet combat readout — HP and damage, or the downed countdown.
+   Common pets (no combat role) show nothing at all. */
+function petHudLine() {
+  const species = (activePet && activePet.species) || null;
+  const pet = me && me.pet;
+  if (!species || !pet || pet.maxHp === undefined) return "";
+  const def = petCombatDef(species);
+  if (!def) return "";
+  const name = (activePet && activePet.pet_name) || WILD_SPECIES[species]?.name || species;
+  if (pet.downedUntil && performance.now() < pet.downedUntil) {
+    return `<br><span style="color:#8a94a2">${name} downed — ${Math.ceil((pet.downedUntil - performance.now()) / 1000)}s</span>`;
+  }
+  return `<br><span style="color:#bee078">${name} ${Math.ceil(pet.hp)}/${pet.maxHp} HP &nbsp;•&nbsp; ${def.dmg} dmg</span>`;
 }
 
 function fmtLeft(untilMs) {

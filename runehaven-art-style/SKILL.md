@@ -55,6 +55,36 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-07-29 (v16 — pet combat states: lunge, damage, downed/recovery)
+No new creature art and no new species this build — v16 is a mechanics pass
+(stats/targeting/cooldowns live in the README + commit message). The rendering
+scope is the set of states the existing pet art now has to read in:
+- **Attack lunge, deliberately NOT a wind-up tell.** Pets get a ~200ms sine
+  shove toward the target and nothing else. The v13 fairness rule (raised
+  weapon + amber "!" before every hit) is a MOB rule and must stay mob-only —
+  pets aren't mobs, and giving them a telegraph would misread as an enemy
+  about to strike the player. If a pet ever pops an amber "!", that's a bug.
+- **Downed read (0 HP, recovers after 75s — pets are never lost).** Dimmed to
+  55% alpha, walk bob replaced by a crouch offset so it sits/cowers, and
+  fliers (Griffin/Phoenix) drop from their ~28px follow altitude to 2px — a
+  grounded flier is the loudest possible "out of the fight" signal. At its
+  feet: a dim slate ring with a gold-green arc that sweeps to full over the
+  recovery, plus a small "downed Ns" label.
+- **The downed ring is NOT the pale-green pulsing tame ring.** That ring means
+  "this creature can be tamed right now" (v14) and must keep meaning only
+  that. Different colour, different shape (filling arc vs pulse), different
+  unit. Never merge the two treatments.
+- **Pet HP bar**: same language as the v13 mob bar — thin, above the unit,
+  hidden at full HP — but **gold (#d8a24c), not red**. Red bars mean hostile;
+  a friendly unit must not wear one. Bar and flash offsets scale by
+  `SPECIES_K` so the big pets (Golem 1.65, Shadowfox 1.66, Bear 1.60) don't
+  wear their bar inside their own silhouette.
+- All combat overlays are **local-player only** — remote pet HP isn't synced,
+  so other players' pets keep the plain v11 follower treatment.
+- HUD: active-pet HP/damage line under the blood-window line; the Companions
+  roster rows now carry each pet's combat stat (or "no combat role" for the
+  four Sprites, which have none by design).
+
 ### 2026-07-15 (v15 — reference sheet v3 incorporated: players, pets, mobs, weapons, armour)
 The whole approved art-reference package is now the live game art. Zero mechanics changed.
 - **Players — Direction A "Heroic"**: five distinct silhouettes replace the triangle+head. Mystic = floor-length robe, NO legs, bell sleeves, glowing eyes in a pointed hood, orbiting runes. Knight = broadest body, closed crested helm (no face), plate lames, tabard, shield slung on the back. Ranger = lean, half-cape one shoulder, quiver of fletched arrows, visible jaw under the hood. Beastmaster = asymmetric one-shoulder pelt, bare arms/chest, claw necklace, antler band. Architect = boxy work apron, hammer + chisel on the belt, rolled plans on the back, pencil behind ear. Locked class palettes unchanged. Bodies live in `drawHeroBody` at sheet-native 28px, scaled by `HERO_K = 11/28` inside drawUnit — the 11-unit local space and S=2.1 world proportion are unchanged.

@@ -135,6 +135,41 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     } else {
       results.push(['canWearDownTame/tameChanceFor exist', false]);
     }
+    // ===== v16 pet-combat stat table (locked spec — do not "improve") =====
+    const pcd = window.petCombatDef;
+    if (pcd) {
+      const TBL = [
+        ['wolf', 30, 4, 1500, false], ['bear', 55, 8, 2200, false], ['boar', 35, 6, 1300, false],
+        ['griffin', 40, 7, 1600, false], ['golem', 60, 5, 2500, false],
+        ['phoenix', 50, 10, 1500, true], ['shadowfox', 50, 10, 1300, true],
+      ];
+      for (const [s, hp, dmg, cd, pvp] of TBL) {
+        const d = pcd(s, 'Ranger');
+        results.push([`pet ${s} = ${hp}hp/${dmg}dmg/${cd}ms/pvp:${pvp}`,
+          !!d && d.hp === hp && d.dmg === dmg && d.cdMs === cd && d.pvp === pvp]);
+      }
+      // bible trait: Beastmaster grants the active pet +20% HP and damage
+      const bw = pcd('wolf', 'Beastmaster');
+      results.push(['BM wolf +20% -> 36hp/5dmg', !!bw && bw.hp === 36 && bw.dmg === 5]);
+      const bg = pcd('golem', 'Beastmaster');
+      results.push(['BM golem +20% -> 72hp/6dmg', !!bg && bg.hp === 72 && bg.dmg === 6]);
+      const bp = pcd('phoenix', 'Beastmaster');
+      results.push(['BM phoenix +20% -> 60hp/12dmg', !!bp && bp.hp === 60 && bp.dmg === 12]);
+      // Common pets have NO combat role at all
+      for (const s of ['tree_sprite', 'water_sprite', 'stone_sprite', 'wind_sprite']) {
+        results.push([`${s} has no combat role`, pcd(s, 'Beastmaster') === null]);
+      }
+      // species from the locked table that aren't implemented yet must NOT
+      // be pre-built — extend this list as each one actually ships
+      for (const s of ['glow_moth', 'stag', 'unicorn', 'crystal_golem', 'basilisk',
+                       'lightfox', 'krakenling', 'salamander_king', 'duskfox_elder',
+                       'golem_elder', 'dragon_elder', 'unicorn_elder']) {
+        results.push([`${s} not pre-built`, pcd(s, 'Beastmaster') === null]);
+      }
+    } else {
+      results.push(['petCombatDef exists', false]);
+    }
+
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
     process.exit(allOk && !caught ? 0 : 1);
