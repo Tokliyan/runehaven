@@ -51,7 +51,7 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
 7. Extend `debug/run5.js`'s coverage lists with any new species/mobs/weapon
    kinds/classes added in this build, so future runs keep covering them.
 
-## Confirmed, locked spec for the next build (v16 — pet combat & uses)
+## Confirmed, locked spec for the next build (v17 — Enchanted Forest, Sacred Meadow, 3 pets)
 
 v16 (pet combat) shipped successfully — see the changelog in runehaven-art-style/SKILL.md. This section replaces the old v16 entry as the current locked target. Do not redesign the numbers or mechanics below — implement exactly as written, same as v16.
 
