@@ -132,6 +132,19 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['phoenix baited = .30+.25+.15 = .70', Math.abs(phC - 0.70) < 1e-9]);
       const boarC = tcf({ id: 'boar:test', species: 'boar' }, false);
       results.push(['boar chance = .45+.25 = .70', Math.abs(boarC - 0.70) < 1e-9]);
+      // v17: the three rare-biome passive tames use the same v12 formula
+      const stagC = tcf({ id: 'stag:test', species: 'stag' }, false);
+      results.push(['stag chance = .45+.25 = .70', Math.abs(stagC - 0.70) < 1e-9]);
+      const uniC = tcf({ id: 'unicorn:test', species: 'unicorn' }, false);
+      results.push(['unicorn chance = .25+.25 = .50', Math.abs(uniC - 0.50) < 1e-9]);
+      const lfC = tcf({ id: 'lightfox:test', species: 'lightfox' }, false);
+      results.push(['lightfox chance = .20+.25 = .45', Math.abs(lfC - 0.45) < 1e-9]);
+      const lfBaitC = tcf({ id: 'lightfox:test', species: 'lightfox' }, true);
+      results.push(['lightfox baited = .20+.25+.15 = .60', Math.abs(lfBaitC - 0.60) < 1e-9]);
+      // none of the three is fight-to-tame — the wear-down gate must stay shut
+      for (const s of ['stag', 'unicorn', 'lightfox']) {
+        results.push([`${s} is NOT fight-to-tame`, cwdt(mk(s, 1, 40)) === false]);
+      }
     } else {
       results.push(['canWearDownTame/tameChanceFor exist', false]);
     }
@@ -142,6 +155,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         ['wolf', 30, 4, 1500, false], ['bear', 55, 8, 2200, false], ['boar', 35, 6, 1300, false],
         ['griffin', 40, 7, 1600, false], ['golem', 60, 5, 2500, false],
         ['phoenix', 50, 10, 1500, true], ['shadowfox', 50, 10, 1300, true],
+        // v17 — locked from the v16 spec table, attached to the new species
+        ['stag', 25, 3, 1800, false], ['unicorn', 45, 8, 1600, true],
+        ['lightfox', 50, 10, 1300, true],
       ];
       for (const [s, hp, dmg, cd, pvp] of TBL) {
         const d = pcd(s, 'Ranger');
@@ -161,13 +177,93 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       // species from the locked table that aren't implemented yet must NOT
       // be pre-built — extend this list as each one actually ships
-      for (const s of ['glow_moth', 'stag', 'unicorn', 'crystal_golem', 'basilisk',
-                       'lightfox', 'krakenling', 'salamander_king', 'duskfox_elder',
+      for (const s of ['glow_moth', 'crystal_golem', 'basilisk',
+                       'krakenling', 'salamander_king', 'duskfox_elder',
                        'golem_elder', 'dragon_elder', 'unicorn_elder']) {
         results.push([`${s} not pre-built`, pcd(s, 'Beastmaster') === null]);
       }
     } else {
       results.push(['petCombatDef exists', false]);
+    }
+
+    // ===== v17 time-window gates (Unicorn night-only, Lightfox dawn-only) =====
+    // getDayT is a function declaration, so it lands on the global object and
+    // can be stubbed to drive isWildVisible through the whole day cycle.
+    const iwv = window.isWildVisible, realDayT = window.getDayT;
+    if (iwv && realDayT) {
+      const at = (t, sp) => { window.getDayT = () => t; const v = iwv({ species: sp }); window.getDayT = realDayT; return v; };
+      // Unicorn: visible/tameable only while nightAlpha >= 0.4 (t 0.5..1.0)
+      results.push(['unicorn hidden at midday (t=.25)',   at(0.25, 'unicorn') === false]);
+      results.push(['unicorn hidden at dawn (t=.03)',     at(0.03, 'unicorn') === false]);
+      results.push(['unicorn hidden at dusk (t=.52)',     at(0.52, 'unicorn') === false]);
+      results.push(['unicorn VISIBLE deep night (t=.75)', at(0.75, 'unicorn') === true]);
+      // Lightfox: dawn window only — the first few % of the cycle
+      results.push(['lightfox VISIBLE at dawn (t=.01)',   at(0.01, 'lightfox') === true]);
+      results.push(['lightfox VISIBLE at dawn (t=.06)',   at(0.06, 'lightfox') === true]);
+      results.push(['lightfox hidden just after dawn (t=.08)', at(0.08, 'lightfox') === false]);
+      results.push(['lightfox hidden at midday (t=.25)',  at(0.25, 'lightfox') === false]);
+      results.push(['lightfox hidden at night (t=.75)',   at(0.75, 'lightfox') === false]);
+      // the dawn window really is narrower than the night check
+      let dawnT = 0, nightT = 0;
+      for (let i = 0; i < 1000; i++) {
+        if (at(i / 1000, 'lightfox')) dawnT++;
+        if (at(i / 1000, 'unicorn')) nightT++;
+      }
+      results.push([`dawn window ${dawnT / 10}% of cycle, in the 5-8% target`, dawnT >= 50 && dawnT <= 80]);
+      results.push([`dawn window narrower than night (${dawnT / 10}% < ${nightT / 10}%)`, dawnT < nightT]);
+      // Stag has no time gate at all
+      results.push(['stag visible by day',   at(0.25, 'stag') === true]);
+      results.push(['stag visible by night', at(0.75, 'stag') === true]);
+    } else {
+      results.push(['isWildVisible/getDayT exist', false]);
+    }
+
+    // ===== v17 worldgen sanity: both rare biomes must actually be reachable =====
+    // If either never appears, the rarity threshold is wrong — fix the
+    // threshold rather than shipping an unreachable biome.
+    const dwi = window.debugWorldInfo, biomeAt = window.biomeAt;
+    if (dwi && biomeAt) {
+      const { N, B } = dwi();
+      const counts = {};
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+        const b = biomeAt(x, y);
+        counts[b] = (counts[b] || 0) + 1;
+      }
+      const ench = counts[B.ENCHFOREST] || 0, sac = counts[B.SACMEADOW] || 0;
+      const dark = counts[B.DARKFOREST] || 0, forest = counts[B.FOREST] || 0, meadow = counts[B.MEADOW] || 0;
+      console.log(`worldgen (seed 123456789): forest ${forest}, meadow ${meadow}, darkforest ${dark}, ` +
+                  `enchforest ${ench}, sacmeadow ${sac}`);
+      results.push([`Enchanted Forest exists (${ench} tiles)`, ench > 0]);
+      results.push([`Sacred Meadow exists (${sac} tiles)`, sac > 0]);
+      // sparse pockets, not a takeover of the parent biome
+      results.push([`Enchanted Forest stays a sparse pocket (${ench}/${ench + forest})`, ench < forest]);
+      results.push([`Sacred Meadow stays a sparse pocket (${sac}/${sac + meadow})`, sac < meadow]);
+      // the rare fields must be independent of the moisture band: Dark Forest
+      // is untouched by them, and regular Forest/Meadow both still exist
+      results.push(['Dark Forest band untouched', dark === 1]);
+      results.push(['regular Forest still exists', forest > 0]);
+      results.push(['regular Meadow still exists', meadow > 0]);
+      // Stag has no presence roll, so it must reliably find its biome. Unicorn
+      // and Lightfox deliberately may not exist in a given session (presence
+      // roll), so their spawn count is not assertable here.
+      const spawned = dwi().wildSpecies;
+      const stags = spawned.filter(s => s === 'stag').length;
+      console.log('wild spawns:', JSON.stringify(spawned));
+      results.push([`Stag reaches its Enchanted Forest biome (${stags} spawned)`, stags > 0]);
+      // the two new gatherables must actually spawn somewhere
+      if (window.featureTypeAt) {
+        let herbs = 0, essences = 0;
+        for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+          const ft = window.featureTypeAt(x, y);
+          if (ft === 'herb') herbs++;
+          if (ft === 'essence') essences++;
+        }
+        console.log(`gatherables: rare_herb nodes ${herbs}, magic_essence nodes ${essences}`);
+        results.push([`rare_herb nodes spawn (${herbs})`, herbs > 0]);
+        results.push([`magic_essence nodes spawn (${essences})`, essences > 0]);
+      }
+    } else {
+      results.push(['debugWorldInfo/biomeAt exist', false]);
     }
 
     let allOk = true;

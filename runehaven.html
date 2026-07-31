@@ -302,6 +302,9 @@ const ITEM_META = {
   iron_bar:     { name: "Iron Bar",      color: "#d0d4dc" },
   runic_stone:  { name: "Runic Stone",   color: "#5ac8e0" },
   dragonsteel:  { name: "Dragonsteel",   color: "#b06ce0" },
+  /* v17: collect-only — no recipe and no consumable effect by design */
+  rare_herb:    { name: "Rare Herb",     color: "#8fd08a" },
+  magic_essence:{ name: "Magic Essence", color: "#a88ce8" },
   iron_sword:   { name: "Iron Sword",    color: "#c8ccd4", weapon: true },
   iron_spear:   { name: "Iron Spear",    color: "#c8ccd4", weapon: true },
   iron_shortbow:{ name: "Iron Shortbow", color: "#c8ccd4", weapon: true },
@@ -502,7 +505,20 @@ function fbm(x, y, s) {
        + valueNoise(x / 5,  y / 5,  s + 137) * 0.18;
 }
 
-const B = { DEEP:0, WATER:1, SHALLOW:2, SAND:3, PLAINS:4, MEADOW:5, FOREST:6, DARKFOREST:7, ROCK:8, PEAK:9, VOLROCK:10, LAVA:11, RUINB:12 };
+const B = { DEEP:0, WATER:1, SHALLOW:2, SAND:3, PLAINS:4, MEADOW:5, FOREST:6, DARKFOREST:7, ROCK:8, PEAK:9, VOLROCK:10, LAVA:11, RUINB:12, ENCHFOREST:13, SACMEADOW:14 };
+/* v17: rarity thresholds for the two rare-variant biomes. These gate a SECOND,
+   fully independent noise field (own seed offset, single octave) applied only
+   to tiles the moisture logic has ALREADY classified — never the moisture value
+   itself, which would encroach on the Dark Forest band. Both are tunables:
+   picked so pocket counts land near Dark Forest's by tile count across seeds
+   (see the worldgen sanity check in debug/run4.js), tuned independently. */
+const ENCH_RARITY = 0.78;      // Forest -> Enchanted Forest
+const SACRED_RARITY = 0.74;    // Meadow -> Sacred Meadow
+/* v17: harness hook — biome ids are lexically scoped consts, so the debug
+   harnesses need a function-declared accessor to assert against them. */
+function debugWorldInfo() {
+  return { N, B: Object.assign({}, B), wildSpecies: wilds.map(w => w.species) };
+}
 /* v12 roster — seven bible-accurate species (Fox/Fawn/Owl retired).
    flier: circling hover-follow at `alt` px. nightOnly: hidden + untameable by
    day. presenceRoll: may simply not exist this session. bloodFavored /
@@ -554,6 +570,16 @@ const WILD_SPECIES = {
   griffin:      { name: "Griffin",      base: 0.35, flier: true,  alt: 28, biomes: [], fightToTame: true, bloodFavored: false, shunnedByBlood: false },
   phoenix:      { name: "Phoenix",      base: 0.30, flier: true,  alt: 28, biomes: [], fightToTame: true, bloodFavored: false, shunnedByBlood: false },
   shadowfox:    { name: "Shadowfox",    base: 0.35, flier: false, count: 2, biomes: [B.DARKFOREST], nightOnly: true, presenceRoll: 0.55, bloodFavored: true, shunnedByBlood: false },
+  /* v17: the rare-variant biome roster. All three are PASSIVE tames (hold-E
+     channel, v12 formula) — the bible never says "fight" for any of them.
+     Base chances are the locked spec's. `count` is a designed tunable.
+     Unicorn reuses the exact Shadowfox gating pattern (nightOnly + a 0.55
+     presence roll) but is pinned to Enchanted Forest, not regular Forest.
+     Lightfox adds the one new gate — dawnOnly, see DAWN_END — stacked on its
+     own presence roll, which is why its tame base is the lowest of the three. */
+  stag:         { name: "Stag",         base: 0.45, flier: false, count: 3, biomes: [B.ENCHFOREST], bloodFavored: false, shunnedByBlood: false },
+  unicorn:      { name: "Unicorn",      base: 0.25, flier: false, count: 2, biomes: [B.ENCHFOREST], nightOnly: true, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
+  lightfox:     { name: "Lightfox",     base: 0.20, flier: false, count: 2, biomes: [B.SACMEADOW], dawnOnly: true, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
 };
 /* v16: PET COMBAT — the locked spec table (see README "v16"). The bible gives
    pet rarity, taming method and flavour but ZERO combat numbers, so every
@@ -571,9 +597,12 @@ const PET_COMBAT = {
   boar:      { hp: 35, dmg: 6,  cdMs: 1300, pvp: false },
   griffin:   { hp: 40, dmg: 7,  cdMs: 1600, pvp: false },
   golem:     { hp: 60, dmg: 5,  cdMs: 2500, pvp: false },
+  stag:      { hp: 25, dmg: 3,  cdMs: 1800, pvp: false },
   /* Rare / Epic — may assist against an engaged player */
   phoenix:   { hp: 50, dmg: 10, cdMs: 1500, pvp: true },
   shadowfox: { hp: 50, dmg: 10, cdMs: 1300, pvp: true },
+  unicorn:   { hp: 45, dmg: 8,  cdMs: 1600, pvp: true },
+  lightfox:  { hp: 50, dmg: 10, cdMs: 1300, pvp: true },
 };
 const PET_ATK_RADIUS = 2.6;    // tunable: the spec's "short radius"
 const PET_DOWNED_MS = 75000;   // spec: ~75s recovery — pets are never lost
@@ -616,6 +645,11 @@ const PAL = {
   [B.VOLROCK]:    ["#5c3c3c", "#5a3a3a"],
   [B.LAVA]:       ["#ff7a3c", "#fd783a"],
   [B.RUINB]:      ["#bcb4a2", "#b9b19f"],
+  /* v17 rare variants. Enchanted Forest: canopy deliberately DESATURATED
+     (green pulled toward slate-teal) so the bioluminescent undergrowth and
+     drifting motes read against it. Sacred Meadow: warm golden dawn grass. */
+  [B.ENCHFOREST]: ["#55736a", "#527066"],
+  [B.SACMEADOW]:  ["#cfc079", "#ccbd75"],
 };
 
 function placeLandmarks() {
@@ -676,6 +710,17 @@ function biomeAt(tx, ty) {
   }
   else if (e < 0.86) b = B.ROCK;
   else b = B.PEAK;
+
+  /* v17: rare-variant overlay. This runs AFTER the moisture band above has
+     already settled the base biome, and reads a SECOND, fully independent
+     field — a single-octave valueNoise on its own seed offset, NOT the
+     moisture fbm — so extending it can never encroach on the Dark Forest
+     band. Forest and Meadow get their own field and their own threshold. */
+  if (b === B.FOREST) {
+    if (valueNoise(tx / 4, ty / 4, worldSeed + 613) > ENCH_RARITY) b = B.ENCHFOREST;
+  } else if (b === B.MEADOW) {
+    if (valueNoise(tx / 4, ty / 4, worldSeed + 877) > SACRED_RARITY) b = B.SACMEADOW;
+  }
 
   const dV = Math.hypot(tx - VOLCANO.x, ty - VOLCANO.y);
   if (dV < 9 && b !== B.DEEP && b !== B.WATER) {
@@ -780,6 +825,21 @@ function clusterNoise(tx, ty) { return valueNoise(tx / 9, ty / 9, worldSeed + 30
 function featureTypeAt(tx, ty) {
   const b = biomeAt(tx, ty);
   const h = hash2(tx, ty, 91);
+  /* v17: the two new collect-only resources. The bible names rare_herb and
+     magic_essence but defines NO use for either, so they have no recipe and
+     no consumable effect this version — they exist purely to be picked up.
+     Which biome each belongs to, and the per-tile rates below, are designed
+     tunables (the bible specifies neither). */
+  if (b === B.ENCHFOREST) {
+    if (h > 0.88) return "essence";
+    if (clusterNoise(tx, ty) > 0.42 && h > 0.42) return "tree";
+    return null;
+  }
+  if (b === B.SACMEADOW) {
+    if (h > 0.965) return "tree";
+    if (h > 0.45) return "herb";
+    return null;
+  }
   if (b === B.FOREST || b === B.DARKFOREST) {
     // organic clumps with clearings, not a grid orchard
     if (clusterNoise(tx, ty) > 0.42 && h > 0.42) return "tree";
@@ -798,8 +858,11 @@ function featureTypeAt(tx, ty) {
   // RUINB: no per-tile scatter — the ruin is a hand-composed set piece now
   return null;
 }
-const FEATURE_GIVES = { tree: "wood", rock: "stone", iron: "iron_ore", runic: "runic_stone" };
-const FINITE = new Set(["rock", "iron", "runic"]);   // FIX: ore mined once
+const FEATURE_GIVES = { tree: "wood", rock: "stone", iron: "iron_ore", runic: "runic_stone",
+                        herb: "rare_herb", essence: "magic_essence" };
+const FINITE = new Set(["rock", "iron", "runic", "herb", "essence"]);   // FIX: ore mined once
+/* v17: finite, but picked rather than mined — verb + toast wording only */
+const PICKED = new Set(["herb", "essence"]);
 
 function buildFeatureList() {
   features = [];
@@ -820,7 +883,8 @@ function buildFeatureList() {
       }
       // Non-gatherable decorative clutter (2026-07-11): bushes, flowers, pebbles
       const b = biomeAt(tx, ty);
-      if (b !== B.PLAINS && b !== B.MEADOW && b !== B.FOREST) continue;
+      if (b !== B.PLAINS && b !== B.MEADOW && b !== B.FOREST &&
+          b !== B.ENCHFOREST && b !== B.SACMEADOW) continue;   // v17
       if (Math.hypot(tx - TOWER.x, ty - TOWER.y) < 3.5) continue;
       if (Math.hypot(tx - SPAWN_FORGE.x, ty - SPAWN_FORGE.y) < 2.5) continue;
       const dh = hash2(tx, ty, 501);
@@ -829,7 +893,7 @@ function buildFeatureList() {
         const jy = (hash2(tx, ty, 507) - 0.5) * 0.7;
         const v = hash2(tx, ty, 509);
         const kind = v < 0.34 ? "pebble" : v < 0.72 ? "bush" : "flowers";
-        if (kind === "flowers" && b === B.FOREST) continue;
+        if (kind === "flowers" && (b === B.FOREST || b === B.ENCHFOREST)) continue;
         decor.push({ kind, x: tx + 0.5 + jx, y: ty + 0.5 + jy, h: hash2(tx, ty, 511) });
       }
     }
@@ -902,7 +966,12 @@ function buildFeatureList() {
     if (def.fightToTame) continue;   // v14: these spawn as hostile mobs, not wilds
     if (def.presenceRoll && Math.random() > def.presenceRoll) continue;
     let placed = 0;
-    for (let a = 0; a < 600 && placed < (def.count || 3); a++) {
+    /* v17: the placement search is a hashed sample of the map, so a species
+       whose biome covers only a handful of tiles (the new rare variants) can
+       exhaust 600 candidates without ever landing on one. Widened to 4000 —
+       purely a search budget, not a design number: every species that already
+       reached its count inside 600 still places on exactly the same tiles. */
+    for (let a = 0; a < 4000 && placed < (def.count || 3); a++) {
       const tx = Math.floor(hash2(a, 21 + placed, worldSeed + spSeed) * N);
       const ty = Math.floor(hash2(a, 37 + placed, worldSeed + spSeed * 3) * N);
       if (!def.biomes.includes(biomeAt(tx, ty))) continue;
@@ -1047,7 +1116,8 @@ function bakeTerrain() {
       const hS = heightAt(tx, ty + 1);
       const hE = heightAt(tx + 1, ty);
 
-      const grassy = (b === B.PLAINS || b === B.MEADOW || b === B.FOREST);
+      const grassy = (b === B.PLAINS || b === B.MEADOW || b === B.FOREST ||
+                      b === B.ENCHFOREST || b === B.SACMEADOW);   // v17
 
       // Cream cliff faces (unchanged approach) + wear detail (2026-07-11)
       if (h > Math.max(-1, hS)) {
@@ -1206,6 +1276,63 @@ function bakeTerrain() {
           c.moveTo(dwx - 4, dwy + 1);
           c.lineTo(dwx + 4, dwy - 1);
           c.stroke();
+        }
+      }
+
+      /* v17: Enchanted Forest ground — bioluminescent undergrowth baked into
+         the tile. Flat hard-edged specks, no gradients: the shimmer comes from
+         colour contrast against the desaturated canopy, matching the flat-
+         shaded rule. The drifting motes above it are live particles. */
+      if (b === B.ENCHFOREST) {
+        c.fillStyle = "rgba(126,232,206,0.30)";                 // faint glow pool
+        c.beginPath();
+        c.moveTo(cx, cy - IH2 * 0.55);
+        c.lineTo(cx + IW2 * 0.55, cy);
+        c.lineTo(cx, cy + IH2 * 0.55);
+        c.lineTo(cx - IW2 * 0.55, cy);
+        c.closePath();
+        c.fill();
+        for (let k = 0; k < 3; k++) {
+          const gh = hash2(tx, ty, 130 + k);
+          if (gh < 0.42) continue;
+          const gx2 = cx + (hash2(tx, ty, 140 + k) - 0.5) * IW2 * 1.1;
+          const gy2 = cy + (hash2(tx, ty, 150 + k) - 0.5) * IH2 * 1.1;
+          c.fillStyle = k === 0 ? "#a8f4dc" : "#7ad8c0";
+          c.fillRect(gx2, gy2, 2, 2);
+          c.fillStyle = "rgba(168,244,220,0.35)";
+          c.fillRect(gx2 - 1.5, gy2 - 1.5, 5, 5);
+        }
+      }
+
+      /* v17: Sacred Meadow ground — warm golden grass plus a soft light-shaft
+         treatment: a pale wedge laid across the tile in the sun's direction,
+         hard-edged like everything else, so it reads as a shaft not a bloom. */
+      if (b === B.SACMEADOW) {
+        if (hash2(tx, ty, 160) > 0.35) {
+          const shx = cx + (hash2(tx, ty, 162) - 0.5) * IW2 * 0.7;
+          c.fillStyle = "rgba(255,244,196,0.22)";
+          c.beginPath();
+          c.moveTo(shx - 2.5, cy - IH2 * 0.9);
+          c.lineTo(shx + 3.5, cy - IH2 * 0.9);
+          c.lineTo(shx + 7, cy + IH2 * 0.8);
+          c.lineTo(shx + 1.5, cy + IH2 * 0.8);
+          c.closePath();
+          c.fill();
+        }
+        c.strokeStyle = "rgba(226,196,110,0.55)";               // warm grass strokes
+        c.lineWidth = 1;
+        for (let k = 0; k < 2; k++) {
+          const bx2 = cx + (hash2(tx, ty, 170 + k) - 0.5) * IW2 * 0.9;
+          const by2 = cy + (hash2(tx, ty, 174 + k) - 0.5) * IH2 * 0.8;
+          c.beginPath();
+          c.moveTo(bx2, by2 + 2);
+          c.quadraticCurveTo(bx2 + 1, by2 - 1, bx2 + 2.4, by2 - 3.4);
+          c.stroke();
+        }
+        if (hash2(tx, ty, 178) > 0.86) {                        // occasional gold bloom
+          c.fillStyle = "#f6e08c";
+          c.fillRect(cx + (hash2(tx, ty, 180) - 0.5) * IW2 * 0.7,
+                     cy + (hash2(tx, ty, 182) - 0.5) * IH2 * 0.7, 2, 2);
         }
       }
 
@@ -1650,11 +1777,21 @@ function tamingPos(tw, tNow) {
   return tw.mob ? [tw.mob.x, tw.mob.y] : wildPos(tw, tNow);
 }
 
-/* v12: night-only species are hidden and untameable by day */
+/* v17: the dawn window, tuned against the real day curve rather than a
+   disconnected number. nightAlpha() puts night at 0.5..1.0, so the cycle
+   restarts at first light, and duskGlow()'s dawn lobe peaks at t=0.02 and
+   dies out by t=0.09 — the stretch the sky itself renders as dawn. 0.07 sits
+   inside that lobe at 7% of the cycle, deliberately far narrower than the
+   nightAlpha >= 0.4 night check (which spans roughly 40% of the cycle). */
+const DAWN_END = 0.07;
+
+/* v12: night-only species are hidden and untameable by day
+   v17: + dawn-only species, hidden and untameable outside the dawn window */
 function isWildVisible(w) {
   const sp = WILD_SPECIES[w.species];
   if (!sp) return false;
   if (sp.nightOnly && nightAlpha(getDayT()) < 0.4) return false;
+  if (sp.dawnOnly && getDayT() >= DAWN_END) return false;
   return true;
 }
 
@@ -2089,7 +2226,7 @@ async function doInteract() {
       // ore yields more per node since each node is gone once mined
       const qty = g.type === "rock" ? 3 : 2;
       invAdd(got, qty);
-      toast(`+${qty} ${ITEM_META[got].name} — the vein is spent`);
+      toast(`+${qty} ${ITEM_META[got].name}` + (PICKED.has(g.type) ? "" : " — the vein is spent"));
     } else {
       invAdd(got, 1);
       toast(`+1 ${ITEM_META[got].name}`);
@@ -2124,13 +2261,14 @@ const petPanel = document.getElementById("petPanel");
 function refreshPetPanel() {
   const list = document.getElementById("petList");
   if (!myPets.length) {
-    list.innerHTML = `<div class="inv-row"><span class="qty">No companions yet — Sprites haunt the forests, shores, rocks and plains; Wolf pups and young Golems hide in forest and ruin; something darker prowls the Dark Forest at night. Hold E near one to tame it. Success isn't guaranteed!</span></div>`;
+    list.innerHTML = `<div class="inv-row"><span class="qty">No companions yet — Sprites haunt the forests, shores, rocks and plains; Wolf pups and young Golems hide in forest and ruin; something darker prowls the Dark Forest at night. Stags graze the shimmering Enchanted Forest, unicorns only after dark, and a Lightfox may show itself in a Sacred Meadow at first light. Hold E near one to tame it. Success isn't guaranteed!</span></div>`;
     return;
   }
   const cols = {
     tree_sprite: "#6fae4e", water_sprite: "#6fb0c4", stone_sprite: "#a89c86",
     wind_sprite: "#dce8ec", wolf: "#9aa2ac", golem: "#8e8474", shadowfox: "#3c3a4a",
     boar: "#7a5f48", bear: "#8a6240", griffin: "#c8a35c", phoenix: "#e8641c",
+    stag: "#c49a68", unicorn: "#f4f0e8", lightfox: "#f6e4ac",
   };
   list.innerHTML = myPets.map(pt => {
     const spName = WILD_SPECIES[pt.species]?.name || pt.species + " (retired)";
@@ -2424,7 +2562,18 @@ function updateParticles(dt, t) {
       const tx = Math.floor(cam.x - 14 + Math.random() * 28);
       const ty = Math.floor(cam.y - 14 + Math.random() * 28);
       const b = biomeAt(tx, ty);
-      if ((b === B.FOREST || b === B.DARKFOREST) && isNight && Math.random() < 0.25) {
+      if (b === B.ENCHFOREST && Math.random() < 0.5) {
+        // v17: drifting motes — same particle language as the existing magic
+        // effects (plain rising coloured squares), day and night alike
+        particles.push({ x: tx + Math.random(), y: ty + Math.random(), z: 2 + Math.random() * 10,
+          vx: (Math.random() - 0.5) * 0.15, vy: (Math.random() - 0.5) * 0.15, vz: 3 + Math.random() * 4,
+          life: 3.5 + Math.random() * 2.5, maxLife: 6, col: "#a8f4dc", size: 2, kind: "mote", ph: Math.random() * 9 });
+      } else if (b === B.SACMEADOW && Math.random() < 0.45) {
+        // v17: warmer dawn motes drifting through the light shafts
+        particles.push({ x: tx + Math.random(), y: ty + Math.random(), z: 2 + Math.random() * 12,
+          vx: (Math.random() - 0.5) * 0.12, vy: (Math.random() - 0.5) * 0.12, vz: 2.5 + Math.random() * 3.5,
+          life: 3.5 + Math.random() * 2.5, maxLife: 6, col: "#ffeeb0", size: 2, kind: "mote", ph: Math.random() * 9 });
+      } else if ((b === B.FOREST || b === B.DARKFOREST) && isNight && Math.random() < 0.25) {
         particles.push({ x: tx + Math.random(), y: ty + Math.random(), z: 10 + Math.random() * 8,
           vx: 0, vy: 0, vz: 0, life: 4 + Math.random() * 3, maxLife: 7, col: "#ffe89a", size: 1.8, kind: "firefly", ph: Math.random() * 9 });
       } else if ((b === B.LAVA || b === B.VOLROCK) && Math.random() < 0.4) {
@@ -2593,7 +2742,9 @@ function drawBlob(sx, sy, r, col) {
    blobs. Two archetypes per forest + per-tree width/lean variety. Placement
    and clustering are untouched — only the individual silhouette changed. */
 function drawTree(f, t) {
-  const dark = biomeAt(f.tx, f.ty) === B.DARKFOREST;
+  const bT = biomeAt(f.tx, f.ty);
+  const dark = bT === B.DARKFOREST;
+  const ench = bT === B.ENCHFOREST;      // v17: desaturated so the glow reads
   const scale = 0.7 + f.h * 0.75;
   const z = groundZ(f.x, f.y);
   const [sx, sy] = worldToScreen(f.x, f.y, z);
@@ -2604,11 +2755,11 @@ function drawTree(f, t) {
   const cw = (wide ? 13 : 9) * scale * wf;             // canopy half-width
   const ch = (wide ? 14 : 22) * scale;                 // canopy height
   drawShadow(sx, sy, cw * 1.7, trunkH + ch);
-  drawBox(f.x, f.y, 0.14, 0.14, trunkH, dark ? "#3e2c1c" : "#6b4a2c");
+  drawBox(f.x, f.y, 0.14, 0.14, trunkH, ench ? "#4c4258" : dark ? "#3e2c1c" : "#6b4a2c");
 
-  const lit  = dark ? "#37592c" : (f.h > 0.75 ? "#63984a" : "#578a40");
-  const mid  = dark ? "#2a4522" : (f.h > 0.75 ? "#4f8038" : "#477434");
-  const dk   = dark ? "#1d3318" : (f.h > 0.75 ? "#3c6428" : "#365c26");
+  const lit  = ench ? "#6a9086" : dark ? "#37592c" : (f.h > 0.75 ? "#63984a" : "#578a40");
+  const mid  = ench ? "#557a72" : dark ? "#2a4522" : (f.h > 0.75 ? "#4f8038" : "#477434");
+  const dk   = ench ? "#3d5c58" : dark ? "#1d3318" : (f.h > 0.75 ? "#3c6428" : "#365c26");
   const base = sy - trunkH;
   const apexX = sx + lean, apexY = base - ch;
 
@@ -2818,6 +2969,46 @@ function drawRunicNode(f, t) {
   };
   shard(-3, 19, 3.6, 2);    // tall kinked main crystal
   shard(4, 12, 3, -1.5);    // shorter, leaning the other way
+}
+/* v17: Rare Herb — a low golden-green frond cluster in the Sacred Meadow.
+   Deliberately plant-shaped, not a rock, so it can't be read as an ore node. */
+function drawHerbNode(f, t) {
+  const [sx, sy] = worldToScreen(f.x, f.y, groundZ(f.x, f.y));
+  const s = 0.9 + hash2(f.tx, f.ty, 441) * 0.35;
+  drawShadow(sx, sy, 11 * s, 6 * s);
+  const sway = Math.sin(t / 620 + f.tx * 1.7 + f.ty) * 1.2;
+  for (let i = 0; i < 5; i++) {
+    const lean = (i - 2) * 2.3 + sway;
+    P(ctx, [sx, sy, sx + lean - 1.5, sy - (7 + i % 2 * 3) * s, sx + lean + 1.5, sy - (6 + i % 2 * 3) * s],
+      i % 2 ? "#6fae62" : "#8fd08a");
+  }
+  P(ctx, [sx - 1.2, sy, sx + sway * 0.4, sy - 11 * s, sx + 1.2, sy], "#b6e4a4");
+  ctx.fillStyle = "#f0f4c8";                       // pale seed heads
+  ctx.fillRect(sx + sway - 1, sy - 11.6 * s, 2, 2);
+  ctx.fillRect(sx + sway - 4.4, sy - 8.4 * s, 1.6, 1.6);
+  ctx.fillRect(sx + sway + 3, sy - 8.8 * s, 1.6, 1.6);
+}
+/* v17: Magic Essence — a hovering violet wisp knot over a small mossy stone,
+   using the drifting-mote colour language of the Enchanted Forest floor. */
+function drawEssenceNode(f, t) {
+  const [sx, sy] = worldToScreen(f.x, f.y, groundZ(f.x, f.y));
+  const s = 0.9 + hash2(f.tx, f.ty, 443) * 0.35;
+  drawShadow(sx, sy, 12 * s, 7 * s);
+  P(ctx, [sx - 5 * s, sy, sx - 3.4 * s, sy - 3.6 * s, sx + 3 * s, sy - 3.8 * s, sx + 5 * s, sy], "#5a5a70");
+  P(ctx, [sx + 3 * s, sy - 3.8 * s, sx + 5 * s, sy, sx - 0.4 * s, sy], "#3c3c4e");
+  const fl = Math.sin(t / 520 + f.tx + f.ty * 1.3) * 1.6;
+  const cyv = sy - (11 + fl) * s;
+  ctx.fillStyle = "rgba(168,140,232,0.28)";        // halo
+  ctx.fillRect(sx - 6 * s, cyv - 6 * s, 12 * s, 12 * s);
+  P(ctx, [sx, cyv - 5 * s, sx - 3.4 * s, cyv, sx, cyv + 4.4 * s, sx + 3.4 * s, cyv], "#a88ce8");
+  P(ctx, [sx, cyv - 5 * s, sx + 3.4 * s, cyv, sx, cyv + 4.4 * s], "#7a5cc0");
+  ctx.fillStyle = "#e8dcff";
+  ctx.fillRect(sx - 1, cyv - 1.4, 2.2, 2.2);
+  for (let i = 0; i < 2; i++) {                     // orbiting motes
+    const a2 = t / 700 + i * Math.PI;
+    ctx.fillStyle = i ? "#c8b4f4" : "#a8f4dc";
+    ctx.fillRect(sx + Math.cos(a2) * 7 * s - 0.8, cyv + Math.sin(a2) * 3 * s - 0.8, 1.8, 1.8);
+  }
 }
 /* Hand-composed ruin pieces (2026-07-11): deliberate broken architecture */
 const RUINSTONE = "#d2c9b2";
@@ -3350,6 +3541,7 @@ function SCL(c, x, y, w, h, col, step) {
 const SPECIES_K = {
   tree_sprite: 0.53, water_sprite: 0.61, stone_sprite: 0.84, wind_sprite: 0.69,
   wolf: 1.06, golem: 1.65, shadowfox: 1.66,
+  stag: 1.15, unicorn: 1.30, lightfox: 1.05,          // v17 reference-sheet ratios
   boar: 1.12, bear: 1.60, griffin: 1.26, phoenix: 1.02,
 };
 const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94 };
@@ -4210,7 +4402,105 @@ function drawSpecies(species, sx, sy, t, moving) {
     P(ctx, [sx - 7.4, sy - 1.2, sx - 13.4, sy - 6.6 + Math.sin(t / 260) * 1.4, sx - 11.4, sy - 8.4 + Math.sin(t / 260) * 1.4, sx - 6.2, sy - 4.4], "#413d54");
     ctx.fillStyle = "#8a6cb4";
     ctx.fillRect(sx - 13.8, sy - 8.6 + Math.sin(t / 260) * 1.4, 2, 2);
-  
+
+  } else if (species === "stag") {
+
+    ctx.strokeStyle = "#8a6f52"; ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(sx - 3.8, sy); ctx.lineTo(sx - 3.8, sy - 6);
+    ctx.moveTo(sx + 3.2, sy); ctx.lineTo(sx + 3.2, sy - 6); ctx.stroke();
+    ctx.fillStyle = "#2e2418";
+    ctx.fillRect(sx - 4.4, sy - 1, 1.4, 1); ctx.fillRect(sx + 2.6, sy - 1, 1.4, 1);
+    P(ctx, [sx - 5, sy - 5.6, sx - 3.8, sy - 12.4, sx + 3.6, sy - 13, sx + 4.8, sy - 5.6], "#c49a68");
+    P(ctx, [sx + 3.6, sy - 13, sx + 4.8, sy - 5.6, sx - 5, sy - 5.6, sx - 0.4, sy - 7.6], "#8a6842");
+    ctx.fillStyle = "#e8dcc4";
+    ctx.fillRect(sx - 2.6, sy - 10.4, 1.2, 1.2); ctx.fillRect(sx + 0.4, sy - 11, 1.2, 1.2);
+    ctx.fillRect(sx - 1, sy - 8.6, 1, 1); ctx.fillRect(sx + 2, sy - 9, 1, 1);
+    P(ctx, [sx + 2.4, sy - 12.4, sx + 3.8, sy - 18.4, sx + 6.4, sy - 18.2, sx + 5, sy - 11.6], "#c49a68");
+    P(ctx, [sx + 3.8, sy - 18.6, sx + 9, sy - 19.6, sx + 9.2, sy - 15.6, sx + 4, sy - 15], "#d2a874");
+    P(ctx, [sx + 9, sy - 19.6, sx + 9.2, sy - 15.6, sx + 6, sy - 15.4], "#96724a");
+    P(ctx, [sx + 9.1, sy - 18.6, sx + 11.8, sy - 17.4, sx + 9.2, sy - 16], "#8a6842");
+    ctx.fillStyle = "#241a10"; ctx.fillRect(sx + 10.8, sy - 17.6, 0.9, 0.9);
+    EY(ctx, sx + 7.2, sy - 18, 1, "#e8dcc4", "#2e2418");
+    P(ctx, [sx + 4, sy - 19.6, sx + 3.4, sy - 22.4, sx + 5.6, sy - 19.6], "#96724a");
+    P(ctx, [sx + 7, sy - 19.6, sx + 8.6, sy - 22.2, sx + 9, sy - 19.4], "#96724a");
+    ctx.strokeStyle = "#e0d0b0"; ctx.lineWidth = 1.3; ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(sx + 4.8, sy - 20.4); ctx.lineTo(sx + 3.4, sy - 24.4); ctx.lineTo(sx + 4.2, sy - 27.6);
+    ctx.moveTo(sx + 3.8, sy - 22.6); ctx.lineTo(sx + 0.6, sy - 24);
+    ctx.moveTo(sx + 3.4, sy - 24.4); ctx.lineTo(sx + 0.8, sy - 26.6);
+    ctx.moveTo(sx + 4, sy - 26.4); ctx.lineTo(sx + 2, sy - 28.8);
+    ctx.moveTo(sx + 7.4, sy - 20.6); ctx.lineTo(sx + 8.8, sy - 24.6); ctx.lineTo(sx + 8, sy - 27.8);
+    ctx.moveTo(sx + 8.4, sy - 22.8); ctx.lineTo(sx + 11.6, sy - 24.2);
+    ctx.moveTo(sx + 8.8, sy - 24.6); ctx.lineTo(sx + 11.4, sy - 26.8);
+    ctx.moveTo(sx + 8.2, sy - 26.6); ctx.lineTo(sx + 10.2, sy - 29);
+    ctx.stroke(); ctx.lineCap = "butt";
+    P(ctx, [sx - 4.8, sy - 10.4, sx - 7.6, sy - 13.6 + Math.sin(t / 400), sx - 3.8, sy - 12], "#e8dcc4");
+
+  } else if (species === "unicorn") {
+
+    ctx.strokeStyle = "#e0dad0"; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(sx - 4, sy); ctx.lineTo(sx - 4, sy - 6.4);
+    ctx.moveTo(sx + 3.4, sy); ctx.lineTo(sx + 3.4, sy - 6.4); ctx.stroke();
+    ctx.fillStyle = "#c8bca8";
+    ctx.fillRect(sx - 4.7, sy - 1.2, 1.6, 1.2); ctx.fillRect(sx + 2.7, sy - 1.2, 1.6, 1.2);
+    P(ctx, [sx - 5.4, sy - 6, sx - 4.2, sy - 13.4, sx + 4.2, sy - 14, sx + 5.2, sy - 6], "#f8f5ef");
+    P(ctx, [sx + 4.2, sy - 14, sx + 5.2, sy - 6, sx - 5.4, sy - 6, sx - 0.4, sy - 8.2], "#cdc6bc");
+    P(ctx, [sx - 4.2, sy - 13.4, sx - 1, sy - 14.4, sx + 0.4, sy - 10, sx - 4.6, sy - 9], "#ffffff");
+    P(ctx, [sx + 2.8, sy - 13.4, sx + 4.2, sy - 19.8, sx + 7, sy - 19.6, sx + 5.4, sy - 12.6], "#f8f5ef");
+    P(ctx, [sx + 4.2, sy - 20, sx + 9.6, sy - 21, sx + 9.8, sy - 16.8, sx + 4.4, sy - 16.2], "#ffffff");
+    P(ctx, [sx + 9.6, sy - 21, sx + 9.8, sy - 16.8, sx + 6.4, sy - 16.6], "#d6cfc4");
+    P(ctx, [sx + 9.7, sy - 20, sx + 12.4, sy - 18.6, sx + 9.8, sy - 17.2], "#dcd4c8");
+    ctx.fillStyle = "#8a8290"; ctx.fillRect(sx + 11.4, sy - 18.8, 0.9, 0.9);
+    EY(ctx, sx + 7.6, sy - 19.4, 1.1, "#e8e0f4", "#3a3444");
+    P(ctx, [sx + 4.4, sy - 21, sx + 4, sy - 23.8, sx + 5.8, sy - 21], "#d6cfc4");
+    P(ctx, [sx + 7, sy - 21, sx + 8.4, sy - 23.6, sx + 8.8, sy - 20.8], "#d6cfc4");
+    ctx.strokeStyle = "#f4e6b0"; ctx.lineWidth = 1.7; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(sx + 8.4, sy - 21.6); ctx.lineTo(sx + 11.6, sy - 29.6); ctx.stroke();
+    ctx.strokeStyle = "#c8a862"; ctx.lineWidth = 0.65;
+    for (let i = 0; i < 5; i++) {
+      const f = i / 5;
+      ctx.beginPath();
+      ctx.moveTo(sx + 8.5 + f * 3, sy - 22.4 - f * 7.2);
+      ctx.lineTo(sx + 9.7 + f * 2.6, sy - 22.9 - f * 7.2);
+      ctx.stroke();
+    }
+    ctx.lineCap = "butt";
+    for (let i = 0; i < 4; i++) {
+      P(ctx, [sx + 3.4 - i * 0.7, sy - 20 + i * 1.7, sx + 0.4 - i * 0.5, sy - 16.4 + i * 1.6, sx + 4.6 - i * 0.6, sy - 15.4 + i * 1.6], i % 2 ? "#e8def4" : "#f4ecfa");
+    }
+    P(ctx, [sx - 5.2, sy - 11.4, sx - 9.8, sy - 15.4 + Math.sin(t / 420) * 1.2, sx - 4, sy - 13], "#f4ecfa");
+
+  } else if (species === "lightfox") {
+
+    const g = ctx.createRadialGradient(sx, sy - 7, 1, sx, sy - 7, 20);
+    g.addColorStop(0, "rgba(255,238,176,0.3)"); g.addColorStop(1, "rgba(255,238,176,0)");
+    ctx.fillStyle = g; ctx.fillRect(sx - 20, sy - 28, 40, 34);
+    P(ctx, [sx - 7.4, sy, sx - 5.4, sy - 8.4, sx + 3.4, sy - 8, sx + 5.4, sy], "#f6e4ac");
+    P(ctx, [sx + 3.4, sy - 8, sx + 5.4, sy, sx - 7.4, sy, sx - 0.6, sy - 2.6], "#cfae68");
+    P(ctx, [sx - 5.2, sy - 8, sx - 2.6, sy - 10.4, sx + 0.4, sy - 6.6, sx - 5.6, sy - 4.6], "#fdf4d4");
+    ctx.fillStyle = "#fffbe8";
+    ctx.fillRect(sx - 5, sy - 1.4, 2, 1.4); ctx.fillRect(sx + 1.6, sy - 1.4, 2, 1.4);
+    P(ctx, [sx + 3.2, sy - 10.6, sx + 8.6, sy - 10.2, sx + 8.4, sy - 5, sx + 3, sy - 5.4], "#fdf2ce");
+    P(ctx, [sx + 8.6, sy - 10.2, sx + 8.4, sy - 5, sx + 5.6, sy - 5.2], "#cfae68");
+    P(ctx, [sx + 8.4, sy - 8, sx + 11.4, sy - 7.2, sx + 8.4, sy - 5.6], "#e8d09c");
+    ctx.fillStyle = "#8a6a2c"; ctx.fillRect(sx + 10.8, sy - 7.4, 1, 0.9);
+    P(ctx, [sx + 3.4, sy - 10.6, sx + 4, sy - 14.6, sx + 5.6, sy - 10.4], "#e8d09c");
+    P(ctx, [sx + 6.2, sy - 10.4, sx + 7.6, sy - 14.2, sx + 8.4, sy - 10.2], "#e8d09c");
+    P(ctx, [sx + 3.8, sy - 11, sx + 4.2, sy - 13.4, sx + 5, sy - 11], "#fffbe4");
+    ctx.fillStyle = "rgba(255,240,180,0.4)";
+    ctx.beginPath(); ctx.arc(sx + 6.4, sy - 8.2, 2.4, 0, Math.PI * 2); ctx.fill();
+    EY(ctx, sx + 6.4, sy - 8.2, 1.2, "#fff8d0", "#7a5a1c");
+    P(ctx, [sx - 7.4, sy - 1.2, sx - 13.4, sy - 6.6 + Math.sin(t / 260) * 1.4, sx - 11.4, sy - 8.4 + Math.sin(t / 260) * 1.4, sx - 6.2, sy - 4.4], "#f6e4ac");
+    ctx.fillStyle = "#fffbe4";
+    ctx.fillRect(sx - 13.9, sy - 8.8 + Math.sin(t / 260) * 1.4, 2.4, 2.4);
+    for (let i = 0; i < 3; i++) {
+      const ph = (t / 700 + i * 0.34) % 1;
+      ctx.fillStyle = `rgba(255,246,200,${0.7 * (1 - ph)})`;
+      ctx.fillRect(sx - 6 + i * 6, sy - 12 - ph * 10, 1.4, 1.4);
+    }
+
   }
   ctx.restore();
 }
@@ -4619,7 +4909,8 @@ function render(t) {
       for (let ox = -3; ox <= 3; ox++) {
         const tx = ptx + ox, ty = pty + oy;
         const b = biomeAt(tx, ty);
-        if (b !== B.PLAINS && b !== B.MEADOW && b !== B.FOREST) continue;
+        if (b !== B.PLAINS && b !== B.MEADOW && b !== B.FOREST &&
+            b !== B.ENCHFOREST && b !== B.SACMEADOW) continue;   // v17
         if (hash2(tx, ty, 881) < 0.7) continue;
         const gx = tx + 0.2 + hash2(tx, ty, 883) * 0.6;
         const gy = ty + 0.2 + hash2(tx, ty, 887) * 0.6;
@@ -4627,7 +4918,10 @@ function render(t) {
         const [sx, sy] = worldToScreen(gx, gy, groundZ(gx, gy));
         const away = (gx - me.x) * 1.2;
         const bend = Math.sin(t / 420 + tx * 3 + ty) * 1.6 + away * prox * 1.4;
-        ctx.strokeStyle = `rgba(70,110,50,${0.35 + prox * 0.3})`;
+        // v17: the rare variants keep their own grass tone
+        ctx.strokeStyle = b === B.SACMEADOW ? `rgba(196,166,86,${0.35 + prox * 0.3})`
+          : b === B.ENCHFOREST ? `rgba(96,150,132,${0.35 + prox * 0.3})`
+          : `rgba(70,110,50,${0.35 + prox * 0.3})`;
         ctx.lineWidth = 1;
         for (let k = 0; k < 2; k++) {
           ctx.beginPath();
@@ -4697,6 +4991,8 @@ function render(t) {
     else if (e.kind === "rock") drawRockNode(e.f);
     else if (e.kind === "iron") drawIronNode(e.f);
     else if (e.kind === "runic") drawRunicNode(e.f, t);
+    else if (e.kind === "herb") drawHerbNode(e.f, t);
+    else if (e.kind === "essence") drawEssenceNode(e.f, t);
     else if (e.kind === "ruinpiece") drawRuinPiece(e.rp);
     else if (e.kind === "decor") drawDecor(e.d, t);
     else if (e.kind === "critter") drawCritter(e.cr, t);
@@ -4794,6 +5090,15 @@ function render(t) {
       ctx.beginPath();
       ctx.arc(px, py, p.size, 0, Math.PI * 2);
       ctx.fill();
+    } else if (p.kind === "mote") {
+      // v17: drifting mote — hard square core with a soft square halo, twinkling
+      const tw3 = 0.55 + Math.sin(t / 260 + p.ph * 5) * 0.45;
+      ctx.globalAlpha = a * tw3;
+      ctx.fillStyle = p.col;
+      ctx.fillRect(px - p.size / 2, py - p.size / 2, p.size, p.size);
+      ctx.globalAlpha = a * tw3 * 0.3;
+      ctx.fillRect(px - p.size * 1.4, py - p.size * 1.4, p.size * 2.8, p.size * 2.8);
+      ctx.globalAlpha = 1;
     } else {
       ctx.globalAlpha = a * 0.9;
       ctx.fillStyle = p.col;
@@ -5014,7 +5319,7 @@ function updateHUD(dayT) {
   else if (nearChest()) { hudPrompt.textContent = "[E] Dev Supply Chest — stock all materials"; hudPrompt.style.display = "block"; }
   else if (item) { hudPrompt.textContent = `[E] Pick up ${ITEM_META[item.type]?.name || item.type}`; hudPrompt.style.display = "block"; }
   else if (g) {
-    const verb = FINITE.has(g.type) ? "Mine" : "Gather";
+    const verb = (FINITE.has(g.type) && !PICKED.has(g.type)) ? "Mine" : "Gather";
     hudPrompt.textContent = `[E] ${verb} ${ITEM_META[FEATURE_GIVES[g.type]].name}`;
     hudPrompt.style.display = "block";
   }

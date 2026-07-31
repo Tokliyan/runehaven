@@ -122,7 +122,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     const CLS = ["Ranger", "Knight", "Mystic", "Beastmaster", "Architect"];
     const KINDS = ["sword", "dagger", "spear", "axe", "bow", "crossbow", "staff"];
     const SPECIES = ["tree_sprite", "water_sprite", "stone_sprite", "wind_sprite", "wolf", "golem",
-                      "shadowfox", "boar", "bear", "griffin", "phoenix"];
+                      "shadowfox", "boar", "bear", "griffin", "phoenix",
+                      "stag", "unicorn", "lightfox"];                     // v17
     const MOBK = ["goblin", "bandit", "troll", "boar", "bear", "griffin", "phoenix"];
     let n = 0;
     if (window.drawUnit) {
@@ -168,6 +169,29 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           window.petOverlays(pet, 60, 60, nowMs, st === "downed", 60, 62);
           n += 2;
         }
+      }
+    }
+    // v17: the two new gatherable node drawers + an Enchanted-Forest tree,
+    // none of which the 5-frame boot is guaranteed to reach.
+    if (window.drawHerbNode && window.drawEssenceNode) {
+      for (let i = 0; i < 4; i++) {
+        const f = { type: 'herb', x: 40.5, y: 50.5, tx: 40 + i, ty: 50, key: (40 + i) + ',50', h: 0.9 };
+        window.drawHerbNode(f, 900 + i * 250);
+        window.drawEssenceNode({ ...f, type: 'essence' }, 900 + i * 250);
+        n += 2;
+      }
+    }
+    if (window.drawTree && window.biomeAt && window.debugWorldInfo) {
+      const { N, B } = window.debugWorldInfo();
+      for (const target of [B.ENCHFOREST, B.SACMEADOW, B.FOREST, B.DARKFOREST]) {
+        let hit = null;
+        for (let y = 0; y < N && !hit; y++) for (let x = 0; x < N; x++) {
+          if (window.biomeAt(x, y) === target) { hit = [x, y]; break; }
+        }
+        if (!hit) continue;
+        window.drawTree({ type: 'tree', x: hit[0] + 0.5, y: hit[1] + 0.5, tx: hit[0], ty: hit[1],
+                          key: hit.join(','), h: 0.8 }, 900);
+        n += 1;
       }
     }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
