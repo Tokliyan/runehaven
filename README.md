@@ -55,7 +55,25 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
 
 v16 (pet combat) shipped successfully — see the changelog in runehaven-art-style/SKILL.md. This section replaces the old v16 entry as the current locked target. Do not redesign the numbers or mechanics below — implement exactly as written, same as v16.
 
-Biomes: two rarer-variant biomes, following the exact same pattern already used for Dark Forest (a rarer pocket embedded within an existing biome via the hashed-patch technique already in the world-build code — search for how Dark Forest is generated and mirror that approach, do not invent a new worldgen method). Enchanted Forest is a rarer pocket within Forest tiles (shimmering palette: bioluminescent undergrowth, drifting motes using the same particle language as existing magic effects, desaturated canopy so the glow reads). Sacred Meadow is a rarer pocket within Meadow tiles (golden/dawn palette, warm grass, soft light-shaft treatment). Tune hash thresholds to a density similar to Dark Forest's — match the existing constant, do not guess a wildly different rarity.
+Biomes: two rarer-variant biomes. IMPORTANT — Dark Forest is NOT a hashed
+patch; it is a moisture-fBm threshold band shared with Forest/Meadow/Plains
+(roughly: m > 0.70 is Dark Forest, m > 0.52 is Forest, m < 0.32 is Meadow,
+else Plains — confirm the exact code before touching it). Do not mirror that
+technique directly, since extending the same moisture field would encroach
+on the Dark Forest band. Instead: after a tile's base biome is already
+decided by the existing moisture logic, apply a SECOND, fully independent
+noise/hash field (a new call using a different seed offset, not the same
+moisture value) to tiles already classified as Forest. Where that second
+field crosses a rarity threshold, reclassify the tile to a new
+ENCHANTED_FOREST biome value instead of Forest — shimmering palette:
+bioluminescent undergrowth, drifting motes using the same particle language
+as existing magic effects, desaturated canopy so the glow reads. Do the
+exact same for Meadow tiles with a new SACRED_MEADOW value, using its own
+independent field/threshold (golden/dawn palette, warm grass, soft
+light-shaft treatment) — its rarity does not need to match Enchanted
+Forest's, tune each independently. Aim for a sparse pocket density
+comparable to Dark Forest's by eye/tile-count in the worldgen sanity check,
+not by reusing Dark Forest's actual threshold value.
 
 New resource (gatherable only, no crafting use yet): rare_herb and magic_essence as new stackable ground items, gatherable via the existing E-to-pick-up flow (same pattern as ore). Do NOT design any crafting recipe or consumable effect for these — the bible mentions them but defines no use, and inventing one would violate the no-guessing rule. They exist purely as collectible items this version; their purpose gets designed later once actually needed.
 
