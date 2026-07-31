@@ -8,7 +8,7 @@ build to check bible-fidelity claims itself).
 ## Layout
 
 ```
-runehaven.html              the game — currently v15
+runehaven.html              the game — currently v16
 runehaven-art-style/         SKILL.md — read this before ANY rendering change
 debug/run2.js                quick login-screen smoke test
 debug/run3.js                REQUIRED full-boot harness (real login, 5 frames)
