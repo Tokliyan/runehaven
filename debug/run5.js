@@ -122,7 +122,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     const CLS = ["Ranger", "Knight", "Mystic", "Beastmaster", "Architect"];
     const KINDS = ["sword", "dagger", "spear", "axe", "bow", "crossbow", "staff"];
     const SPECIES = ["tree_sprite", "water_sprite", "stone_sprite", "wind_sprite", "wolf", "golem",
-                      "shadowfox", "boar", "bear", "griffin", "phoenix"];
+                      "shadowfox", "boar", "bear", "griffin", "phoenix",
+                      "stag", "unicorn", "lightfox"];   // v17
     const MOBK = ["goblin", "bandit", "troll", "boar", "bear", "griffin", "phoenix"];
     let n = 0;
     if (window.drawUnit) {

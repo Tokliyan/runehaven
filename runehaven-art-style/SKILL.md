@@ -47,6 +47,8 @@ Peak (snow)   #ece7db / #e6e1d5
 Volcanic rock #5c3c3c / #563838
 Lava          #ff7a3c / #f97438
 Ruins         #bcb4a2 / #b6ae9c
+Enchanted fst #4c6a63 / #496760   (v17 — rare Forest variant)
+Sacred meadow #cbbf72 / #c8bc6f   (v17 — rare Meadow variant)
 ```
 
 Flat-face shading formula: side faces are the top colour darkened by a multiplier (~0.72 for the "SW-facing" face catching less light, ~0.55 for the "SE-facing" face in full shadow). Keep this ratio consistent across ALL objects (terrain, trees, rocks, buildings) so the whole world reads under one consistent light source.
@@ -54,6 +56,42 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
+
+### 2026-08-01 (v17 — Enchanted Forest, Sacred Meadow, 3 new pets)
+Two rarer-variant biomes and three new species. Combat numbers, tame chances
+and spawn gating live in the README's v17 spec + the commit message; the
+rendering scope is below.
+- **Enchanted Forest** (rare Forest variant): the palette is deliberately
+  *desaturated* — cool grey-green ground (#4c6a63) and a muted canopy
+  (#5f7d72 / #4d6961 / #3b544e, pale violet-grey trunks) — so the
+  **bioluminescent undergrowth** is the brightest thing on the tile. The
+  undergrowth is flat pale-cyan clusters (#8ff0d2 / #c8fbe8) with a soft
+  halo, painted into the terrain bake; no gradients, the glow reads as
+  shape. If this biome ever looks like plain Forest with sparkles, the
+  canopy desaturation has been lost — that is the bug.
+- **Sacred Meadow** (rare Meadow variant): warm golden grass (#cbbf72) with
+  amber tuft strokes, a **soft dawn light-shaft** quad on ~38% of tiles
+  (low alpha, no hard edge — a hard-edged shaft would reintroduce the v4
+  "flashlight cone" complaint), and sparse golden blooms.
+- **Drifting motes** — a new `mote` particle kind, deliberately the same
+  magic-effect language as the runic/tier motes (soft glow core + hard
+  pixel, gentle pulse), NOT the firefly treatment. Enchanted Forest motes
+  drift day and night; Sacred Meadow's are warm dawn dust, daytime only.
+- **Two new gatherable nodes**, each with its own silhouette so neither can
+  be mistaken for a rock node (the 2026-07-07 "every node looks the same"
+  lesson): **rare_herb** = fanned green blade cluster with a pale flower
+  head, gentle sway; **magic_essence** = a faceted violet shard floating and
+  bobbing above a dark stone cradle. Both flat-faceted, no outlines.
+- **Stag / Unicorn / Lightfox**: approved concept art inserted verbatim via
+  the v15 P/R/EY helpers — not redrawn or reinterpreted. Sizes in
+  `SPECIES_K` are the reference-sheet ratios: Stag 1.15, Unicorn 1.30,
+  Lightfox 1.05. The Lightfox carries its own radial glow and a rising
+  ember-mote trail in all states (same idea as the Phoenix's persistent
+  trail); the Unicorn's horn gets ribbed gold strokes and a four-band mane.
+- These three are **passive-tame**, so they use the v14 pale-green pulsing
+  tame ring and never the mob wind-up "!" tell. As with pets generally, an
+  amber "!" over any of them is a bug.
+- No mounting/riding art — deferred, and nothing was built toward it.
 
 ### 2026-07-29 (v16 — pet combat states: lunge, damage, downed/recovery)
 No new creature art and no new species this build — v16 is a mechanics pass

@@ -142,6 +142,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         ['wolf', 30, 4, 1500, false], ['bear', 55, 8, 2200, false], ['boar', 35, 6, 1300, false],
         ['griffin', 40, 7, 1600, false], ['golem', 60, 5, 2500, false],
         ['phoenix', 50, 10, 1500, true], ['shadowfox', 50, 10, 1300, true],
+        // v17 — locked spec table, attached to the three new species
+        ['stag', 25, 3, 1800, false], ['unicorn', 45, 8, 1600, true], ['lightfox', 50, 10, 1300, true],
       ];
       for (const [s, hp, dmg, cd, pvp] of TBL) {
         const d = pcd(s, 'Ranger');
@@ -161,13 +163,62 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       // species from the locked table that aren't implemented yet must NOT
       // be pre-built — extend this list as each one actually ships
-      for (const s of ['glow_moth', 'stag', 'unicorn', 'crystal_golem', 'basilisk',
-                       'lightfox', 'krakenling', 'salamander_king', 'duskfox_elder',
+      for (const s of ['glow_moth', 'crystal_golem', 'basilisk',
+                       'krakenling', 'salamander_king', 'duskfox_elder',
                        'golem_elder', 'dragon_elder', 'unicorn_elder']) {
         results.push([`${s} not pre-built`, pcd(s, 'Beastmaster') === null]);
       }
     } else {
       results.push(['petCombatDef exists', false]);
+    }
+
+    // ===== v17 time-window gates =====
+    // Night runs dayT 0.5..1.0 (nightAlpha); dawn is the first 7% of the
+    // cycle (DAWN_END), which sits inside duskGlow's dawn lobe.
+    const vis = window.speciesVisibleAt;
+    if (vis) {
+      // Unicorn: night-only, exactly like the Shadowfox gate
+      results.push(['unicorn hidden at midday (dayT .25)',  vis('unicorn', 0.25) === false]);
+      results.push(['unicorn hidden at dawn (dayT .03)',    vis('unicorn', 0.03) === false]);
+      results.push(['unicorn hidden just before dusk (.5)', vis('unicorn', 0.5) === false]);
+      results.push(['unicorn VISIBLE deep in night (.75)',  vis('unicorn', 0.75) === true]);
+      // Lightfox: dawn-only, a strictly narrower window than night
+      results.push(['lightfox VISIBLE at dawn (dayT 0)',    vis('lightfox', 0) === true]);
+      results.push(['lightfox VISIBLE late dawn (.069)',    vis('lightfox', 0.069) === true]);
+      results.push(['lightfox hidden just past dawn (.07)', vis('lightfox', 0.07) === false]);
+      results.push(['lightfox hidden at midday (.25)',      vis('lightfox', 0.25) === false]);
+      results.push(['lightfox hidden at night (.75)',       vis('lightfox', 0.75) === false]);
+      // the dawn window really is narrower than night
+      let dawnN = 0, nightN = 0;
+      for (let i = 0; i < 1000; i++) {
+        if (vis('lightfox', i / 1000)) dawnN++;
+        if (vis('unicorn', i / 1000)) nightN++;
+      }
+      results.push(['dawn window narrower than night', dawnN > 0 && dawnN < nightN]);
+      // Stag has no time gate at all
+      results.push(['stag visible day and night',
+        vis('stag', 0.25) === true && vis('stag', 0.75) === true]);
+      results.push(['unknown species never visible', vis('nope', 0.25) === false]);
+    } else {
+      results.push(['speciesVisibleAt exists', false]);
+    }
+
+    // ===== v17 worldgen sanity: the rare-variant biomes must be reachable =====
+    // An unreachable biome is a threshold bug, not a design choice.
+    const btc = window.biomeTileCounts;
+    if (btc) {
+      const counts = btc();
+      const ench = counts.ENCHANTED || 0, sacr = counts.SACRED || 0;
+      console.log('worldgen: ENCHANTED', ench, 'tiles, SACRED', sacr, 'tiles,',
+                  'DARKFOREST', counts.DARKFOREST || 0, '(seed', tableData.world.seed + ')');
+      results.push(['Enchanted Forest tiles exist in the seeded world', ench >= 1]);
+      results.push(['Sacred Meadow tiles exist in the seeded world', sacr >= 1]);
+      // still a rare variant, not a takeover of its parent biome
+      results.push(['Enchanted Forest stays sparse (< 8% of map)', ench < 0.08 * 80 * 80]);
+      results.push(['Sacred Meadow stays sparse (< 8% of map)', sacr < 0.08 * 80 * 80]);
+      results.push(['parent Forest biome survives', (counts.FOREST || 0) > ench]);
+    } else {
+      results.push(['biomeTileCounts exists', false]);
     }
 
     let allOk = true;
