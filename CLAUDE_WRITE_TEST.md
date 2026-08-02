@@ -1,1 +1,0 @@
-Claude write-access verification test. Safe to ignore - deleted automatically within seconds.
