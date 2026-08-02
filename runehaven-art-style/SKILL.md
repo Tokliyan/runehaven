@@ -55,6 +55,46 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-07-31 (v17 — Enchanted Forest, Sacred Meadow, and three new species)
+Two rare-variant biomes and three new creatures. Biome rarity thresholds, tame
+chances, time gates and the two new gatherables' mechanics live in the README +
+commit message, not here — below is only how they look.
+- **Enchanted Forest** (rare Forest variant). Palette `#55736a / #527066` — the
+  canopy is **deliberately desaturated**, green pulled toward slate-teal, and
+  the trees use their own facet set (`#6a9086 / #557a72 / #3d5c58`, violet-grey
+  trunk). That desaturation is the whole point: it is what lets the
+  bioluminescent undergrowth read. If a future pass "fixes" the canopy back to
+  forest green, the glow disappears into it. Undergrowth is baked into the tile
+  as hard-edged teal specks with a flat halo — **no gradients**, the shimmer
+  comes from colour contrast, per the flat-shaded rule.
+- **Sacred Meadow** (rare Meadow variant). Golden dawn palette
+  `#cfc079 / #ccbd75`, warm grass strokes, occasional gold bloom, and a soft
+  light-shaft treatment — a pale wedge laid across the tile. The shaft is a
+  hard-edged polygon, not a bloom or blur; it reads as a shaft of light, and
+  keeping it hard-edged is what keeps it inside the art language.
+- **Drifting motes** are a new particle kind (`mote`): twinkling square core +
+  square halo, rising slowly, teal in the Enchanted Forest and warm gold in the
+  Sacred Meadow. **These are not fireflies.** Fireflies are gold, forest/dark
+  forest only, and night only; motes run day and night and mark the rare
+  biomes. Do not merge the two treatments — a mote appearing in plain Forest at
+  night would destroy the "you have found somewhere rare" read.
+- **Stag / Unicorn / Lightfox**: approved concept art inserted verbatim into the
+  `drawSpecies` chain in the existing `P`/`R`/`EY` helper convention — ported,
+  not redrawn or reinterpreted. `SPECIES_K` ratios from the reference sheet:
+  Stag 1.15, Unicorn 1.30 (tallest ground pet after Shadowfox/Golem), Lightfox
+  1.05. All three are ground species, so they inherit the standard walk bob,
+  sun shadow, x+y depth sort, and every v16 combat overlay (gold HP bar, lunge,
+  downed ring) with no per-species special-casing.
+- **Two new gatherable node silhouettes**, both deliberately unlike the ore
+  nodes so the 2026-07-07 "everything is grey cube debris" problem does not come
+  back: **Rare Herb** is a swaying frond cluster with pale seed heads — plant-
+  shaped, no rock base; **Magic Essence** is a hovering violet wisp over a small
+  mossy stone, with orbiting motes tying it to the Enchanted Forest floor.
+- Grass tufts and cliff moss now follow the variant tones (warm gold in the
+  Sacred Meadow, teal-grey in the Enchanted Forest) rather than staying plains
+  green — a variant biome whose grass detail is the parent biome's colour reads
+  as a palette bug.
+
 ### 2026-07-29 (v16 — pet combat states: lunge, damage, downed/recovery)
 No new creature art and no new species this build — v16 is a mechanics pass
 (stats/targeting/cooldowns live in the README + commit message). The rendering
