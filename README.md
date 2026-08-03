@@ -51,40 +51,72 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
 7. Extend `debug/run5.js`'s coverage lists with any new species/mobs/weapon
    kinds/classes added in this build, so future runs keep covering them.
 
-## Confirmed, locked spec for the next build (v18 — Underground + Underwater Caves, 5 new species)
+## Confirmed, locked spec for the next build (v18 rev2 — Underground Caves only, 3 species)
 
-v17 (Enchanted Forest / Sacred Meadow / Stag / Unicorn / Lightfox) shipped
-successfully. This section replaces the v17 entry as the current locked
-target. Do not redesign the numbers or mechanics below — implement exactly
-as written.
+v17 shipped successfully. Two prior attempts at v18 both correctly stopped
+on real blockers — see the changelog / commit history for the full reports
+if you want them, the short version is below. This is v18 rev2, replacing
+the original v18 section as the current locked target. Do not redesign the
+numbers or mechanics below — implement exactly as written.
 
-**PART A — density pass (do this first, before any new content).** Current
-overworld spawn counts were never tuned with visual density in mind and the
-island is reading as cluttered. Reduce every existing MOBS and
-WILD_SPECIES `count` value by roughly 30-40%, rounding down, minimum 1.
-Exact target: goblin 5→3, bandit 4→3, troll 3→2, boar 3→2, bear 3→2,
-griffin 2→1, phoenix 2→1, wolf/golem/shadowfox and the four sprites: reduce
-similarly by ~35% each, minimum 1. This is a pure tuning change — do not
-touch spawn logic, biome gating, or placement algorithms, only the count
-numbers. Confirm via `run5`'s existing render-coverage sweep that every
-species/mob still renders at least once (a lower count must never drop a
-species to zero spawns in the test seed).
+**What changed from the original v18 spec, and why:**
+- Underwater Caves, Water Dragon, and Sea Serpent are REMOVED from this
+  version. The original spec asked to "reuse" a breath-timer dive mechanic
+  and health-regen item that were never actually built — only discussed.
+  Building them properly (a real consumable-item system, breath timer, and
+  a deep-water traversal exception, since B.DEEP is currently in BLOCKED)
+  deserves its own dedicated spec, not a rushed addition here. They move to
+  a future version once that mechanic is designed with the same level of
+  detail as everything else in this file.
+- Part A's density numbers are now complete and final for every affected
+  species — no formula, no ambiguity, just explicit numbers.
+- The dragonV2() art below has been fixed: the palette parameter is now
+  named PAL instead of P, since P collided with the game's own global
+  polygon-drawing function and would have thrown on the first draw call.
 
-**PART B — cave access: Underground and Underwater Caves are separate
-interior spaces, not more overworld tiles.** This directly matters for the
-density problem above — do not place any new content as additional
-overworld decor. Underground Caves: an entrance point placed on ROCK or
-PEAK terrain (reuse the existing ruin/landmark placement pattern already in
-the world-build code — search for how the Ruins or Ancient Forge landmark
-picks its position — do not invent a new placement method), leading into a
-separate enclosed interior area, not part of the 80x80 overworld grid.
-Underwater Caves: reuse the breath-timer dive mechanic and the health-regen
-item already agreed for underwater access — the entrance is a dive point in
-deep water, leading to its own separate interior area, same architecture as
-the underground entrance. Both interiors can be modest single rooms/short
-corridors for this version — the point is establishing the access pattern
-and giving these 5 species real places to exist, not building a sprawling
-dungeon crawl (that's Dungeons, a later version).
+**PART A — density pass (do this first, before any new content).** Final,
+complete, deliberate numbers for every affected species — not a formula,
+not an approximation, apply exactly these:
+
+| Species | Current count | New count | Reasoning |
+|---|---|---|---|
+| goblin | 5 | 3 | |
+| bandit | 4 | 3 | |
+| troll | 3 | 2 | |
+| boar | 3 | 2 | |
+| bear | 3 | 2 | |
+| griffin | 2 | 1 | |
+| phoenix | 2 | 1 | |
+| tree_sprite | 4 | 3 | common ambient wildlife, kept fairly present |
+| water_sprite | 4 | 3 | same |
+| stone_sprite | 4 | 3 | same |
+| wind_sprite | 4 | 3 | same |
+| wolf | 3 | 2 | |
+| golem | 2 | 1 | no extra spawn-gating, safe to cut |
+| shadowfox | 2 | 2 (unchanged) | already gated by nightOnly + presenceRoll 0.55 — cutting further risks zero spawns |
+| stag | 3 | 2 | no extra gating |
+| unicorn | 2 | 2 (unchanged) | already gated by nightOnly + presenceRoll 0.55, same reasoning as shadowfox |
+| lightfox | 2 | 2 (unchanged) | already gated by dawn window + presenceRoll, same reasoning |
+
+Do not touch spawn logic, biome gating, or placement algorithms — only these
+count numbers. Confirm via run5's existing render-coverage sweep that every
+species still renders at least once in the test seed (a lower count must
+never drop a species to zero spawns — this is exactly why the already-gated
+species above are left unchanged rather than cut further).
+
+**PART B — cave access: Underground Caves are a separate interior space,
+not more overworld tiles.** This directly matters for the density problem
+above — do not place any new content as additional overworld decor. An
+entrance point placed on ROCK or PEAK terrain (reuse the existing
+ruin/landmark placement pattern already in the world-build code — the RUIN
+landmark's placement logic, angle+radius from TOWER with separation
+rejection-sampling, is the pattern to mirror — do not invent a new
+placement method), leading into a separate enclosed interior area, not part
+of the 80x80 overworld grid. A modest single room/short corridor is enough
+for this version — the point is establishing the access pattern and giving
+these 3 species a real place to exist, not building a sprawling dungeon
+crawl (that's Dungeons, a later version). Underwater Caves are deferred —
+see the note at the top of this section for why.
 
 **PART C — five new species.**
 
@@ -92,15 +124,18 @@ dungeon crawl (that's Dungeons, a later version).
 
 | Pet | Rarity | Where | Tame base chance |
 |---|---|---|---|
-| Water Dragon | Rare | Underwater Caves, tame as hatchling | 0.25 |
 | Fire Dragon | Rare | Underground Caves (lava sub-area), tame as hatchling | 0.25 |
 | Glow Moth | Common | Underground Caves (and Dungeons later — Underground only this version) | 0.65 |
 
-Combat stats — Water/Fire Dragon already locked from the v16 table, just
-attach them: 55 HP / 12 dmg / 1.6s cooldown / PvP-capable (Rare rarity,
-matches Unicorn's Rare-tier PvP gating). Glow Moth: NO combat role, matches
-the original Common-tier rule (Sprites + Glow Moth = no combat) — do not
-give it HP/dmg/cooldown stats at all.
+Combat stats — Fire Dragon already locked from the v16 table, just attach
+it: 55 HP / 12 dmg / 1.6s cooldown / PvP-capable (Rare rarity, matches
+Unicorn's Rare-tier PvP gating). Glow Moth: NO combat role, matches the
+original Common-tier rule (Sprites + Glow Moth = no combat) — do not give
+it HP/dmg/cooldown stats at all.
+
+(Water Dragon is deferred to whenever Underwater Caves and the dive
+mechanic ship together — its stats are still locked at the same 55/12/1.6s
+whenever that happens, this is not a redesign, just a delay.)
 
 **Glow Moth's actual function — a new mechanic, not combat:** when active,
 it should light the area around the player — a soft radius, most
@@ -115,20 +150,19 @@ light sources, no separate toggle, just "on while active."
 
 | Mob | Difficulty | Where | HP | Dmg | Windup | Notes |
 |---|---|---|---|---|---|---|
-| Dark Wraith | Medium | Dark Forest only this version (bible also lists Dungeons — defer that spawn until Dungeons exist, a later version) | 65 | 12 | 600ms | Ranged spectral attack, not melee lunge — thematically appropriate for an incorporeal enemy. Reuse the existing ranged-mob pattern if one exists in the mob framework; if not, a short-range bolt is fine, flag the exact mechanism used |
-| Sea Serpent | Hard | Underwater Caves interior | 130 | 18 | 700ms | Standard melee-range mob framework, just bigger numbers than Troll |
+| Dark Wraith | Medium | Dark Forest only this version (bible also lists Dungeons — defer that spawn until Dungeons exist, a later version) | 65 | 12 | 600ms | Ranged spectral attack, not melee lunge — thematically appropriate for an incorporeal enemy. No ranged-mob pattern exists in the framework yet, confirmed — a short-range bolt is fine, flag the exact mechanism used in the commit |
 
-Both use the existing MOBS table shape exactly (hp/dmg/atkRange/
+Uses the existing MOBS table shape exactly (hp/dmg/atkRange/
 atkCooldownMs/windupMs/aggroRadius/leashRadius/moveSpeed/count/tameable/
-loot) — Dark Wraith drops runic materials (reuse the existing runic_stone
-item), Sea Serpent drops "rare aquatic loot" — since no aquatic-specific
-loot item exists yet, use existing materials (iron_bar/runic_stone) at a
-generous drop rate rather than inventing a new item type; a dedicated
-aquatic loot item can be designed later if actually needed.
+loot) — drops runic materials (reuse the existing runic_stone item).
 
-**Mounts:** Water Dragon and Fire Dragon are both on the bible's mountable
-list. DEFERRED, same as v16/v17 — no riding code, they inherit the
-speed bonus automatically whenever full mounting ships.
+(Sea Serpent is deferred to whenever Underwater Caves ships — same 130/18
+stats locked in for then, not a redesign.)
+
+**Mounts:** Fire Dragon is on the bible's mountable list. DEFERRED, same as
+v16/v17 — no riding code, it inherits the speed bonus automatically
+whenever full mounting ships. (Water Dragon's mount status carries over
+whenever it ships too.)
 
 **Art — already designed and ported for you, ready to insert.** Same
 convention as v15/v17 (P/R/EY/BND/SCL/drawBlobLocal — confirmed already
@@ -139,14 +173,16 @@ once, near the other rendering helpers (alongside P/R/EY/BND/SCL is a
 sensible spot). It is used by Dark Wraith's art and will be reused by
 future Elder-tier content, so this is worth getting right now.
 
-Also new: `dragonV2()` is a SHARED body function used by both Water Dragon
-and Fire Dragon (and will be reused again when Storm/Shadow Dragons are
-built in a later version — the palette table below already includes their
-colors even though only `water`/`fire` are wired into `drawSpecies` this
-version, so no rework is needed later). Insert `dragonV2()` once as its own
-top-level function, insert `DRAGON_PAL` once as its own top-level constant,
-then call it from within the `drawSpecies` branches for `water_dragon` and
-`fire_dragon`.
+Also new: `dragonV2()` is a SHARED body function, used by Fire Dragon this
+version and reused again whenever Water Dragon and Storm/Shadow Dragons
+ship later — the palette table below already includes all four colors even
+though only `fire` is wired into `drawSpecies` this version, so no rework
+is needed later. The palette parameter is named `PAL` (not `P`) inside this
+function specifically because `P` collides with the game's own global
+polygon-drawing function — using `P` here would silently break every draw
+call. Insert `dragonV2()` once as its own top-level function, insert
+`DRAGON_PAL` once as its own top-level constant, then call it from within
+the `drawSpecies` branch for `fire_dragon` only this version.
 
 ```js
 // ============ 1. aura() — new shared helper, insert once ============
@@ -187,60 +223,60 @@ const DRAGON_PAL = {
 };
 
 // ============ 3. dragonV2() — new shared function, insert once ============
-function dragonV2(sx, sy, P, t, variant, S) {
+function dragonV2(sx, sy, PAL, t, variant, S) {
   S = S || 1;
   const F = Math.sin(t / 340) * 3 * S;
   const X = (v) => sx + v * S, Y = (v) => sy + v * S;
 
-  P(ctx, [X(-1), Y(-14), X(-15), Y(-22 - F / S), X(-19), Y(-11 - F / S), X(-7), Y(-9)], P.wingDark);
-  R(ctx, [X(-1), Y(-14), X(-15), Y(-22 - F / S)], P.boneDark, 1.1 * S);
-  R(ctx, [X(-2), Y(-13), X(-17), Y(-16 - F / S)], P.boneDark, 0.9 * S);
+  P(ctx, [X(-1), Y(-14), X(-15), Y(-22 - F / S), X(-19), Y(-11 - F / S), X(-7), Y(-9)], PAL.wingDark);
+  R(ctx, [X(-1), Y(-14), X(-15), Y(-22 - F / S)], PAL.boneDark, 1.1 * S);
+  R(ctx, [X(-2), Y(-13), X(-17), Y(-16 - F / S)], PAL.boneDark, 0.9 * S);
 
-  P(ctx, [X(-6), Y(-2), X(-16), Y(-5 + Math.sin(t / 300) * 1.4), X(-15), Y(-1.5), X(-5), Y(-5)], P.mid);
-  P(ctx, [X(-16), Y(-5 + Math.sin(t / 300) * 1.4), X(-21), Y(-8 + Math.sin(t / 300) * 2), X(-18), Y(-2)], P.lit);
+  P(ctx, [X(-6), Y(-2), X(-16), Y(-5 + Math.sin(t / 300) * 1.4), X(-15), Y(-1.5), X(-5), Y(-5)], PAL.mid);
+  P(ctx, [X(-16), Y(-5 + Math.sin(t / 300) * 1.4), X(-21), Y(-8 + Math.sin(t / 300) * 2), X(-18), Y(-2)], PAL.lit);
   for (let i = 0; i < 4; i++) {
-    P(ctx, [X(-7 - i * 2.4), Y(-4 - i * 0.3), X(-8 - i * 2.4), Y(-7 - i * 0.5), X(-9.4 - i * 2.4), Y(-4.2 - i * 0.3)], P.ridge);
+    P(ctx, [X(-7 - i * 2.4), Y(-4 - i * 0.3), X(-8 - i * 2.4), Y(-7 - i * 0.5), X(-9.4 - i * 2.4), Y(-4.2 - i * 0.3)], PAL.ridge);
   }
 
-  P(ctx, [X(-5), Y(0), X(-6.4), Y(-7), X(-2), Y(-7.6), X(-1.4), Y(0)], P.mid);
-  P(ctx, [X(-6.6), Y(0), X(-3), Y(0), X(-3), Y(-1.6), X(-7.2), Y(-1.2)], P.claw);
+  P(ctx, [X(-5), Y(0), X(-6.4), Y(-7), X(-2), Y(-7.6), X(-1.4), Y(0)], PAL.mid);
+  P(ctx, [X(-6.6), Y(0), X(-3), Y(0), X(-3), Y(-1.6), X(-7.2), Y(-1.2)], PAL.claw);
 
-  P(ctx, [X(-6), Y(-6), X(-5), Y(-14), X(4), Y(-14.6), X(6), Y(-6)], P.lit);
-  P(ctx, [X(4), Y(-14.6), X(6), Y(-6), X(-6), Y(-6), X(-0.5), Y(-9)], P.mid);
-  P(ctx, [X(-5), Y(-6), X(5.4), Y(-6), X(4.4), Y(-1.4), X(-4), Y(-1.4)], P.belly);
-  BND(ctx, X(-3.8), X(4.2), Y(-5), 4, 1.1 * S, P.bandLine, 0.6 * S);
-  SCL(ctx, X(-4.6), Y(-13.4), 9 * S, 6 * S, P.scale, 2.3 * S);
+  P(ctx, [X(-6), Y(-6), X(-5), Y(-14), X(4), Y(-14.6), X(6), Y(-6)], PAL.lit);
+  P(ctx, [X(4), Y(-14.6), X(6), Y(-6), X(-6), Y(-6), X(-0.5), Y(-9)], PAL.mid);
+  P(ctx, [X(-5), Y(-6), X(5.4), Y(-6), X(4.4), Y(-1.4), X(-4), Y(-1.4)], PAL.belly);
+  BND(ctx, X(-3.8), X(4.2), Y(-5), 4, 1.1 * S, PAL.bandLine, 0.6 * S);
+  SCL(ctx, X(-4.6), Y(-13.4), 9 * S, 6 * S, PAL.scale, 2.3 * S);
 
-  P(ctx, [X(2.4), Y(0), X(1.6), Y(-7.4), X(5.4), Y(-7.8), X(5.8), Y(0)], P.lit);
-  P(ctx, [X(1.4), Y(0), X(6), Y(0), X(6), Y(-1.8), X(1.2), Y(-1.4)], P.claw);
+  P(ctx, [X(2.4), Y(0), X(1.6), Y(-7.4), X(5.4), Y(-7.8), X(5.8), Y(0)], PAL.lit);
+  P(ctx, [X(1.4), Y(0), X(6), Y(0), X(6), Y(-1.8), X(1.2), Y(-1.4)], PAL.claw);
 
-  P(ctx, [X(1.6), Y(-13), X(3), Y(-22), X(6.4), Y(-21.4), X(5), Y(-12.4)], P.lit);
-  P(ctx, [X(5), Y(-12.4), X(6.4), Y(-21.4), X(7), Y(-20.6), X(6), Y(-12)], P.mid);
+  P(ctx, [X(1.6), Y(-13), X(3), Y(-22), X(6.4), Y(-21.4), X(5), Y(-12.4)], PAL.lit);
+  P(ctx, [X(5), Y(-12.4), X(6.4), Y(-21.4), X(7), Y(-20.6), X(6), Y(-12)], PAL.mid);
   for (let i = 0; i < 4; i++) {
-    P(ctx, [X(2.6 + i * 0.3), Y(-14.4 - i * 2), X(1.4 + i * 0.3), Y(-16.4 - i * 2), X(3.4 + i * 0.3), Y(-16.2 - i * 2)], P.ridge);
+    P(ctx, [X(2.6 + i * 0.3), Y(-14.4 - i * 2), X(1.4 + i * 0.3), Y(-16.4 - i * 2), X(3.4 + i * 0.3), Y(-16.2 - i * 2)], PAL.ridge);
   }
 
-  P(ctx, [X(2.8), Y(-22.6), X(10), Y(-23.6), X(10.4), Y(-18.6), X(3), Y(-18)], P.head);
-  P(ctx, [X(10), Y(-23.6), X(10.4), Y(-18.6), X(6.4), Y(-18.4)], P.mid);
-  P(ctx, [X(10.2), Y(-22.6), X(14.4), Y(-20.8), X(10.4), Y(-19)], P.head);
-  P(ctx, [X(10.2), Y(-19.6), X(14.2), Y(-20.4), X(13.8), Y(-18.6), X(10.3), Y(-18.4)], P.mid);
-  P(ctx, [X(3.4), Y(-23.4), X(9.6), Y(-24.2), X(9.2), Y(-22.4), X(3.6), Y(-22)], P.ridge);
+  P(ctx, [X(2.8), Y(-22.6), X(10), Y(-23.6), X(10.4), Y(-18.6), X(3), Y(-18)], PAL.head);
+  P(ctx, [X(10), Y(-23.6), X(10.4), Y(-18.6), X(6.4), Y(-18.4)], PAL.mid);
+  P(ctx, [X(10.2), Y(-22.6), X(14.4), Y(-20.8), X(10.4), Y(-19)], PAL.head);
+  P(ctx, [X(10.2), Y(-19.6), X(14.2), Y(-20.4), X(13.8), Y(-18.6), X(10.3), Y(-18.4)], PAL.mid);
+  P(ctx, [X(3.4), Y(-23.4), X(9.6), Y(-24.2), X(9.2), Y(-22.4), X(3.6), Y(-22)], PAL.ridge);
   ctx.fillStyle = "#f4f0e0";
   for (let i = 0; i < 3; i++) ctx.fillRect(X(11 + i * 1.2), Y(-19.4), 0.7 * S, 1.1 * S);
-  ctx.fillStyle = P.nostril || P.mid;
+  ctx.fillStyle = PAL.nostril || PAL.mid;
   ctx.fillRect(X(13), Y(-21.4), 1 * S, 0.9 * S);
-  EY(ctx, X(8), Y(-22.2), 1.5 * S, P.eye, P.pupil);
+  EY(ctx, X(8), Y(-22.2), 1.5 * S, PAL.eye, PAL.pupil);
 
-  P(ctx, [X(4), Y(-23.8), X(1.6), Y(-30), X(5.8), Y(-24.4)], P.horn);
-  P(ctx, [X(6), Y(-24.2), X(4.6), Y(-31.4), X(7.8), Y(-24.6)], P.hornLit);
-  P(ctx, [X(3.2), Y(-23.4), X(0.4), Y(-26.6), X(3.4), Y(-22.4)], P.horn);
+  P(ctx, [X(4), Y(-23.8), X(1.6), Y(-30), X(5.8), Y(-24.4)], PAL.horn);
+  P(ctx, [X(6), Y(-24.2), X(4.6), Y(-31.4), X(7.8), Y(-24.6)], PAL.hornLit);
+  P(ctx, [X(3.2), Y(-23.4), X(0.4), Y(-26.6), X(3.4), Y(-22.4)], PAL.horn);
 
-  P(ctx, [X(1), Y(-14), X(-11), Y(-25 - F / S), X(-16), Y(-12 - F / S), X(-4), Y(-8.4)], P.wing);
-  P(ctx, [X(-11), Y(-25 - F / S), X(-16), Y(-12 - F / S), X(-9), Y(-15)], P.wingMid);
-  R(ctx, [X(1), Y(-14), X(-11), Y(-25 - F / S)], P.bone, 1.2 * S);
-  R(ctx, [X(0), Y(-13), X(-13.4), Y(-19 - F / S)], P.bone, 1 * S);
-  R(ctx, [X(-0.6), Y(-12), X(-14.6), Y(-13.6 - F / S)], P.bone, 0.9 * S);
-  P(ctx, [X(-11), Y(-25 - F / S), X(-13.4), Y(-27.4 - F / S), X(-12.6), Y(-24 - F / S)], P.claw);
+  P(ctx, [X(1), Y(-14), X(-11), Y(-25 - F / S), X(-16), Y(-12 - F / S), X(-4), Y(-8.4)], PAL.wing);
+  P(ctx, [X(-11), Y(-25 - F / S), X(-16), Y(-12 - F / S), X(-9), Y(-15)], PAL.wingMid);
+  R(ctx, [X(1), Y(-14), X(-11), Y(-25 - F / S)], PAL.bone, 1.2 * S);
+  R(ctx, [X(0), Y(-13), X(-13.4), Y(-19 - F / S)], PAL.bone, 1 * S);
+  R(ctx, [X(-0.6), Y(-12), X(-14.6), Y(-13.6 - F / S)], PAL.bone, 0.9 * S);
+  P(ctx, [X(-11), Y(-25 - F / S), X(-13.4), Y(-27.4 - F / S), X(-12.6), Y(-24 - F / S)], PAL.claw);
 
   if (variant === "water") {
     P(ctx, [X(3), Y(-23.8), X(0.6), Y(-28.6), X(5), Y(-24.6)], "#9fe0ec");
@@ -274,9 +310,6 @@ function dragonV2(sx, sy, P, t, variant, S) {
 }
 
 // ============ 4. drawSpecies branches — insert into the existing chain ============
-else if (species === "water_dragon") {
-  dragonV2(sx, sy, DRAGON_PAL.water, t, "water");
-}
 else if (species === "fire_dragon") {
   dragonV2(sx, sy, DRAGON_PAL.fire, t, "fire");
 }
@@ -342,73 +375,34 @@ else if (kind === "dark_wraith") {
       ctx.fillRect(sx - 7 + i * 7, sy - 14 - ph * 12 + drift, 1.6, 1.6);
     }
 }
-else if (kind === "sea_serpent") {
-    const w1 = Math.sin(t / 420) * 1.6, w2 = Math.sin(t / 420 + 1.2) * 1.6;
-    P(ctx, [sx - 22, sy, sx - 19, sy - 6 + w1, sx - 13, sy - 6.4 + w1, sx - 10, sy], "#2f7c8c");
-    P(ctx, [sx - 19, sy - 6 + w1, sx - 13, sy - 6.4 + w1, sx - 14, sy - 2], "#1e5a68");
-    P(ctx, [sx - 9, sy, sx - 6, sy - 7 + w2, sx + 1, sy - 7.4 + w2, sx + 4, sy], "#3f9aa8");
-    P(ctx, [sx - 6, sy - 7 + w2, sx + 1, sy - 7.4 + w2, sx - 1, sy - 2], "#25687a");
-    SCL(ctx, sx - 20, sy - 5.4 + w1, 8, 4, "#25687a", 2.2);
-    SCL(ctx, sx - 7, sy - 6.4 + w2, 9, 4.6, "#2a7284", 2.2);
-    for (let i = 0; i < 3; i++) {
-      P(ctx, [sx - 18 + i * 2.6, sy - 6 + w1, sx - 19 + i * 2.6, sy - 10.4 + w1, sx - 16 + i * 2.6, sy - 6.2 + w1], "#9fe0ec");
-    }
-    for (let i = 0; i < 3; i++) {
-      P(ctx, [sx - 5 + i * 2.6, sy - 7 + w2, sx - 6 + i * 2.6, sy - 11.6 + w2, sx - 3 + i * 2.6, sy - 7.2 + w2], "#9fe0ec");
-    }
-    P(ctx, [sx - 23, sy - 1.4, sx - 29.4, sy - 5.4 + Math.sin(t / 380) * 2, sx - 22.4, sy - 5], "#2f7c8c");
-    P(ctx, [sx - 29.4, sy - 5.4 + Math.sin(t / 380) * 2, sx - 33.4, sy - 2 + Math.sin(t / 380) * 2, sx - 30, sy - 9 + Math.sin(t / 380) * 2], "#9fe0ec");
-    P(ctx, [sx + 1.4, sy - 7, sx + 3.4, sy - 19.4, sx + 7, sy - 19, sx + 5.4, sy - 6.4], "#3f9aa8");
-    P(ctx, [sx + 5.4, sy - 19, sx + 7, sy - 19, sx + 6.4, sy - 6.6], "#25687a");
-    for (let i = 0; i < 4; i++) {
-      P(ctx, [sx + 3.2 - i * 0.2, sy - 17.4 + i * 2.6, sx + 1.4 - i * 0.2, sy - 19.4 + i * 2.6, sx + 3.6 - i * 0.2, sy - 15.4 + i * 2.6], "#9fe0ec");
-    }
-    P(ctx, [sx + 3.2, sy - 19.8, sx + 11, sy - 21.2, sx + 11.4, sy - 15.6, sx + 3.4, sy - 14.8], "#4aa8b6");
-    P(ctx, [sx + 11, sy - 21.2, sx + 11.4, sy - 15.6, sx + 7, sy - 15.4], "#25687a");
-    P(ctx, [sx + 11.2, sy - 20.2, sx + 16.4, sy - 18.2, sx + 11.4, sy - 16.2], "#3f9aa8");
-    ctx.fillStyle = "#f4f0e0";
-    for (let i = 0; i < 4; i++) ctx.fillRect(sx + 12 + i * 1.3, sy - 17.2, 0.8, 1.4);
-    P(ctx, [sx + 3.8, sy - 21, sx + 9.6, sy - 22.2, sx + 9.2, sy - 20, sx + 4, sy - 19.4], "#67c2d0");
-    EY(ctx, sx + 8.4, sy - 19.8, 1.5, "#eafcff", "#0e3a44");
-    P(ctx, [sx + 4, sy - 22, sx + 2.2, sy - 27.4, sx + 6, sy - 22.6], "#9fe0ec");
-    P(ctx, [sx + 6, sy - 22.6, sx + 7.4, sy - 28.4, sx + 9.4, sy - 22], "#bfeef6");
-    P(ctx, [sx + 9.4, sy - 22, sx + 12, sy - 26.4, sx + 11.4, sy - 21], "#9fe0ec");
-    for (let i = 0; i < 3; i++) {
-      const ph = (t / 900 + i * 0.34) % 1;
-      ctx.strokeStyle = `rgba(200,240,250,${0.5 * (1 - ph)})`; ctx.lineWidth = 0.8;
-      ctx.beginPath(); ctx.arc(sx + 14 + i * 3, sy - 22 - ph * 10, 1.4, 0, Math.PI * 2); ctx.stroke();
-    }
-}
 ```
 
-After inserting, add `water_dragon`, `fire_dragon`, `glow_moth` to
-`SPECIES_K` (Rare dragons: 1.30 each, matching the already-approved
-reference-sheet scale for hatchling dragons; Glow Moth: 0.32, small).
-Add `dark_wraith`, `sea_serpent` to `MOB_K` (Dark Wraith: 1.30, human-ish
-scale; Sea Serpent: 2.60, large — this is a big creature) and `MOB_TALL`
-(Dark Wraith: 4; Sea Serpent: 15 — its body is wide and low, tune the exact
-overlay-offset value against how it actually renders, this is a starting
-estimate not a hard requirement).
+After inserting, add `fire_dragon`, `glow_moth` to `SPECIES_K` (Fire
+Dragon: 1.30, matching the already-approved reference-sheet scale for
+hatchling dragons; Glow Moth: 0.32, small). Add `dark_wraith` to `MOB_K`
+(1.30, human-ish scale) and `MOB_TALL` (4).
 
 **Proof gates — standard gauntlet plus:**
-- Extend `run4.js` with assertions for all 5 species (stats match the
+- Extend `run4.js` with assertions for all 3 species (stats match the
   tables above exactly; Glow Moth confirmed to have no combat capability at
   all, not just zero stats but no combat code path triggering for it).
-- Extend `run5.js`'s coverage sweep to include all 5 new species/mobs.
-- Confirm via a quick check that both new cave interiors are actually
-  reachable from the entrances placed in the overworld (not literally the
-  full worldgen sanity check from v17, just confirm the entrance→interior
-  transition exists and doesn't error).
+- Extend `run5.js`'s coverage sweep to include all 3 new species/mobs.
+- Confirm via a quick check that the Underground Cave interior is actually
+  reachable from its entrance in the overworld (not the full worldgen
+  sanity check from v17, just confirm the entrance→interior transition
+  exists and doesn't error).
 - Confirm the density-reduction pass (Part A) didn't drop any species to
   zero spawns anywhere in the test seed.
 
-**Explicitly not touched this version:** Dungeons (later version — this is
-also when Dark Wraith's second spawn location and Demon Knight arrive),
-Storm/Shadow Dragons (later version, though their palette data is now
-pre-staged), mounting/riding (still future), a dedicated aquatic loot item
-(design later if actually needed), full dungeon-crawl depth for the two new
-cave interiors (this version just establishes access + a home for these 5
-species).
+**Explicitly not touched this version:** Underwater Caves, Water Dragon,
+Sea Serpent, and the dive/breath/health-item mechanic they depend on — all
+deferred to a future version once that mechanic gets its own proper spec.
+Dungeons (later — also when Dark Wraith's second spawn location and Demon
+Knight arrive). Storm/Shadow Dragons (later, palette data pre-staged
+already). Mounting/riding (still future). A dedicated aquatic loot item
+(design later if actually needed). Full dungeon-crawl depth for the
+Underground interior (this version just establishes access + a home for
+these 3 species).
 
 **After v18 ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated with the next
