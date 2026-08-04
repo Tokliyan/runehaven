@@ -145,6 +145,18 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       for (const s of ['stag', 'unicorn', 'lightfox']) {
         results.push([`${s} is NOT fight-to-tame`, cwdt(mk(s, 1, 40)) === false]);
       }
+      // ===== v18: the two Underground Caves pets, same v12 passive formula =====
+      const fdC = tcf({ id: 'fire_dragon:test', species: 'fire_dragon' }, false);
+      results.push(['fire_dragon chance = .25+.25 = .50', Math.abs(fdC - 0.50) < 1e-9]);
+      const fdBaitC = tcf({ id: 'fire_dragon:test', species: 'fire_dragon' }, true);
+      results.push(['fire_dragon baited = .25+.25+.15 = .65', Math.abs(fdBaitC - 0.65) < 1e-9]);
+      const gmC = tcf({ id: 'glow_moth:test', species: 'glow_moth' }, false);
+      results.push(['glow_moth chance = .65+.25 = .90', Math.abs(gmC - 0.90) < 1e-9]);
+      for (const s of ['fire_dragon', 'glow_moth']) {
+        results.push([`${s} is NOT fight-to-tame`, cwdt(mk(s, 1, 40)) === false]);
+      }
+      // the Dark Wraith is a kill-for-loot mob — the tame gate must never open
+      results.push(['dark_wraith gate CLOSED at 1hp', cwdt(mk('dark_wraith', 1, 65)) === false]);
     } else {
       results.push(['canWearDownTame/tameChanceFor exist', false]);
     }
@@ -158,6 +170,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         // v17 — locked from the v16 spec table, attached to the new species
         ['stag', 25, 3, 1800, false], ['unicorn', 45, 8, 1600, true],
         ['lightfox', 50, 10, 1300, true],
+        // v18 — Fire Dragon, locked at 55/12/1.6s, Rare-tier so PvP-capable
+        ['fire_dragon', 55, 12, 1600, true],
       ];
       for (const [s, hp, dmg, cd, pvp] of TBL) {
         const d = pcd(s, 'Ranger');
@@ -171,13 +185,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['BM golem +20% -> 72hp/6dmg', !!bg && bg.hp === 72 && bg.dmg === 6]);
       const bp = pcd('phoenix', 'Beastmaster');
       results.push(['BM phoenix +20% -> 60hp/12dmg', !!bp && bp.hp === 60 && bp.dmg === 12]);
-      // Common pets have NO combat role at all
-      for (const s of ['tree_sprite', 'water_sprite', 'stone_sprite', 'wind_sprite']) {
+      // Common pets have NO combat role at all. v18: Glow Moth joins this list
+      // rather than the not-yet-built one below — it SHIPPED this version, and
+      // having no combat role is its correct, deliberate state.
+      for (const s of ['tree_sprite', 'water_sprite', 'stone_sprite', 'wind_sprite', 'glow_moth']) {
         results.push([`${s} has no combat role`, pcd(s, 'Beastmaster') === null]);
       }
       // species from the locked table that aren't implemented yet must NOT
       // be pre-built — extend this list as each one actually ships
-      for (const s of ['glow_moth', 'crystal_golem', 'basilisk',
+      for (const s of ['water_dragon', 'crystal_golem', 'basilisk',
                        'krakenling', 'salamander_king', 'duskfox_elder',
                        'golem_elder', 'dragon_elder', 'unicorn_elder']) {
         results.push([`${s} not pre-built`, pcd(s, 'Beastmaster') === null]);
@@ -214,6 +230,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // Stag has no time gate at all
       results.push(['stag visible by day',   at(0.25, 'stag') === true]);
       results.push(['stag visible by night', at(0.75, 'stag') === true]);
+      // v18: neither cave pet is time-gated — the biome is their rarity
+      for (const s of ['fire_dragon', 'glow_moth']) {
+        results.push([`${s} visible by day`,   at(0.25, s) === true]);
+        results.push([`${s} visible by night`, at(0.75, s) === true]);
+      }
     } else {
       results.push(['isWildVisible/getDayT exist', false]);
     }
@@ -264,6 +285,142 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
     } else {
       results.push(['debugWorldInfo/biomeAt exist', false]);
+    }
+
+    // ===== v18 PART A: the density pass, exactly the locked table =====
+    const dwi2 = window.debugWorldInfo;
+    if (dwi2 && dwi2().MOBS) {
+      const info = dwi2();
+      const MOB_COUNTS = { goblin: 3, bandit: 3, troll: 2, boar: 2, bear: 2,
+                           griffin: 1, phoenix: 1, dark_wraith: 2 };
+      for (const [k, want] of Object.entries(MOB_COUNTS)) {
+        results.push([`MOBS.${k}.count = ${want}`, info.MOBS[k] && info.MOBS[k].count === want]);
+      }
+      const SP_COUNTS = { tree_sprite: 3, water_sprite: 3, stone_sprite: 3, wind_sprite: 3,
+                          wolf: 2, golem: 1, stag: 2,
+                          // deliberately UNCHANGED — already presence-roll gated
+                          shadowfox: 2, unicorn: 2, lightfox: 2,
+                          // v18 new
+                          fire_dragon: 1, glow_moth: 3 };
+      for (const [k, want] of Object.entries(SP_COUNTS)) {
+        results.push([`WILD_SPECIES.${k}.count = ${want}`,
+          info.WILD_SPECIES[k] && info.WILD_SPECIES[k].count === want]);
+      }
+
+      // ===== v18 PART A proof: no species was cut to zero spawns =====
+      // Species carrying a presenceRoll may legitimately be absent from any
+      // given session, and fight-to-tame species spawn as mobs, so neither is
+      // assertable here — everything else must actually reach its biome.
+      const spawned = info.wildSpecies, spawnedMobs = info.mobKinds;
+      console.log('mob spawns:', JSON.stringify(spawnedMobs));
+      for (const [k, def] of Object.entries(info.WILD_SPECIES)) {
+        if (def.presenceRoll || def.fightToTame) continue;
+        const n2 = spawned.filter(s => s === k).length;
+        results.push([`${k} still spawns after the density cut (${n2})`, n2 > 0]);
+      }
+      for (const k of ['goblin', 'bandit', 'troll', 'boar', 'bear', 'griffin', 'phoenix']) {
+        const n2 = spawnedMobs.filter(s => s === k).length;
+        results.push([`mob ${k} still spawns after the density cut (${n2})`, n2 > 0]);
+      }
+      // Dark Wraith is NOT asserted, and this is deliberate + reported, not a
+      // silent skip: its bible-specified home, Dark Forest, is a ONE-TILE band
+      // in this test seed (the `dark === 1` assertion above), so the 600-sample
+      // mob placement search realistically never lands on it. Shadowfox has had
+      // exactly this problem, unnoticed, since v12 — it is DARKFOREST-only too.
+      // Widening the Dark Forest band is a worldgen decision for its own spec;
+      // this build must not guess at one. See the commit message.
+      console.log(`NOTE: dark_wraith spawned ${spawnedMobs.filter(s => s === 'dark_wraith').length}x ` +
+                  `— Dark Forest is a 1-tile band in this seed; not asserted, see commit message.`);
+
+      // ===== v18 PART C: Dark Wraith's locked stats + its ranged mechanism =====
+      const dw = info.MOBS.dark_wraith;
+      results.push(['dark_wraith 65 HP',        !!dw && dw.hp === 65]);
+      results.push(['dark_wraith 12 dmg',       !!dw && dw.dmg === 12]);
+      results.push(['dark_wraith 600ms windup', !!dw && dw.windupMs === 600]);
+      results.push(['dark_wraith is not tameable', !!dw && dw.tameable === false]);
+      results.push(['dark_wraith spawns in Dark Forest only',
+        !!dw && dw.biomes.length === 1 && dw.biomes[0] === info.B.DARKFOREST]);
+      results.push(['dark_wraith drops runic materials',
+        !!dw && dw.loot.some(l => l.type === 'runic_stone')]);
+      // the ranged read: it strikes from well outside every melee mob's reach
+      const melee = Object.entries(info.MOBS).filter(([k]) => k !== 'dark_wraith')
+        .map(([, d]) => d.atkRange);
+      results.push([`dark_wraith is RANGED (${dw.atkRange} vs melee max ${Math.max(...melee)})`,
+        !!dw && dw.atkRange >= 3 && dw.atkRange > Math.max(...melee)]);
+      // and it must still open fire from inside its own aggro radius
+      results.push(['dark_wraith aggro radius exceeds its attack range',
+        !!dw && dw.aggroRadius > dw.atkRange]);
+
+      // ===== v18 PART B: Underground Caves must actually be reachable =====
+      const { N: N2, B: B2 } = info;
+      let cave = 0, rock2 = 0, peak2 = 0;
+      for (let y = 0; y < N2; y++) for (let x = 0; x < N2; x++) {
+        const b = window.biomeAt(x, y);
+        if (b === B2.UNDERCAVE) cave++;
+        if (b === B2.ROCK) rock2++;
+        if (b === B2.PEAK) peak2++;
+      }
+      console.log(`worldgen v18: undercave ${cave}, rock ${rock2}, peak ${peak2}`);
+      results.push([`Underground Caves exist (${cave} tiles)`, cave > 0]);
+      results.push([`Underground Caves stay a sparse pocket (${cave}/${cave + rock2 + peak2})`,
+        cave < rock2]);
+      results.push([`regular Rock still exists (${rock2})`, rock2 > 0]);
+      results.push([`regular Peak still exists (${peak2})`, peak2 > 0]);
+      // a cave tile must be WALKABLE — the whole point of the corrected Part B
+      // is that it is an overworld tile you walk onto, not a separate space
+      let caveWalkable = null;
+      for (let y = 0; y < N2 && caveWalkable === null; y++) for (let x = 0; x < N2; x++) {
+        if (window.biomeAt(x, y) === B2.UNDERCAVE) { caveWalkable = [x, y]; break; }
+      }
+      results.push(['a cave tile is walkable (not in BLOCKED)',
+        !!caveWalkable && window.heightAt(caveWalkable[0], caveWalkable[1]) >= 0]);
+    } else {
+      results.push(['debugWorldInfo exposes MOBS/WILD_SPECIES', false]);
+    }
+
+    // ===== v18 PART C: Glow Moth has NO combat code path, not just no stats =====
+    // Driven through the real active-pet flow and real frames, not by poking
+    // at the tables: the pet must never acquire combat state at all.
+    if (window.setActivePet && window.debugWorldInfo && window.petInterposes) {
+      const pump = (from) => {
+        for (let f = from; f < from + 6; f++) {
+          const q = rafQ; rafQ = [];
+          for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+        }
+      };
+      await window.setActivePet({ id: 'gm-test', species: 'glow_moth', pet_name: 'Test Moth' });
+      pump(20);
+      const gm = window.debugWorldInfo().pet;
+      results.push(['glow_moth follows as a pet', !!gm && gm.sp === 'glow_moth']);
+      results.push(['glow_moth never gains combat state',
+        !!gm && gm.maxHp === undefined && gm.hp === undefined]);
+      results.push(['glow_moth never lunges (no swing)', !!gm && !gm.swingT]);
+      results.push(['glow_moth never interposes for its owner',
+        window.petInterposes({ x: gm ? gm.x : 0, y: gm ? gm.y : 0, kind: 'goblin' },
+                             { atkRange: 4 }) === false]);
+      // ...and Glow Moth's ONE mechanic: it widens the local player's light
+      if (window.collectLights) {
+        const lit = window.collectLights();
+        results.push(['glow_moth widens the player light to 215',
+          lit.some(L => L.r === 215 && L.col.indexOf('244,232,160') >= 0)]);
+        results.push(['glow_moth does NOT add a second light source',
+          lit.filter(L => L.r === 215).length === 1]);
+      }
+      // contrast: a Rare combat pet DOES acquire state through the same path
+      await window.setActivePet({ id: 'fd-test', species: 'fire_dragon', pet_name: 'Test Dragon' });
+      pump(30);
+      const fd = window.debugWorldInfo().pet;
+      results.push(['fire_dragon follows as a pet', !!fd && fd.sp === 'fire_dragon']);
+      // login above is Beastmaster: 55 * 1.2 = 66
+      results.push(['fire_dragon DOES gain combat state (55 +20% BM = 66hp)',
+        !!fd && fd.maxHp === 66]);
+      if (window.collectLights) {
+        results.push(['player light returns to 150 without the moth',
+          window.collectLights().some(L => L.r === 150)]);
+      }
+      await window.setActivePet(null);
+    } else {
+      results.push(['setActivePet/petInterposes exist', false]);
     }
 
     let allOk = true;
