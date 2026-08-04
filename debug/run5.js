@@ -123,8 +123,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     const KINDS = ["sword", "dagger", "spear", "axe", "bow", "crossbow", "staff"];
     const SPECIES = ["tree_sprite", "water_sprite", "stone_sprite", "wind_sprite", "wolf", "golem",
                       "shadowfox", "boar", "bear", "griffin", "phoenix",
-                      "stag", "unicorn", "lightfox"];                     // v17
-    const MOBK = ["goblin", "bandit", "troll", "boar", "bear", "griffin", "phoenix"];
+                      "stag", "unicorn", "lightfox",                      // v17
+                      "fire_dragon", "glow_moth"];                        // v18
+    const MOBK = ["goblin", "bandit", "troll", "boar", "bear", "griffin", "phoenix",
+                  "dark_wraith"];                                         // v18
     let n = 0;
     if (window.drawUnit) {
       for (const cls of CLS) {
@@ -148,6 +150,14 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                         state: st, winding, flash: 0, fx: winding ? -1 : 1, fy: 0, dead: false, target: null, ph: 1 };
             window.drawMob(m, 800);
             n += 1;
+            // v18: the Dark Wraith's ranged-strike bolt only draws with a live
+            // target and a fresh boltT, so the null-target pass above can never
+            // reach it — exercise both halves of that branch explicitly.
+            if (mk === "dark_wraith") {
+              window.drawMob({ ...m, target: { x: 44, y: 53 }, boltT: performance.now() }, 800);
+              window.drawMob({ ...m, target: { x: 44, y: 53 }, boltT: performance.now() - 9999 }, 800);
+              n += 2;
+            }
           }
         }
       }
@@ -193,6 +203,19 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                           key: hit.join(','), h: 0.8 }, 900);
         n += 1;
       }
+    }
+    // v18: the Underground Caves ground treatment is baked inside bakeTerrain(),
+    // which paints EVERY tile of the map at boot — so the boot above has already
+    // executed that branch. Report the tile count so a silently-empty biome
+    // (which would mean the branch never ran) is visible here too.
+    if (window.biomeAt && window.debugWorldInfo) {
+      const { N, B } = window.debugWorldInfo();
+      let cave = 0;
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+        if (window.biomeAt(x, y) === B.UNDERCAVE) cave++;
+      }
+      console.log('undercave tiles baked this seed:', cave);
+      if (!cave) { console.log('COVERAGE GAP: no B.UNDERCAVE tile — cave ground art never drew'); process.exit(1); }
     }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
