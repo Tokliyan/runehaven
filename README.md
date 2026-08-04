@@ -104,19 +104,30 @@ species still renders at least once in the test seed (a lower count must
 never drop a species to zero spawns — this is exactly why the already-gated
 species above are left unchanged rather than cut further).
 
-**PART B — cave access: Underground Caves are a separate interior space,
-not more overworld tiles.** This directly matters for the density problem
-above — do not place any new content as additional overworld decor. An
-entrance point placed on ROCK or PEAK terrain (reuse the existing
-ruin/landmark placement pattern already in the world-build code — the RUIN
-landmark's placement logic, angle+radius from TOWER with separation
-rejection-sampling, is the pattern to mirror — do not invent a new
-placement method), leading into a separate enclosed interior area, not part
-of the 80x80 overworld grid. A modest single room/short corridor is enough
-for this version — the point is establishing the access pattern and giving
-these 3 species a real place to exist, not building a sprawling dungeon
-crawl (that's Dungeons, a later version). Underwater Caves are deferred —
-see the note at the top of this section for why.
+**PART B — cave access: CORRECTED APPROACH, verified against live code
+before this run.** The original wording asked for a "separate interior
+space, not part of the 80x80 grid" — that pattern does not exist anywhere
+in this codebase (no teleport, no room-transition, no interior-instance
+system, confirmed by direct search). Do NOT build one from scratch; that is
+new architecture, not this version's scope.
+
+Instead, use the EXACT technique that already shipped successfully in v17
+for Enchanted Forest and Sacred Meadow — confirmed present and working:
+`ENCH_RARITY`/`SACRED_RARITY` constants and the `B.ENCHFOREST`/
+`B.SACMEADOW` enum pattern at the top of the world-build code. Underground
+Caves is a rarer biome-tile variant embedded within ROCK/PEAK terrain,
+using a second independent noise field (own seed offset, not reusing
+ENCH_RARITY or SACRED_RARITY) applied to tiles already classified as ROCK
+or PEAK — where it crosses a rarity threshold, reclassify to a new
+`B.UNDERCAVE` value, same mechanism, same file region. This is a real
+overworld tile a player just walks onto — no teleport, no separate space,
+no new systems. Dark, cave-toned palette (desaturated rock, deep shadow,
+sparse ambient light) distinguishes it visually from plain ROCK/PEAK. This
+also naturally addresses the density complaint, since it's inherently
+sparse/pocketed exactly like Enchanted Forest and Sacred Meadow already
+are. No landmark/entrance placement needed — drop the RUIN-placement-reuse
+instruction entirely, it doesn't apply to this approach. Underwater Caves
+remain deferred — see the note at the top of this section for why.
 
 **PART C — five new species.**
 
@@ -387,10 +398,11 @@ hatchling dragons; Glow Moth: 0.32, small). Add `dark_wraith` to `MOB_K`
   tables above exactly; Glow Moth confirmed to have no combat capability at
   all, not just zero stats but no combat code path triggering for it).
 - Extend `run5.js`'s coverage sweep to include all 3 new species/mobs.
-- Confirm via a quick check that the Underground Cave interior is actually
-  reachable from its entrance in the overworld (not the full worldgen
-  sanity check from v17, just confirm the entrance→interior transition
-  exists and doesn't error).
+- Run the same worldgen sanity check pattern as v17: generate the test-seed
+  world and confirm at least one B.UNDERCAVE tile actually exists somewhere
+  in it. If it doesn't, the rarity threshold is wrong — fix the threshold,
+  don't ship an unreachable biome (identical requirement to v17's Enchanted
+  Forest / Sacred Meadow check, just for this new biome value).
 - Confirm the density-reduction pass (Part A) didn't drop any species to
   zero spawns anywhere in the test seed.
 
