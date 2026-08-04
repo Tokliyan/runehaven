@@ -55,6 +55,75 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-04 (v18 — Underground Caves, Fire Dragon, Glow Moth, Dark Wraith)
+A third rare biome pocket and three new creatures. Density counts, combat stats,
+tame chances and the Dark Wraith's ranged mechanism live in the README + commit
+message, not here — below is only how it all looks.
+- **Underground Caves** (rare ROCK/PEAK variant, `B.UNDERCAVE`). Palette
+  `#4a453e / #474239` — the parent Rock hue with the warmth and the value taken
+  out of it, so a cave pocket reads as a **hole punched in the highland**, not
+  as one more shade of rock. Its cliff faces are the cave tone shaded on the
+  locked 0.8 / 0.58 ratio, **not** the cream `CLIFF_SW`/`CLIFF_SE` — a dark tile
+  wearing cream cliffs read as a palette bug in every test frame.
+- Cave ground is a deep shadow pool (`rgba(12,10,16,0.34)` inner diamond), two
+  hard fissure strokes, and a sparse warm mineral glint with a flat halo.
+  **Hard-edged flat shapes only, no gradients** — same rule the Enchanted Forest
+  undergrowth follows.
+- **Caves deliberately do NOT get drifting motes.** Motes mark the two rare
+  *surface* biomes (v17); spreading them to a third would destroy the "you have
+  found somewhere rare" read that earns them. Caves carry their identity through
+  value and shadow instead. Do not merge these treatments.
+- A cave pocket carved out of a snow PEAK loses the peak height rule and drops
+  to plateau height, which reads as a recessed bowl in the massif. That is
+  wanted, not a bug — it is what makes the cave mouth legible from above.
+- **`aura()` — new shared render helper** (pulsing radial wash + ground ellipse
+  + rising diamond motes). Takes an `"r,g,b"` triplet rather than a css colour
+  because every stop composes its own alpha. Used by the Dark Wraith now, built
+  to be reused by Elder-tier content later.
+- **`dragonV2()` + `DRAGON_PAL` — one shared dragon body, four palettes**
+  (water / fire / storm / shadow) with only `fire` wired up this version, so
+  later dragons need no rework. Its palette parameter is named **`PAL`, never
+  `P`** — `P` is this file's global polygon helper and shadowing it would
+  silently break every draw call in the body. (`PAL` shadowing the biome-palette
+  global inside that one function is harmless; nothing in there reads a biome
+  colour.)
+- **Fire Dragon**: approved concept art ported verbatim. It is a **ground
+  species** — the art plants its claws on the baseline — so it inherits the
+  standard walk bob, sun shadow, x+y depth sort and every v16 combat overlay
+  with no special casing. `SPECIES_K` 1.30, the reference-sheet hatchling scale.
+- **Glow Moth**: `SPECIES_K` 0.32, the smallest thing in the roster. Its warm
+  radial gradient is the one place a gradient is correct here — it is a light
+  source, not a surface. That same colour is reused as the light it casts: while
+  it is the active pet the **local player's own light widens 150→215 and warms
+  to `rgba(244,232,160,…)`**. It is deliberately not a second light entity — no
+  stacking, no toggle, on while active — so it can never double-expose a scene.
+- **Dark Wraith**: incorporeal read — 86% alpha body, drifting tatter fringe,
+  violet eye squares with a soft square halo, and the new `aura()` beneath it.
+  Ported into `drawMob`'s in-transform chain with `sx`/`sy` substituted for
+  `(0)`, the same v15 port convention goblin/troll/bandit already use.
+  `MOB_K` 1.30, `MOB_TALL` 4.
+- **The wraith's ranged strike is a visible bolt**, drawn *after* the body and
+  *outside* the body transform so it reads as reaching the target rather than as
+  part of the silhouette — a 240ms violet line that fades out. Without it a hit
+  from 4.5 tiles away has no visual cause at all. The v13 fairness rule is
+  untouched: the amber "!" still plays for a full 600ms first.
+
+## JUDGMENT CALLS THIS VERSION
+Rendering-scope calls made where the spec was silent. All shipped and working —
+these are refinements to consider, not unfinished work.
+- **Cave palette `#4a453e / #474239`** and the shadow/fissure/glint values. The
+  spec asked for "desaturated rock, deep shadow, sparse ambient light" and gave
+  no hexes. Picked to sit clearly apart from volcanic `#5c3c3c` (warm) and plain
+  Rock `#b3a993` (light).
+- **`UNDERCAVE_RARITY = 0.80`** — yields 41 cave tiles in the test seed, 8.2% of
+  the Rock/Peak pool, deliberately between Sacred Meadow's 3.7% and Enchanted
+  Forest's 12.4%. Pure tunable; raise it for rarer caves, lower it for more.
+- **Fire Dragon as a ground species, and Glow Moth as a flier at `alt: 12`**
+  (matching Wind Sprite). Neither was stated; both follow from the supplied art.
+- **`GLOW_MOTH_LIGHT_R = 215`** against the unlit default of 150. "A soft
+  radius" was the whole brief — this is a ~43% widening, tunable either way.
+- **240ms bolt lifetime** for the wraith's ranged strike.
+
 ### 2026-07-31 (v17 — Enchanted Forest, Sacred Meadow, and three new species)
 Two rare-variant biomes and three new creatures. Biome rarity thresholds, tame
 chances, time gates and the two new gatherables' mechanics live in the README +
