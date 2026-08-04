@@ -505,7 +505,7 @@ function fbm(x, y, s) {
        + valueNoise(x / 5,  y / 5,  s + 137) * 0.18;
 }
 
-const B = { DEEP:0, WATER:1, SHALLOW:2, SAND:3, PLAINS:4, MEADOW:5, FOREST:6, DARKFOREST:7, ROCK:8, PEAK:9, VOLROCK:10, LAVA:11, RUINB:12, ENCHFOREST:13, SACMEADOW:14 };
+const B = { DEEP:0, WATER:1, SHALLOW:2, SAND:3, PLAINS:4, MEADOW:5, FOREST:6, DARKFOREST:7, ROCK:8, PEAK:9, VOLROCK:10, LAVA:11, RUINB:12, ENCHFOREST:13, SACMEADOW:14, UNDERCAVE:15 };
 /* v17: rarity thresholds for the two rare-variant biomes. These gate a SECOND,
    fully independent noise field (own seed offset, single octave) applied only
    to tiles the moisture logic has ALREADY classified — never the moisture value
@@ -514,10 +514,19 @@ const B = { DEEP:0, WATER:1, SHALLOW:2, SAND:3, PLAINS:4, MEADOW:5, FOREST:6, DA
    (see the worldgen sanity check in debug/run4.js), tuned independently. */
 const ENCH_RARITY = 0.78;      // Forest -> Enchanted Forest
 const SACRED_RARITY = 0.74;    // Meadow -> Sacred Meadow
+/* v18: same mechanism a third time — Underground Caves are a rare pocket
+   variant of ROCK/PEAK, on their OWN independent field and seed offset (not
+   a reuse of either threshold above). Tunable: picked so cave tiles land
+   between the Sacred Meadow's and Enchanted Forest's share of their parent
+   biome — rare enough to feel found, dense enough to host two species.
+   See the worldgen sanity check in debug/run4.js. */
+const UNDERCAVE_RARITY = 0.80;  // ROCK/PEAK -> Underground Caves
 /* v17: harness hook — biome ids are lexically scoped consts, so the debug
    harnesses need a function-declared accessor to assert against them. */
 function debugWorldInfo() {
-  return { N, B: Object.assign({}, B), wildSpecies: wilds.map(w => w.species) };
+  return { N, B: Object.assign({}, B), wildSpecies: wilds.map(w => w.species),
+           mobKinds: mobs.map(m => m.kind), MOBS, WILD_SPECIES, PET_COMBAT,
+           pet: (me && me.pet) || null, activePet };
 }
 /* v12 roster — seven bible-accurate species (Fox/Fawn/Owl retired).
    flier: circling hover-follow at `alt` px. nightOnly: hidden + untameable by
@@ -527,27 +536,45 @@ function debugWorldInfo() {
 /* v13: hostile mob framework. tameable:false on both — the wear-down
    fight-to-tame gate below is built generically but deliberately INERT until
    v14 wires real fight-to-tame species (Bear/Boar/Griffin/Phoenix) to it. */
+/* v18 PART A — deliberate density pass, exactly the locked spec's numbers:
+   goblin 5->3, bandit 4->3, troll 3->2, boar 3->2, bear 3->2, griffin 2->1,
+   phoenix 2->1. Only the counts moved; spawn logic, biome gating and the
+   placement algorithm are untouched. */
 const MOBS = {
-  goblin: { name: "Goblin", biomes: [B.FOREST, B.PLAINS], hp: 40, dmg: 6,  atkRange: 1.4, atkCooldownMs: 1400, windupMs: 550, aggroRadius: 5,   leashRadius: 11, moveSpeed: 1.55, count: 5, tameable: false,
+  goblin: { name: "Goblin", biomes: [B.FOREST, B.PLAINS], hp: 40, dmg: 6,  atkRange: 1.4, atkCooldownMs: 1400, windupMs: 550, aggroRadius: 5,   leashRadius: 11, moveSpeed: 1.55, count: 3, tameable: false,
     loot: [{ type: "wood", qty: 2, chance: 0.8 }, { type: "stone", qty: 1, chance: 0.5 }, { type: "iron_ore", qty: 1, chance: 0.2 }] },
-  bandit: { name: "Bandit", biomes: [B.PLAINS, B.RUINB], hp: 55, dmg: 9,  atkRange: 1.5, atkCooldownMs: 1600, windupMs: 550, aggroRadius: 6.5, leashRadius: 13, moveSpeed: 1.85, count: 4, tameable: false,
+  bandit: { name: "Bandit", biomes: [B.PLAINS, B.RUINB], hp: 55, dmg: 9,  atkRange: 1.5, atkCooldownMs: 1600, windupMs: 550, aggroRadius: 6.5, leashRadius: 13, moveSpeed: 1.85, count: 3, tameable: false,
     loot: [{ type: "iron_bar", qty: 1, chance: 0.5 }, { type: "wood", qty: 2, chance: 0.6 }, { type: "iron_ore", qty: 1, chance: 0.35 }] },
   /* v14: medium-tier mob — slower and heavier, longer tell so the big hits stay dodgeable */
-  troll:  { name: "Troll",   biomes: [B.ROCK, B.PEAK],     hp: 90, dmg: 14, atkRange: 1.7, atkCooldownMs: 2000, windupMs: 750, aggroRadius: 7,   leashRadius: 12, moveSpeed: 1.3,  count: 3, tameable: false,
+  troll:  { name: "Troll",   biomes: [B.ROCK, B.PEAK],     hp: 90, dmg: 14, atkRange: 1.7, atkCooldownMs: 2000, windupMs: 750, aggroRadius: 7,   leashRadius: 12, moveSpeed: 1.3,  count: 2, tameable: false,
     loot: [{ type: "stone", qty: 3, chance: 0.9 }, { type: "iron_ore", qty: 2, chance: 0.6 }, { type: "iron_bar", qty: 1, chance: 0.3 }] },
   /* v14: fight-to-tame — hostile until worn below WEARDOWN_THRESHOLD, then the
      v12 taming flow takes over. Killing them drops loot; taming forfeits it. */
-  boar:    { name: "Boar",    biomes: [B.PLAINS, B.MEADOW], hp: 50, dmg: 7,  atkRange: 1.3, atkCooldownMs: 1300, windupMs: 520, aggroRadius: 4.5, leashRadius: 10, moveSpeed: 2.1, count: 3, tameable: true,
+  boar:    { name: "Boar",    biomes: [B.PLAINS, B.MEADOW], hp: 50, dmg: 7,  atkRange: 1.3, atkCooldownMs: 1300, windupMs: 520, aggroRadius: 4.5, leashRadius: 10, moveSpeed: 2.1, count: 2, tameable: true,
     loot: [{ type: "wood", qty: 2, chance: 0.7 }, { type: "stone", qty: 1, chance: 0.5 }] },
-  bear:    { name: "Bear",    biomes: [B.FOREST],           hp: 80, dmg: 13, atkRange: 1.6, atkCooldownMs: 1800, windupMs: 700, aggroRadius: 5.5, leashRadius: 11, moveSpeed: 1.7, count: 3, tameable: true,
+  bear:    { name: "Bear",    biomes: [B.FOREST],           hp: 80, dmg: 13, atkRange: 1.6, atkCooldownMs: 1800, windupMs: 700, aggroRadius: 5.5, leashRadius: 11, moveSpeed: 1.7, count: 2, tameable: true,
     loot: [{ type: "wood", qty: 3, chance: 0.8 }, { type: "stone", qty: 2, chance: 0.5 }] },
-  griffin: { name: "Griffin", biomes: [B.PEAK],             hp: 70, dmg: 11, atkRange: 1.6, atkCooldownMs: 1500, windupMs: 600, aggroRadius: 8,   leashRadius: 14, moveSpeed: 2.0, count: 2, tameable: true,
+  griffin: { name: "Griffin", biomes: [B.PEAK],             hp: 70, dmg: 11, atkRange: 1.6, atkCooldownMs: 1500, windupMs: 600, aggroRadius: 8,   leashRadius: 14, moveSpeed: 2.0, count: 1, tameable: true,
     loot: [{ type: "iron_bar", qty: 1, chance: 0.6 }, { type: "iron_ore", qty: 2, chance: 0.5 }] },
-  phoenix: { name: "Phoenix", biomes: [B.VOLROCK],          hp: 75, dmg: 11, atkRange: 1.5, atkCooldownMs: 1500, windupMs: 600, aggroRadius: 6.5, leashRadius: 12, moveSpeed: 1.9, count: 2, tameable: true,
+  phoenix: { name: "Phoenix", biomes: [B.VOLROCK],          hp: 75, dmg: 11, atkRange: 1.5, atkCooldownMs: 1500, windupMs: 600, aggroRadius: 6.5, leashRadius: 12, moveSpeed: 1.9, count: 1, tameable: true,
     loot: [{ type: "iron_bar", qty: 1, chance: 0.7 }, { type: "runic_stone", qty: 1, chance: 0.25 }] },
+  /* v18: the framework's first RANGED mob. No ranged pattern existed, so the
+     "ranged spectral attack" is expressed through the EXISTING distance
+     machinery rather than new AI: atkRange is pushed out to 4.5 tiles, so the
+     state machine flips to "attack" while the wraith is still 4-5 tiles out
+     and it never closes to melee, and drawMob paints a spectral bolt across
+     that gap on the strike frame so the hit reads as fired, not swung. The
+     v13 fairness rule is untouched — the amber "!" still plays first, and the
+     windup is a full 600ms of it. hp/dmg/windupMs are the locked spec's;
+     atkRange, cooldown, aggro/leash, moveSpeed, count and the loot rates are
+     designed tunables. Dark Forest only this version — the bible also lists
+     Dungeons, which do not exist yet. */
+  dark_wraith: { name: "Dark Wraith", biomes: [B.DARKFOREST], hp: 65, dmg: 12, atkRange: 4.5, atkCooldownMs: 1700, windupMs: 600, aggroRadius: 7.5, leashRadius: 13, moveSpeed: 1.45, count: 2, tameable: false,
+    loot: [{ type: "runic_stone", qty: 1, chance: 0.75 }, { type: "stone", qty: 2, chance: 0.5 }] },
 };
 const WEARDOWN_THRESHOLD = 0.25;   // generic fight-to-tame gate (inert in v13)
 const MOB_RESPAWN_MS = 60000;      // dev-island convenience: fights are repeatable
+const DW_BOLT_MS = 240;            // v18: Dark Wraith ranged-strike bolt lifetime
 let mobs = [];
 
 function m0f(v) { return typeof v === "number" ? v : 0; }
@@ -556,13 +583,17 @@ function canWearDownTame(m) {
   return !!(def && def.tameable && !m.dead && m.hp / m.maxHp <= WEARDOWN_THRESHOLD);
 }
 
+/* v18 PART A — density pass: all four Sprites 4->3, wolf 3->2, golem 2->1,
+   stag 3->2. Shadowfox, Unicorn and Lightfox are deliberately UNCHANGED —
+   each is already gated by a presence roll on top of a time window, so
+   cutting them further risks a session with zero of them in the world. */
 const WILD_SPECIES = {
-  tree_sprite:  { name: "Tree Sprite",  base: 0.65, flier: true,  alt: 10, count: 4, biomes: [B.FOREST, B.DARKFOREST], bloodFavored: false, shunnedByBlood: false },
-  water_sprite: { name: "Water Sprite", base: 0.65, flier: true,  alt: 10, count: 4, biomes: [B.SHALLOW], bloodFavored: false, shunnedByBlood: false },
-  stone_sprite: { name: "Stone Sprite", base: 0.65, flier: true,  alt: 10, count: 4, biomes: [B.ROCK], bloodFavored: false, shunnedByBlood: false },
-  wind_sprite:  { name: "Wind Sprite",  base: 0.65, flier: true,  alt: 12, count: 4, biomes: [B.PLAINS, B.MEADOW], bloodFavored: false, shunnedByBlood: false },
-  wolf:         { name: "Wolf",         base: 0.50, flier: false, count: 3, biomes: [B.FOREST], bloodFavored: false, shunnedByBlood: false },
-  golem:        { name: "Golem",        base: 0.50, flier: false, count: 2, biomes: [B.RUINB], bloodFavored: false, shunnedByBlood: false },
+  tree_sprite:  { name: "Tree Sprite",  base: 0.65, flier: true,  alt: 10, count: 3, biomes: [B.FOREST, B.DARKFOREST], bloodFavored: false, shunnedByBlood: false },
+  water_sprite: { name: "Water Sprite", base: 0.65, flier: true,  alt: 10, count: 3, biomes: [B.SHALLOW], bloodFavored: false, shunnedByBlood: false },
+  stone_sprite: { name: "Stone Sprite", base: 0.65, flier: true,  alt: 10, count: 3, biomes: [B.ROCK], bloodFavored: false, shunnedByBlood: false },
+  wind_sprite:  { name: "Wind Sprite",  base: 0.65, flier: true,  alt: 12, count: 3, biomes: [B.PLAINS, B.MEADOW], bloodFavored: false, shunnedByBlood: false },
+  wolf:         { name: "Wolf",         base: 0.50, flier: false, count: 2, biomes: [B.FOREST], bloodFavored: false, shunnedByBlood: false },
+  golem:        { name: "Golem",        base: 0.50, flier: false, count: 1, biomes: [B.RUINB], bloodFavored: false, shunnedByBlood: false },
   /* v14 fight-to-tame species — spawn as HOSTILE MOBS (see MOBS), never as
      passive wilds; these entries define tame chance + tamed follower form */
   boar:         { name: "Boar",         base: 0.45, flier: false, biomes: [], fightToTame: true, bloodFavored: false, shunnedByBlood: false },
@@ -577,9 +608,18 @@ const WILD_SPECIES = {
      presence roll) but is pinned to Enchanted Forest, not regular Forest.
      Lightfox adds the one new gate — dawnOnly, see DAWN_END — stacked on its
      own presence roll, which is why its tame base is the lowest of the three. */
-  stag:         { name: "Stag",         base: 0.45, flier: false, count: 3, biomes: [B.ENCHFOREST], bloodFavored: false, shunnedByBlood: false },
+  stag:         { name: "Stag",         base: 0.45, flier: false, count: 2, biomes: [B.ENCHFOREST], bloodFavored: false, shunnedByBlood: false },
   unicorn:      { name: "Unicorn",      base: 0.25, flier: false, count: 2, biomes: [B.ENCHFOREST], nightOnly: true, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
   lightfox:     { name: "Lightfox",     base: 0.20, flier: false, count: 2, biomes: [B.SACMEADOW], dawnOnly: true, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
+  /* v18: the Underground Caves roster. Both are PASSIVE tames (hold-E channel,
+     v12 formula) — the bible names no fight for either. Tame bases are the
+     locked spec's. Fire Dragon is a GROUND species: its art (dragonV2) is a
+     feet-planted pose, so it inherits the standard walk bob, sun shadow, x+y
+     depth sort and every v16 combat overlay with no special casing; Glow Moth
+     hovers like the Sprites. `count` and `alt` are designed tunables, kept
+     deliberately low in the same spirit as Part A's density pass. */
+  fire_dragon:  { name: "Fire Dragon",  base: 0.25, flier: false, count: 1, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
+  glow_moth:    { name: "Glow Moth",    base: 0.65, flier: true,  alt: 12, count: 3, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
 };
 /* v16: PET COMBAT — the locked spec table (see README "v16"). The bible gives
    pet rarity, taming method and flavour but ZERO combat numbers, so every
@@ -603,11 +643,19 @@ const PET_COMBAT = {
   shadowfox: { hp: 50, dmg: 10, cdMs: 1300, pvp: true },
   unicorn:   { hp: 45, dmg: 8,  cdMs: 1600, pvp: true },
   lightfox:  { hp: 50, dmg: 10, cdMs: 1300, pvp: true },
+  /* v18 — locked from the v16 table. Rare tier, so PvP-capable on the same
+     gating as Unicorn. Glow Moth is deliberately ABSENT rather than zeroed:
+     Common tier means NO combat role at all, the same rule as the four
+     Sprites, so petCombatDef must return null for it. */
+  fire_dragon: { hp: 55, dmg: 12, cdMs: 1600, pvp: true },
 };
 const PET_ATK_RADIUS = 2.6;    // tunable: the spec's "short radius"
 const PET_DOWNED_MS = 75000;   // spec: ~75s recovery — pets are never lost
 const PET_BM_BUFF = 1.2;       // bible: Beastmaster "pet stat buffs" = +20%
 const PET_LUNGE_MS = 200;      // pets have NO wind-up tell — just a lunge
+/* v18: Glow Moth's entire mechanic — the local player's own light radius while
+   it is the active pet (150 is the unlit default). Tunable. */
+const GLOW_MOTH_LIGHT_R = 215;
 const PVP_ENGAGE_MS = 8000;    // tunable: how long a PvP exchange counts
 let pvpEngaged = new Map();    // username -> ms until they count as engaged
 
@@ -650,6 +698,10 @@ const PAL = {
      drifting motes read against it. Sacred Meadow: warm golden dawn grass. */
   [B.ENCHFOREST]: ["#55736a", "#527066"],
   [B.SACMEADOW]:  ["#cfc079", "#ccbd75"],
+  /* v18 Underground Caves: desaturated rock pulled far down in value — the
+     parent ROCK hue with the warmth and the light taken out of it, so a cave
+     pocket reads as a hole in the highland rather than another rock shade. */
+  [B.UNDERCAVE]:  ["#4a453e", "#474239"],
 };
 
 function placeLandmarks() {
@@ -720,6 +772,15 @@ function biomeAt(tx, ty) {
     if (valueNoise(tx / 4, ty / 4, worldSeed + 613) > ENCH_RARITY) b = B.ENCHFOREST;
   } else if (b === B.MEADOW) {
     if (valueNoise(tx / 4, ty / 4, worldSeed + 877) > SACRED_RARITY) b = B.SACMEADOW;
+  } else if (b === B.ROCK || b === B.PEAK) {
+    /* v18: Underground Caves. Identical technique, third field: applied only
+       to tiles the elevation bands have ALREADY settled as ROCK or PEAK, so
+       it can never encroach on any other band. This is a real overworld tile
+       the player just walks onto — deliberately NOT added to BLOCKED, which
+       is what turns a cave pocket punched into a snow PEAK into somewhere
+       reachable. The volcano / ruin / safe-zone overrides below still win
+       over it, exactly as they do over the two v17 variants. */
+    if (valueNoise(tx / 4, ty / 4, worldSeed + 1091) > UNDERCAVE_RARITY) b = B.UNDERCAVE;
   }
 
   const dV = Math.hypot(tx - VOLCANO.x, ty - VOLCANO.y);
@@ -998,7 +1059,7 @@ function buildFeatureList() {
         id: mk + ":" + tx + "," + ty, kind: mk,
         x: tx + 0.5, y: ty + 0.5, hx: tx + 0.5, hy: ty + 0.5,
         hp: def.hp, maxHp: def.hp, state: "idle", target: null,
-        atkAt: 0, windupStart: 0, winding: false, flash: 0,
+        atkAt: 0, windupStart: 0, winding: false, flash: 0, boltT: 0,
         ph: a * 2.3, dead: false, respawnAt: 0, lastSync: 0, fx: 0, fy: 1,
       });
       placed++;
@@ -1122,7 +1183,8 @@ function bakeTerrain() {
       // Cream cliff faces (unchanged approach) + wear detail (2026-07-11)
       if (h > Math.max(-1, hS)) {
         const drop = zTop - Math.max(-1, hS) * HZ;
-        const faceCol = (b === B.VOLROCK || b === B.LAVA) ? shade("#5c3c3c", 0.8) : CLIFF_SW;
+        const faceCol = (b === B.VOLROCK || b === B.LAVA) ? shade("#5c3c3c", 0.8)
+          : b === B.UNDERCAVE ? shade("#4a453e", 0.8) : CLIFF_SW;   // v18: cave walls are not cream cliffs
         c.fillStyle = faceCol;
         c.beginPath();
         c.moveTo(cx - IW2, cy);
@@ -1182,7 +1244,8 @@ function bakeTerrain() {
       }
       if (h > Math.max(-1, hE)) {
         const drop = zTop - Math.max(-1, hE) * HZ;
-        const faceCol = (b === B.VOLROCK || b === B.LAVA) ? shade("#5c3c3c", 0.58) : CLIFF_SE;
+        const faceCol = (b === B.VOLROCK || b === B.LAVA) ? shade("#5c3c3c", 0.58)
+          : b === B.UNDERCAVE ? shade("#4a453e", 0.58) : CLIFF_SE;   // v18
         c.fillStyle = faceCol;
         c.beginPath();
         c.moveTo(cx, cy + IH2);
@@ -1333,6 +1396,41 @@ function bakeTerrain() {
           c.fillStyle = "#f6e08c";
           c.fillRect(cx + (hash2(tx, ty, 180) - 0.5) * IW2 * 0.7,
                      cy + (hash2(tx, ty, 182) - 0.5) * IH2 * 0.7, 2, 2);
+        }
+      }
+
+      /* v18: Underground Caves ground — deep shadow pool, fissures in the
+         rock, and a sparse mineral glint for the "sparse ambient light" read.
+         Hard-edged flat shapes only, no gradients (flat-shaded rule). This is
+         deliberately NOT the v17 drifting-mote treatment: motes mark the two
+         rare SURFACE biomes and must not leak into a third one. */
+      if (b === B.UNDERCAVE) {
+        c.fillStyle = "rgba(12,10,16,0.34)";                     // deep shadow pool
+        c.beginPath();
+        c.moveTo(cx, cy - IH2 * 0.62);
+        c.lineTo(cx + IW2 * 0.62, cy);
+        c.lineTo(cx, cy + IH2 * 0.62);
+        c.lineTo(cx - IW2 * 0.62, cy);
+        c.closePath();
+        c.fill();
+        c.strokeStyle = "rgba(18,15,22,0.5)";                    // fissures
+        c.lineWidth = 1;
+        for (let k = 0; k < 2; k++) {
+          const fxc = cx + (hash2(tx, ty, 186 + k) - 0.5) * IW2 * 0.8;
+          const fyc = cy + (hash2(tx, ty, 190 + k) - 0.5) * IH2 * 0.8;
+          c.beginPath();
+          c.moveTo(fxc - 3, fyc + 1);
+          c.lineTo(fxc, fyc - 1);
+          c.lineTo(fxc + 3, fyc + 2);
+          c.stroke();
+        }
+        if (hash2(tx, ty, 194) > 0.72) {                         // sparse mineral glint
+          const gxc = cx + (hash2(tx, ty, 196) - 0.5) * IW2 * 0.7;
+          const gyc = cy + (hash2(tx, ty, 198) - 0.5) * IH2 * 0.7;
+          c.fillStyle = "rgba(212,182,120,0.20)";
+          c.fillRect(gxc - 1.5, gyc - 1.5, 5, 5);
+          c.fillStyle = "#d4b678";
+          c.fillRect(gxc, gyc, 2, 2);
         }
       }
 
@@ -1671,6 +1769,7 @@ function updateMob(m, dt, t, now) {
     if (m.winding && now - m.windupStart >= def.windupMs) {
       m.winding = false;
       m.atkAt = now + def.atkCooldownMs;
+      if (m.kind === "dark_wraith") m.boltT = now;   // v18: ranged strike visual
       const d = Math.hypot(m.target.x - m.x, m.target.y - m.y) || 1;
       if (d <= def.atkRange * 1.35 && m.target === me && !dead && !inSafeZone(me.x, me.y)) {
         // mob damage runs the SAME pipeline as PvP — armor + block both work
@@ -3536,6 +3635,138 @@ function SCL(c, x, y, w, h, col, step) {
     }
   }
 }
+/* v18: shared aura helper — pulsing radial wash + a ground ellipse + rising
+   diamond motes. Used by Dark Wraith's art below and deliberately written to
+   be reused by future Elder-tier content. `col` is an "r,g,b" triplet string,
+   not a css colour, because every stop composes its own alpha. */
+function aura(sx, sy, col, rx, t, o) {
+  o = o || {};
+  const rgb = col;
+  const pulse = 0.45 + Math.sin(t / (o.speed || 340)) * 0.28;
+  const g = ctx.createRadialGradient(sx, sy - rx * 0.5, 1, sx, sy - rx * 0.5, rx * 1.5);
+  g.addColorStop(0, `rgba(${rgb},${0.26 * pulse})`);
+  g.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = g;
+  ctx.fillRect(sx - rx * 1.6, sy - rx * 2.2, rx * 3.2, rx * 3.2);
+  ctx.strokeStyle = `rgba(${rgb},${pulse})`;
+  ctx.lineWidth = o.lw || 1.4;
+  ctx.beginPath();
+  ctx.ellipse(sx, sy + 1, rx + Math.sin(t / 340) * 1.6, (rx + Math.sin(t / 340) * 1.6) * 0.4, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  const n = o.motes === undefined ? 4 : o.motes;
+  for (let i = 0; i < n; i++) {
+    const ph = (t / (o.riseMs || 900) + i / n) % 1;
+    const fy = sy - 2 - ph * rx * 2.4;
+    const fx = sx + Math.sin(t / 500 + i * 2.3) * rx * 0.7;
+    const a = 0.75 * (1 - ph);
+    const s = o.moteSize || 2.2;
+    ctx.fillStyle = `rgba(${rgb},${a})`;
+    ctx.beginPath();
+    ctx.moveTo(fx, fy - s); ctx.lineTo(fx + s * 0.7, fy); ctx.lineTo(fx, fy + s); ctx.lineTo(fx - s * 0.7, fy);
+    ctx.closePath(); ctx.fill();
+  }
+}
+
+/* v18: shared dragon palette. All four variants are pre-staged so the shared
+   body function needs no rework when Water/Storm/Shadow Dragons ship; only
+   `fire` is wired into drawSpecies this version. */
+const DRAGON_PAL = {
+  water:  { lit:"#4aa8b6", mid:"#2f7c8c", belly:"#bfe4ec", bandLine:"#8ec6d4", scale:"#3c93a2", ridge:"#9fe0ec", head:"#4aa8b6", horn:"#2a6472", hornLit:"#67c2d0", wing:"#63c6d2", wingMid:"#3f9aa8", wingDark:"#367f8e", bone:"#a8dce6", boneDark:"#4e8e9c", claw:"#e2f2f6", eye:"#eafcff", pupil:"#123840" },
+  fire:   { lit:"#c2482c", mid:"#8f2c1a", belly:"#f0b48a", bandLine:"#d08a5c", scale:"#a83a22", ridge:"#ffb14c", head:"#c2482c", horn:"#5e1e10", hornLit:"#e8804a", wing:"#e0663a", wingMid:"#b0402a", wingDark:"#8a2c1c", bone:"#f4b48a", boneDark:"#7a2612", claw:"#ffe0b4", eye:"#ffe08a", pupil:"#3a1004" },
+  storm:  { lit:"#5f61a2", mid:"#3f4074", belly:"#c6cbee", bandLine:"#9498cc", scale:"#4e5090", ridge:"#a8c4f0", head:"#5f61a2", horn:"#2e2f5c", hornLit:"#8a8cd0", wing:"#8286c8", wingMid:"#5a5c9a", wingDark:"#454778", bone:"#cdd2f4", boneDark:"#4a4c86", claw:"#e8ecff", eye:"#e8f0ff", pupil:"#1c1e3c" },
+  shadow: { lit:"#3a3450", mid:"#241f36", belly:"#6a5f86", bandLine:"#4c4368", scale:"#2e2842", ridge:"#7a5ca8", head:"#3a3450", horn:"#191426", hornLit:"#5e4c86", wing:"#4e4470", wingMid:"#332c4c", wingDark:"#241f36", bone:"#7e6ea8", boneDark:"#2a2440", claw:"#c8b4e8", eye:"#c08cf0", pupil:"#1a1026" },
+};
+
+/* v18: shared dragon body, reused by every dragon variant. The palette
+   parameter is named PAL, NOT P — `P` is this file's global polygon helper
+   and shadowing it here would silently break every draw call in the body.
+   (PAL shadows the biome-palette global for the length of this function
+   only, which is harmless: nothing in here reads a biome colour.) */
+function dragonV2(sx, sy, PAL, t, variant, S) {
+  S = S || 1;
+  const F = Math.sin(t / 340) * 3 * S;
+  const X = (v) => sx + v * S, Y = (v) => sy + v * S;
+
+  P(ctx, [X(-1), Y(-14), X(-15), Y(-22 - F / S), X(-19), Y(-11 - F / S), X(-7), Y(-9)], PAL.wingDark);
+  R(ctx, [X(-1), Y(-14), X(-15), Y(-22 - F / S)], PAL.boneDark, 1.1 * S);
+  R(ctx, [X(-2), Y(-13), X(-17), Y(-16 - F / S)], PAL.boneDark, 0.9 * S);
+
+  P(ctx, [X(-6), Y(-2), X(-16), Y(-5 + Math.sin(t / 300) * 1.4), X(-15), Y(-1.5), X(-5), Y(-5)], PAL.mid);
+  P(ctx, [X(-16), Y(-5 + Math.sin(t / 300) * 1.4), X(-21), Y(-8 + Math.sin(t / 300) * 2), X(-18), Y(-2)], PAL.lit);
+  for (let i = 0; i < 4; i++) {
+    P(ctx, [X(-7 - i * 2.4), Y(-4 - i * 0.3), X(-8 - i * 2.4), Y(-7 - i * 0.5), X(-9.4 - i * 2.4), Y(-4.2 - i * 0.3)], PAL.ridge);
+  }
+
+  P(ctx, [X(-5), Y(0), X(-6.4), Y(-7), X(-2), Y(-7.6), X(-1.4), Y(0)], PAL.mid);
+  P(ctx, [X(-6.6), Y(0), X(-3), Y(0), X(-3), Y(-1.6), X(-7.2), Y(-1.2)], PAL.claw);
+
+  P(ctx, [X(-6), Y(-6), X(-5), Y(-14), X(4), Y(-14.6), X(6), Y(-6)], PAL.lit);
+  P(ctx, [X(4), Y(-14.6), X(6), Y(-6), X(-6), Y(-6), X(-0.5), Y(-9)], PAL.mid);
+  P(ctx, [X(-5), Y(-6), X(5.4), Y(-6), X(4.4), Y(-1.4), X(-4), Y(-1.4)], PAL.belly);
+  BND(ctx, X(-3.8), X(4.2), Y(-5), 4, 1.1 * S, PAL.bandLine, 0.6 * S);
+  SCL(ctx, X(-4.6), Y(-13.4), 9 * S, 6 * S, PAL.scale, 2.3 * S);
+
+  P(ctx, [X(2.4), Y(0), X(1.6), Y(-7.4), X(5.4), Y(-7.8), X(5.8), Y(0)], PAL.lit);
+  P(ctx, [X(1.4), Y(0), X(6), Y(0), X(6), Y(-1.8), X(1.2), Y(-1.4)], PAL.claw);
+
+  P(ctx, [X(1.6), Y(-13), X(3), Y(-22), X(6.4), Y(-21.4), X(5), Y(-12.4)], PAL.lit);
+  P(ctx, [X(5), Y(-12.4), X(6.4), Y(-21.4), X(7), Y(-20.6), X(6), Y(-12)], PAL.mid);
+  for (let i = 0; i < 4; i++) {
+    P(ctx, [X(2.6 + i * 0.3), Y(-14.4 - i * 2), X(1.4 + i * 0.3), Y(-16.4 - i * 2), X(3.4 + i * 0.3), Y(-16.2 - i * 2)], PAL.ridge);
+  }
+
+  P(ctx, [X(2.8), Y(-22.6), X(10), Y(-23.6), X(10.4), Y(-18.6), X(3), Y(-18)], PAL.head);
+  P(ctx, [X(10), Y(-23.6), X(10.4), Y(-18.6), X(6.4), Y(-18.4)], PAL.mid);
+  P(ctx, [X(10.2), Y(-22.6), X(14.4), Y(-20.8), X(10.4), Y(-19)], PAL.head);
+  P(ctx, [X(10.2), Y(-19.6), X(14.2), Y(-20.4), X(13.8), Y(-18.6), X(10.3), Y(-18.4)], PAL.mid);
+  P(ctx, [X(3.4), Y(-23.4), X(9.6), Y(-24.2), X(9.2), Y(-22.4), X(3.6), Y(-22)], PAL.ridge);
+  ctx.fillStyle = "#f4f0e0";
+  for (let i = 0; i < 3; i++) ctx.fillRect(X(11 + i * 1.2), Y(-19.4), 0.7 * S, 1.1 * S);
+  ctx.fillStyle = PAL.nostril || PAL.mid;
+  ctx.fillRect(X(13), Y(-21.4), 1 * S, 0.9 * S);
+  EY(ctx, X(8), Y(-22.2), 1.5 * S, PAL.eye, PAL.pupil);
+
+  P(ctx, [X(4), Y(-23.8), X(1.6), Y(-30), X(5.8), Y(-24.4)], PAL.horn);
+  P(ctx, [X(6), Y(-24.2), X(4.6), Y(-31.4), X(7.8), Y(-24.6)], PAL.hornLit);
+  P(ctx, [X(3.2), Y(-23.4), X(0.4), Y(-26.6), X(3.4), Y(-22.4)], PAL.horn);
+
+  P(ctx, [X(1), Y(-14), X(-11), Y(-25 - F / S), X(-16), Y(-12 - F / S), X(-4), Y(-8.4)], PAL.wing);
+  P(ctx, [X(-11), Y(-25 - F / S), X(-16), Y(-12 - F / S), X(-9), Y(-15)], PAL.wingMid);
+  R(ctx, [X(1), Y(-14), X(-11), Y(-25 - F / S)], PAL.bone, 1.2 * S);
+  R(ctx, [X(0), Y(-13), X(-13.4), Y(-19 - F / S)], PAL.bone, 1 * S);
+  R(ctx, [X(-0.6), Y(-12), X(-14.6), Y(-13.6 - F / S)], PAL.bone, 0.9 * S);
+  P(ctx, [X(-11), Y(-25 - F / S), X(-13.4), Y(-27.4 - F / S), X(-12.6), Y(-24 - F / S)], PAL.claw);
+
+  if (variant === "water") {
+    P(ctx, [X(3), Y(-23.8), X(0.6), Y(-28.6), X(5), Y(-24.6)], "#9fe0ec");
+    P(ctx, [X(-2), Y(-14.6), X(-5.4), Y(-19), X(-0.4), Y(-15.4)], "#9fe0ec");
+    for (let i = 0; i < 3; i++) {
+      const ph = (t / 700 + i * 0.33) % 1;
+      ctx.fillStyle = `rgba(180,236,248,${0.6 * (1 - ph)})`;
+      ctx.beginPath(); ctx.arc(X(15 + ph * 6), Y(-20.6 + Math.sin(t / 260 + i) * 2), 1.2 * S, 0, Math.PI * 2); ctx.fill();
+    }
+  } else if (variant === "fire") {
+    for (let i = 0; i < 4; i++) {
+      const ph = (t / 420 + i * 0.26) % 1;
+      ctx.fillStyle = `rgba(255,${140 + i * 22},50,${0.8 * (1 - ph)})`;
+      ctx.fillRect(X(14.6 + ph * 8), Y(-21 + Math.sin(t / 200 + i * 2) * 2.2), 1.8 * S, 1.8 * S);
+    }
+  } else if (variant === "storm") {
+    ctx.strokeStyle = "#dceaff"; ctx.lineWidth = 1.2 * S;
+    const zz = Math.sin(t / 160) > 0.4 ? 1 : 0.25;
+    ctx.globalAlpha = zz;
+    ctx.beginPath();
+    ctx.moveTo(X(2), Y(-30)); ctx.lineTo(X(4.6), Y(-33.4)); ctx.lineTo(X(3), Y(-33)); ctx.lineTo(X(5.6), Y(-36.4));
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  } else if (variant === "shadow") {
+    for (let i = 1; i <= 3; i++) {
+      ctx.fillStyle = `rgba(50,38,72,${0.22 / i})`;
+      const off = i * 5 * S;
+      P(ctx, [X(-6) - off, Y(-2), X(-3) - off, Y(-9), X(-1) - off, Y(-1)], `rgba(56,44,80,${0.26 / i})`);
+    }
+  }
+}
 /* per-species / per-mob render scale: reference-sheet approved size ratios
    (× player height) converted to draw-scale over each branch's native px */
 const SPECIES_K = {
@@ -3543,9 +3774,10 @@ const SPECIES_K = {
   wolf: 1.06, golem: 1.65, shadowfox: 1.66,
   stag: 1.15, unicorn: 1.30, lightfox: 1.05,          // v17 reference-sheet ratios
   boar: 1.12, bear: 1.60, griffin: 1.26, phoenix: 1.02,
+  fire_dragon: 1.30, glow_moth: 0.32,                 // v18
 };
-const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94 };
-const MOB_TALL = { troll: 22, bandit: 4, bear: 5, griffin: 8, phoenix: 6 };
+const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94, dark_wraith: 1.30 };
+const MOB_TALL = { troll: 22, bandit: 4, bear: 5, griffin: 8, phoenix: 6, dark_wraith: 4 };
 
 const KIT = {
   Ranger:      { trim: "#2e4a22", accent: "#c8b078", cloth: "#5a4a30" },
@@ -3917,6 +4149,42 @@ function drawMob(m, t) {
     ctx.fillStyle = "#5c8a44";                                                          // moss on the troll
     ctx.fillRect((0) - 5.4, (0) - 8, 3, 2); ctx.fillRect((0) + 1.4, (0) - 12.6, 2.2, 1.6);
   
+  } else if (m.kind === "dark_wraith") {
+
+    aura((0), (0), "110,80,170", 10, t, { motes: 3, moteSize: 1.8, lw: 1 });
+    ctx.globalAlpha = 0.86;
+    const drift = Math.sin(t / 620) * 1.4;
+    for (let i = 0; i < 5; i++) {
+      const w = Math.sin(t / 300 + i * 1.4) * 1.6;
+      P(ctx, [(0) - 6 + i * 3, (0) - 8 + drift, (0) - 7.4 + i * 3 + w, (0) + 1 + drift, (0) - 3.6 + i * 3 + w, (0) - 0.6 + drift],
+           i % 2 ? "#2e2444" : "#3c3058");
+    }
+    P(ctx, [(0) - 6.4, (0) - 8 + drift, (0) - 5, (0) - 18 + drift, (0) + 4.6, (0) - 18.6 + drift, (0) + 6.4, (0) - 8 + drift], "#3c3058");
+    P(ctx, [(0) + 4.6, (0) - 18.6 + drift, (0) + 6.4, (0) - 8 + drift, (0) - 6.4, (0) - 8 + drift, (0) - 0.4, (0) - 11 + drift], "#241c36");
+    P(ctx, [(0) - 5, (0) - 18 + drift, (0) - 1.4, (0) - 20.4 + drift, (0) + 2, (0) - 20.2 + drift, (0) + 4.6, (0) - 18.6 + drift], "#4e4074");
+    P(ctx, [(0) - 3.6, (0) - 18.4 + drift, (0) - 2.6, (0) - 12.6 + drift, (0) + 2.6, (0) - 12.8 + drift, (0) + 3.6, (0) - 18.6 + drift], "#120e1c");
+    const gp = 0.55 + Math.sin(t / 260) * 0.4;
+    ctx.fillStyle = `rgba(180,120,255,${gp})`;
+    ctx.fillRect((0) - 2, (0) - 16.6 + drift, 1.6, 1.6);
+    ctx.fillRect((0) + 0.6, (0) - 16.6 + drift, 1.6, 1.6);
+    ctx.fillStyle = `rgba(180,120,255,${gp * 0.28})`;
+    ctx.fillRect((0) - 3, (0) - 17.6 + drift, 3.6, 3.6);
+    ctx.fillRect((0) - 0.4, (0) - 17.6 + drift, 3.6, 3.6);
+    ctx.strokeStyle = "#c4b8dc"; ctx.lineWidth = 0.8; ctx.lineCap = "round";
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.moveTo((0) + 6.4, (0) - 12 + drift);
+      ctx.lineTo((0) + 9.4 + i * 0.8, (0) - 13.6 - i * 1.2 + drift);
+      ctx.stroke();
+    }
+    ctx.lineCap = "butt";
+    ctx.globalAlpha = 1;
+    for (let i = 0; i < 3; i++) {
+      const ph = (t / 800 + i * 0.34) % 1;
+      ctx.fillStyle = `rgba(150,110,220,${0.55 * (1 - ph)})`;
+      ctx.fillRect((0) - 7 + i * 7, (0) - 14 - ph * 12 + drift, 1.6, 1.6);
+    }
+
   } else {
 
     P(ctx, [(0), (0) - 10.5, (0) - 4, (0) - 0.6, (0), (0) + 0.8], "#7a5c40");
@@ -3937,6 +4205,24 @@ function drawMob(m, t) {
   
   }
   ctx.restore();
+  /* v18: the Dark Wraith's ranged strike made visible — a spectral bolt drawn
+     along the gap it just fired across, AFTER the body and outside the body
+     transform so it reads as reaching the target rather than as part of the
+     silhouette. This is the whole "ranged attack" mechanism on the render
+     side; the range itself is just def.atkRange. */
+  if (m.kind === "dark_wraith" && m.boltT && m.target &&
+      performance.now() - m.boltT < DW_BOLT_MS) {
+    const bp = 1 - (performance.now() - m.boltT) / DW_BOLT_MS;
+    const [bx2, by2] = worldToScreen(m.target.x, m.target.y, groundZ(m.target.x, m.target.y) + 6);
+    ctx.strokeStyle = `rgba(180,120,255,${(0.85 * bp).toFixed(3)})`;
+    ctx.lineWidth = 1.6;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - 12);
+    ctx.lineTo(bx2, by2);
+    ctx.stroke();
+    ctx.lineCap = "butt";
+  }
   drawMobOverlays(m, sx, sy, t, def);
 }
 
@@ -4500,6 +4786,36 @@ function drawSpecies(species, sx, sy, t, moving) {
       ctx.fillStyle = `rgba(255,246,200,${0.7 * (1 - ph)})`;
       ctx.fillRect(sx - 6 + i * 6, sy - 12 - ph * 10, 1.4, 1.4);
     }
+
+  } else if (species === "fire_dragon") {
+
+    dragonV2(sx, sy, DRAGON_PAL.fire, t, "fire");
+
+  } else if (species === "glow_moth") {
+
+    const g = ctx.createRadialGradient(sx, sy - 10, 1, sx, sy - 10, 17);
+    g.addColorStop(0, "rgba(244,232,160,0.5)"); g.addColorStop(1, "rgba(244,232,160,0)");
+    ctx.fillStyle = g; ctx.fillRect(sx - 17, sy - 27, 34, 34);
+    const fl = Math.sin(t / 150) * 3.4;
+    P(ctx, [sx - 1, sy - 11, sx - 12, sy - 18 - fl, sx - 9, sy - 6, sx - 2.6, sy - 7], "#c9b96c");
+    P(ctx, [sx + 1, sy - 11, sx + 12, sy - 18 - fl, sx + 9, sy - 6, sx + 2.6, sy - 7], "#b0a05a");
+    P(ctx, [sx - 1, sy - 13, sx - 10, sy - 20 + fl * 0.4, sx - 3, sy - 10], "#f4ebb4");
+    P(ctx, [sx + 1, sy - 13, sx + 10, sy - 20 + fl * 0.4, sx + 3, sy - 10], "#ded27f");
+    ctx.fillStyle = "rgba(255,250,214,0.9)";
+    ctx.beginPath(); ctx.arc(sx - 6.4, sy - 15.4, 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + 6.4, sy - 15.4, 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#8a7a4c";
+    ctx.beginPath(); ctx.arc(sx - 6.4, sy - 15.4, 0.6, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx + 6.4, sy - 15.4, 0.6, 0, Math.PI * 2); ctx.fill();
+    P(ctx, [sx - 1.7, sy - 16, sx + 1.7, sy - 16, sx + 1.2, sy - 6, sx - 1.2, sy - 6], "#7a6a40");
+    ctx.fillStyle = "#fff6c4";
+    ctx.fillRect(sx - 1.1, sy - 10.4, 2.2, 4);
+    drawBlobLocal(ctx, sx, sy - 17, 1.8, "#a89658");
+    ctx.strokeStyle = "#6e5f38"; ctx.lineWidth = 0.7; ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(sx - 0.8, sy - 18.2); ctx.quadraticCurveTo(sx - 4, sy - 22, sx - 6.4, sy - 21);
+    ctx.moveTo(sx + 0.8, sy - 18.2); ctx.quadraticCurveTo(sx + 4, sy - 22, sx + 6.4, sy - 21);
+    ctx.stroke(); ctx.lineCap = "butt";
 
   }
   ctx.restore();
@@ -5244,7 +5560,15 @@ function collectLights() {
     { x: SPAWN_FORGE.x, y: SPAWN_FORGE.y, z: 12, r: 110, a: 0.85, col: "rgba(240,150,70,A)" },
     { x: VOLCANO.x, y: VOLCANO.y, z: HZ * 2, r: 240, a: 0.7, col: "rgba(255,120,50,A)" },
   ];
-  if (!dead) lights.push({ x: me.x, y: me.y, z: 8, r: 150, a: 0.8, col: "rgba(255,190,120,A)" });
+  /* v18: Glow Moth's mechanic, and its only one — while it is the ACTIVE pet
+     the LOCAL player's own light is widened and warmed to the moth's own
+     gradient colour. Deliberately not a second light source: no stacking, no
+     separate toggle, on while active. Most visible in the new caves and at
+     night, which is the point. */
+  const mothLit = !!(activePet && activePet.species === "glow_moth");
+  if (!dead) lights.push({ x: me.x, y: me.y, z: 8,
+    r: mothLit ? GLOW_MOTH_LIGHT_R : 150, a: mothLit ? 0.9 : 0.8,
+    col: mothLit ? "rgba(244,232,160,A)" : "rgba(255,190,120,A)" });
   for (const tp of TORCHES) lights.push({ x: tp.x, y: tp.y, z: 12, r: 78, a: 0.85, col: "rgba(255,176,80,A)" });
   for (const [, o] of others) if (!o.dead) lights.push({ x: o.x, y: o.y, z: 8, r: 130, a: 0.72, col: "rgba(255,190,120,A)" });
   return lights;
