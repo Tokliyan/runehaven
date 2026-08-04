@@ -41,10 +41,55 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    - `node debug/run3.js runehaven.html` — must show `CAUGHT ERROR: none`
    - `node debug/run4.js runehaven.html` — all `PASS`, zero `FAIL`
    - `node debug/run5.js runehaven.html` — must show `CAUGHT: none`
-5. **If anything fails, or a patch anchor isn't unique, STOP.** Do not guess,
-   do not "fix forward" with more invented content, do not ship a broken
-   build. Write a `BUILD_FAILED.md` at the repo root explaining exactly what
-   failed and why, and leave `runehaven.html` unchanged.
+5. **When something is unclear or unspecified, classify it before deciding
+   what to do — RED always stops, YELLOW ships with a flagged note.**
+
+   **RED — always STOP, no exceptions, regardless of how small it looks:**
+   - Any test harness actually fails (`run3`/`run4`/`run5` catch a real
+     error, or any `run4` line is `FAIL`) — this is the mechanical,
+     objective signal that something is genuinely broken. Never overridden.
+   - A patch anchor isn't unique.
+   - The spec would require inventing bible content — a pet, mob, biome,
+     location, or lore element not in the bible. This is a creative
+     integrity rule, not a bug-severity one, and severity never overrides it.
+   - The spec assumes an entire system exists that doesn't, AND building it
+     properly needs 3+ genuinely unspecified, interdependent decisions with
+     real gameplay consequences (a whole consumable-item framework, a whole
+     new traversal/instance architecture — the kind of thing where any
+     guess is really a design decision, not a tunable).
+
+   For any RED case: do not guess, do not "fix forward" with invented
+   content, do not ship a broken build. Write `BUILD_FAILED.md` at the repo
+   root explaining exactly what's blocking and why, leave `runehaven.html`
+   unchanged.
+
+   **YELLOW — make the reasonable call, ship it, flag it clearly:**
+   - A single tunable number or threshold is uncertain, but any reasonable
+     value in a normal range keeps the game working (a rarity threshold, a
+     cooldown, a light radius, a stat number within the established range
+     for its rarity tier).
+   - A minor naming or implementation choice where multiple options all
+     work equally well (matching an existing code convention, e.g. an
+     abbreviated enum name).
+   - A visual/polish detail that doesn't affect functionality (an overlay
+     offset, a minor color choice within an already-approved palette).
+   - An implementation detail the spec left slightly underspecified, but
+     where only one interpretation is actually sensible given everything
+     else in the spec.
+
+   For any YELLOW case: make the call, implement it, ship normally through
+   the full gate above — but add a `## JUDGMENT CALLS THIS VERSION` section
+   to the changelog entry in `SKILL.md` (or a top-level note in the commit
+   message if it's not rendering-related) listing every one, in plain
+   language, so it's easy to spot and revise the next morning. A version
+   that shipped with flagged judgment calls is a complete, done version —
+   not a partial one. The judgment calls are refinements to consider, not
+   unfinished work.
+
+   **When genuinely unsure which zone something belongs in: treat it as
+   RED.** A missed YELLOW just means an unnecessary night lost, which is
+   recoverable. A wrongly-shipped RED is a broken or invented build in a
+   real player's hands, which is not.
 6. On success: update `runehaven-art-style/SKILL.md` with a new dated
    changelog entry (rendering-scope changes only — mechanics/balance live in
    this README or commit messages, not the skill).
