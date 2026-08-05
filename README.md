@@ -168,14 +168,20 @@ are percentages evaluated per-tile via noise, already resolution-independent,
 confirmed directly, do not change the 0.78/0.74/0.80 numbers themselves.
 
 **PART C — widen biome pockets so they read as substantial regions, not
-just "the same tiny patches, more of them."** The three v17/v18 rare-biome
-overlays sample noise at `valueNoise(tx / 4, ty / 4, ...)` — the `/4`
-controls how large each contiguous pocket is. Change all three from `/4`
-to `/12` (matching the 3x scale factor), keeping the existing threshold
-values unchanged. This makes each Enchanted Forest / Sacred Meadow /
-Underground Cave region roughly 3x wider and taller — a real, walkable
-biome you spend time in, not a patch you cross in three steps — while the
-overall rarity (how much of the map is each type) stays the same.
+just "the same tiny patches, more of them." CONFIRMED: bigger than the
+initial 3x proposal.** The three v17/v18 rare-biome overlays sample noise
+at `valueNoise(tx / 4, ty / 4, ...)` — the `/4` controls how large each
+contiguous pocket is. Change all three from `/4` to `/20` (5x the original
+wavelength, not just 3x matching the map's own growth), keeping the
+existing threshold values unchanged. This makes each Enchanted Forest /
+Sacred Meadow / Underground Cave region a genuinely large, walkable region
+— not just proportionally the same as before, but noticeably more
+substantial than that — while the overall rarity (how much of the map is
+each type) stays the same. If `/20` produces only one or two enormous
+blobs per biome type in the test-seed world instead of several distinct
+regions, that's a real signal it's too wide — back off toward `/16` and
+note it as a judgment call rather than shipping a map with only one
+Enchanted Forest total.
 
 **PART D — density rescaling for every existing species, as a formula and
 rule, not hand-picked numbers.** With 9x the area, keeping every count
