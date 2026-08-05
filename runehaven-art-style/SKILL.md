@@ -55,6 +55,109 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-05 (v19 — world scale-up, N 80 → 240)
+No new art and no new species. The island itself is 3x wider in each direction
+(9x the area), and everything that was measured in absolute tiles moved with it.
+Entity counts, search budgets and the density rule live in the README + commit
+message; below is only what changed about how the world READS.
+- **The cramped island is FIXED — it was a scale problem, not a content
+  problem.** v17/v18 kept adding biomes and species onto an 80x80 dev-scale
+  map, so every new region landed shoulder-to-shoulder with the last one.
+  Growing the map and rescaling the distances (rather than thinning content)
+  is what buys back the space between things.
+- **Rare-biome pockets are now large enough to be places, not patches.** The
+  three v17/v18 overlays sample their own noise field; that field's wavelength
+  went `/4` → `/20` — 5x, deliberately more than the map's own 3x, so a pocket
+  grows faster than the world around it. Measured in the test seed: Enchanted
+  Forest 9 distinct regions (largest 220 tiles, vs 64 tiles across the WHOLE
+  old map), Sacred Meadow 4, Underground Caves 8. The spec's back-off
+  condition — "only one or two enormous blobs per biome" — did not trigger, so
+  `/16` was not needed. The rarity thresholds are untouched, so each variant's
+  share of its parent biome is exactly what it was; only pocket size and count
+  moved.
+- **Landmark separation scales with the world.** Volcano/Mount/Ruin now place
+  at 75/72/57 tiles from the Tower instead of 25/24/19, with every
+  minimum-separation buffer tripled to match. Verified in the test seed that
+  all three actually found a valid spot rather than silently exhausting their
+  12 attempts and shipping wherever the last try landed — that failure mode is
+  now a `run4` assertion, not a hope.
+- **Volcano and mountain keep their silhouettes.** Cone rim, lava core, the
+  VOLROCK band and the PEAK→ROCK buffer that keeps snow off volcanic rock
+  (the 2026-07-11 "no transition" fix) all tripled together, so the landmark
+  reads at the same proportion of the world it always did rather than becoming
+  a pinprick on a bigger map.
+- **Safe zone still reads as plain grass**, at `SAFE_RADIUS` 27 instead of 9 —
+  the full-override radius, the height flatten and the erosion exemption all
+  scaled together, verified by spot-checking tiles out to the new radius.
+- **⚠️ The Eternal Tower now sits INSIDE the safe zone.** Spawn and Tower are
+  pinned to `N/2` with fixed offsets (18 tiles apart), and the locked spec
+  explicitly said not to change them — so as `SAFE_RADIUS` went 9 → 27 the
+  zone grew out past the Tower. The spawn hub is now a compact cluster in a
+  much larger world instead of a spread the size of the map. Nothing breaks
+  (mobs were already excluded far past the Tower), but it is a visible change
+  in how the centre reads and is the most likely thing to want revisiting.
+- **⚠️ The baked terrain canvas is now 10604x5414px (~57 Mpx, ~219 MB) —
+  up from 3564x1894 (~6.8 Mpx, ~26 MB).** `bakeTerrain()` paints the whole
+  map into one offscreen canvas at boot; that is inherent to N and the spec
+  did not raise it. Within desktop Chrome/Firefox limits, but it is well past
+  what mobile Safari will allocate, and boot cost rose ~290ms → ~300ms in the
+  harness (which stubs the actual painting, so the real-browser cost is
+  higher). Flagging rather than fixing: chunking the bake is a rendering
+  architecture decision, not a tunable, and inventing one was not in scope.
+- **Ambient decor did not scale and now reads thin.** Grazing rabbits (3),
+  the Tower's circling birds (3), butterflies, torches and fences are all
+  fixed counts and none of them appear in the spec's density list, so they
+  were left exactly as they were — across 9x the area they are now much
+  sparser than before. Deliberate (following the spec's explicit list), not
+  an oversight, but worth a look next pass.
+
+## JUDGMENT CALLS THIS VERSION
+Calls made where the locked spec was silent or where the world's new size broke
+an assumption it didn't mention. All shipped and verified through the full gate
+— these are refinements to consider, not unfinished work.
+- **"Safe-zone grass flatten, first/second check" resolved to three sites, not
+  two.** The spec's table lists one `SAFE_RADIUS + 2` → `+6` and one
+  `SAFE_RADIUS + 3` → `+9`, but the code has the `+2` pattern twice (the
+  biome grass override in `biomeAt` and the height flatten in `rawHeight`) and
+  `+3` twice. Applied the spec's mapping to every safe-zone grass/flatten
+  site — `+2`→`+6` on both, `+3`→`+9` on the erosion exemption — since any
+  other split would leave the grass disc and the flat disc different sizes.
+- **One extra distance check found and scaled 3x**, under Part B's explicit
+  catch-all: the grazing-rabbit spawn exclusion, `SAFE_RADIUS + 3` → `+9`.
+  It is the same category as the wild-pet and mob exclusions the spec listed.
+- **Spawn-search budgets scaled by AREA (9x), not by Part B's 3x** — wilds
+  4000 → 36000, mobs 600 → 5400. These are counts of random samples taken
+  across the map, so samples-per-tile is the invariant that has to hold; at 3x
+  the cave and ruin species fell short of their new counts purely because the
+  search ran out. Costs ~12ms of boot. Not a design number.
+- **Glow Moth reaches 7–9 of its 9 target, run to run** — Underground Caves
+  are only ~90 tiles and wilds must sit 3 tiles apart, so the last one or two
+  are geometry-limited, not budget-limited. Left as is; raising it would mean
+  either more cave tiles or tighter spacing, both real design changes.
+- **`debugWorldInfo()` now also exports `SAFE_RADIUS`, `SPAWN`, `TOWER` and the
+  three landmark positions** (as copies). Part E requires proving the landmarks
+  actually placed, and like the biome ids they are lexically scoped consts that
+  a harness cannot otherwise see.
+- **The three harnesses no longer sleep a fixed 200ms after clicking ENTER;
+  they wait for the login screen to actually hide.** At the new scale boot takes
+  ~300ms, so the old fixed sleep expired *before* login finished and every
+  assertion after it silently ran against a world that was never entered —
+  `run3` still printed `CAUGHT ERROR: none` while testing nothing. This was
+  found and fixed during this build; it is the single most important change in
+  the harnesses.
+- **`run4`'s scale-bound pins were updated, not relaxed.** "Dark Forest band
+  untouched" was pinned at `dark === 1` — a true value only at N=80 — and is
+  now pinned at `dark === 875`, the same invariant at the new scale. The
+  density table was updated to the v19 locked numbers with the same
+  exact-value style v18 used.
+- **The Dark Wraith is now asserted rather than excused.** v18 shipped with an
+  open note that it could not be tested because Dark Forest was a *one-tile*
+  band in the test seed. The scale-up fixed that as a side effect — the same
+  moisture logic over 9x the tiles yields an 875-tile band, and the wraith now
+  reliably spawns 6x — so the gap is closed and held closed by a real
+  assertion. Shadowfox (Dark Forest-only too) benefits identically but keeps
+  its presence roll, so it still can't be asserted.
+
 ### 2026-08-04 (v18 — Underground Caves, Fire Dragon, Glow Moth, Dark Wraith)
 A third rare biome pocket and three new creatures. Density counts, combat stats,
 tame chances and the Dark Wraith's ranged mechanism live in the README + commit
