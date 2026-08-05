@@ -96,7 +96,14 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     if (urlEl) urlEl.value = 'https://stub.supabase.co';
     if (keyEl) keyEl.value = 'stub-key';
     doc.getElementById('enterBtn').onclick();
-    await new Promise(r => setTimeout(r, 200));          // let the async login settle
+    /* v19: the world is 240x240 (9x the old area), so worldgen + bakeTerrain
+       now take ~300ms — a fixed 200ms sleep expired BEFORE login finished and
+       every later assertion silently ran against a world that was never
+       entered. Wait for the real completion signal instead of a guess. */
+    const t0 = Date.now();
+    while (doc.getElementById('login').style.display !== 'none' && Date.now() - t0 < 60000)
+      await new Promise(r => setTimeout(r, 25));
+    console.log('login settled after', Date.now() - t0, 'ms');
   } catch (e) { if (!caught) caught = e; }
 
   console.log('login hidden:', doc.getElementById('login')?.style.display === 'none');
@@ -261,7 +268,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push([`Sacred Meadow stays a sparse pocket (${sac}/${sac + meadow})`, sac < meadow]);
       // the rare fields must be independent of the moisture band: Dark Forest
       // is untouched by them, and regular Forest/Meadow both still exist
-      results.push(['Dark Forest band untouched', dark === 1]);
+      /* Same invariant as v17/v18 — the rare-variant overlays read their own
+         noise fields and must never consume the moisture band — but the pinned
+         value is scale-bound and moves with N. At N=80 this seed produced a
+         1-tile band; at N=240 the same moisture logic produces 875. */
+      results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 875]);
       results.push(['regular Forest still exists', forest > 0]);
       results.push(['regular Meadow still exists', meadow > 0]);
       // Stag has no presence roll, so it must reliably find its biome. Unicorn
@@ -291,17 +302,20 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     const dwi2 = window.debugWorldInfo;
     if (dwi2 && dwi2().MOBS) {
       const info = dwi2();
-      const MOB_COUNTS = { goblin: 3, bandit: 3, troll: 2, boar: 2, bear: 2,
-                           griffin: 1, phoenix: 1, dark_wraith: 2 };
+      /* v19 PART D — every count above rescaled for the 9x map: common
+         ambient wildlife x3, already-gated rare pets x2. This table is the
+         locked spec's, exactly as v18's was; it is not a floor or a guess. */
+      const MOB_COUNTS = { goblin: 9, bandit: 9, troll: 6, boar: 6, bear: 6,
+                           griffin: 3, phoenix: 3, dark_wraith: 6 };
       for (const [k, want] of Object.entries(MOB_COUNTS)) {
         results.push([`MOBS.${k}.count = ${want}`, info.MOBS[k] && info.MOBS[k].count === want]);
       }
-      const SP_COUNTS = { tree_sprite: 3, water_sprite: 3, stone_sprite: 3, wind_sprite: 3,
-                          wolf: 2, golem: 1, stag: 2,
-                          // deliberately UNCHANGED — already presence-roll gated
-                          shadowfox: 2, unicorn: 2, lightfox: 2,
-                          // v18 new
-                          fire_dragon: 1, glow_moth: 3 };
+      const SP_COUNTS = { tree_sprite: 9, water_sprite: 9, stone_sprite: 9, wind_sprite: 9,
+                          wolf: 6, golem: 3, stag: 6,
+                          // x2, not x3 — scarcity IS these three's design, so a
+                          // bigger map must not make them proportionally easier
+                          shadowfox: 4, unicorn: 4, lightfox: 4,
+                          fire_dragon: 3, glow_moth: 9 };
       for (const [k, want] of Object.entries(SP_COUNTS)) {
         results.push([`WILD_SPECIES.${k}.count = ${want}`,
           info.WILD_SPECIES[k] && info.WILD_SPECIES[k].count === want]);
@@ -322,15 +336,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         const n2 = spawnedMobs.filter(s => s === k).length;
         results.push([`mob ${k} still spawns after the density cut (${n2})`, n2 > 0]);
       }
-      // Dark Wraith is NOT asserted, and this is deliberate + reported, not a
-      // silent skip: its bible-specified home, Dark Forest, is a ONE-TILE band
-      // in this test seed (the `dark === 1` assertion above), so the 600-sample
-      // mob placement search realistically never lands on it. Shadowfox has had
-      // exactly this problem, unnoticed, since v12 — it is DARKFOREST-only too.
-      // Widening the Dark Forest band is a worldgen decision for its own spec;
-      // this build must not guess at one. See the commit message.
-      console.log(`NOTE: dark_wraith spawned ${spawnedMobs.filter(s => s === 'dark_wraith').length}x ` +
-                  `— Dark Forest is a 1-tile band in this seed; not asserted, see commit message.`);
+      /* v19: the Dark Wraith is now ASSERTED. v18 could not assert it because
+         Dark Forest was a one-tile band in this seed at N=80, so the placement
+         search never landed on it. The scale-up fixed that as a side effect —
+         the same moisture logic over 9x the tiles yields a real 875-tile band —
+         so the gap v18 reported openly is now closed and held closed here.
+         Shadowfox (DARKFOREST-only too) benefits identically, but keeps its
+         presence roll and so still cannot be asserted. */
+      const wraiths = spawnedMobs.filter(s => s === 'dark_wraith').length;
+      results.push([`mob dark_wraith now reaches its Dark Forest (${wraiths})`, wraiths > 0]);
 
       // ===== v18 PART C: Dark Wraith's locked stats + its ranged mechanism =====
       const dw = info.MOBS.dark_wraith;
@@ -353,12 +367,14 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
 
       // ===== v18 PART B: Underground Caves must actually be reachable =====
       const { N: N2, B: B2 } = info;
-      let cave = 0, rock2 = 0, peak2 = 0;
+      let cave = 0, rock2 = 0, peak2 = 0, ench2 = 0, sac2 = 0;
       for (let y = 0; y < N2; y++) for (let x = 0; x < N2; x++) {
         const b = window.biomeAt(x, y);
         if (b === B2.UNDERCAVE) cave++;
         if (b === B2.ROCK) rock2++;
         if (b === B2.PEAK) peak2++;
+        if (b === B2.ENCHFOREST) ench2++;   // v19 Part E re-check, in this scope
+        if (b === B2.SACMEADOW) sac2++;
       }
       console.log(`worldgen v18: undercave ${cave}, rock ${rock2}, peak ${peak2}`);
       results.push([`Underground Caves exist (${cave} tiles)`, cave > 0]);
@@ -374,6 +390,52 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       results.push(['a cave tile is walkable (not in BLOCKED)',
         !!caveWalkable && window.heightAt(caveWalkable[0], caveWalkable[1]) >= 0]);
+
+      // ===== v19 PART E: the scale-up's own proof gates =====
+      const H = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+      const SP = info.SPAWN, TW = info.TOWER, SR = info.SAFE_RADIUS;
+      const VO = info.VOLCANO, MO = info.MOUNT, RU = info.RUIN;
+      results.push([`N scaled to 240 (was 80)`, N2 === 240]);
+      results.push([`SAFE_RADIUS scaled to 27 (was 9)`, SR === 27]);
+      /* placeLandmarks() gives up after 12 attempts and ships whatever the
+         last attempt produced, silently. These re-check the break conditions
+         it was searching for, so an exhausted search is a FAIL, not a shrug. */
+      console.log(`landmarks: VOLCANO ${VO.x},${VO.y} MOUNT ${MO.x},${MO.y} RUIN ${RU.x},${RU.y}`);
+      console.log(`  V dTower ${H(VO,TW).toFixed(1)} dSpawn ${H(VO,SP).toFixed(1)} | ` +
+                  `M dTower ${H(MO,TW).toFixed(1)} dSpawn ${H(MO,SP).toFixed(1)} dV ${H(MO,VO).toFixed(1)} | ` +
+                  `R dTower ${H(RU,TW).toFixed(1)} dSpawn ${H(RU,SP).toFixed(1)} dV ${H(RU,VO).toFixed(1)} dM ${H(RU,MO).toFixed(1)}`);
+      results.push([`VOLCANO placed clear of spawn (${H(VO,SP).toFixed(1)} > ${SR + 42})`,
+        H(VO, SP) > SR + 42]);
+      results.push([`MOUNT placed clear of spawn (${H(MO,SP).toFixed(1)} > ${SR + 36})`,
+        H(MO, SP) > SR + 36]);
+      results.push([`MOUNT placed clear of volcano (${H(MO,VO).toFixed(1)} > 78)`, H(MO, VO) > 78]);
+      results.push([`RUIN placed clear of spawn (${H(RU,SP).toFixed(1)} > ${SR + 24})`,
+        H(RU, SP) > SR + 24]);
+      results.push([`RUIN placed clear of volcano (${H(RU,VO).toFixed(1)} > 42)`, H(RU, VO) > 42]);
+      results.push([`RUIN placed clear of mount (${H(RU,MO).toFixed(1)} > 42)`, H(RU, MO) > 42]);
+      // and none of them may sit on the clamp margin, which would mean the
+      // search ran off the map rather than finding a spot inside it
+      for (const [nm, L] of [['VOLCANO', VO], ['MOUNT', MO], ['RUIN', RU]]) {
+        results.push([`${nm} is inside the clamp margin (36..${N2 - 36})`,
+          L.x > 36 && L.x < N2 - 36 && L.y > 36 && L.y < N2 - 36]);
+      }
+      // the safe zone must still read as plain grass at the new radius
+      let nonGrass = [];
+      for (const [dx, dy] of [[0,0],[8,0],[-8,0],[0,8],[0,-8],[15,15],[-15,-15],
+                              [SR-2,0],[0,SR-2],[-(SR-2),0],[0,-(SR-2)]]) {
+        const tx = Math.round(SP.x + dx), ty = Math.round(SP.y + dy);
+        if (window.biomeAt(tx, ty) !== B2.PLAINS) nonGrass.push(`${tx},${ty}`);
+      }
+      results.push([`safe zone is plain grass at radius ${SR} (${nonGrass.length} bad tiles)`,
+        nonGrass.length === 0]);
+      // all three rare biomes survived the scale-up — re-run in one place
+      results.push([`all three rare biomes survived the scale-up ` +
+        `(ench ${ench2}, sacred ${sac2}, cave ${cave})`, ench2 > 0 && sac2 > 0 && cave > 0]);
+      // Part D actually applied: entity total should land near 3x, not 1x or 9x
+      const ents = info.wildSpecies.length + info.mobKinds.length;
+      console.log(`entities: ${ents} (v18 baseline in this seed: 36; target ~3x = ~108)`);
+      results.push([`entity total is roughly 3x the old world (${ents}, want 72..160)`,
+        ents >= 72 && ents <= 160]);
     } else {
       results.push(['debugWorldInfo exposes MOBS/WILD_SPECIES', false]);
     }
