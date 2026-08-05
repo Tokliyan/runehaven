@@ -1,0 +1,11 @@
+{
+  "name": "runehaven",
+  "private": true,
+  "description": "The game itself is the single self-contained runehaven.html and has NO dependencies. This manifest exists only to pin jsdom for the debug/runN.js pre-ship harnesses.",
+  "scripts": {
+    "test": "node debug/run3.js runehaven.html && node debug/run4.js runehaven.html && node debug/run5.js runehaven.html"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
+  }
+}
