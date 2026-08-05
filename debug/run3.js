@@ -96,7 +96,14 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     if (urlEl) urlEl.value = 'https://stub.supabase.co';
     if (keyEl) keyEl.value = 'stub-key';
     doc.getElementById('enterBtn').onclick();
-    await new Promise(r => setTimeout(r, 200));          // let the async login settle
+    /* v19: the world is 240x240 (9x the old area), so worldgen + bakeTerrain
+       now take ~300ms — a fixed 200ms sleep expired BEFORE login finished and
+       every later assertion silently ran against a world that was never
+       entered. Wait for the real completion signal instead of a guess. */
+    const t0 = Date.now();
+    while (doc.getElementById('login').style.display !== 'none' && Date.now() - t0 < 60000)
+      await new Promise(r => setTimeout(r, 25));
+    console.log('login settled after', Date.now() - t0, 'ms');
   } catch (e) { if (!caught) caught = e; }
 
   console.log('login hidden:', doc.getElementById('login')?.style.display === 'none');
