@@ -95,6 +95,13 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    this README or commit messages, not the skill).
 7. Extend `debug/run5.js`'s coverage lists with any new species/mobs/weapon
    kinds/classes added in this build, so future runs keep covering them.
+8. **If the full gate passed cleanly** (every check above green, nothing
+   flagged RED): attempt to push the final commit directly onto `main`,
+   not just your own branch, as the very last step. If your environment
+   does not permit a direct push to `main`, that's fine — land on the
+   usual branch as before, no error, a human will sync it. This is a
+   nice-to-have, never a requirement — never fail a build or treat a
+   blocked push to `main` as a RED condition.
 
 ## Confirmed, locked spec for the next build (v20 — Ruins as repeatable structures + scattered Safe Zones)
 
