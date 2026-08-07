@@ -1,14 +1,13 @@
 # RuneHaven
 
 2D persistent open-world isometric survival RPG. Single HTML file
-(`runehaven.html`) + Supabase + Netlify. Governed by `RuneHaven_Bible.docx`
-(not included here yet — add it to this repo before relying on any automated
-build to check bible-fidelity claims itself).
+(`runehaven.html`) + Supabase + Netlify. Governed by `RUNEHAVEN_BIBLE.md` — full text now in this repo, read it
+directly, do not assume or invent anything it doesn't state.
 
 ## Layout
 
 ```
-runehaven.html              the game — currently v16
+runehaven.html              the game — currently v19 (v20 in progress)
 runehaven-art-style/         SKILL.md — read this before ANY rendering change
 debug/run2.js                quick login-screen smoke test
 debug/run3.js                REQUIRED full-boot harness (real login, 5 frames)
