@@ -96,136 +96,110 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
 7. Extend `debug/run5.js`'s coverage lists with any new species/mobs/weapon
    kinds/classes added in this build, so future runs keep covering them.
 
-## Confirmed, locked spec for the next build (v19 — world scale-up, N: 80 to 240)
+## Confirmed, locked spec for the next build (v20 — Ruins as repeatable structures + scattered Safe Zones)
 
-v18 shipped successfully — genuinely clean night, zero blockers, verified.
-This section replaces the v18 entry as the current locked target.
-Underwater Caves (originally slated as v19) is now v20 — deliberately kept
-separate so this version stays focused on one large, high-blast-radius
-change rather than combining it with an unrelated system.
+v19 shipped successfully — genuinely clean, 151/151 in run4, verified
+independently. This section replaces the v19 entry as the current locked
+target.
 
-**Why this version exists:** the island currently reads as visually
-cramped — all v17/v18 biome content crammed onto an 80x80 dev-scale
-island. This grows the actual map footprint 3x in each direction (9x
-total area) and rescales everything anchored to the old size, rather than
-leaving the same small world with more content stacked onto it.
+NOTE on numbering: an earlier draft of the v19 spec's closing note called
+the next version "v20 — Underwater Caves." That was superseded later in
+planning — this section (Ruins + Safe Zones) is the real v20. Underwater
+Caves is v21. If you see the old reference anywhere, ignore it; this
+section is authoritative.
 
-**This is the highest-blast-radius version attempted so far — every
-existing system touches world generation in some way.** Read this entire
-section before touching any code, more carefully than usual.
+**Everything below was checked directly against the live, post-v19 code
+before being written — every number here matches what's actually in
+`runehaven.html` right now, not an assumption.**
 
-**PART A — the core change.**
-```
-const N = 80;
-```
-becomes
-```
-const N = 240;
-```
-`SPAWN`, `TOWER`, `SPAWN_FORGE`, `DEV_CHEST`, `SHRINE` are already computed
-relative to `N` (confirmed directly in the live code before this spec was
-written — search for `N / 2` to verify again before relying on it) and
-require NO changes themselves.
+**PART A — Ruins become plural, scattered structures, not one fixed
+placement.**
 
-**PART B — every hardcoded absolute-distance constant found by direct
-search, each scaled by exactly 3x to match N's growth.** This list was
-built by searching the entire world-generation code for every
-distance-from-a-point check — do not assume it's exhaustive; if you find
-another one during implementation, scale it by 3x too and note it as a
-judgment call (YELLOW, not a blocker — this is a straightforward,
-low-risk category of fix even if incomplete on the first pass).
+Current state (confirmed): `RUIN = { x, y }` is a single point, placed once
+via angle+radius from TOWER (radius 57) with separation checks (`SAFE_RADIUS
++ 24` from SPAWN, `42` from VOLCANO, `42` from MOUNT). `buildRuinPieces()`
+already builds every decor piece relative to `const R = RUIN;` — offsets
+only, nothing else hardcoded. `RUINB` tiles get carved within 4.5 tiles of
+the single `RUIN` point. Golem and Bandit are gated to the `B.RUINB` tile
+type itself, not distance from `RUIN` — confirmed directly, zero changes
+needed to either species.
 
-| What | Old | New (x3) |
-|---|---|---|
-| `SAFE_RADIUS` | 9 | 27 |
-| VOLCANO placement radius from TOWER | 25 | 75 |
-| MOUNT placement radius from TOWER | 24 | 72 |
-| RUIN placement radius from TOWER | 19 | 57 |
-| VOLCANO min-distance-from-SPAWN buffer | `SAFE_RADIUS + 14` | `SAFE_RADIUS + 42` (using new SAFE_RADIUS) |
-| MOUNT min-distance-from-SPAWN buffer | `SAFE_RADIUS + 12` | `SAFE_RADIUS + 36` |
-| MOUNT min-distance-from-VOLCANO | 26 | 78 |
-| RUIN min-distance-from-SPAWN buffer | `SAFE_RADIUS + 8` | `SAFE_RADIUS + 24` |
-| RUIN min-distance-from-VOLCANO | 14 | 42 |
-| RUIN min-distance-from-MOUNT | 14 | 42 |
-| `placeLandmarks` clamp margin (`12` in `Math.max(12, Math.min(N-12,...))`) | 12 | 36 |
-| `elevRaw` dTower divisor | 40 | 120 |
-| `elevRaw` dMount divisor | 12 | 36 |
-| Mount height bump — near threshold | 5 | 15 |
-| Mount height bump — far threshold | 9 | 27 |
-| Volcano rim threshold | 5.5 | 16.5 |
-| Volcano VOLROCK/LAVA band threshold | 9 | 27 |
-| Volcano LAVA core threshold | 2.5 | 7.5 |
-| ROCK-flattening-near-volcano threshold | 14 | 42 |
-| Safe-zone grass flatten, first check | `SAFE_RADIUS + 2` | `SAFE_RADIUS + 6` |
-| Safe-zone grass flatten, second check | `SAFE_RADIUS + 3` | `SAFE_RADIUS + 9` |
-| Wild-pet spawn exclusion near SPAWN | 12 | 36 |
-| Mob spawn exclusion near SPAWN | 14 | 42 |
+**The change:**
+1. `RUIN = {x,y}` becomes `RUINS = []`, an array.
+2. Do NOT reuse the angle-radius-from-Tower technique for placing the six
+   — that technique is for exactly one instance at a controlled distance.
+   Instead reuse the wilds/mobs scattering pattern (search `let spSeed = 0`
+   to find it) — hashed candidate tiles across the whole map via
+   `hash2(a, offset, worldSeed + seed) * N`, with a search budget, checking
+   separation against everything already placed. This is what makes Ruins
+   actually scatter like the wilds do, not cluster near the town center.
+3. Target: **6 Ruins total.** Each instance must maintain the SAME
+   separation buffers the single Ruin already used — `SAFE_RADIUS + 24` from
+   SPAWN, `42` from VOLCANO, `42` from MOUNT, `42` from TOWER — plus a NEW
+   minimum separation of `45` between any two Ruin centers, so the six don't
+   cluster together.
+4. Rename `buildRuinPieces()` to `buildRuinCluster(center)`, replace
+   `const R = RUIN;` with `const R = center;` (this is the entire
+   refactor — every other line already uses `R.x + offset` and needs no
+   change). Call it once per entry in `RUINS`, appending each cluster's
+   pieces to the same shared `ruinPieces` array — every other system that
+   reads `ruinPieces` (rendering, mining, interaction) needs no changes,
+   since it's still just one flat array.
+5. The `RUINB` tile-carving check (`Math.hypot(tx - RUIN.x, ...) < 4.5`)
+   must loop over all entries in `RUINS`, not the single point.
+6. Add ONE new small decorative piece to each ruin cluster — a dark
+   archway/entrance marker, visual only, hinting at the bible's "dungeon
+   entrances" without building Dungeons yet (same pattern as v18's cave
+   entrances existing before their interiors mattered). Keep it simple:
+   a dark trapezoid or arch shape in the existing ruin-stone palette,
+   roughly 2-3 tiles tall, placed at one edge of the cluster.
 
-**Explicitly do NOT touch:** `SPAWN_FORGE` decor-clearance check (`< 2.5`)
-— that's object-collision clearance, not world-scale, leave it as-is. The
-`ENCH_RARITY`/`SACRED_RARITY`/`UNDERCAVE_RARITY` threshold VALUES — these
-are percentages evaluated per-tile via noise, already resolution-independent,
-confirmed directly, do not change the 0.78/0.74/0.80 numbers themselves.
+**PART B — Other Safe Zones: scattered, minimal, explicitly not a
+trading system.**
 
-**PART C — widen biome pockets so they read as substantial regions, not
-just "the same tiny patches, more of them." CONFIRMED: bigger than the
-initial 3x proposal.** The three v17/v18 rare-biome overlays sample noise
-at `valueNoise(tx / 4, ty / 4, ...)` — the `/4` controls how large each
-contiguous pocket is. Change all three from `/4` to `/20` (5x the original
-wavelength, not just 3x matching the map's own growth), keeping the
-existing threshold values unchanged. This makes each Enchanted Forest /
-Sacred Meadow / Underground Cave region a genuinely large, walkable region
-— not just proportionally the same as before, but noticeably more
-substantial than that — while the overall rarity (how much of the map is
-each type) stays the same. If `/20` produces only one or two enormous
-blobs per biome type in the test-seed world instead of several distinct
-regions, that's a real signal it's too wide — back off toward `/16` and
-note it as a judgment call rather than shipping a map with only one
-Enchanted Forest total.
+Bible: "Other Safe Zones — Scattered neutral trading and resting areas."
+Currently `inSafeZone(x, y)` is a single-point check against `SPAWN` only.
 
-**PART D — density rescaling for every existing species, as a formula and
-rule, not hand-picked numbers.** With 9x the area, keeping every count
-identical would make the world feel empty; multiplying every count by 9
-would likely overcrowd it and add real sync/performance load for no good
-reason. Apply this rule instead:
+**The change:**
+1. New array, e.g. `OTHER_SAFE_ZONES = []`, populated via the SAME
+   wilds-style scattering technique as Part A.
+2. Target: **4 zones total**, deliberately rarer than the 6 Ruins.
+   Minimum separation of `40` from each other, from SPAWN, and from every
+   Ruin and major landmark.
+3. Extend `inSafeZone(x, y)` to return true if the point is within
+   `SAFE_RADIUS` of SPAWN **or** within a smaller radius (propose `8`,
+   tunable) of any `OTHER_SAFE_ZONES` entry.
+4. Visual treatment: reuse the existing `"well"` decor piece (already has
+   its own art — search `k: "well"` and `p.k === "well"` to confirm before
+   using it) as a visual anchor at each zone's center, plus a small
+   flattened-grass clearing using the same flatten technique already
+   applied around SPAWN, just at the smaller radius from step 3.
+5. **Explicitly do NOT build any trading/currency/barter mechanic.** No
+   currency system exists in the game, and the bible's actual trading hub
+   is the separate Grand Bazaar landmark (its own later version). These are
+   "resting areas" functionally this version — protection plus a visual
+   anchor, nothing more. Do not invent an item-exchange UI to satisfy the
+   word "trading" in the bible quote.
 
-- **Common ambient wildlife** (four sprites, wolf, boar, bear, griffin,
-  phoenix, golem, goblin, bandit, troll, fire_dragon, glow_moth,
-  dark_wraith, stag) — multiply each current count by 3 (not 9). This
-  keeps density-per-tile somewhat lower than before the v18 pass, which
-  fits the bible's "bases genuinely hard to find" framing — more empty
-  space between encounters, not the same crowding spread over more room.
-- **Already-gated rare/chance-spawn pets** (shadowfox, unicorn, lightfox —
-  all with `presenceRoll` and/or time-window gating already) — multiply by
-  2, not 3. Their whole design is scarcity; growing the map shouldn't make
-  them proportionally easier to find.
-- This is explicitly YELLOW-zone: pick the exact resulting numbers,
-  implement them, and list the full before/after table in the changelog's
-  JUDGMENT CALLS section. Reasonable, not required to be perfectly tuned —
-  this is exactly what that system exists for.
-
-**PART E — proof gates, more thorough than usual given the blast radius:**
-- Standard gauntlet: parse check, `run3`, `run4`, `run5` all clean.
-- Confirm `placeLandmarks()` actually succeeds for VOLCANO, MOUNT, and RUIN
-  in the test seed — none of the three should exhaust their 12 placement
-  attempts without finding a valid spot. If one does, the scaled distances
-  in Part B are inconsistent with each other — fix them, don't ship a
-  landmark that silently failed to place.
-- Re-run the EXACT worldgen sanity check pattern from v17 and v18 — confirm
-  Enchanted Forest, Sacred Meadow, AND Underground Cave tiles all still
-  exist in the test seed at the new scale. All three, not just the newest
-  one — this version has the highest chance of silently breaking something
-  that worked before.
-- Confirm the safe zone still reads as plain grass near SPAWN (spot-check
-  a handful of tiles within the new `SAFE_RADIUS` of SPAWN).
-- Confirm total entity count in the test seed is roughly proportional to
-  the old count x3 (not x9, not x1) — a rough sanity check that Part D's
-  formula was actually applied, not skipped.
+**PART C — proof gates, standard gauntlet plus:**
+- Confirm all 6 `RUINS` entries actually placed (none exhausted their
+  search budget without finding a valid spot).
+- Confirm `B.RUINB` tiles exist near every one of the 6 clusters in the
+  test seed, not just one.
+- Confirm Golem and/or Bandit actually spawn near at least 2 different
+  Ruin clusters in the test seed — a real multi-instance check, not just
+  "the biome tile exists."
+- Confirm all 4 `OTHER_SAFE_ZONES` entries placed successfully.
+- Confirm `inSafeZone()` correctly protects a test point near each of the
+  4 scattered zones, not just near SPAWN.
+- Extend `run5.js` coverage to include the new ruin-entrance decor piece
+  and the well-anchor rendering at a scattered safe zone.
 
 **Explicitly not touched this version:** Underwater Caves, Water Dragon,
-Sea Serpent (now v20). Mounting. Dungeons. Any new content — this version
-is purely the scale-up, nothing new added on top of it.
+Sea Serpent (v21). Dungeons themselves — the entrance markers added here
+are decoration only, no interior, no Demon Knight, nothing functional yet.
+Grand Bazaar and any trading/currency mechanic. Mounting.
 
-**After v19 ships successfully, do not start any further version
+**After v20 ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated with the next
 target, exactly as before.
