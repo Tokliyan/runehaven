@@ -102,110 +102,75 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v20 — Ruins as repeatable structures + scattered Safe Zones)
+## Confirmed, locked spec for the next build (v20 rev2 — Ruins as repeatable structures + scattered Safe Zones)
 
-v19 shipped successfully — genuinely clean, 151/151 in run4, verified
-independently. This section replaces the v19 entry as the current locked
-target.
+v19 shipped successfully. A first v20 attempt correctly stopped RED on a
+real geometric conflict, found by an exhaustive 57,600-tile scan across
+five seeds — not a guess, measured. This section fixes exactly that,
+carries forward everything the first attempt already verified working, and
+adds two more real fixes it found along the way. Nothing else changes.
 
-NOTE on numbering: an earlier draft of the v19 spec's closing note called
-the next version "v20 — Underwater Caves." That was superseded later in
-planning — this section (Ruins + Safe Zones) is the real v20. Underwater
-Caves is v21. If you see the old reference anywhere, ignore it; this
-section is authoritative.
+**What was already verified working — build it exactly as before, do not
+re-derive or second-guess any of this:**
+- `RUIN = {x,y}` becomes `RUINS = []`, six centres via the wilds/mobs
+  hashed scattering pattern (`hash2(a, offset, worldSeed + seed) * N`) —
+  NOT the angle-radius-from-Tower technique. Confirmed genuinely scattered
+  on the harness seed, no clustering near the town centre.
+- `buildRuinPieces()` → `buildRuinCluster(center)`, `const R = center;`
+  replacing `const R = RUIN;` — the entire refactor, every other line
+  already used `R.x + offset`. Append each cluster to the one shared
+  `ruinPieces` array.
+- The `RUINB` carve, the deliberate runic vein per cluster, and
+  `debugWorldInfo()` all loop over `RUINS`.
+- Golem and Bandit: zero changes, both already gate on `B.RUINB`.
+- The dark archway/entrance decor piece (two jambs, a lintel, a flat
+  near-black trapezoid mouth, ~2.5-3 tiles tall, darkened ruin stone) —
+  already built, already verified drawing clean. Bible-supported
+  ("dungeon entrances"), visual only.
+- `OTHER_SAFE_ZONES = []`, same hashed scattering pattern, the existing
+  `"well"` decor piece as the visual anchor, the radius-8 grass clearing,
+  `inSafeZone()` extended to check SPAWN OR any zone in the array. No
+  trading/currency mechanic, exactly as before.
 
-**Everything below was checked directly against the live, post-v19 code
-before being written — every number here matches what's actually in
-`runehaven.html` right now, not an assumption.**
+**FIX 1 — the actual blocker: Ruin-to-Safe-Zone separation drops from 40
+to 24.** 40 made 6 Ruins and 4 Safe Zones mutually impossible on this
+island's real habitable area (confirmed by exhaustive scan). 24 comfortably
+yields all 4 zones on every seed tested, with room to spare, while still
+keeping a zone's centre roughly 20 tiles clear of a Ruin's actual 4.5-tile
+footprint. Every OTHER separation value (zone-to-zone 40, zone-to-SPAWN/
+TOWER/VOLCANO/MOUNT 40, Ruin's own separations from landmarks and from each
+other) is UNCHANGED — this is the one number that was wrong.
 
-**PART A — Ruins become plural, scattered structures, not one fixed
-placement.**
+**FIX 2 — land-fitness checks during placement must use `elevRaw()`, never
+`biomeAt()`.** `placeLandmarks()` runs before `tileCache.clear()`, so any
+`biomeAt()` call there permanently bakes a pre-Ruin/pre-Zone biome into the
+cache for every tile it touches, and the later `RUINB` carve (or the Safe
+Zone's grass flatten) then silently never appears on that tile. `elevRaw()`
+is pure noise with no cache and is safe to call here. Land = `0.44 <= e <
+0.84` (confirmed solid-ground band). Use this for BOTH Ruins and Safe Zones.
 
-Current state (confirmed): `RUIN = { x, y }` is a single point, placed once
-via angle+radius from TOWER (radius 57) with separation checks (`SAFE_RADIUS
-+ 24` from SPAWN, `42` from VOLCANO, `42` from MOUNT). `buildRuinPieces()`
-already builds every decor piece relative to `const R = RUIN;` — offsets
-only, nothing else hardcoded. `RUINB` tiles get carved within 4.5 tiles of
-the single `RUIN` point. Golem and Bandit are gated to the `B.RUINB` tile
-type itself, not distance from `RUIN` — confirmed directly, zero changes
-needed to either species.
+**FIX 3 — Ruin placement search: widen the budget past 60,000 candidates,
+or stop re-seeding the hash stream on every placement attempt (pick
+whichever is the smaller, more surgical change).** The exhaustive scan
+confirmed a valid 6th Ruin spot always exists on every seed tested (true
+max is 7-9 Ruins) — this was purely the search running out, not a real
+placement conflict, so the fix is a search-budget/seeding issue only, not
+another separation number.
 
-**The change:**
-1. `RUIN = {x,y}` becomes `RUINS = []`, an array.
-2. Do NOT reuse the angle-radius-from-Tower technique for placing the six
-   — that technique is for exactly one instance at a controlled distance.
-   Instead reuse the wilds/mobs scattering pattern (search `let spSeed = 0`
-   to find it) — hashed candidate tiles across the whole map via
-   `hash2(a, offset, worldSeed + seed) * N`, with a search budget, checking
-   separation against everything already placed. This is what makes Ruins
-   actually scatter like the wilds do, not cluster near the town center.
-3. Target: **6 Ruins total.** Each instance must maintain the SAME
-   separation buffers the single Ruin already used — `SAFE_RADIUS + 24` from
-   SPAWN, `42` from VOLCANO, `42` from MOUNT, `42` from TOWER — plus a NEW
-   minimum separation of `45` between any two Ruin centers, so the six don't
-   cluster together.
-4. Rename `buildRuinPieces()` to `buildRuinCluster(center)`, replace
-   `const R = RUIN;` with `const R = center;` (this is the entire
-   refactor — every other line already uses `R.x + offset` and needs no
-   change). Call it once per entry in `RUINS`, appending each cluster's
-   pieces to the same shared `ruinPieces` array — every other system that
-   reads `ruinPieces` (rendering, mining, interaction) needs no changes,
-   since it's still just one flat array.
-5. The `RUINB` tile-carving check (`Math.hypot(tx - RUIN.x, ...) < 4.5`)
-   must loop over all entries in `RUINS`, not the single point.
-6. Add ONE new small decorative piece to each ruin cluster — a dark
-   archway/entrance marker, visual only, hinting at the bible's "dungeon
-   entrances" without building Dungeons yet (same pattern as v18's cave
-   entrances existing before their interiors mattered). Keep it simple:
-   a dark trapezoid or arch shape in the existing ruin-stone palette,
-   roughly 2-3 tiles tall, placed at one edge of the cluster.
+**PART C — proof gates, same as before, with one correction:** the
+`run4.js` assertion for the Dark Forest tile-band count must be
+RE-MEASURED after this build, not reused from any earlier number (including
+861, which was observed on the failed first attempt and is not necessarily
+final now that FIX 1 changes how many Safe Zone clearings actually place).
+Confirm all 6 Ruins place. Confirm all 4 Safe Zones place — this is now
+the real test of whether Fix 1 actually resolved the conflict. Confirm
+`B.RUINB` tiles and Golem/Bandit spawns near multiple Ruin clusters.
+Confirm `inSafeZone()` protects a test point near each of the 4 zones.
 
-**PART B — Other Safe Zones: scattered, minimal, explicitly not a
-trading system.**
-
-Bible: "Other Safe Zones — Scattered neutral trading and resting areas."
-Currently `inSafeZone(x, y)` is a single-point check against `SPAWN` only.
-
-**The change:**
-1. New array, e.g. `OTHER_SAFE_ZONES = []`, populated via the SAME
-   wilds-style scattering technique as Part A.
-2. Target: **4 zones total**, deliberately rarer than the 6 Ruins.
-   Minimum separation of `40` from each other, from SPAWN, and from every
-   Ruin and major landmark.
-3. Extend `inSafeZone(x, y)` to return true if the point is within
-   `SAFE_RADIUS` of SPAWN **or** within a smaller radius (propose `8`,
-   tunable) of any `OTHER_SAFE_ZONES` entry.
-4. Visual treatment: reuse the existing `"well"` decor piece (already has
-   its own art — search `k: "well"` and `p.k === "well"` to confirm before
-   using it) as a visual anchor at each zone's center, plus a small
-   flattened-grass clearing using the same flatten technique already
-   applied around SPAWN, just at the smaller radius from step 3.
-5. **Explicitly do NOT build any trading/currency/barter mechanic.** No
-   currency system exists in the game, and the bible's actual trading hub
-   is the separate Grand Bazaar landmark (its own later version). These are
-   "resting areas" functionally this version — protection plus a visual
-   anchor, nothing more. Do not invent an item-exchange UI to satisfy the
-   word "trading" in the bible quote.
-
-**PART C — proof gates, standard gauntlet plus:**
-- Confirm all 6 `RUINS` entries actually placed (none exhausted their
-  search budget without finding a valid spot).
-- Confirm `B.RUINB` tiles exist near every one of the 6 clusters in the
-  test seed, not just one.
-- Confirm Golem and/or Bandit actually spawn near at least 2 different
-  Ruin clusters in the test seed — a real multi-instance check, not just
-  "the biome tile exists."
-- Confirm all 4 `OTHER_SAFE_ZONES` entries placed successfully.
-- Confirm `inSafeZone()` correctly protects a test point near each of the
-  4 scattered zones, not just near SPAWN.
-- Extend `run5.js` coverage to include the new ruin-entrance decor piece
-  and the well-anchor rendering at a scattered safe zone.
-
-**Explicitly not touched this version:** Underwater Caves, Water Dragon,
-Sea Serpent (v21). Dungeons themselves — the entrance markers added here
-are decoration only, no interior, no Demon Knight, nothing functional yet.
-Grand Bazaar and any trading/currency mechanic. Mounting.
+**Explicitly not touched:** Underwater Caves, Water Dragon, Sea Serpent
+(v21). Dungeons themselves, Grand Bazaar, any trading/currency mechanic,
+mounting.
 
 **After v20 ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated with the next
-target, exactly as before.
+target.
