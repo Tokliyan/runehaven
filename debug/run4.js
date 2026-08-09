@@ -271,8 +271,14 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       /* Same invariant as v17/v18 — the rare-variant overlays read their own
          noise fields and must never consume the moisture band — but the pinned
          value is scale-bound and moves with N. At N=80 this seed produced a
-         1-tile band; at N=240 the same moisture logic produces 875. */
-      results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 875]);
+         1-tile band; at N=240 the same moisture logic produces 875.
+         v20: RE-MEASURED, deliberately not carried over. Six Ruin clusters
+         (not one) now carve RUINB over the moisture band, and four Safe Zone
+         clearings flatten more of it to grass, so 875 -> 763 on this seed.
+         The invariant being guarded is unchanged: the rare-variant NOISE
+         fields still never touch this band — only the landmark overrides,
+         which have always won over it, take tiles from it. */
+      results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 763]);
       results.push(['regular Forest still exists', forest > 0]);
       results.push(['regular Meadow still exists', meadow > 0]);
       // Stag has no presence roll, so it must reliably find its biome. Unicorn
@@ -394,31 +400,136 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // ===== v19 PART E: the scale-up's own proof gates =====
       const H = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
       const SP = info.SPAWN, TW = info.TOWER, SR = info.SAFE_RADIUS;
-      const VO = info.VOLCANO, MO = info.MOUNT, RU = info.RUIN;
+      const VO = info.VOLCANO, MO = info.MOUNT;
+      const RUS = info.RUINS, ZONES = info.OTHER_SAFE_ZONES;
       results.push([`N scaled to 240 (was 80)`, N2 === 240]);
       results.push([`SAFE_RADIUS scaled to 27 (was 9)`, SR === 27]);
       /* placeLandmarks() gives up after 12 attempts and ships whatever the
          last attempt produced, silently. These re-check the break conditions
          it was searching for, so an exhausted search is a FAIL, not a shrug. */
-      console.log(`landmarks: VOLCANO ${VO.x},${VO.y} MOUNT ${MO.x},${MO.y} RUIN ${RU.x},${RU.y}`);
+      console.log(`landmarks: VOLCANO ${VO.x},${VO.y} MOUNT ${MO.x},${MO.y}`);
       console.log(`  V dTower ${H(VO,TW).toFixed(1)} dSpawn ${H(VO,SP).toFixed(1)} | ` +
-                  `M dTower ${H(MO,TW).toFixed(1)} dSpawn ${H(MO,SP).toFixed(1)} dV ${H(MO,VO).toFixed(1)} | ` +
-                  `R dTower ${H(RU,TW).toFixed(1)} dSpawn ${H(RU,SP).toFixed(1)} dV ${H(RU,VO).toFixed(1)} dM ${H(RU,MO).toFixed(1)}`);
+                  `M dTower ${H(MO,TW).toFixed(1)} dSpawn ${H(MO,SP).toFixed(1)} dV ${H(MO,VO).toFixed(1)}`);
       results.push([`VOLCANO placed clear of spawn (${H(VO,SP).toFixed(1)} > ${SR + 42})`,
         H(VO, SP) > SR + 42]);
       results.push([`MOUNT placed clear of spawn (${H(MO,SP).toFixed(1)} > ${SR + 36})`,
         H(MO, SP) > SR + 36]);
       results.push([`MOUNT placed clear of volcano (${H(MO,VO).toFixed(1)} > 78)`, H(MO, VO) > 78]);
-      results.push([`RUIN placed clear of spawn (${H(RU,SP).toFixed(1)} > ${SR + 24})`,
-        H(RU, SP) > SR + 24]);
-      results.push([`RUIN placed clear of volcano (${H(RU,VO).toFixed(1)} > 42)`, H(RU, VO) > 42]);
-      results.push([`RUIN placed clear of mount (${H(RU,MO).toFixed(1)} > 42)`, H(RU, MO) > 42]);
-      // and none of them may sit on the clamp margin, which would mean the
-      // search ran off the map rather than finding a spot inside it
-      for (const [nm, L] of [['VOLCANO', VO], ['MOUNT', MO], ['RUIN', RU]]) {
-        results.push([`${nm} is inside the clamp margin (36..${N2 - 36})`,
-          L.x > 36 && L.x < N2 - 36 && L.y > 36 && L.y < N2 - 36]);
+
+      /* ===== v20 PART C: Ruins as repeatable structures + scattered Safe Zones.
+         The whole point of rev2 is that the search actually completes, so an
+         exhausted search is a FAIL here, never a shrug — the first v20 attempt
+         stopped RED precisely because it could not place all six and all four. */
+      console.log(`RUINS (${RUS.length}): ` + RUS.map(r => `${r.x},${r.y}`).join('  '));
+      console.log(`ZONES (${ZONES.length}): ` + ZONES.map(z => `${z.x},${z.y}`).join('  '));
+      results.push([`all ${6} Ruin clusters placed (${RUS.length})`, RUS.length === 6]);
+      results.push([`all ${4} Other Safe Zones placed (${ZONES.length})`, ZONES.length === 4]);
+      // every Ruin keeps the v19 Ruin's own separations, unchanged
+      for (let i = 0; i < RUS.length; i++) {
+        const R = RUS[i];
+        const minR = Math.min(...RUS.filter((_, j) => j !== i).map(o => H(R, o)));
+        console.log(`  ruin ${i} ${R.x},${R.y} dSpawn ${H(R,SP).toFixed(1)} ` +
+                    `dV ${H(R,VO).toFixed(1)} dM ${H(R,MO).toFixed(1)} minRuin ${minR.toFixed(1)}`);
+        results.push([`ruin ${i} clear of spawn (${H(R,SP).toFixed(1)} > ${SR + 24})`, H(R, SP) > SR + 24]);
+        results.push([`ruin ${i} clear of volcano (${H(R,VO).toFixed(1)} > 42)`, H(R, VO) > 42]);
+        results.push([`ruin ${i} clear of mount (${H(R,MO).toFixed(1)} > 42)`, H(R, MO) > 42]);
+        results.push([`ruin ${i} clear of other ruins (${minR.toFixed(1)} > ${info.RUIN_SEP})`,
+          minR > info.RUIN_SEP]);
+        results.push([`ruin ${i} inside the clamp margin (36..${N2 - 36})`,
+          R.x > 36 && R.x < N2 - 36 && R.y > 36 && R.y < N2 - 36]);
       }
+      /* FIX 1: Ruin-to-Zone is 24, not 40. Every OTHER separation is unchanged,
+         so they are all re-asserted above and below at their own values. */
+      for (let i = 0; i < ZONES.length; i++) {
+        const Z = ZONES[i];
+        const minZ = ZONES.length > 1
+          ? Math.min(...ZONES.filter((_, j) => j !== i).map(o => H(Z, o))) : Infinity;
+        const minR = Math.min(...RUS.map(r => H(Z, r)));
+        console.log(`  zone ${i} ${Z.x},${Z.y} dSpawn ${H(Z,SP).toFixed(1)} dTower ${H(Z,TW).toFixed(1)} ` +
+                    `dV ${H(Z,VO).toFixed(1)} dM ${H(Z,MO).toFixed(1)} minZone ${minZ.toFixed(1)} minRuin ${minR.toFixed(1)}`);
+        for (const [nm, L] of [['spawn', SP], ['tower', TW], ['volcano', VO], ['mount', MO]]) {
+          results.push([`zone ${i} clear of ${nm} (${H(Z,L).toFixed(1)} > ${info.ZONE_SEP})`,
+            H(Z, L) > info.ZONE_SEP]);
+        }
+        results.push([`zone ${i} clear of other zones (${minZ.toFixed(1)} > ${info.ZONE_SEP})`,
+          minZ > info.ZONE_SEP]);
+        results.push([`zone ${i} clear of every ruin (${minR.toFixed(1)} > ${info.RUIN_ZONE_SEP})`,
+          minR > info.RUIN_ZONE_SEP]);
+        results.push([`zone ${i} inside the clamp margin (36..${N2 - 36})`,
+          Z.x > 36 && Z.x < N2 - 36 && Z.y > 36 && Z.y < N2 - 36]);
+      }
+      results.push([`Ruin-to-Zone separation is 24, not 40 (FIX 1)`, info.RUIN_ZONE_SEP === 24]);
+      results.push([`every other separation unchanged (ruin ${info.RUIN_SEP}, zone ${info.ZONE_SEP})`,
+        info.RUIN_SEP === 40 && info.ZONE_SEP === 40]);
+
+      /* FIX 2 is only observable through its consequence: placement ran before
+         tileCache.clear() using elevRaw(), so the RUINB carve and each zone's
+         grass clearing must actually be present on the tiles they cover. If a
+         biomeAt() call had leaked into placement, these are the tiles that
+         would silently still hold their pre-carve biome. */
+      const ruinbPer = RUS.map(r => {
+        let n = 0;
+        for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++)
+          if (window.biomeAt(r.x + dx, r.y + dy) === B2.RUINB) n++;
+        return n;
+      });
+      console.log(`RUINB tiles per cluster: ${ruinbPer.join(', ')}`);
+      results.push([`every cluster carved real RUINB ground (${ruinbPer.join('/')})`,
+        ruinbPer.length === 6 && ruinbPer.every(n => n > 40)]);
+      results.push([`every ruin centre is a RUINB tile (FIX 2 — no stale cache)`,
+        RUS.every(r => window.biomeAt(r.x, r.y) === B2.RUINB)]);
+      results.push([`every zone centre is plain grass (FIX 2 — no stale cache)`,
+        ZONES.every(z => window.biomeAt(z.x, z.y) === B2.PLAINS)]);
+      /* The clearing is guarded like the Ruin carve, so it never paints grass
+         onto water or a blocked tile — a coastal zone keeps its shoreline. */
+      const clearingBad = ZONES.map(z => {
+        let bad = 0;
+        for (let dy = -8; dy <= 8; dy++) for (let dx = -8; dx <= 8; dx++) {
+          if (Math.hypot(dx, dy) >= info.ZONE_R) continue;
+          const b = window.biomeAt(z.x + dx, z.y + dy);
+          if (b !== B2.PLAINS && b !== B2.DEEP && b !== B2.WATER && b !== B2.SHALLOW) bad++;
+        }
+        return bad;
+      });
+      results.push([`zone clearings are grass except where they meet water (${clearingBad.join('/')})`,
+        clearingBad.every(n => n === 0)]);
+
+      // Golem (RUINB-only) and Bandit must reach more than one cluster
+      const clustersNear = (pts, rad) => {
+        const set = new Set();
+        for (const p of pts) RUS.forEach((r, i) => { if (H(p, r) < rad) set.add(i); });
+        return [...set].sort((a, b) => a - b);
+      };
+      const golemAt = clustersNear(info.wildSpots.filter(w => w.species === 'golem'), 12);
+      const banditAt = clustersNear(info.mobSpots.filter(m => m.kind === 'bandit'), 12);
+      console.log(`golems near clusters [${golemAt}] | bandits near clusters [${banditAt}]`);
+      results.push([`Golem spawns near multiple Ruin clusters (${golemAt.length})`, golemAt.length >= 2]);
+      results.push([`Bandit spawns near multiple Ruin clusters (${banditAt.length})`, banditAt.length >= 2]);
+      // preservation: both still gate on RUINB exactly as they did in v19
+      results.push(['Golem still gates on RUINB only',
+        info.WILD_SPECIES.golem.biomes.length === 1 && info.WILD_SPECIES.golem.biomes[0] === B2.RUINB]);
+      results.push(['Bandit still gates on PLAINS + RUINB',
+        info.MOBS.bandit.biomes.includes(B2.RUINB) && info.MOBS.bandit.biomes.includes(B2.PLAINS)]);
+
+      // inSafeZone() protects a point inside each zone, and stops at its edge
+      results.push([`inSafeZone protects a point near each of the ${ZONES.length} zones`,
+        ZONES.every(z => window.inSafeZone(z.x, z.y) && window.inSafeZone(z.x + 3, z.y - 3))]);
+      results.push([`inSafeZone stops at each zone's edge`,
+        ZONES.every(z => !window.inSafeZone(z.x + info.ZONE_R + 2, z.y))]);
+      results.push(['inSafeZone still protects the Spawn zone', window.inSafeZone(SP.x, SP.y)]);
+      results.push(['inSafeZone is false out in the open world',
+        !window.inSafeZone(RUS[0].x, RUS[0].y)]);
+
+      // one cluster's worth of set pieces per centre, plus one well per zone
+      const pk = info.ruinPieceSpots.reduce((a, p) => (a[p.k] = (a[p.k] || 0) + 1, a), {});
+      console.log('ruin set pieces:', JSON.stringify(pk));
+      results.push([`ruin set pieces built per centre (${info.ruinPieceSpots.length} total)`,
+        pk.wallX === 36 && pk.wallY === 6 && pk.col === 18 && pk.lintelY === 6 &&
+        pk.fallen === 6 && pk.rubble === 12]);
+      results.push([`one dungeon entrance per cluster (${pk.entrance || 0})`, pk.entrance === 6]);
+      results.push([`one well per cluster plus one per Safe Zone (${pk.well || 0})`, pk.well === 10]);
+      // the deliberate runic vein is now one per cluster
+      results.push([`one deliberate runic vein per cluster (${info.ruinVeins})`, info.ruinVeins === 6]);
       // the safe zone must still read as plain grass at the new radius
       let nonGrass = [];
       for (const [dx, dy] of [[0,0],[8,0],[-8,0],[0,8],[0,-8],[15,15],[-15,-15],

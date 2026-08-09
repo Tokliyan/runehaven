@@ -418,7 +418,17 @@ let iAmMoving = false;
 
 const TOWER = { x: N / 2, y: N / 2 - 8 };
 const SPAWN = { x: N / 2, y: N / 2 + 10 };
-let VOLCANO = { x: 0, y: 0 }, MOUNT = { x: 0, y: 0 }, RUIN = { x: 0, y: 0 };
+let VOLCANO = { x: 0, y: 0 }, MOUNT = { x: 0, y: 0 };
+/* v20: the Ruins stop being one landmark. Six scattered clusters, placed by
+   the same hashed-sampling pattern the wilds and mobs already use, so they
+   read as repeatable structures found out in the world rather than a single
+   set piece orbiting the town centre. */
+let RUINS = [];
+/* v20: bible — "Other Safe Zones — Scattered neutral trading and resting
+   areas". This version builds the resting/protection half only; there is
+   deliberately no trading or currency mechanic (the Grand Bazaar is not in
+   this build's scope). */
+let OTHER_SAFE_ZONES = [];
 const SPAWN_FORGE = { x: SPAWN.x + 4, y: SPAWN.y + 2 };
 /* ⚠️ DEV-ONLY (v9): unlimited materials chest for testing crafting/combat on
    the dev island. MUST be removed or admin-gated before any real/live launch. */
@@ -539,7 +549,25 @@ function debugWorldInfo() {
            SAFE_RADIUS,
            SPAWN: { x: SPAWN.x, y: SPAWN.y }, TOWER: { x: TOWER.x, y: TOWER.y },
            VOLCANO: { x: VOLCANO.x, y: VOLCANO.y }, MOUNT: { x: MOUNT.x, y: MOUNT.y },
-           RUIN: { x: RUIN.x, y: RUIN.y } };
+           /* v20: the Ruins are a list now, and the bible's Other Safe Zones
+              are placed the same way — both need to be assertable from the
+              harness, along with the separation constants they were placed
+              against. Copies, not the live arrays. */
+           RUIN_FOOT, ZONE_R, RUIN_SEP, ZONE_SEP, RUIN_ZONE_SEP,
+           RUINS: RUINS.map(r => ({ x: r.x, y: r.y })),
+           OTHER_SAFE_ZONES: OTHER_SAFE_ZONES.map(z => ({ x: z.x, y: z.y })),
+           /* v20: mob home spots and the ruin set-piece list, so the harness
+              can prove Golem/Bandit reach more than one cluster and that a
+              cluster's pieces really were built per centre. */
+           mobSpots: mobs.map(m => ({ kind: m.kind, x: m.hx, y: m.hy })),
+           wildSpots: wilds.map(w => ({ species: w.species, x: w.x, y: w.y })),
+           /* featureIndex is a top-level `let`, so it never lands on window —
+              the harness can only see the per-cluster runic vein from here. */
+           ruinVeins: RUINS.filter(r => {
+             const f = featureIndex.get(r.x + "," + (r.y - 1));
+             return !!f && f.type === "runic";
+           }).length,
+           ruinPieceSpots: ruinPieces.map(p => ({ k: p.k, x: p.x, y: p.y })) };
 }
 /* v12 roster — seven bible-accurate species (Fox/Fawn/Owl retired).
    flier: circling hover-follow at `alt` px. nightOnly: hidden + untameable by
@@ -742,15 +770,74 @@ function placeLandmarks() {
     if (Math.hypot(MOUNT.x - SPAWN.x, MOUNT.y - SPAWN.y) > SAFE_RADIUS + 36 &&
         Math.hypot(MOUNT.x - VOLCANO.x, MOUNT.y - VOLCANO.y) > 78) break;
   }
-  for (let attempt = 0; attempt < 12; attempt++) {
-    const a3 = (hash2(3 + attempt, 3, worldSeed)) * Math.PI * 2;
-    RUIN = { x: Math.round(TOWER.x + Math.cos(a3) * 57), y: Math.round(TOWER.y + Math.sin(a3) * 57) };
-    if (Math.hypot(RUIN.x - SPAWN.x, RUIN.y - SPAWN.y) > SAFE_RADIUS + 24 &&
-        Math.hypot(RUIN.x - VOLCANO.x, RUIN.y - VOLCANO.y) > 42 &&
-        Math.hypot(RUIN.x - MOUNT.x, RUIN.y - MOUNT.y) > 42) break;
-  }
   const clamp = p => { p.x = Math.max(36, Math.min(N - 36, p.x)); p.y = Math.max(36, Math.min(N - 36, p.y)); };
-  clamp(VOLCANO); clamp(MOUNT); clamp(RUIN);
+  clamp(VOLCANO); clamp(MOUNT);
+  placeRuinsAndZones();
+}
+
+/* v20 placement constants. The separations from SPAWN/VOLCANO/MOUNT are the
+   v19 Ruin's own numbers, unchanged. */
+const RUIN_COUNT = 6, ZONE_COUNT = 4;
+const RUIN_FOOT = 4.5;      // carve radius of one Ruin cluster (v19 value)
+const ZONE_R = 8;           // a Safe Zone's grass clearing AND its protected radius
+const RUIN_SEP = 40;        // Ruin-to-Ruin
+const ZONE_SEP = 40;        // Zone-to-Zone and Zone-to-SPAWN/TOWER/VOLCANO/MOUNT
+const RUIN_ZONE_SEP = 24;   // Ruin-to-Zone
+
+/* Land fitness for placement. This MUST use elevRaw() and never biomeAt():
+   placeLandmarks() runs before tileCache.clear(), so a biomeAt() call here
+   permanently bakes a pre-Ruin, pre-Zone biome into the cache for every tile
+   it touches, and the later RUINB carve (or a Zone's grass clearing) then
+   silently never appears on those tiles. elevRaw() is pure noise with no
+   cache and is safe to call at this point. 0.44 <= e < 0.84 is the solid-
+   ground band: above SAND (0.42) and below PEAK (0.86), with margin. */
+function isPlaceableLand(tx, ty) {
+  const e = elevRaw(tx, ty);
+  return e >= 0.44 && e < 0.84;
+}
+
+/* Six Ruin clusters and four Other Safe Zones, both scattered with the
+   wilds/mobs hashed-sampling pattern — hash2(a, offset, worldSeed + seed) * N
+   — NOT the angle-and-radius-from-Tower technique the single v19 Ruin used.
+
+   One fixed hash stream per structure type, swept once. The wilds/mobs
+   pattern folds `placed` into the hash offset, which restarts the candidate
+   stream from a = 0 every time one lands; under the Ruins' much tighter
+   constraints that re-seeding is what exhausted the search on the sixth
+   cluster. A valid sixth spot always existed — this was the search running
+   out, not a real placement conflict — so not re-seeding is the fix, and it
+   is a smaller change than widening the budget further. */
+function placeRuinsAndZones() {
+  RUINS = [];
+  OTHER_SAFE_ZONES = [];
+  const H = (ax, ay, p) => Math.hypot(ax - p.x, ay - p.y);
+  const inBounds = (tx, ty) => tx >= 36 && tx <= N - 36 && ty >= 36 && ty <= N - 36;
+  for (let a = 0; a < 60000 && RUINS.length < RUIN_COUNT; a++) {
+    const tx = Math.floor(hash2(a, 61, worldSeed + 7717) * N);
+    const ty = Math.floor(hash2(a, 67, worldSeed + 7723) * N);
+    if (!inBounds(tx, ty) || !isPlaceableLand(tx, ty)) continue;
+    if (H(tx, ty, SPAWN) <= SAFE_RADIUS + 24) continue;
+    if (H(tx, ty, VOLCANO) <= 42) continue;
+    if (H(tx, ty, MOUNT) <= 42) continue;
+    if (RUINS.some(r => H(tx, ty, r) <= RUIN_SEP)) continue;
+    RUINS.push({ x: tx, y: ty });
+  }
+  for (let a = 0; a < 60000 && OTHER_SAFE_ZONES.length < ZONE_COUNT; a++) {
+    const tx = Math.floor(hash2(a, 71, worldSeed + 8837) * N);
+    const ty = Math.floor(hash2(a, 73, worldSeed + 8849) * N);
+    if (!inBounds(tx, ty) || !isPlaceableLand(tx, ty)) continue;
+    if (H(tx, ty, SPAWN) <= ZONE_SEP) continue;
+    if (H(tx, ty, TOWER) <= ZONE_SEP) continue;
+    if (H(tx, ty, VOLCANO) <= ZONE_SEP) continue;
+    if (H(tx, ty, MOUNT) <= ZONE_SEP) continue;
+    if (OTHER_SAFE_ZONES.some(z => H(tx, ty, z) <= ZONE_SEP)) continue;
+    /* 24, not 40: at 40 six Ruins and four Zones are mutually impossible on
+       this island's real habitable area (confirmed by an exhaustive per-tile
+       scan). 24 still keeps a Zone's centre ~20 tiles clear of a Ruin's
+       actual 4.5-tile footprint. */
+    if (RUINS.some(r => H(tx, ty, r) <= RUIN_ZONE_SEP)) continue;
+    OTHER_SAFE_ZONES.push({ x: tx, y: ty });
+  }
 }
 
 function elevRaw(tx, ty) {
@@ -814,10 +901,17 @@ function biomeAt(tx, ty) {
   }
   // Transition buffer: no stark white snow flush against volcanic rock
   if (b === B.PEAK && dV < 42) b = B.ROCK;
-  if (Math.hypot(tx - RUIN.x, ty - RUIN.y) < 4.5 && !BLOCKED.has(b) && b !== B.WATER) b = B.RUINB;
+  /* v20: the RUINB carve now loops every cluster, same radius and same guards */
+  if (!BLOCKED.has(b) && b !== B.WATER &&
+      RUINS.some(r => Math.hypot(tx - r.x, ty - r.y) < RUIN_FOOT)) b = B.RUINB;
 
   // FIX (skill list): safe zone is plain green grass — full override, all biomes
   if (dS < SAFE_RADIUS + 6 && b !== B.PLAINS) b = B.PLAINS;
+  /* v20: every scattered Safe Zone gets the same plain-grass clearing, with
+     the Ruin carve's guards so it can never paint grass over open water or a
+     blocked tile. */
+  if (b !== B.PLAINS && !BLOCKED.has(b) && b !== B.WATER &&
+      OTHER_SAFE_ZONES.some(z => Math.hypot(tx - z.x, ty - z.y) < ZONE_R)) b = B.PLAINS;
   if (dTower < 4.5 && (BLOCKED.has(b) || b === B.WATER || b === B.ROCK || b === B.VOLROCK)) b = B.PLAINS;
 
   // Shallow-water halo where sea touches land (Islanders coastline glow)
@@ -873,6 +967,11 @@ function rawHeight(tx, ty) {
     if (b === B.LAVA) h = 1;           // lava pit inside the rim
     // Safe zone and tower footing stay level ground
     if (Math.hypot(tx - SPAWN.x, ty - SPAWN.y) < SAFE_RADIUS + 6) h = 0;
+    /* v20: a scattered Safe Zone's clearing is level ground too — its well
+       straddling a stepped cliff face would not read as a clearing. Setting
+       h = 0 here also puts the whole clearing below the h >= 1 edge-erosion
+       branch in heightAt(), so no exemption is needed there. */
+    if (OTHER_SAFE_ZONES.some(z => Math.hypot(tx - z.x, ty - z.y) < ZONE_R)) h = 0;
     if (Math.hypot(tx - TOWER.x, ty - TOWER.y) < 4.5) h = Math.min(h, 1);
   }
   rawHCache.set(key, h);
@@ -984,9 +1083,9 @@ function buildFeatureList() {
       }
     }
   }
-  // One deliberate runic vein placed among the ruins
-  {
-    const tx = RUIN.x, ty = RUIN.y - 1;
+  // One deliberate runic vein placed among the ruins — v20: one per cluster
+  for (const R of RUINS) {
+    const tx = R.x, ty = R.y - 1;
     const key = tx + "," + ty;
     if (!minedNodes.has(key)) {
       const feat = { type: "runic", x: tx + 0.3, y: ty + 0.4, tx, ty, key, h: 0.7 };
@@ -1098,14 +1197,20 @@ function buildFeatureList() {
       placed++;
     }
   }
-  buildRuinPieces();
+  /* v20: one shared ruinPieces array, one cluster appended per Ruin centre. */
+  ruinPieces = [];
+  for (const R of RUINS) buildRuinCluster(R);
+  /* v20: each Other Safe Zone is anchored by the existing ruin "well" set
+     piece — the same stone well art, reused, no new drawing code. */
+  for (const z of OTHER_SAFE_ZONES) ruinPieces.push({ k: "well", x: z.x, y: z.y });
 }
 
 /* Hand-composed ancient ruin (2026-07-11): a few large broken structures,
    deliberately arranged, open ground between them — not random rubble. */
-function buildRuinPieces() {
-  ruinPieces = [];
-  const R = RUIN;
+/* v20: was buildRuinPieces() building the one RUIN. Same composition, now
+   built per centre and appended to the shared array — the caller resets it. */
+function buildRuinCluster(center) {
+  const R = center;
   // Broken wall run along the north side, one gap, uneven heights
   const wallSegs = [[-2.4, -2.2], [-1.4, -2.2], [-0.4, -2.2], [1.6, -2.2], [2.6, -2.2]];
   wallSegs.forEach(([ox, oy], i) => {
@@ -1125,6 +1230,11 @@ function buildRuinPieces() {
   ruinPieces.push({ k: "col", x: R.x + 0.2, y: R.y + 2.3, hp: 12 });
   // v8: stone well in the open ground — furniture, not a composition change
   ruinPieces.push({ k: "well", x: R.x - 0.6, y: R.y + 0.1 });
+  /* v20: dark entrance set into the gap in the north wall run (segments sit
+     at x -2.4/-1.4/-0.4 and 1.6/2.6, so +0.6 is the gap). Bible: "Ruins —
+     ... dungeon entrances". Visual only — nothing behind it is enterable in
+     this version. */
+  ruinPieces.push({ k: "entrance", x: R.x + 0.6, y: R.y - 2.2 });
 }
 function removeFeature(key) {
   const f = featureIndex.get(key);
@@ -2120,7 +2230,13 @@ async function tryPickup(item) {
 /* =========================================================
    COMBAT (unchanged)
    ========================================================= */
-function inSafeZone(x, y) { return Math.hypot(x - SPAWN.x, y - SPAWN.y) < SAFE_RADIUS; }
+function inSafeZone(x, y) {
+  if (Math.hypot(x - SPAWN.x, y - SPAWN.y) < SAFE_RADIUS) return true;
+  /* v20: the bible's scattered Other Safe Zones protect exactly their grass
+     clearing — one radius for both, so the visible green circle IS the safe
+     area with no invisible margin either way. */
+  return OTHER_SAFE_ZONES.some(z => Math.hypot(x - z.x, y - z.y) < ZONE_R);
+}
 
 function tryAttack(aimX, aimY) {
   if (dead) return;
@@ -3144,6 +3260,11 @@ function drawEssenceNode(f, t) {
 }
 /* Hand-composed ruin pieces (2026-07-11): deliberate broken architecture */
 const RUINSTONE = "#d2c9b2";
+/* v20: the dungeon entrance is the same ruin stone taken down in value —
+   darker than every other piece in the cluster, which is what makes the
+   entrance read as a way in rather than more broken wall. */
+const RUINDARK = "#8f8878";
+const RUINLINTEL = "#9c9484";
 function drawRuinPiece(p) {
   const [sx, sy] = worldToScreen(p.x, p.y, groundZ(p.x, p.y));
   if (p.k === "wallX") {
@@ -3198,6 +3319,30 @@ function drawRuinPiece(p) {
     ctx.lineTo(rx, ry + 3);
     ctx.closePath();
     ctx.fill();
+  } else if (p.k === "entrance") {
+    /* v20 dungeon entrance: two jambs carrying a lintel, with a flat
+       near-black trapezoid mouth between them — the tallest piece in a
+       cluster at ~34px (≈3 tiles at IH2 = 11). Darkened ruin stone, so it
+       reads as the same architecture gone deeper and colder. Hard-edged
+       flat fills only, no gradient — the mouth is dark because it is a
+       dark colour, not because it is blurred. */
+    const JW = 0.24, JD = 0.30, JH = 30, GAP = 0.52;
+    drawShadow(sx, sy, 34, JH);
+    // mouth first: the jambs and lintel then overlap its edges
+    const gz = groundZ(p.x, p.y);
+    const [mx0, my0] = worldToScreen(p.x - GAP, p.y, gz);
+    const [mx1, my1] = worldToScreen(p.x + GAP, p.y, gz);
+    ctx.fillStyle = "#14161c";
+    ctx.beginPath();
+    ctx.moveTo(mx0, my0);
+    ctx.lineTo(mx1, my1);
+    ctx.lineTo(mx1 - 2, my1 - JH);
+    ctx.lineTo(mx0 + 2, my0 - JH);
+    ctx.closePath();
+    ctx.fill();
+    drawBox(p.x - GAP, p.y, JW, JD, JH, RUINDARK);
+    drawBox(p.x + GAP, p.y, JW, JD, JH, RUINDARK);
+    drawBox(p.x, p.y, GAP * 2 + JW, JD * 0.85, 6, RUINLINTEL, JH);
   }
 }
 

@@ -7,7 +7,7 @@ directly, do not assume or invent anything it doesn't state.
 ## Layout
 
 ```
-runehaven.html              the game — currently v19 (v20 in progress)
+runehaven.html              the game — currently v20
 runehaven-art-style/         SKILL.md — read this before ANY rendering change
 debug/run2.js                quick login-screen smoke test
 debug/run3.js                REQUIRED full-boot harness (real login, 5 frames)
