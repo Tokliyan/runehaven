@@ -224,6 +224,32 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('undercave tiles baked this seed:', cave);
       if (!cave) { console.log('COVERAGE GAP: no B.UNDERCAVE tile — cave ground art never drew'); process.exit(1); }
     }
+    /* v20: the Ruin set pieces. Every cluster is now placed far out in the
+       world by a hashed sweep, so the 5-frame boot is not guaranteed to have
+       any of them on camera — exactly the gap this sweep exists to close.
+       EXTEND RUINPIECE_LIST whenever a new set-piece kind ships. */
+    if (window.drawRuinPiece && window.debugWorldInfo) {
+      const RUINPIECE_LIST = ['wallX', 'wallY', 'col', 'lintelY', 'fallen',
+                              'rubble', 'well', 'entrance'];          // v20: entrance
+      const info5 = window.debugWorldInfo();
+      const base = (info5.RUINS && info5.RUINS[0]) || { x: 60, y: 60 };
+      for (const k of RUINPIECE_LIST) {
+        window.drawRuinPiece({ k, x: base.x + 0.6, y: base.y + 0.4, hp: 22, z: 28 });
+        n += 1;
+      }
+      // every kind the live world actually built, at its real coordinates
+      for (const p of (info5.ruinPieceSpots || [])) {
+        window.drawRuinPiece({ k: p.k, x: p.x, y: p.y, hp: 22, z: 28 });
+        n += 1;
+      }
+      const built = new Set((info5.ruinPieceSpots || []).map(p => p.k));
+      for (const k of RUINPIECE_LIST) {
+        if (!built.has(k)) {
+          console.log(`COVERAGE GAP: no "${k}" ruin piece was built in the live world`);
+          process.exit(1);
+        }
+      }
+    }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {
