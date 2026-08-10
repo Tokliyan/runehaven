@@ -204,7 +204,7 @@
 <div class="hud" id="hudWorld"></div>
 <div class="hud" id="hudZone">SAFE ZONE — YOU ARE PROTECTED</div>
 <div class="hud" id="hudPrompt"></div>
-<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block (shield classes) &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions</div>
+<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block (shield classes) &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions</div>
 <div id="hpBarWrap"><div id="hpBar"></div></div>
 
 <div class="panel" id="invPanel">
@@ -322,6 +322,29 @@ const ITEM_META = {
   trail_bait:   { name: "Trail Bait",    color: "#b08a52" },
   iron_armor:   { name: "Iron Armor",    color: "#c8ccd4", armor: true },
   runic_armor:  { name: "Runic Armor",   color: "#5ac8e0", armor: true },
+  /* v21: the breath-extension item. Its own equip slot (charm), separate from
+     the weapon and armor slots — see me.charm. Not a bible item: the bible
+     names no diving gear, so this is DESIGNED content from the locked v21
+     spec, deliberately built out of common materials so a new player can
+     craft one before ever reaching an Underwater Cave. */
+  divers_charm: { name: "Diver's Charm", color: "#7fd8e8", charm: true },
+};
+
+/* v21: the dive/breath mechanic's numbers. Every one of these is a designed
+   TUNABLE — the bible gives Underwater Caves and their inhabitants but no
+   breath, drown or regen values at all. BREATH_MAX/BREATH_CHARM_MAX are the
+   locked spec's 30/50; the rest are the spec's "roughly" figures. */
+const BREATH_MAX = 30;          // seconds of air, bare
+const BREATH_CHARM_MAX = 50;    // with a Diver's Charm equipped
+const BREATH_DRAIN = 1;         // per second, diving on B.DEEP only
+const BREATH_REGEN = 4;         // per second, surfaced on non-deep ground
+const DROWN_DPS = 5;            // per second once breath hits 0
+const CHARM_DIVE_REGEN = 1.5;   // hp/sec while diving with the charm equipped
+/* v21: single-slot charm, same shape as the armor slot below. Only one charm
+   exists this version; the table is what makes adding a second one a data
+   change rather than a code change. */
+const CHARMS = {
+  divers_charm: { name: "Diver's Charm", tier: "iron", maxBreath: BREATH_CHARM_MAX, diveRegen: CHARM_DIVE_REGEN },
 };
 
 /* v10: single-slot armor — flat % damage reduction, conservative on purpose */
@@ -383,6 +406,10 @@ const RECIPES = [
   { out: "trail_bait",        mats: { wood: 2, stone: 1 },                    where: "forge",   label: "Mix Trail Bait" },
   { out: "iron_armor",        mats: { iron_bar: 4, wood: 1 },                 where: "forge",   label: "Forge Iron Armor" },
   { out: "runic_armor",       mats: { runic_stone: 3, iron_bar: 2 },          where: "forge",   label: "Forge Runic Armor" },
+  /* v21: deliberately cheap and iron-tier — the Underwater Caves are gated by
+     the dive mechanic, not by a crafting wall, so the charm must be craftable
+     before you have ever been down there. No bootstrapping problem. */
+  { out: "divers_charm",      mats: { iron_bar: 2, wood: 3 },                 where: "forge",   label: "Craft Diver's Charm" },
   { out: "dragonsteel_sword", mats: { dragonsteel: 3, runic_stone: 2 },       where: "ancient", label: "Forge Dragonsteel Sword" },
 ];
 
@@ -515,7 +542,7 @@ function fbm(x, y, s) {
        + valueNoise(x / 5,  y / 5,  s + 137) * 0.18;
 }
 
-const B = { DEEP:0, WATER:1, SHALLOW:2, SAND:3, PLAINS:4, MEADOW:5, FOREST:6, DARKFOREST:7, ROCK:8, PEAK:9, VOLROCK:10, LAVA:11, RUINB:12, ENCHFOREST:13, SACMEADOW:14, UNDERCAVE:15 };
+const B = { DEEP:0, WATER:1, SHALLOW:2, SAND:3, PLAINS:4, MEADOW:5, FOREST:6, DARKFOREST:7, ROCK:8, PEAK:9, VOLROCK:10, LAVA:11, RUINB:12, ENCHFOREST:13, SACMEADOW:14, UNDERCAVE:15, UWCAVE:16 };
 /* v17: rarity thresholds for the two rare-variant biomes. These gate a SECOND,
    fully independent noise field (own seed offset, single octave) applied only
    to tiles the moisture logic has ALREADY classified — never the moisture value
@@ -536,6 +563,16 @@ const SACRED_RARITY = 0.74;    // Meadow -> Sacred Meadow
    biome — rare enough to feel found, dense enough to host two species.
    See the worldgen sanity check in debug/run4.js. */
 const UNDERCAVE_RARITY = 0.80;  // ROCK/PEAK -> Underground Caves
+/* v21: same mechanism a FOURTH time — Underwater Caves are a rare pocket
+   variant of B.DEEP, on their own independent field and seed offset. Carved
+   from DEEP specifically, not WATER: DEEP is the one water tile that is
+   actually in BLOCKED, which is what keeps the bible's "deep underwater
+   caves" framing and gates the whole biome behind the dive mechanic.
+   B.UWCAVE is deliberately NOT added to BLOCKED — that alone makes the cave
+   pocket itself walkable, exactly like every prior biome-pocket, while the
+   ring of ordinary DEEP around it stays blocked. Tunable; see the worldgen
+   sanity check in debug/run4.js. */
+const UWCAVE_RARITY = 0.82;     // DEEP -> Underwater Caves
 /* v17: harness hook — biome ids are lexically scoped consts, so the debug
    harnesses need a function-declared accessor to assert against them. */
 function debugWorldInfo() {
@@ -567,7 +604,28 @@ function debugWorldInfo() {
              const f = featureIndex.get(r.x + "," + (r.y - 1));
              return !!f && f.type === "runic";
            }).length,
-           ruinPieceSpots: ruinPieces.map(p => ({ k: p.k, x: p.x, y: p.y })) };
+           ruinPieceSpots: ruinPieces.map(p => ({ k: p.k, x: p.x, y: p.y })),
+           /* v21: the dive mechanic's live state and its constants. `me` is a
+              top-level `let` like every other one of these, so a harness has
+              no other way to see the breath values it has to prove. Copy. */
+           BREATH_MAX, BREATH_CHARM_MAX, BREATH_DRAIN, BREATH_REGEN, DROWN_DPS,
+           UWCAVE_RARITY, CHARMS,
+           player: me ? { x: me.x, y: me.y, hp: me.hp, maxHp: me.maxHp,
+                          diving: !!me.diving, breath: me.breath,
+                          maxBreath: me.maxBreath, charm: me.charm || null,
+                          inv: Object.assign({}, me.inv) } : null };
+}
+/* v21: harness hook — the counterpart to the read-only export above. PART F
+   has to prove the dive gate end to end (in and out of B.DEEP, breath draining
+   only where it should, damage landing through the real path), and none of
+   that is reachable without being able to place the player. Only these fields
+   are settable, and only ones the game itself already writes every frame. */
+function debugSetPlayer(patch) {
+  if (!me || !patch) return null;
+  for (const k of ["x", "y", "hp", "diving", "breath", "maxBreath", "charm"]) {
+    if (k in patch) me[k] = patch[k];
+  }
+  return debugWorldInfo().player;
 }
 /* v12 roster — seven bible-accurate species (Fox/Fawn/Owl retired).
    flier: circling hover-follow at `alt` px. nightOnly: hidden + untameable by
@@ -619,6 +677,18 @@ const MOBS = {
      Dungeons, which do not exist yet. */
   dark_wraith: { name: "Dark Wraith", biomes: [B.DARKFOREST], hp: 65, dmg: 12, atkRange: 4.5, atkCooldownMs: 1700, windupMs: 600, aggroRadius: 7.5, leashRadius: 13, moveSpeed: 1.45, count: 6, tameable: false,
     loot: [{ type: "runic_stone", qty: 1, chance: 0.75 }, { type: "stone", qty: 2, chance: 0.5 }] },
+  /* v21: bible — "Sea Serpent — Underwater — Hard — Rare aquatic loot". The
+     framework's standard MELEE shape (nothing about it is ranged), on the
+     locked 130 HP / 18 dmg / 700ms windup; atkRange, cooldown, aggro/leash,
+     moveSpeed, count and the loot rates are designed tunables. It lives on
+     B.UWCAVE tiles, and since ordinary B.DEEP is blocked for mobs exactly as
+     it is for players, it can never leave its cave pocket — the encounter
+     only ever happens to a player who dived in. LOOT: the bible's "rare
+     aquatic loot" has no dedicated item yet and inventing one is not this
+     version's job, so this is existing materials at a deliberately generous
+     rate, matching how hard the fight and the trip to it are. */
+  sea_serpent: { name: "Sea Serpent", biomes: [B.UWCAVE], hp: 130, dmg: 18, atkRange: 1.8, atkCooldownMs: 1900, windupMs: 700, aggroRadius: 7, leashRadius: 12, moveSpeed: 1.5, count: 3, tameable: false,
+    loot: [{ type: "runic_stone", qty: 2, chance: 0.8 }, { type: "iron_bar", qty: 2, chance: 0.9 }] },
 };
 const WEARDOWN_THRESHOLD = 0.25;   // generic fight-to-tame gate (inert in v13)
 const MOB_RESPAWN_MS = 60000;      // dev-island convenience: fights are repeatable
@@ -673,6 +743,15 @@ const WILD_SPECIES = {
      deliberately low in the same spirit as Part A's density pass. */
   fire_dragon:  { name: "Fire Dragon",  base: 0.25, flier: false, count: 3, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
   glow_moth:    { name: "Glow Moth",    base: 0.65, flier: true,  alt: 12, count: 9, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
+  /* v21: the Underwater Caves roster. Bible — "Water Dragon — Deep underwater
+     caves, tame as hatchling" — so a PASSIVE tame (hold-E channel, v12
+     formula) at the same 0.25 base as its Fire Dragon sibling, and a GROUND
+     species for exactly the same reason: dragonV2's pose plants its claws on
+     the baseline, so it inherits the walk bob, sun shadow, x+y depth sort and
+     every v16 combat overlay with no special casing. `count` is a designed
+     tunable, matched to Fire Dragon's. Mountable per the bible, but riding is
+     DEFERRED for every species alike — no riding code exists yet. */
+  water_dragon: { name: "Water Dragon", base: 0.25, flier: false, count: 3, biomes: [B.UWCAVE], bloodFavored: false, shunnedByBlood: false },
 };
 /* v16: PET COMBAT — the locked spec table (see README "v16"). The bible gives
    pet rarity, taming method and flavour but ZERO combat numbers, so every
@@ -701,6 +780,9 @@ const PET_COMBAT = {
      Common tier means NO combat role at all, the same rule as the four
      Sprites, so petCombatDef must return null for it. */
   fire_dragon: { hp: 55, dmg: 12, cdMs: 1600, pvp: true },
+  /* v21 — locked from the same v16 table, unchanged since: Rare tier, so
+     PvP-capable on Unicorn's gating, and stat-identical to Fire Dragon. */
+  water_dragon: { hp: 55, dmg: 12, cdMs: 1600, pvp: true },
 };
 const PET_ATK_RADIUS = 2.6;    // tunable: the spec's "short radius"
 const PET_DOWNED_MS = 75000;   // spec: ~75s recovery — pets are never lost
@@ -731,6 +813,36 @@ function isPvpEngaged(name) {
 const BLOCKED = new Set([B.DEEP, B.PEAK, B.LAVA]);
 const SLOW = new Set([B.WATER, B.SHALLOW, B.DARKFOREST]);
 
+/* v21: the dive exception, and the ONLY place BLOCKED is relaxed. While
+   me.diving is true, B.DEEP stops blocking the local player's own movement —
+   nothing else changes. B.PEAK and B.LAVA stay blocked whatever the dive
+   state is: this is a deep-water exception, deliberately not a general
+   noclip. Mobs, pets, projectiles and knockback all keep using BLOCKED
+   directly, so a dived player is the only thing in the world that can be out
+   there. */
+function diveBlocked(b) {
+  if (!BLOCKED.has(b)) return false;
+  return !(me && me.diving && b === B.DEEP);
+}
+/* v21: the equipped charm's definition, or null. Same shape as ARMORS[me.armor]. */
+function equippedCharm() { return (me && CHARMS[me.charm]) || null; }
+/* v21: breath ceiling — the charm is the only thing that moves it. */
+function breathMax() { const c = equippedCharm(); return c ? c.maxBreath : BREATH_MAX; }
+/* v21: F toggles diving. Surfacing while still standing ON deep water is
+   refused rather than allowed: me.diving would go false with the player on a
+   BLOCKED tile, and the very next movement check would reject every direction
+   at once — a softlock. Refusing is the explicit handling the spec asks for. */
+function toggleDive() {
+  if (!me || dead) return;
+  const here = biomeAt(Math.floor(me.x), Math.floor(me.y));
+  if (me.diving && here === B.DEEP) {
+    toast("Too deep to surface here — swim to shallower ground first");
+    return;
+  }
+  me.diving = !me.diving;
+  toast(me.diving ? "Diving — deep water is open to you (F to surface)" : "You surface");
+}
+
 /* Locked palette from the art-style skill (+ shallow-water halo) */
 const PAL = {
   [B.DEEP]:       ["#2c5a72", "#2b5870"],
@@ -755,6 +867,11 @@ const PAL = {
      parent ROCK hue with the warmth and the light taken out of it, so a cave
      pocket reads as a hole in the highland rather than another rock shade. */
   [B.UNDERCAVE]:  ["#4a453e", "#474239"],
+  /* v21: Underwater Caves — desaturated blue-grey rock. Deliberately reads as
+     ROCK that happens to be underwater, not as more water: darker and far
+     greyer than deep water's #2c5a72, and pulled cold/blue away from the
+     Underground Caves' warm #4a453e so the two cave biomes never confuse. */
+  [B.UWCAVE]:     ["#2f4a54", "#2c4650"],
 };
 
 function placeLandmarks() {
@@ -893,6 +1010,14 @@ function biomeAt(tx, ty) {
        reachable. The volcano / ruin / safe-zone overrides below still win
        over it, exactly as they do over the two v17 variants. */
     if (valueNoise(tx / 20, ty / 20, worldSeed + 1091) > UNDERCAVE_RARITY) b = B.UNDERCAVE;
+  } else if (b === B.DEEP) {
+    /* v21: Underwater Caves. Identical technique, fourth field: applied only
+       to tiles the elevation bands have ALREADY settled as DEEP, so it can
+       never encroach on any other band. Like the Underground Caves this is a
+       real walkable overworld tile — but the ring of ordinary DEEP around it
+       is in BLOCKED, so the only way onto one is the dive toggle (F). The
+       volcano / ruin / safe-zone overrides below still win over it. */
+    if (valueNoise(tx / 20, ty / 20, worldSeed + 1447) > UWCAVE_RARITY) b = B.UWCAVE;
   }
 
   const dV = Math.hypot(tx - VOLCANO.x, ty - VOLCANO.y);
@@ -943,7 +1068,11 @@ function rawHeight(tx, ty) {
   if (rawHCache.has(key)) return rawHCache.get(key);
   const b = biomeAt(tx, ty);
   let h;
-  if (b === B.DEEP || b === B.WATER || b === B.SHALLOW) h = -1;
+  /* v21: B.UWCAVE joins the water heights. It is carved out of DEEP and sits
+     on the sea floor, so it must stay at -1 like the water around it — the
+     plateau branch below would otherwise raise a cave pocket into a cliff-
+     walled island rising out of the open sea. */
+  if (b === B.DEEP || b === B.WATER || b === B.SHALLOW || b === B.UWCAVE) h = -1;
   else {
     // Coarse plateau noise -> wide blobby hills. The old fine-noise thresholds
     // produced thin one-tile contour strips whose cliff faces lined up into
@@ -1577,6 +1706,45 @@ function bakeTerrain() {
         }
       }
 
+      /* v21: Underwater Caves ground — the Underground Caves' shadow-and-
+         fissure language taken cold, plus the sparse bioluminescent accent the
+         spec asks for. The accent reuses the ENCHANTED FOREST UNDERGROWTH
+         treatment (hard-edged speck + flat square halo, baked into the tile),
+         shifted from teal to blue — deliberately NOT the drifting `mote`
+         particle kind, which marks the two rare SURFACE biomes and must not
+         leak into a third or fourth one (v18 rule, unchanged). Hard-edged flat
+         shapes only, no gradients. */
+      if (b === B.UWCAVE) {
+        c.fillStyle = "rgba(8,18,26,0.34)";                      // cold shadow pool
+        c.beginPath();
+        c.moveTo(cx, cy - IH2 * 0.62);
+        c.lineTo(cx + IW2 * 0.62, cy);
+        c.lineTo(cx, cy + IH2 * 0.62);
+        c.lineTo(cx - IW2 * 0.62, cy);
+        c.closePath();
+        c.fill();
+        c.strokeStyle = "rgba(14,28,38,0.5)";                    // fissures in the rock
+        c.lineWidth = 1;
+        for (let k = 0; k < 2; k++) {
+          const fxu = cx + (hash2(tx, ty, 202 + k) - 0.5) * IW2 * 0.8;
+          const fyu = cy + (hash2(tx, ty, 206 + k) - 0.5) * IH2 * 0.8;
+          c.beginPath();
+          c.moveTo(fxu - 3, fyu + 1);
+          c.lineTo(fxu, fyu - 1);
+          c.lineTo(fxu + 3, fyu + 2);
+          c.stroke();
+        }
+        for (let k = 0; k < 3; k++) {                            // bioluminescent accents
+          if (hash2(tx, ty, 210 + k) < 0.58) continue;
+          const gxu = cx + (hash2(tx, ty, 214 + k) - 0.5) * IW2 * 1.1;
+          const gyu = cy + (hash2(tx, ty, 218 + k) - 0.5) * IH2 * 1.1;
+          c.fillStyle = "rgba(143,232,244,0.30)";
+          c.fillRect(gxu - 1.5, gyu - 1.5, 5, 5);
+          c.fillStyle = k === 0 ? "#8fe8f4" : "#5fc4d8";
+          c.fillRect(gxu, gyu, 2, 2);
+        }
+      }
+
       // v8: single deliberate packed-earth trail, Spawn -> Spawn Forge only
       if (grassy) {
         const dTrail = distToSeg(tx + 0.5, ty + 0.5, SPAWN.x, SPAWN.y, SPAWN_FORGE.x, SPAWN_FORGE.y);
@@ -1755,6 +1923,21 @@ async function loginPlayer(username, cls) {
     }
     me = { username, cls, x: s.x, y: s.y, level: 1, hp: 100, maxHp: 100, inv: {}, equipped: null, armor: null, lastKillAt: null, shrineCdUntil: null, deadUntil: null };
   }
+  /* v21: dive/breath state, set once for BOTH the returning and the new-player
+     path. Deliberately NOT persisted: savePlayer() writes a fixed column list
+     and the players table has no columns for these, so adding them here would
+     mean a schema change this build has no way to verify. The charm itself
+     lives in the inventory, which IS persisted — only which slot it sits in is
+     session-local, exactly like starting each session surfaced and full of
+     air. Flagged in the changelog as a judgment call. */
+  me.diving = false;
+  me.charm = null;
+  me.maxBreath = BREATH_MAX;
+  me.breath = BREATH_MAX;
+  /* A stored position can now be a B.UWCAVE tile — legitimately walkable, but
+     ringed by blocked deep water. Someone who logs out in a cave comes back
+     already diving; without this they would surface into a softlock. */
+  if (biomeAt(Math.floor(me.x), Math.floor(me.y)) === B.UWCAVE) me.diving = true;
   cam.x = me.x; cam.y = me.y;
 }
 
@@ -2207,6 +2390,10 @@ async function dropAllItems() {
   me.inv = {};
   me.equipped = null;
   me.armor = null;
+  /* v21: the charm is only a slot pointer — the item itself was already
+     dropped with the inventory above, so clearing the slot is all that is
+     owed here. Pushing another drop would duplicate the item. */
+  me.charm = null;
   if (!drops.length) return;
   const { data } = await sb.from("ground_items").insert(drops).select();
   if (data) {
@@ -2359,6 +2546,42 @@ function applyDamage(dmg, from, opts = {}) {
   savePlayer();
 }
 
+/* v21: breath, drowning and the charm's dive regen — one place, driven from
+   update() every frame. Deliberately reuses what already exists: the drain is
+   plain per-second arithmetic, the regen matches the safe-zone recovery
+   convention, and running out of air routes through applyDamage() — the same
+   path mobs and players use — so armour, the safe-zone exemption, the hit
+   flash, the floating number and death itself all behave exactly as they
+   always have. There is no separate "drowning death" system. */
+let drownAcc = 0;               // accumulates dt into whole seconds of damage
+function updateBreath(dt) {
+  if (!me || dead) return;
+  me.maxBreath = breathMax();
+  if (me.breath > me.maxBreath) me.breath = me.maxBreath;
+  const here = biomeAt(Math.floor(me.x), Math.floor(me.y));
+  /* Breath only costs anything in the open deep water in BETWEEN caves. On a
+     B.UWCAVE tile — or anything else that isn't B.DEEP — it holds steady,
+     which is what turns a cave pocket into an air pocket once you reach it. */
+  if (me.diving && here === B.DEEP) {
+    me.breath = Math.max(0, me.breath - BREATH_DRAIN * dt);
+  } else if (!me.diving && here !== B.DEEP) {
+    me.breath = Math.min(me.maxBreath, me.breath + BREATH_REGEN * dt);
+  }
+  const charm = equippedCharm();
+  if (me.diving && charm && charm.diveRegen && me.hp < me.maxHp) {
+    me.hp = Math.min(me.maxHp, me.hp + charm.diveRegen * dt);
+  }
+  if (me.diving && here === B.DEEP && me.breath <= 0) {
+    drownAcc += dt;
+    while (drownAcc >= 1 && !dead) {
+      drownAcc -= 1;
+      applyDamage(DROWN_DPS, "the deep");
+    }
+  } else {
+    drownAcc = 0;
+  }
+}
+
 function enterDeath(killer, resumed) {
   dead = true;
   if (!resumed) {
@@ -2378,6 +2601,13 @@ function respawn() {
   me.hp = me.maxHp;
   me.deadUntil = null;
   dead = false;
+  /* v21: you wake at the Spawn Safe Zone surfaced and full of air. Without
+     this, drowning would respawn you still flagged as diving — on dry land,
+     where breath never refills, and free to walk straight back into deep
+     water on an empty tank. */
+  me.diving = false;
+  me.breath = me.maxBreath;
+  drownAcc = 0;
   document.getElementById("deathOverlay").style.display = "none";
   toast("You wake at the Spawn Safe Zone");
   sendMove(true);
@@ -2553,6 +2783,11 @@ function refreshPanels() {
       const a = ARMORS[type];
       html += `<div class="inv-row weapon ${me.armor === type ? "equipped" : ""} tier-${a.tier}" data-a="${type}">
         <span class="iconwrap">${ic(meta.color)}<span>${meta.name}</span></span><span class="qty">−${Math.round(a.reduce * 100)}% dmg${qty > 1 ? " ×" + qty : ""}</span></div>`;
+    } else if (meta.charm) {
+      // v21: charm slot — same row treatment as armor, its own single slot
+      const ch = CHARMS[type];
+      html += `<div class="inv-row weapon ${me.charm === type ? "equipped" : ""} tier-${ch.tier}" data-c="${type}">
+        <span class="iconwrap">${ic(meta.color)}<span>${meta.name}</span></span><span class="qty">${ch.maxBreath}s breath${qty > 1 ? " ×" + qty : ""}</span></div>`;
     } else {
       html += `<div class="inv-row"><span class="iconwrap">${ic(meta.color)}<span>${meta.name}</span></span><span class="qty">×${qty}</span></div>`;
     }
@@ -2564,6 +2799,11 @@ function refreshPanels() {
       if (el.dataset.a) {
         // v10: armor slot toggle, separate from the weapon slot
         me.armor = me.armor === el.dataset.a ? null : el.dataset.a;
+      } else if (el.dataset.c) {
+        // v21: charm slot toggle, separate from both
+        me.charm = me.charm === el.dataset.c ? null : el.dataset.c;
+        me.maxBreath = breathMax();
+        me.breath = Math.min(me.breath, me.maxBreath);
       } else {
         const w = el.dataset.w;
         me.equipped = w === "fists" ? null : w;
@@ -2584,8 +2824,11 @@ function refreshPanels() {
     const whereTxt = r.where === "ancient" ? "The Ancient Forge (beyond this region)" : "Spawn Forge";
     const w = WEAPONS[r.out];
     const ar = ARMORS[r.out];
-    const tierCls = w ? "tier-" + w.tier : ar ? "tier-" + ar.tier : "";
-    const statTxt = w ? ` <span class="qty">(${w.dmg} dmg)</span>` : ar ? ` <span class="qty">(−${Math.round(ar.reduce * 100)}% dmg taken)</span>` : "";
+    const ch = CHARMS[r.out];        // v21
+    const tierCls = w ? "tier-" + w.tier : ar ? "tier-" + ar.tier : ch ? "tier-" + ch.tier : "";
+    const statTxt = w ? ` <span class="qty">(${w.dmg} dmg)</span>`
+      : ar ? ` <span class="qty">(−${Math.round(ar.reduce * 100)}% dmg taken)</span>`
+      : ch ? ` <span class="qty">(${ch.maxBreath}s breath, heals while diving)</span>` : "";
     return `<div class="craft-row ${tierCls}">
       <div>${r.label}${statTxt}</div>
       <div class="mats">${mats}</div>
@@ -2614,6 +2857,7 @@ addEventListener("keydown", e => {
   if (k === "i") { invPanel.style.display = invPanel.style.display === "block" ? "none" : "block"; refreshPanels(); }
   if (k === "c") { craftPanel.style.display = craftPanel.style.display === "block" ? "none" : "block"; refreshPanels(); }
   if (k === "p") { petPanel.style.display = petPanel.style.display === "block" ? "none" : "block"; refreshPetPanel(); }
+  if (k === "f" && !e.repeat) toggleDive();                 // v21: dive toggle
   if (k === "shift") sendMove(true);                        // v10: block pose on
 });
 addEventListener("keyup", e => {
@@ -2667,8 +2911,12 @@ function update(dt, t) {
       const spd = PLAYER_SPEED * (SLOW.has(here) ? 0.55 : 1) * (isBlocking() ? 0.5 : 1);
       const nx = me.x + (dx / len) * spd * dt;
       const ny = me.y + (dy / len) * spd * dt;
-      if (!BLOCKED.has(biomeAt(Math.floor(nx), Math.floor(me.y)))) me.x = nx;
-      if (!BLOCKED.has(biomeAt(Math.floor(me.x), Math.floor(ny)))) me.y = ny;
+      /* v21: the one movement gate the dive toggle touches — diveBlocked()
+         is BLOCKED with the single B.DEEP exception while me.diving is true.
+         Peaks and lava are unaffected, and every other BLOCKED check in the
+         file (knockback, mobs, pets, projectiles, spawn search) is untouched. */
+      if (!diveBlocked(biomeAt(Math.floor(nx), Math.floor(me.y)))) me.x = nx;
+      if (!diveBlocked(biomeAt(Math.floor(me.x), Math.floor(ny)))) me.y = ny;
       me.x = Math.max(1, Math.min(N - 1, me.x));
       me.y = Math.max(1, Math.min(N - 1, me.y));
       sendMove(false);
@@ -2676,6 +2924,7 @@ function update(dt, t) {
     if (inSafeZone(me.x, me.y) && me.hp < me.maxHp) {
       me.hp = Math.min(me.maxHp, me.hp + 2.5 * dt);
     }
+    updateBreath(dt);          // v21: dive breath / drowning / charm regen
   } else if (me.deadUntil && Date.now() >= me.deadUntil) {
     respawn();
   }
@@ -3953,9 +4202,10 @@ const SPECIES_K = {
   stag: 1.15, unicorn: 1.30, lightfox: 1.05,          // v17 reference-sheet ratios
   boar: 1.12, bear: 1.60, griffin: 1.26, phoenix: 1.02,
   fire_dragon: 1.30, glow_moth: 0.32,                 // v18
+  water_dragon: 1.30,                                 // v21: Fire Dragon's ratio, same body
 };
-const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94, dark_wraith: 1.30 };
-const MOB_TALL = { troll: 22, bandit: 4, bear: 5, griffin: 8, phoenix: 6, dark_wraith: 4 };
+const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94, dark_wraith: 1.30, sea_serpent: 2.60 };
+const MOB_TALL = { troll: 22, bandit: 4, bear: 5, griffin: 8, phoenix: 6, dark_wraith: 4, sea_serpent: 15 };
 
 const KIT = {
   Ranger:      { trim: "#2e4a22", accent: "#c8b078", cloth: "#5a4a30" },
@@ -4361,6 +4611,51 @@ function drawMob(m, t) {
       const ph = (t / 800 + i * 0.34) % 1;
       ctx.fillStyle = `rgba(150,110,220,${0.55 * (1 - ph)})`;
       ctx.fillRect((0) - 7 + i * 7, (0) - 14 - ph * 12 + drift, 1.6, 1.6);
+    }
+
+  } else if (m.kind === "sea_serpent") {
+
+    /* v21: approved concept art, ported verbatim — not redrawn or
+       reinterpreted. Only the v15 port convention is applied: the sheet's
+       `sx`/`sy` become `(0)`, because this chain runs inside drawMob's body
+       transform (translate to sx,sy then scale by MOB_K), exactly as goblin /
+       troll / bandit / dark_wraith already do. A long low body with two
+       cresting coils, so it reads as a serpent breaking the surface of the
+       cave pool rather than as another upright humanoid. */
+    const w1 = Math.sin(t / 420) * 1.6, w2 = Math.sin(t / 420 + 1.2) * 1.6;
+    P(ctx, [(0) - 22, (0), (0) - 19, (0) - 6 + w1, (0) - 13, (0) - 6.4 + w1, (0) - 10, (0)], "#2f7c8c");
+    P(ctx, [(0) - 19, (0) - 6 + w1, (0) - 13, (0) - 6.4 + w1, (0) - 14, (0) - 2], "#1e5a68");
+    P(ctx, [(0) - 9, (0), (0) - 6, (0) - 7 + w2, (0) + 1, (0) - 7.4 + w2, (0) + 4, (0)], "#3f9aa8");
+    P(ctx, [(0) - 6, (0) - 7 + w2, (0) + 1, (0) - 7.4 + w2, (0) - 1, (0) - 2], "#25687a");
+    SCL(ctx, (0) - 20, (0) - 5.4 + w1, 8, 4, "#25687a", 2.2);
+    SCL(ctx, (0) - 7, (0) - 6.4 + w2, 9, 4.6, "#2a7284", 2.2);
+    for (let i = 0; i < 3; i++) {
+      P(ctx, [(0) - 18 + i * 2.6, (0) - 6 + w1, (0) - 19 + i * 2.6, (0) - 10.4 + w1, (0) - 16 + i * 2.6, (0) - 6.2 + w1], "#9fe0ec");
+    }
+    for (let i = 0; i < 3; i++) {
+      P(ctx, [(0) - 5 + i * 2.6, (0) - 7 + w2, (0) - 6 + i * 2.6, (0) - 11.6 + w2, (0) - 3 + i * 2.6, (0) - 7.2 + w2], "#9fe0ec");
+    }
+    P(ctx, [(0) - 23, (0) - 1.4, (0) - 29.4, (0) - 5.4 + Math.sin(t / 380) * 2, (0) - 22.4, (0) - 5], "#2f7c8c");
+    P(ctx, [(0) - 29.4, (0) - 5.4 + Math.sin(t / 380) * 2, (0) - 33.4, (0) - 2 + Math.sin(t / 380) * 2, (0) - 30, (0) - 9 + Math.sin(t / 380) * 2], "#9fe0ec");
+    P(ctx, [(0) + 1.4, (0) - 7, (0) + 3.4, (0) - 19.4, (0) + 7, (0) - 19, (0) + 5.4, (0) - 6.4], "#3f9aa8");
+    P(ctx, [(0) + 5.4, (0) - 19, (0) + 7, (0) - 19, (0) + 6.4, (0) - 6.6], "#25687a");
+    for (let i = 0; i < 4; i++) {
+      P(ctx, [(0) + 3.2 - i * 0.2, (0) - 17.4 + i * 2.6, (0) + 1.4 - i * 0.2, (0) - 19.4 + i * 2.6, (0) + 3.6 - i * 0.2, (0) - 15.4 + i * 2.6], "#9fe0ec");
+    }
+    P(ctx, [(0) + 3.2, (0) - 19.8, (0) + 11, (0) - 21.2, (0) + 11.4, (0) - 15.6, (0) + 3.4, (0) - 14.8], "#4aa8b6");
+    P(ctx, [(0) + 11, (0) - 21.2, (0) + 11.4, (0) - 15.6, (0) + 7, (0) - 15.4], "#25687a");
+    P(ctx, [(0) + 11.2, (0) - 20.2, (0) + 16.4, (0) - 18.2, (0) + 11.4, (0) - 16.2], "#3f9aa8");
+    ctx.fillStyle = "#f4f0e0";
+    for (let i = 0; i < 4; i++) ctx.fillRect((0) + 12 + i * 1.3, (0) - 17.2, 0.8, 1.4);
+    P(ctx, [(0) + 3.8, (0) - 21, (0) + 9.6, (0) - 22.2, (0) + 9.2, (0) - 20, (0) + 4, (0) - 19.4], "#67c2d0");
+    EY(ctx, (0) + 8.4, (0) - 19.8, 1.5, "#eafcff", "#0e3a44");
+    P(ctx, [(0) + 4, (0) - 22, (0) + 2.2, (0) - 27.4, (0) + 6, (0) - 22.6], "#9fe0ec");
+    P(ctx, [(0) + 6, (0) - 22.6, (0) + 7.4, (0) - 28.4, (0) + 9.4, (0) - 22], "#bfeef6");
+    P(ctx, [(0) + 9.4, (0) - 22, (0) + 12, (0) - 26.4, (0) + 11.4, (0) - 21], "#9fe0ec");
+    for (let i = 0; i < 3; i++) {
+      const ph = (t / 900 + i * 0.34) % 1;
+      ctx.strokeStyle = `rgba(200,240,250,${0.5 * (1 - ph)})`; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.arc((0) + 14 + i * 3, (0) - 22 - ph * 10, 1.4, 0, Math.PI * 2); ctx.stroke();
     }
 
   } else {
@@ -4969,6 +5264,13 @@ function drawSpecies(species, sx, sy, t, moving) {
 
     dragonV2(sx, sy, DRAGON_PAL.fire, t, "fire");
 
+  } else if (species === "water_dragon") {
+
+    /* v21: the whole art requirement. dragonV2 and DRAGON_PAL.water were both
+       pre-staged in v18 and are already proven by Fire Dragon's identical
+       branch — a new dragon is one line, not new art. */
+    dragonV2(sx, sy, DRAGON_PAL.water, t, "water");
+
   } else if (species === "glow_moth") {
 
     const g = ctx.createRadialGradient(sx, sy - 10, 1, sx, sy - 10, 17);
@@ -5094,6 +5396,22 @@ function drawWild(w, t) {
   }
 }
 
+/* v21: dive-state cue — a few pale bubbles rising off the diver and fading.
+   This is the SEA SERPENT's bubble treatment reused (thin stroked ring, no
+   fill, no gradient), deliberately not the `mote` particle kind, which marks
+   the rare surface biomes and must not spread. */
+function diveCue(sx, sy, t) {
+  ctx.lineWidth = 0.9;
+  for (let i = 0; i < 3; i++) {
+    const ph = (t / 900 + i * 0.34) % 1;
+    ctx.strokeStyle = `rgba(200,240,250,${(0.55 * (1 - ph)).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.arc(sx - 4 + i * 4 + Math.sin(t / 300 + i * 2) * 1.6, sy - 10 - ph * 14,
+            1.2 + i * 0.3, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
 function drawPlayerEntity(p, name, t, isMe) {
   const z = groundZ(p.x, p.y);
   const [sx, sy] = worldToScreen(p.x, p.y, z);
@@ -5132,6 +5450,10 @@ function drawPlayerEntity(p, name, t, isMe) {
       ctx.fillRect(sx - 5 + i * 9 + Math.sin(t / 250 + i * 3) * 2, sy - 8 - ph * 12, 2.4, 2.4);
     }
   }
+
+  // v21: the dive-state cue — local player only, since no other player's
+  // dive state is synced (same rule as the v16 combat overlays).
+  if (isMe && me.diving) diveCue(sx, sy - bob, t);
 
   /* v9 AURA FIX: tier effects previously drew BEFORE the unit, so the unit's
      own sun-shadow ellipse painted over them at the same spot — auras never
@@ -5790,6 +6112,12 @@ function updateHUD(dayT) {
       ? `<br><span style="color:#bee078">Shrine blessing ${fmtLeft(tameBuffUntil)}</span>` : "") +
     (bloodDecayFrac() > 0
       ? `<br><span style="color:#d0604c">Blooded +${Math.round(15 * bloodDecayFrac())}% (Shadowfox)</span>` : "") +
+    /* v21: the breath readout appears only when it means something — while
+       diving, or while it is still refilling after a dive. */
+    (me.diving || me.breath < me.maxBreath
+      ? `<br><span style="color:${me.breath <= 0 ? "#ff7a68" : "#7fd8e8"}">` +
+        `Breath ${Math.ceil(me.breath)}/${me.maxBreath}${me.diving ? " — diving" : ""}` +
+        `${me.breath <= 0 ? " — DROWNING" : ""}</span>` : "") +
     petHudLine();
 
   const phase = dayT < 0.25 ? "Morning" : dayT < 0.5 ? "Afternoon" : dayT < 0.62 ? "Dusk" : "Night";

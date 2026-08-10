@@ -55,6 +55,143 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-10 (v21 — Underwater Caves, the dive mechanic, Water Dragon, Sea Serpent)
+A fourth rare biome pocket, two new creatures, and the first time the player
+can be somewhere the world previously refused to let them stand. Breath
+numbers, drowning damage, the Diver's Charm recipe and both creatures' combat
+stats live in the README + commit message; below is only how it all looks.
+- **Underwater Caves** (rare DEEP variant, `B.UWCAVE`). Palette
+  `#2f4a54 / #2c4650` — the point is that it reads as **rock that happens to
+  be underwater**, not as more sea. Far greyer and darker than deep water's
+  `#2c5a72`, and pulled cold/blue away from the Underground Caves' warm
+  `#4a453e`, so the two cave biomes can never be mistaken for one another.
+- Cave floor is the v18 cave language taken cold: a dark inner diamond
+  (`rgba(8,18,26,0.34)`), two hard fissure strokes, and up to three
+  **bioluminescent accents** — hard-edged blue speck (`#8fe8f4` / `#5fc4d8`)
+  over a flat square halo. **That accent is the ENCHANTED FOREST UNDERGROWTH
+  treatment recoloured, deliberately NOT the drifting `mote` particle kind.**
+  Motes mark the two rare *surface* biomes (v17) and the v18 rule that they
+  must not spread to a third stands — this is the *baked* glow language, which
+  was always a separate thing. Do not merge them.
+- **A cave pocket sits at sea-floor height (`h = -1`), like the water around
+  it.** Without that it would fall through to the plateau-noise branch and
+  rise out of the open ocean as a cliff-walled island — the exact opposite of
+  the read. It also means a UWCAVE tile never draws a cliff face, which is
+  correct: the caves are a hole in the sea, not a step in the land.
+- **The surrounding deep water is unchanged and still blocked.** That is the
+  whole composition: an ordinary-looking stretch of dark sea that you now
+  discover has somewhere inside it. Nothing marks a pocket from the surface —
+  found, not signposted.
+- **Water Dragon is one line of art, not new art.** `dragonV2()` and
+  `DRAGON_PAL.water` were both pre-staged in v18 (including the water
+  variant's fin flashes and rising bubbles), so the branch is
+  `dragonV2(sx, sy, DRAGON_PAL.water, t, "water")` and nothing else. A ground
+  species for the same reason Fire Dragon is — the shared body plants its
+  claws on the baseline — so it inherits the walk bob, sun shadow, x+y depth
+  sort and every v16 combat overlay with no special casing. `SPECIES_K` 1.30,
+  identical to its fire sibling. This is what pre-staging the palette bought.
+- **Sea Serpent**: approved concept art ported verbatim, not redrawn — only
+  the v15 port convention applied (`sx`/`sy` → `(0)`, since drawMob's chain
+  runs inside the body transform, exactly as goblin/troll/bandit/wraith do).
+  Two cresting coils with phase-offset wave motion, dorsal spine spikes, a
+  reared neck and finned head, and its own rising bubbles. `MOB_K` **2.60** —
+  by far the largest thing in the roster — with `MOB_TALL` 15, a low-profile
+  body whose overlays sit above the reared head rather than the coils.
+- **Diving cue: three pale bubbles rising off the local player and fading.**
+  Local-player only, like every v16 combat overlay, because no other player's
+  dive state is synced. It reuses the Sea Serpent's own bubble treatment (thin
+  stroked ring, no fill, no gradient) rather than inventing an effect, and it
+  is deliberately not a mote.
+- **HUD gains a breath readout**, and only when it means something — while
+  diving, or while it is still refilling afterwards. It turns red and reads
+  DROWNING at zero. `F` is now in the help line.
+- **⚠️ Nothing renders differently underwater.** There is no blue wash, no
+  darkening, no surface line above the diver — a diving player is drawn
+  exactly as a walking one, plus bubbles. That was not in the spec and adding
+  it is a real rendering-architecture question (it would have to compose with
+  the day/night light pass), so it was left alone. It is the most likely thing
+  to want next: right now the read that you are *under* the water rather than
+  on it comes entirely from the terrain and the bubbles.
+- **⚠️ The Sea Serpent's `MOB_TALL` of 15 is a starting estimate.** The art is
+  ~28px tall at native scale and 2.6× that drawn, so the "!" tell and the HP
+  bar sit close to the head rather than clear above it. It reads, but it is
+  the one number here most worth checking against a screenshot.
+
+## JUDGMENT CALLS THIS VERSION
+Calls made where the locked spec was silent, or where following it literally
+would have contradicted its own stated intent. All shipped and verified
+through the full gate (282/282 in run4) — refinements to consider, not
+unfinished work.
+- **The movement gate is a DEEP-only exception, not the literal line the spec
+  printed.** The spec wrote `if (me.diving || !BLOCKED.has(...))` and then, two
+  sentences later, said "B.PEAK and B.LAVA stay blocked regardless of diving
+  state — this is specifically a deep-water exception, not a general noclip."
+  The literal line is a general noclip: it would have let a diving player walk
+  onto lava. Shipped the stated intent as `diveBlocked(b)`, which is BLOCKED
+  with the single `B.DEEP` exception, and `run4` now asserts peaks and lava
+  stay shut while diving.
+- **`UWCAVE_RARITY = 0.82`** (the spec's proposal, kept) — 1677 tiles in the
+  test seed, 5.4% of the deep sea, across **21 separate pockets**, the largest
+  320 tiles. Seven pockets touch shore directly and every one of the 21 is
+  reachable inside a single bare 30s tank; 19 are reachable *and returnable*
+  on one tank. Those are now assertions in `run4`, not observations, because
+  an unreachable cave here loses more than a merely rare one elsewhere.
+- **The Sea Serpent art block in the spec had a duplicated `else if (kind ===
+  "sea_serpent") {` header and one extra closing brace** — a copy-paste
+  artifact, not a second branch: inserted as written it is a syntax error. The
+  body itself is unambiguous, so it was used once, verbatim.
+- **Cave palette `#2f4a54 / #2c4650`** and the shadow/fissure/accent values.
+  The spec asked for "desaturated blue-grey rock, sparse bioluminescent
+  accents" and gave no hexes. Picked to sit clearly apart from both deep water
+  and the warm Underground Caves.
+- **The bioluminescent accent is the BAKED Enchanted-Forest undergrowth
+  language, not the drifting `mote` particle.** The spec said "reuse the
+  particle/glow language already established for Enchanted Forest's motes,
+  shifted toward blue"; the v18 rule says motes must not spread to a third
+  biome. The baked speck-and-halo satisfies both, and is what the Enchanted
+  Forest floor actually uses.
+- **`B.UWCAVE` forced to `h = -1`.** The spec never mentions height. Every
+  other water tile is -1 and the plateau branch would otherwise raise a cave
+  pocket into an island — only one reading is sensible.
+- **Deep water is NOT in `SLOW`.** Diving happens at full walking speed, which
+  is what the 30s-tank reachability numbers above are measured against. A
+  swim-speed penalty would be a real design change and would need those
+  numbers re-measured.
+- **The Diver's Charm is designed content, not bible content** — the bible
+  names no diving gear at all. It is an *item*, not a pet/mob/biome/location,
+  so it is not the kind of thing the never-invent rule forbids, but it is
+  flagged here explicitly. Its slot (`me.charm`) is a third equip slot built
+  on the armor slot's exact pattern.
+- **The charm's equipped state is session-local, deliberately not persisted.**
+  `savePlayer()` writes a fixed column list and the players table has no
+  column for it; adding one is a schema change this build has no way to
+  verify. The charm itself lives in the inventory, which *is* persisted — only
+  which slot it sits in resets, like starting each session surfaced and full
+  of air. On death the slot is cleared without pushing a second drop, since
+  the item was already dropped with the inventory (unlike the armor slot,
+  which duplicates — pre-existing, left alone).
+- **Surfacing on deep water is refused, not auto-pushed.** The spec offered
+  either. Refusing is one branch and cannot fail; a push has to pick a
+  destination tile and can. The toast says why.
+- **Two related states the spec didn't cover, both fixed the obvious way:**
+  respawning clears `diving` and refills breath (otherwise drowning respawns
+  you flagged as diving on dry land, where breath never refills), and logging
+  in *on* a UWCAVE tile brings you back already diving (otherwise you surface
+  into a ring of blocked water).
+- **Sea Serpent tunables:** 1.8 attack range / 1900ms cooldown / aggro 7 /
+  leash 12 / move 1.5 / count 3, dropping `runic_stone ×2 @80%` and
+  `iron_bar ×2 @90%`. Only HP, damage and windup were locked. Loot is existing
+  materials at a generous rate because the bible's "rare aquatic loot" has no
+  dedicated item and inventing one was explicitly not this version's job.
+  Water Dragon's `count: 3` matches Fire Dragon's.
+- **`debugSetPlayer()` — a new harness hook** beside `debugWorldInfo()`. PART F
+  requires proving the dive gate end to end, and `me` is a top-level `let` that
+  never lands on `window`; without a way to place the player, none of it is
+  reachable. It writes only fields the game already writes every frame.
+- **The bubble cue was built, though the spec marked it optional.** It is the
+  only thing on screen that distinguishes diving from walking, and `run5` now
+  covers both it and the real `drawPlayerEntity` branch that calls it.
+
 ### 2026-08-09 (v20 — Ruins as repeatable structures + scattered Safe Zones)
 No new species, no new mobs, no palette changes. The single hand-composed Ruin
 becomes six of them, scattered, and the bible's "Other Safe Zones" arrive as

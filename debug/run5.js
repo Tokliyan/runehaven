@@ -131,9 +131,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     const SPECIES = ["tree_sprite", "water_sprite", "stone_sprite", "wind_sprite", "wolf", "golem",
                       "shadowfox", "boar", "bear", "griffin", "phoenix",
                       "stag", "unicorn", "lightfox",                      // v17
-                      "fire_dragon", "glow_moth"];                        // v18
+                      "fire_dragon", "glow_moth",                         // v18
+                      "water_dragon"];                                    // v21
     const MOBK = ["goblin", "bandit", "troll", "boar", "bear", "griffin", "phoenix",
-                  "dark_wraith"];                                         // v18
+                  "dark_wraith",                                          // v18
+                  "sea_serpent"];                                         // v21
     let n = 0;
     if (window.drawUnit) {
       for (const cls of CLS) {
@@ -223,6 +225,34 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       console.log('undercave tiles baked this seed:', cave);
       if (!cave) { console.log('COVERAGE GAP: no B.UNDERCAVE tile — cave ground art never drew'); process.exit(1); }
+      /* v21: the same check for the Underwater Caves ground treatment, which
+         is baked by the same whole-map pass. An empty biome here means the
+         branch never ran AND the biome is unreachable — a harder failure than
+         elsewhere, since the dive mechanic exists to reach exactly these. */
+      let uwc = 0;
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+        if (window.biomeAt(x, y) === B.UWCAVE) uwc++;
+      }
+      console.log('uwcave tiles baked this seed:', uwc);
+      if (!uwc) { console.log('COVERAGE GAP: no B.UWCAVE tile — underwater cave ground art never drew'); process.exit(1); }
+    }
+    /* v21: the dive-state render. The 5-frame boot enters the world surfaced
+       on dry land, so the diver's bubble cue never draws there — and it is
+       local-player-only, so no remote unit can reach it either. Draw it
+       directly, and then drive the real drawPlayerEntity() path with the
+       player actually diving so the branch that calls it is covered too. */
+    if (window.diveCue) {
+      for (let i = 0; i < 4; i++) { window.diveCue(120, 90, 700 + i * 260); n += 1; }
+    }
+    if (window.debugSetPlayer && window.debugWorldInfo) {
+      const before = window.debugWorldInfo().player;
+      window.debugSetPlayer({ diving: true });
+      for (let f = 40; f < 46; f++) {
+        const q = rafQ; rafQ = [];
+        for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+        n += 1;
+      }
+      window.debugSetPlayer({ diving: !!(before && before.diving) });
     }
     /* v20: the Ruin set pieces. Every cluster is now placed far out in the
        world by a hashed sweep, so the 5-frame boot is not guaranteed to have

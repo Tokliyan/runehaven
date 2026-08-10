@@ -164,6 +164,14 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       // the Dark Wraith is a kill-for-loot mob — the tame gate must never open
       results.push(['dark_wraith gate CLOSED at 1hp', cwdt(mk('dark_wraith', 1, 65)) === false]);
+      // ===== v21: the Water Dragon, "tame as hatchling" = the same passive formula
+      const wdC = tcf({ id: 'water_dragon:test', species: 'water_dragon' }, false);
+      results.push(['water_dragon chance = .25+.25 = .50', Math.abs(wdC - 0.50) < 1e-9]);
+      const wdBaitC = tcf({ id: 'water_dragon:test', species: 'water_dragon' }, true);
+      results.push(['water_dragon baited = .25+.25+.15 = .65', Math.abs(wdBaitC - 0.65) < 1e-9]);
+      results.push(['water_dragon is NOT fight-to-tame', cwdt(mk('water_dragon', 1, 40)) === false]);
+      // the Sea Serpent is kill-for-loot — its tame gate must never open either
+      results.push(['sea_serpent gate CLOSED at 1hp', cwdt(mk('sea_serpent', 1, 130)) === false]);
     } else {
       results.push(['canWearDownTame/tameChanceFor exist', false]);
     }
@@ -179,6 +187,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         ['lightfox', 50, 10, 1300, true],
         // v18 — Fire Dragon, locked at 55/12/1.6s, Rare-tier so PvP-capable
         ['fire_dragon', 55, 12, 1600, true],
+        // v21 — Water Dragon, locked from the same v16 table and identical
+        ['water_dragon', 55, 12, 1600, true],
       ];
       for (const [s, hp, dmg, cd, pvp] of TBL) {
         const d = pcd(s, 'Ranger');
@@ -200,7 +210,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       // species from the locked table that aren't implemented yet must NOT
       // be pre-built — extend this list as each one actually ships
-      for (const s of ['water_dragon', 'crystal_golem', 'basilisk',
+      // v21: water_dragon has left this list — it SHIPPED, and is asserted at
+      // its locked stats in TBL above instead.
+      for (const s of ['crystal_golem', 'basilisk',
                        'krakenling', 'salamander_king', 'duskfox_elder',
                        'golem_elder', 'dragon_elder', 'unicorn_elder']) {
         results.push([`${s} not pre-built`, pcd(s, 'Beastmaster') === null]);
@@ -238,7 +250,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['stag visible by day',   at(0.25, 'stag') === true]);
       results.push(['stag visible by night', at(0.75, 'stag') === true]);
       // v18: neither cave pet is time-gated — the biome is their rarity
-      for (const s of ['fire_dragon', 'glow_moth']) {
+      // v21: the Water Dragon joins them — the dive is its gate, not the clock
+      for (const s of ['fire_dragon', 'glow_moth', 'water_dragon']) {
         results.push([`${s} visible by day`,   at(0.25, s) === true]);
         results.push([`${s} visible by night`, at(0.75, s) === true]);
       }
@@ -312,7 +325,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          ambient wildlife x3, already-gated rare pets x2. This table is the
          locked spec's, exactly as v18's was; it is not a floor or a guess. */
       const MOB_COUNTS = { goblin: 9, bandit: 9, troll: 6, boar: 6, bear: 6,
-                           griffin: 3, phoenix: 3, dark_wraith: 6 };
+                           griffin: 3, phoenix: 3, dark_wraith: 6,
+                           sea_serpent: 3 };   // v21: designed tunable
       for (const [k, want] of Object.entries(MOB_COUNTS)) {
         results.push([`MOBS.${k}.count = ${want}`, info.MOBS[k] && info.MOBS[k].count === want]);
       }
@@ -321,7 +335,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                           // x2, not x3 — scarcity IS these three's design, so a
                           // bigger map must not make them proportionally easier
                           shadowfox: 4, unicorn: 4, lightfox: 4,
-                          fire_dragon: 3, glow_moth: 9 };
+                          fire_dragon: 3, glow_moth: 9,
+                          water_dragon: 3 };   // v21: Fire Dragon's count
       for (const [k, want] of Object.entries(SP_COUNTS)) {
         results.push([`WILD_SPECIES.${k}.count = ${want}`,
           info.WILD_SPECIES[k] && info.WILD_SPECIES[k].count === want]);
@@ -396,6 +411,276 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       results.push(['a cave tile is walkable (not in BLOCKED)',
         !!caveWalkable && window.heightAt(caveWalkable[0], caveWalkable[1]) >= 0]);
+
+      /* ===== v21 PART B: Underwater Caves — carved from DEEP, still a pocket.
+         An unreachable cave here is worse than a merely rare one anywhere
+         else, since the dive mechanic already gates it, so the count is a
+         hard assertion and the reachability of the pockets is measured. */
+      let uwc = 0, deepN = 0;
+      for (let y = 0; y < N2; y++) for (let x = 0; x < N2; x++) {
+        const b = window.biomeAt(x, y);
+        if (b === B2.UWCAVE) uwc++;
+        else if (b === B2.DEEP) deepN++;
+      }
+      console.log(`worldgen v21: uwcave ${uwc}, open deep ${deepN}, ` +
+                  `${(100 * uwc / (uwc + deepN)).toFixed(1)}% of the deep sea`);
+      results.push([`Underwater Caves exist (${uwc} tiles)`, uwc > 0]);
+      results.push([`Underwater Caves stay a sparse pocket (${uwc}/${uwc + deepN})`, uwc < deepN]);
+      results.push([`open deep water still exists (${deepN})`, deepN > 0]);
+      let uwSpot = null;
+      for (let y = 0; y < N2 && !uwSpot; y++) for (let x = 0; x < N2; x++) {
+        if (window.biomeAt(x, y) === B2.UWCAVE) { uwSpot = [x, y]; break; }
+      }
+      results.push(['a UWCAVE tile sits at sea-floor height, like the water around it',
+        !!uwSpot && window.heightAt(uwSpot[0], uwSpot[1]) === -1]);
+      /* Every pocket must be reachable on foot from land within one tank of
+         air: BFS out from every non-deep tile, counting only DEEP steps —
+         B.UWCAVE itself costs nothing, which is the air-pocket rule. */
+      {
+        const idx = (x, y) => y * N2 + x, dist = new Int32Array(N2 * N2).fill(-1), q = [];
+        for (let y = 0; y < N2; y++) for (let x = 0; x < N2; x++) {
+          const b = window.biomeAt(x, y);
+          if (b !== B2.DEEP && b !== B2.UWCAVE) { dist[idx(x, y)] = 0; q.push([x, y]); }
+        }
+        for (let head = 0; head < q.length; head++) {
+          const [cx, cy] = q[head], d = dist[idx(cx, cy)];
+          for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+            const nx = cx + dx, ny = cy + dy;
+            if (nx < 0 || ny < 0 || nx >= N2 || ny >= N2 || dist[idx(nx, ny)] !== -1) continue;
+            const b = window.biomeAt(nx, ny);
+            if (b !== B2.DEEP && b !== B2.UWCAVE) continue;
+            dist[idx(nx, ny)] = b === B2.UWCAVE ? d : d + 1;
+            q.push([nx, ny]);
+          }
+        }
+        const seenP = new Set(), pockets = [];
+        for (let y = 0; y < N2; y++) for (let x = 0; x < N2; x++) {
+          if (window.biomeAt(x, y) !== B2.UWCAVE || seenP.has(idx(x, y))) continue;
+          let n = 0, best = Infinity; const st = [[x, y]]; seenP.add(idx(x, y));
+          while (st.length) {
+            const [cx, cy] = st.pop(); n++; best = Math.min(best, dist[idx(cx, cy)]);
+            for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+              const nx = cx + dx, ny = cy + dy;
+              if (nx < 0 || ny < 0 || nx >= N2 || ny >= N2 || seenP.has(idx(nx, ny))) continue;
+              if (window.biomeAt(nx, ny) !== B2.UWCAVE) continue;
+              seenP.add(idx(nx, ny)); st.push([nx, ny]);
+            }
+          }
+          pockets.push({ n, cross: best });
+        }
+        pockets.sort((a, b) => a.cross - b.cross);
+        // one tank of air = BREATH_MAX seconds at PLAYER_SPEED tiles/second
+        const budget = info.BREATH_MAX * 4.6;
+        console.log(`uwcave pockets (size/deep tiles to cross): ` +
+                    pockets.map(p => `${p.n}/${p.cross}`).join('  '));
+        results.push([`more than one Underwater Cave pocket (${pockets.length})`, pockets.length > 1]);
+        results.push([`every pocket is reachable on one tank of air (budget ${budget} tiles)`,
+          pockets.length > 0 && pockets.every(p => p.cross <= budget)]);
+        results.push([`at least one pocket is a real region, not a speck ` +
+          `(largest ${Math.max(...pockets.map(p => p.n))} tiles)`,
+          Math.max(...pockets.map(p => p.n)) >= 40]);
+      }
+
+      /* ===== v21 PART A: the dive gate itself. This is the ONLY relaxation of
+         BLOCKED in the file, and it must be a deep-water exception, never a
+         general noclip — so peaks and lava are asserted to stay shut. */
+      const dsp = window.debugSetPlayer, dbk = window.diveBlocked;
+      const SPX = () => info.SPAWN.x, SPY = () => info.SPAWN.y;
+      if (dsp && dbk) {
+        dsp({ diving: false });
+        results.push(['surfaced: B.DEEP is blocked',        dbk(B2.DEEP) === true]);
+        results.push(['surfaced: B.UWCAVE is NOT blocked',  dbk(B2.UWCAVE) === false]);
+        dsp({ diving: true });
+        results.push(['diving: B.DEEP opens',               dbk(B2.DEEP) === false]);
+        results.push(['diving: B.PEAK STAYS blocked',       dbk(B2.PEAK) === true]);
+        results.push(['diving: B.LAVA STAYS blocked',       dbk(B2.LAVA) === true]);
+        results.push(['diving: B.UWCAVE still walkable',    dbk(B2.UWCAVE) === false]);
+        results.push(['diving: plain ground never became blocked', dbk(B2.PLAINS) === false]);
+        dsp({ diving: false });
+
+        /* ...and the same thing end to end, through the REAL movement handler:
+           real key events, real update() ticks, a real DEEP tile. */
+        let edge = null;   // a walkable tile with open deep water to its west
+        for (let y = 4; y < N2 - 4 && !edge; y++) for (let x = 4; x < N2 - 4; x++) {
+          if (window.biomeAt(x, y) !== B2.DEEP) continue;
+          const nb = window.biomeAt(x + 1, y);
+          if (nb === B2.DEEP || nb === B2.PEAK || nb === B2.LAVA) continue;
+          if (Math.hypot(x - SPX(), y - SPY()) < 60) continue;   // well outside any safe zone
+          edge = [x, y]; break;
+        }
+        if (edge) {
+          const [dx0, dy0] = edge;
+          const press = (key, type) => window.dispatchEvent(
+            new window.KeyboardEvent(type, { key, bubbles: true }));
+          const walkWest = (steps) => { for (let i = 0; i < steps; i++) window.update(0.05, 1000 + i * 50); };
+          console.log(`dive test edge: deep tile ${dx0},${dy0}, shore tile ${dx0 + 1},${dy0}`);
+
+          dsp({ x: dx0 + 1.5, y: dy0 + 0.5, diving: false, breath: info.BREATH_MAX, hp: 100 });
+          press('a', 'keydown');
+          walkWest(30);
+          let st = window.debugWorldInfo().player;
+          results.push([`surfaced, WASD cannot enter deep water (stopped at x ${st.x.toFixed(2)})`,
+            Math.floor(st.x) === dx0 + 1]);
+
+          dsp({ diving: true });
+          walkWest(30);
+          st = window.debugWorldInfo().player;
+          press('a', 'keyup');
+          const landedOn = window.biomeAt(Math.floor(st.x), Math.floor(st.y));
+          results.push([`diving, WASD DOES enter deep water (walked to x ${st.x.toFixed(2)})`,
+            Math.floor(st.x) <= dx0 && (landedOn === B2.DEEP || landedOn === B2.UWCAVE)]);
+
+          // ===== the F toggle, including the refusal that prevents a softlock
+          dsp({ x: dx0 + 0.5, y: dy0 + 0.5, diving: true });
+          press('f', 'keydown'); press('f', 'keyup');
+          results.push(['F cannot surface you while you stand on deep water',
+            window.debugWorldInfo().player.diving === true]);
+          dsp({ x: dx0 + 1.5, y: dy0 + 0.5, diving: true });
+          press('f', 'keydown'); press('f', 'keyup');
+          results.push(['F surfaces you once you are off deep water',
+            window.debugWorldInfo().player.diving === false]);
+          press('f', 'keydown'); press('f', 'keyup');
+          results.push(['F dives again from dry land',
+            window.debugWorldInfo().player.diving === true]);
+          dsp({ diving: false });
+
+          // ===== breath: drains ONLY while diving on B.DEEP
+          const ub = window.updateBreath;
+          if (ub) {
+            dsp({ x: dx0 + 0.5, y: dy0 + 0.5, diving: true, breath: 30, hp: 100, charm: null });
+            ub(1);
+            results.push([`breath drains 1/s diving on deep water ` +
+              `(${window.debugWorldInfo().player.breath})`,
+              Math.abs(window.debugWorldInfo().player.breath - 29) < 1e-6]);
+            if (uwSpot) {
+              dsp({ x: uwSpot[0] + 0.5, y: uwSpot[1] + 0.5, diving: true, breath: 20 });
+              ub(1); ub(1); ub(1);
+              results.push([`breath HOLDS on a UWCAVE tile — the cave is an air pocket ` +
+                `(${window.debugWorldInfo().player.breath})`,
+                Math.abs(window.debugWorldInfo().player.breath - 20) < 1e-6]);
+            }
+            dsp({ x: SPX(), y: SPY(), diving: false, breath: 10 });
+            ub(1);
+            results.push([`breath regenerates 4/s on land ` +
+              `(${window.debugWorldInfo().player.breath})`,
+              Math.abs(window.debugWorldInfo().player.breath - 14) < 1e-6]);
+            dsp({ breath: 29 });
+            ub(1);
+            results.push(['breath never exceeds maxBreath',
+              window.debugWorldInfo().player.breath === info.BREATH_MAX]);
+
+            // ===== zero breath: damage through the EXISTING applyDamage path
+            dsp({ x: dx0 + 0.5, y: dy0 + 0.5, diving: true, breath: 0, hp: 100, charm: null });
+            ub(1);
+            const hp1 = window.debugWorldInfo().player.hp;
+            results.push([`out of air costs ${info.DROWN_DPS} hp/s (100 -> ${hp1})`,
+              hp1 === 100 - info.DROWN_DPS]);
+            ub(0.4); ub(0.4);   // 0.8s banked — not a whole second yet
+            const hpPart = window.debugWorldInfo().player.hp;
+            results.push([`drowning does NOT tick per frame (still ${hpPart} after 0.8s more)`,
+              hpPart === hp1]);
+            ub(0.4);            // 1.2s banked — exactly one more tick
+            const hp2 = window.debugWorldInfo().player.hp;
+            results.push([`drowning ticks once per whole second (${hp2})`,
+              hp2 === 100 - info.DROWN_DPS * 2]);
+            dsp({ x: SPX() + 40, y: SPY(), diving: false, breath: 0, hp: 100 });
+            ub(1);
+            results.push(['no drowning damage once out of the deep',
+              window.debugWorldInfo().player.hp === 100]);
+          } else {
+            results.push(['updateBreath exists', false]);
+          }
+        } else {
+          results.push(['found a shore tile beside deep water to test the dive gate', false]);
+        }
+        dsp({ x: SPX(), y: SPY(), diving: false, breath: info.BREATH_MAX, hp: 100, charm: null });
+      } else {
+        results.push(['debugSetPlayer/diveBlocked exist', false]);
+      }
+
+      /* ===== v21 PART C: the Diver's Charm, crafted through the REAL recipe
+         table and the real craft panel — not by poking at constants. */
+      if (window.refreshPanels && dsp) {
+        dsp({ x: SPX() + 4, y: SPY() + 2, charm: null });   // stand at the Spawn Forge
+        const invBefore = window.debugWorldInfo().player.inv;
+        window.invAdd('iron_bar', 2);
+        window.invAdd('wood', 3);
+        window.refreshPanels();
+        const rows = [...doc.querySelectorAll('#craftList .craft-row')];
+        const row = rows.find(r => r.textContent.includes("Diver's Charm"));
+        results.push(['a Diver\'s Charm recipe exists at the forge', !!row]);
+        results.push(['it costs Iron Bar x2 + Wood x3',
+          !!row && row.querySelector('.mats').textContent === 'Iron Bar ×2, Wood ×3']);
+        const btn = row && row.querySelector('button');
+        results.push(['it is craftable with exactly those materials in hand',
+          !!btn && !btn.disabled]);
+        if (btn) btn.onclick();
+        const after = window.debugWorldInfo().player.inv;
+        results.push([`crafting yields a Diver's Charm (${JSON.stringify(after)})`,
+          after.divers_charm === 1]);
+        results.push(['crafting spends exactly the 2 bars and 3 wood it charged for',
+          (after.iron_bar || 0) === (invBefore.iron_bar || 0) &&
+          (after.wood || 0) === (invBefore.wood || 0)]);
+        // equipping it, through the same inventory row a player would click
+        window.refreshPanels();
+        const crow = doc.querySelector('#invList [data-c="divers_charm"]');
+        results.push(['the charm gets its own equip row', !!crow]);
+        if (crow) crow.onclick();
+        results.push(['equipping the charm raises maxBreath 30 -> 50',
+          window.debugWorldInfo().player.maxBreath === info.BREATH_CHARM_MAX]);
+        // ...and it heals while diving, which nothing else in the game does
+        if (window.updateBreath && uwSpot) {
+          dsp({ x: uwSpot[0] + 0.5, y: uwSpot[1] + 0.5, diving: true, hp: 50, breath: 50 });
+          window.updateBreath(1);
+          results.push([`the charm regenerates ${info.CHARMS.divers_charm.diveRegen} hp/s while diving ` +
+            `(${window.debugWorldInfo().player.hp})`,
+            Math.abs(window.debugWorldInfo().player.hp - 51.5) < 1e-6]);
+          dsp({ diving: false, hp: 50 });
+          window.updateBreath(1);
+          results.push(['the charm does NOT heal you on dry land',
+            window.debugWorldInfo().player.hp === 50]);
+        }
+        // unequip and leave the world as we found it
+        window.refreshPanels();
+        const crow2 = doc.querySelector('#invList [data-c="divers_charm"]');
+        if (crow2) crow2.onclick();
+        results.push(['unequipping drops maxBreath back to 30',
+          window.debugWorldInfo().player.maxBreath === info.BREATH_MAX]);
+        dsp({ x: SPX(), y: SPY(), diving: false, breath: info.BREATH_MAX, hp: 100, charm: null });
+      }
+
+      /* ===== v21 PARTS D & E: both new creatures live on B.UWCAVE tiles ===== */
+      const wdSpots = info.wildSpots.filter(w => w.species === 'water_dragon');
+      const ssSpots = info.mobSpots.filter(m => m.kind === 'sea_serpent');
+      console.log('water_dragon spots:', JSON.stringify(wdSpots));
+      console.log('sea_serpent spots:', JSON.stringify(ssSpots));
+      results.push([`Water Dragon reaches its Underwater Caves (${wdSpots.length} spawned)`,
+        wdSpots.length === 3]);
+      results.push([`every Water Dragon stands on a UWCAVE tile`,
+        wdSpots.length > 0 && wdSpots.every(w =>
+          window.biomeAt(Math.floor(w.x), Math.floor(w.y)) === B2.UWCAVE)]);
+      results.push([`Sea Serpent reaches its Underwater Caves (${ssSpots.length} spawned)`,
+        ssSpots.length === 3]);
+      results.push([`every Sea Serpent stands on a UWCAVE tile`,
+        ssSpots.length > 0 && ssSpots.every(m =>
+          window.biomeAt(Math.floor(m.x), Math.floor(m.y)) === B2.UWCAVE)]);
+      results.push(['Water Dragon spawns in Underwater Caves ONLY',
+        info.WILD_SPECIES.water_dragon.biomes.length === 1 &&
+        info.WILD_SPECIES.water_dragon.biomes[0] === B2.UWCAVE]);
+      // the Sea Serpent's locked stats
+      const ss = info.MOBS.sea_serpent;
+      results.push(['sea_serpent 130 HP',        !!ss && ss.hp === 130]);
+      results.push(['sea_serpent 18 dmg',        !!ss && ss.dmg === 18]);
+      results.push(['sea_serpent 700ms windup',  !!ss && ss.windupMs === 700]);
+      results.push(['sea_serpent is not tameable', !!ss && ss.tameable === false]);
+      results.push(['sea_serpent is melee, not ranged (the wraith stays the only ranged mob)',
+        !!ss && ss.atkRange < 3]);
+      results.push(['sea_serpent spawns in Underwater Caves ONLY',
+        !!ss && ss.biomes.length === 1 && ss.biomes[0] === B2.UWCAVE]);
+      results.push(['sea_serpent drops existing materials generously',
+        !!ss && ss.loot.length >= 2 && ss.loot.every(l => l.chance >= 0.6)]);
+      results.push(['sea_serpent is the hardest non-boss mob in the world',
+        !!ss && Object.entries(info.MOBS).every(([k, d]) => k === 'sea_serpent' || d.hp < ss.hp)]);
 
       // ===== v19 PART E: the scale-up's own proof gates =====
       const H = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
