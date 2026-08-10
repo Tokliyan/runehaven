@@ -55,6 +55,110 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-09 (v20 — Ruins as repeatable structures + scattered Safe Zones)
+No new species, no new mobs, no palette changes. The single hand-composed Ruin
+becomes six of them, scattered, and the bible's "Other Safe Zones" arrive as
+four rest points. Separations, search budgets and the placement rules live in
+the README + commit message; below is only what changed about how the world
+READS.
+- **The Ruin stops being a landmark and becomes a structure you find.** v19
+  placed one Ruin by angle-and-radius from the Tower, which kept it orbiting
+  the town centre at a fixed distance — it read as part of the spawn hub's
+  furniture rather than as somewhere out in the world. Six clusters now place
+  by the same hashed sampling the wilds and mobs use, so they land anywhere
+  the island has room. Measured in the test seed: centres 45–52 tiles apart,
+  spread across all four quadrants, none within 61 tiles of spawn.
+- **The hand-composed ruin composition is untouched — it is now built six
+  times.** `buildRuinPieces()` → `buildRuinCluster(center)`, every piece still
+  at its exact v6 offset from the cluster centre. The user declared that
+  composition DONE and it must never be altered; repeating it is not altering
+  it. All six clusters are deliberately identical, which is what makes them
+  read as the same lost civilisation rather than six unrelated set pieces.
+- **New set piece: the dark dungeon entrance**, one per cluster, set into the
+  gap in the north wall run (the wall segments sit at x −2.4/−1.4/−0.4 and
+  1.6/2.6, so +0.6 is the doorway). Two jambs carrying a lintel, ~34px tall
+  (≈3 tiles at `IH2` 11) — the tallest thing in a cluster — over a flat
+  near-black trapezoid mouth that tapers inward as it rises. Stone is
+  `#8f8878` / lintel `#9c9484`: the same ruin stone taken down in value, so it
+  reads as this architecture gone deeper and colder rather than as a
+  different material. Hard-edged flat fills only, standard 0.72/0.55 facet
+  split via `drawBox` — the mouth is dark because it is a dark colour, not
+  because it is blurred. Bible-supported ("Ruins — ... dungeon entrances");
+  purely visual, nothing behind it is enterable this version.
+- **Other Safe Zones read as clearings, not as buildings.** Four of them,
+  each a radius-8 disc of plain grass on level ground with the existing ruin
+  stone well as its only anchor — the same well art, reused, no new drawing
+  code. Deliberately quiet: a rest point should read as somewhere the land
+  opens up, not as another structure competing with the Ruins.
+- **The clearing is guarded like the RUINB carve** (`!BLOCKED`, not water), so
+  a zone that lands on the coast keeps its shoreline instead of painting grass
+  out over the sea. Two of the four do exactly that in the test seed.
+- **⚠️ Two of the four Safe Zones sit on the coastline** — ~15% of their disc
+  is water. Placement tests land fitness on the CENTRE tile only, which is
+  what the exhaustive 57,600-tile (240×240) scan behind this spec measured, so
+  this follows the spec exactly rather than second-guessing it. The result is
+  defensible (a coastal rest point by the water reads fine) but if a fully
+  inland clearing is wanted, the fix is a footprint check rather than another
+  separation number — and it would need re-measuring, since it changes which
+  spots qualify.
+- **⚠️ No boundary ring on the scattered zones.** The Spawn zone has its gold
+  dashed ellipse; these have only the grass edge and the HUD's safe-zone
+  indicator. The spec listed the well and the clearing as the whole visual
+  treatment, so nothing was added beyond it. Worth a look — the protected
+  radius and the grass radius are identical (8), so the green edge *is* the
+  boundary, but it is a softer read than the ring.
+- **RUINB ground now covers six pockets instead of one** — 63–69 tiles per
+  cluster, 408 total. Golem (RUINB-only) and Bandit both reach more than one
+  cluster in the test seed, so the ruin biome's creatures are spread across
+  the world rather than stacked in a single spot.
+
+## JUDGMENT CALLS THIS VERSION
+Calls made where the locked spec was silent. All shipped and verified through
+the full gate — refinements to consider, not unfinished work.
+- **Ruin-to-Ruin separation set to 40.** The spec pins Ruin-to-Zone at 24 and
+  every zone separation at 40, and says the Ruins' own separations are
+  unchanged — but v19 had a single Ruin, so a Ruin-to-Ruin number never
+  existed to carry forward. 40 matches the zone-to-zone value and puts ~35
+  tiles of open ground between two 4.5-tile footprints. Measured result: the
+  closest pair lands at 45.1, so the constraint is not the binding one.
+- **Safe Zone protected radius = clearing radius = 8, one constant.** The spec
+  gives the radius-8 clearing and says `inSafeZone()` extends to the zones,
+  but never states a separate protection radius. Using one number for both
+  means the visible green circle IS the safe area, with no invisible margin in
+  either direction. (The Spawn zone deliberately keeps its own arrangement,
+  where the grass disc is 6 tiles wider than the protection.)
+- **The clearing also flattens terrain to `h = 0`,** like the Spawn zone does.
+  The spec says "grass clearing" and nothing about height; a well straddling a
+  three-level cliff step would not read as a clearing. Setting `h = 0` also
+  puts the whole disc below the `h >= 1` edge-erosion branch, so no erosion
+  exemption was needed — one change instead of two.
+- **The dungeon entrance's placement, size and two stone colours** are visual
+  tunables the spec left open (it specified only "two jambs, a lintel, a flat
+  near-black trapezoid mouth, ~2.5–3 tiles tall, darkened ruin stone"). The
+  wall-run gap was chosen because it is the one spot in the locked composition
+  that is already empty, so nothing had to move to make room.
+- **FIX 3 resolved by not re-seeding, not by widening the budget.** The
+  wilds/mobs pattern folds `placed` into the hash offset, restarting the
+  candidate stream from `a = 0` after every success; under the Ruins' tighter
+  constraints that is what exhausted the search on the sixth cluster. One
+  fixed stream swept once is the smaller change of the two the spec offered,
+  and it also stops the search re-testing candidates it already rejected.
+- **`debugWorldInfo()` now also exports `RUINS`, `OTHER_SAFE_ZONES`, the five
+  placement constants, mob/wild home spots and the ruin set-piece list** (all
+  copies). Same reason as v19's landmark export: these are top-level `let`s
+  and `const`s, which never land on `window`, so PART C's proof gates cannot
+  see them any other way.
+- **`run4`'s Dark Forest pin re-measured to 763, not carried over.** PART C
+  required this explicitly. 875 → 763 because six RUINB carves (not one) and
+  four grass clearings now take more tiles from the moisture band. The
+  invariant being guarded is unchanged — the rare-variant noise fields still
+  never touch it; only landmark overrides do, as they always have.
+- **`run5` gained a ruin set-piece sweep** (`RUINPIECE_LIST`), covering all
+  eight kinds at synthetic coordinates and then every piece the live world
+  actually built. Clusters now sit far from spawn, so the 5-frame boot is no
+  longer guaranteed to draw a single one — exactly the gap that sweep exists
+  to close. It also hard-fails if a listed kind was never built.
+
 ### 2026-08-05 (v19 — world scale-up, N 80 → 240)
 No new art and no new species. The island itself is 3x wider in each direction
 (9x the area), and everything that was measured in absolute tiles moved with it.
