@@ -55,6 +55,147 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-11 (v22 — Abyssal Hollow + Sunforge Caldera, Storm Dragon, Shadow Dragon)
+Two more rare biome pockets and the last two dragons the bible lists. Nothing
+here needed new art: both biomes are the proven pocket technique a fifth and
+sixth time, and both dragons are one call each into the shared body that has
+been sitting in the file since v18. Stats, counts and tame chances live in the
+README + commit message; below is only how it all looks.
+- **Abyssal Hollow** (rare DEEP variant, `B.ABYSSAL`). Palette
+  `#182a36 / #162632` — the Underwater Caves' blue-grey rock taken down to
+  roughly half its luminance and pulled colder still. The read is **below**
+  the caves, not beside them: `#2f4a54` is a cave you have swum into,
+  `#182a36` is the floor of the world. It is carved from `B.DEEP` on its own
+  noise field, so the v21 dive is the only way in — **no new access logic was
+  written for it at all.** That is not a shortcut, it is the point: every
+  breath rule keys on `B.DEEP` specifically, so a Hollow tile is an air pocket
+  exactly as a UWCAVE tile is, for free.
+- **Hollow floor is the v21 cave floor made sparse.** Same three elements,
+  three deliberate subtractions and nothing else: a heavier shadow pool
+  (`rgba(4,10,16,0.46)` vs `0.34`), **one** fissure instead of two, and **at
+  most one** bioluminescent speck behind a much higher gate (`0.86` vs `0.58`)
+  instead of up to three, in a dimmer, greyer blue (`#4a96be` against the
+  caves' `#8fe8f4`). Minimal bioluminescence is what the depth reads as.
+  Still the **baked** speck-and-halo language, still deliberately NOT the
+  drifting `mote` particle — the v18 rule that motes mark the two rare
+  *surface* biomes and must not spread holds at a fifth and sixth biome.
+- **A Hollow tile sits at sea-floor height (`h = -1`)**, same as UWCAVE and
+  for the same reason: the plateau branch would otherwise raise the deepest
+  point in the world out of the open ocean as a cliff-walled island.
+- **Sunforge Caldera** (rare VOLROCK variant, `B.CALDERA`). Palette
+  `#f2c884 / #eec27c` — plain volcanic rock `#5c3c3c` gone blinding. It is the
+  brightest ground in the world after snow, and deliberately far more
+  saturated than PEAK's `#ece7db`; the v6 PEAK→ROCK buffer already keeps snow
+  42 tiles clear of the volcano, so the two can never touch and be confused.
+- **The Caldera keeps the volcano cone's height.** Its carve happens *after*
+  the volcano override (VOLROCK does not exist before then), and it inherits
+  the cone's `h = 3 / 2` and the cone's erosion exemption. Left to fall
+  through to the plateau branch it would have punched 2–3 level pits into the
+  rim — the volcano silhouette is on this file's must-not-regress list, and
+  the spec asked for hotter-looking VOLROCK, not a hole in the mountain.
+  `run4` now hard-fails if any caldera tile drops below the cone.
+- **Its cliff faces are its own hot tone**, `shade("#f2c884", 0.8 / 0.58)`,
+  joining the VOLROCK and UNDERCAVE exceptions rather than wearing the cream
+  `CLIFF_SW`/`CLIFF_SE`. Same v18 lesson: a biome-coloured tile with cream
+  cliffs reads as a palette bug.
+- **Caldera ground is the cave treatment inverted** — a *bright* inner pool
+  (`rgba(255,240,206,0.30)`) instead of a dark one, two glowing crust cracks,
+  and an occasional white-hot ember flake. Hard-edged flat fills only, no
+  gradients; the heat comes from colour contrast.
+- **The heat shimmer is the v8 lava shimmer, reused verbatim** — same
+  wavering stroke, same rise cycle, own hash offsets, over a fainter and paler
+  version of the lava glow. The spec said reuse a cheap one if it exists and
+  skip it otherwise; it existed ten lines away. **No new particle system was
+  built.**
+- **Both dragons are one line of art each.** `DRAGON_PAL.storm` /
+  `DRAGON_PAL.shadow` and `dragonV2()`'s `"storm"` (lightning flicker) and
+  `"shadow"` (layered trail) branches were all pre-staged in v18 and have sat
+  unused since, so the branches are `dragonV2(sx, sy, DRAGON_PAL.storm, t,
+  "storm")` and its shadow twin, and nothing else. Ground species for the same
+  reason all four dragons are — the shared body plants its claws on the
+  baseline — so both inherit the walk bob, sun shadow, x+y depth sort and
+  every v16 combat overlay with no special casing. `SPECIES_K` 1.30 each,
+  matching their two siblings. All four call sites still pass `DRAGON_PAL.*`
+  and the parameter is still named `PAL`, never `P` — re-grepped, no
+  regression of the v18 collision.
+- **⚠️ One of the three Storm Dragons in the test seed cannot be reached.**
+  `B.PEAK` is in `BLOCKED` and always has been (Griffin has spawned there
+  since v14), taming needs the player within 1.8 tiles, and the player can
+  only stand on non-blocked ground. Measured over each creature's wander
+  ellipse: the three sit 1.32 / 1.66 / **2.73** tiles from the closest point a
+  player can occupy, so two are tameable and the third can be seen from the
+  rocks below and never caught. The locked spec pins the spawn to `B.PEAK`, so
+  this follows it exactly rather than second-guessing it, and it is now
+  measured and printed by `run4` on every run — with a hard failure if the
+  count ever reaches zero. **This is the thing most worth revisiting.** The
+  fix, if one is wanted, is a walkable-adjacency filter on the spawn search,
+  not a different biome — but that changes which tiles qualify and would need
+  re-measuring.
+- **⚠️ Nothing marks either pocket from outside it.** The Hollow is found
+  exactly like the Underwater Caves — an ordinary stretch of dark sea with
+  somewhere inside it — and the Caldera is a bright patch you walk into on the
+  volcano's flank. Consistent with every prior pocket, but the Caldera is the
+  first one that is genuinely *visible* at distance, since it is the brightest
+  ground in the world sitting on a raised cone. Worth a screenshot to check it
+  reads as heat rather than as snow on the volcano.
+- **⚠️ Caldera tiles carry no ore.** `featureTypeAt`'s VOLROCK branch (iron at
+  0.92, runic at 0.992) does not extend to `B.CALDERA`, so the carve quietly
+  removes ~175 tiles' worth of chances from the volcanic band. That is the
+  spec following its own explicit exclusion — dragonsteel acquisition from the
+  Caldera is deferred until there is a reason to visit beyond the dragon — but
+  it means the Caldera is currently scenery with no resource of its own.
+
+## JUDGMENT CALLS THIS VERSION
+Calls made where the locked spec was silent. All shipped and verified through
+the full gate (324/324 in run4, zero FAILs) — refinements to consider, not
+unfinished work.
+- **The Abyssal Hollow wins the overlap with the Underwater Caves.** Both are
+  carved from `B.DEEP` on independent fields, so some tiles satisfy both and
+  the spec never says which takes precedence. The Hollow is tested first, so
+  the rarer, deeper biome wins: letting the commoner one pre-empt it would
+  make the Hollow rarer than its own threshold says and would chew holes in
+  its pockets. Cost, measured: UWCAVE 1677 → **1619** tiles, 21 → 22 pockets,
+  every one still reachable inside a single bare tank (max crossing 90 of a
+  138-tile budget). Dark Forest is still exactly 763, so `run4`'s pin holds
+  untouched.
+- **`ABYSSAL_RARITY = 0.90` and `CALDERA_RARITY = 0.85`** — both the spec's
+  proposals, kept. Measured: the Hollow is **965 tiles, 3.1% of the deep sea,
+  across 13 pockets** (largest 694), against the caves' 5.2% — genuinely
+  rarer, which was the stated intent. Every one of the 13 is reachable on a
+  bare tank (max crossing 39). The Caldera is **175 tiles in 3 pockets**
+  (largest 137) out of 1120 VOLROCK, and all 175 are walkable from spawn
+  without diving — that is a `run4` assertion, not an observation.
+- **The Caldera inherits VOLROCK's cone height and erosion exemption.** The
+  spec says nothing about height. There were two defensible readings — the
+  v18 precedent where an UNDERCAVE pocket drops to plateau height and reads as
+  a recessed bowl, or keeping the cone — and the volcano silhouette being on
+  the must-not-regress list settles it. Flagged because "caldera" does mean a
+  crater, so a deliberate bowl is a legitimate thing to want instead; it would
+  be one line, and `run4`'s pit assertion would need inverting.
+- **Palette hexes for both biomes.** The spec gave directions ("near-black
+  blue, minimal bioluminescence, sparse" / "near-white/orange glow") and no
+  values. Picked to sit clearly apart from every neighbour: the Hollow from
+  UWCAVE and deep water, the Caldera from VOLROCK, LAVA and PEAK.
+- **Logging in on an `B.ABYSSAL` tile brings you back already diving.** v21
+  added that guard for UWCAVE because surfacing into a ring of blocked deep
+  water is a softlock; a Hollow tile is the same shape of tile, so leaving the
+  guard UWCAVE-only would have shipped it with a second hole. Not new access
+  logic — the existing guard, made whole.
+- **`count: 3` for both dragons,** matching Fire and Water Dragon. The spec
+  locked stats and tame chance but not density.
+- **`debugSetPlayer()` now snaps the camera when it sets a position.** The
+  camera eases toward the player at `dt*6`, so a harness that moved the player
+  across the map and pumped a handful of frames was still rendering the tiles
+  around SPAWN — every on-camera branch it meant to reach silently never ran.
+  This is the same assignment login and respawn already make, and it is what
+  lets `run5` actually execute the Caldera's animated shimmer (verified: 852
+  draws, where before the change it was 0).
+- **`run4`'s underwater reachability BFS now treats `B.ABYSSAL` as free to
+  cross but never as a starting point.** Left alone it would have seeded the
+  search from Hollow tiles as though they were dry land and reported the
+  caves as far closer to shore than they are — a silently weaker test, not a
+  failing one, which is the kind worth catching.
+
 ### 2026-08-10 (v21 — Underwater Caves, the dive mechanic, Water Dragon, Sea Serpent)
 A fourth rare biome pocket, two new creatures, and the first time the player
 can be somewhere the world previously refused to let them stand. Breath

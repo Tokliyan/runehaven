@@ -132,7 +132,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                       "shadowfox", "boar", "bear", "griffin", "phoenix",
                       "stag", "unicorn", "lightfox",                      // v17
                       "fire_dragon", "glow_moth",                         // v18
-                      "water_dragon"];                                    // v21
+                      "water_dragon",                                     // v21
+                      "storm_dragon", "shadow_dragon"];                   // v22
     const MOBK = ["goblin", "bandit", "troll", "boar", "bear", "griffin", "phoenix",
                   "dark_wraith",                                          // v18
                   "sea_serpent"];                                         // v21
@@ -235,6 +236,43 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       console.log('uwcave tiles baked this seed:', uwc);
       if (!uwc) { console.log('COVERAGE GAP: no B.UWCAVE tile — underwater cave ground art never drew'); process.exit(1); }
+      /* v22: the same check for the two new pockets. Both ground treatments
+         are baked by the same whole-map pass, so a zero count means the
+         branch never ran AND the biome is unreachable — and for the Hollow
+         that also means the Shadow Dragon has nowhere to spawn. */
+      let aby = 0, cald = 0;
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+        const b = window.biomeAt(x, y);
+        if (b === B.ABYSSAL) aby++;
+        else if (b === B.CALDERA) cald++;
+      }
+      console.log('abyssal tiles baked this seed:', aby);
+      if (!aby) { console.log('COVERAGE GAP: no B.ABYSSAL tile — Abyssal Hollow ground art never drew'); process.exit(1); }
+      console.log('caldera tiles baked this seed:', cald);
+      if (!cald) { console.log('COVERAGE GAP: no B.CALDERA tile — Sunforge Caldera ground art never drew'); process.exit(1); }
+    }
+    /* v22: the Caldera's animated heat shimmer lives in drawWorld()'s tile
+       loop, not in the bake, so it only runs when a caldera tile is actually
+       on camera — which the 5-frame boot at spawn never is. Put the camera on
+       one and pump frames so the branch is really executed. */
+    if (window.debugSetPlayer && window.biomeAt && window.debugWorldInfo) {
+      const { N, B } = window.debugWorldInfo();
+      const before5 = window.debugWorldInfo().player;
+      for (const target of [B.CALDERA, B.ABYSSAL]) {
+        let hit = null;
+        for (let y = 0; y < N && !hit; y++) for (let x = 0; x < N; x++) {
+          if (window.biomeAt(x, y) === target) { hit = [x, y]; break; }
+        }
+        if (!hit) continue;
+        window.debugSetPlayer({ x: hit[0] + 0.5, y: hit[1] + 0.5,
+                                diving: target === B.ABYSSAL });
+        for (let f = 60; f < 66; f++) {
+          const q = rafQ; rafQ = [];
+          for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+          n += 1;
+        }
+      }
+      if (before5) window.debugSetPlayer({ x: before5.x, y: before5.y, diving: !!before5.diving });
     }
     /* v21: the dive-state render. The 5-frame boot enters the world surfaced
        on dry land, so the diver's bubble cue never draws there — and it is

@@ -172,6 +172,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['water_dragon is NOT fight-to-tame', cwdt(mk('water_dragon', 1, 40)) === false]);
       // the Sea Serpent is kill-for-loot — its tame gate must never open either
       results.push(['sea_serpent gate CLOSED at 1hp', cwdt(mk('sea_serpent', 1, 130)) === false]);
+      // ===== v22: the last two dragons, "tame as hatchling" = the same formula
+      for (const s of ['storm_dragon', 'shadow_dragon']) {
+        results.push([`${s} chance = .25+.25 = .50`, Math.abs(tcf({ id: s + ':test', species: s }, false) - 0.50) < 1e-9]);
+        results.push([`${s} baited = .25+.25+.15 = .65`, Math.abs(tcf({ id: s + ':test', species: s }, true) - 0.65) < 1e-9]);
+        results.push([`${s} is NOT fight-to-tame`, cwdt(mk(s, 1, 40)) === false]);
+      }
     } else {
       results.push(['canWearDownTame/tameChanceFor exist', false]);
     }
@@ -189,6 +195,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         ['fire_dragon', 55, 12, 1600, true],
         // v21 — Water Dragon, locked from the same v16 table and identical
         ['water_dragon', 55, 12, 1600, true],
+        // v22 — Storm and Shadow Dragon, the same locked row a third and
+        // fourth time: Rare tier, PvP-capable, stat-identical to their siblings
+        ['storm_dragon', 55, 12, 1600, true],
+        ['shadow_dragon', 55, 12, 1600, true],
       ];
       for (const [s, hp, dmg, cd, pvp] of TBL) {
         const d = pcd(s, 'Ranger');
@@ -251,7 +261,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['stag visible by night', at(0.75, 'stag') === true]);
       // v18: neither cave pet is time-gated — the biome is their rarity
       // v21: the Water Dragon joins them — the dive is its gate, not the clock
-      for (const s of ['fire_dragon', 'glow_moth', 'water_dragon']) {
+      /* v22: neither new dragon is time-gated either — the biome is the gate
+         (a dive for the Shadow Dragon, a climb for the Storm Dragon). */
+      for (const s of ['fire_dragon', 'glow_moth', 'water_dragon',
+                       'storm_dragon', 'shadow_dragon']) {
         results.push([`${s} visible by day`,   at(0.25, s) === true]);
         results.push([`${s} visible by night`, at(0.75, s) === true]);
       }
@@ -336,7 +349,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                           // bigger map must not make them proportionally easier
                           shadowfox: 4, unicorn: 4, lightfox: 4,
                           fire_dragon: 3, glow_moth: 9,
-                          water_dragon: 3 };   // v21: Fire Dragon's count
+                          water_dragon: 3,     // v21: Fire Dragon's count
+                          storm_dragon: 3, shadow_dragon: 3 };  // v22: same
       for (const [k, want] of Object.entries(SP_COUNTS)) {
         results.push([`WILD_SPECIES.${k}.count = ${want}`,
           info.WILD_SPECIES[k] && info.WILD_SPECIES[k].count === want]);
@@ -433,14 +447,99 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       results.push(['a UWCAVE tile sits at sea-floor height, like the water around it',
         !!uwSpot && window.heightAt(uwSpot[0], uwSpot[1]) === -1]);
+
+      /* ===== v22 PART A: both new biome pockets must exist and stay pockets.
+         Standard worldgen sanity check, same shape as every pocket before. */
+      let aby = 0, cald = 0, vol2 = 0, lava2 = 0, deepOpen = 0;
+      for (let y = 0; y < N2; y++) for (let x = 0; x < N2; x++) {
+        const b = window.biomeAt(x, y);
+        if (b === B2.ABYSSAL) aby++;
+        else if (b === B2.CALDERA) cald++;
+        else if (b === B2.VOLROCK) vol2++;
+        else if (b === B2.LAVA) lava2++;
+        else if (b === B2.DEEP) deepOpen++;
+      }
+      console.log(`worldgen v22: abyssal ${aby} (${(100 * aby / (aby + uwc + deepOpen)).toFixed(1)}% of the deep sea), ` +
+                  `caldera ${cald}, volrock ${vol2}, lava ${lava2}`);
+      results.push([`Abyssal Hollow exists (${aby} tiles)`, aby > 0]);
+      results.push([`Sunforge Caldera exists (${cald} tiles)`, cald > 0]);
+      results.push([`Abyssal Hollow stays a sparse pocket (${aby}/${aby + deepOpen})`, aby < deepOpen]);
+      results.push([`Sunforge Caldera stays a sparse pocket (${cald}/${cald + vol2})`, cald < vol2]);
+      results.push([`plain volcanic rock still exists (${vol2})`, vol2 > 0]);
+      results.push([`the lava core is untouched (${lava2})`, lava2 > 0]);
+      /* The Hollow is deliberately RARER than the Underwater Caves — that is
+         the whole "genuine bottom of the map" read, and it is the one
+         relationship between the two thresholds that actually matters. */
+      results.push([`ABYSSAL_RARITY ${info.ABYSSAL_RARITY} is rarer than UWCAVE_RARITY ${info.UWCAVE_RARITY}`,
+        info.ABYSSAL_RARITY > info.UWCAVE_RARITY]);
+      results.push([`the Hollow really is scarcer on the ground than the caves (${aby} < ${uwc})`, aby < uwc]);
+      results.push([`CALDERA_RARITY is the spec's ${0.85}`, info.CALDERA_RARITY === 0.85]);
+
+      let abySpot = null, caldSpot = null;
+      for (let y = 0; y < N2 && !abySpot; y++) for (let x = 0; x < N2; x++)
+        if (window.biomeAt(x, y) === B2.ABYSSAL) { abySpot = [x, y]; break; }
+      for (let y = 0; y < N2 && !caldSpot; y++) for (let x = 0; x < N2; x++)
+        if (window.biomeAt(x, y) === B2.CALDERA) { caldSpot = [x, y]; break; }
+      /* Carved from DEEP, so it must sit on the sea floor like the water
+         around it — otherwise the plateau branch raises the deepest point in
+         the world out of the ocean as a cliff-walled island. */
+      results.push(['an ABYSSAL tile sits at sea-floor height (-1), like the water around it',
+        !!abySpot && window.heightAt(abySpot[0], abySpot[1]) === -1]);
+      /* Carved from the volcano cone, so it must KEEP the cone's height —
+         the volcano silhouette is on the art skill's must-not-regress list. */
+      results.push([`a CALDERA tile keeps the volcano cone's height (2 or 3)`,
+        !!caldSpot && window.heightAt(caldSpot[0], caldSpot[1]) >= 2]);
+      let caldBad = 0;
+      for (let y = 0; y < N2; y++) for (let x = 0; x < N2; x++) {
+        if (window.biomeAt(x, y) !== B2.CALDERA) continue;
+        const hh = window.heightAt(x, y);
+        if (hh < 2) caldBad++;
+      }
+      results.push([`NO caldera tile punches a pit into the cone (${caldBad} bad tiles)`, caldBad === 0]);
+      // neither is in BLOCKED — that alone is what makes each pocket walkable
+      const dbk0 = window.diveBlocked;
+      if (dbk0) {
+        results.push(['B.ABYSSAL is NOT blocked (walkable once dived to)', dbk0(B2.ABYSSAL) === false]);
+        results.push(['B.CALDERA is NOT blocked (reached on foot, no dive)', dbk0(B2.CALDERA) === false]);
+      }
+      /* The Caldera is a LAND pocket: it must be reachable without diving,
+         which means walkable ground has to connect it to the rest of the
+         island. Flood-fill from spawn over everything not in BLOCKED. */
+      {
+        const idx3 = (x, y) => y * N2 + x, seen3 = new Uint8Array(N2 * N2);
+        const sx0 = Math.floor(info.SPAWN.x), sy0 = Math.floor(info.SPAWN.y);
+        const st3 = [[sx0, sy0]]; seen3[idx3(sx0, sy0)] = 1;
+        let reachedCald = 0;
+        while (st3.length) {
+          const [cx, cy] = st3.pop();
+          if (window.biomeAt(cx, cy) === B2.CALDERA) reachedCald++;
+          for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+            const nx = cx + dx, ny = cy + dy;
+            if (nx < 0 || ny < 0 || nx >= N2 || ny >= N2 || seen3[idx3(nx, ny)]) continue;
+            if (dbk0 && dbk0(window.biomeAt(nx, ny))) continue;
+            seen3[idx3(nx, ny)] = 1; st3.push([nx, ny]);
+          }
+        }
+        console.log(`caldera tiles walkable from spawn without diving: ${reachedCald}/${cald}`);
+        results.push([`the Caldera is reachable on foot from spawn (${reachedCald}/${cald} tiles)`,
+          reachedCald > 0]);
+      }
       /* Every pocket must be reachable on foot from land within one tank of
          air: BFS out from every non-deep tile, counting only DEEP steps —
          B.UWCAVE itself costs nothing, which is the air-pocket rule. */
+      /* v22: B.ABYSSAL is carved from DEEP too, so it joins this BFS on
+         BOTH sides — it is free to cross (every breath rule keys on B.DEEP
+         specifically, so a Hollow tile costs no air, exactly like a UWCAVE
+         one) and it is NOT a starting point, because you can no more walk
+         into it from dry land than into a cave. Left as it was, an ABYSSAL
+         tile would have seeded the search as if it were land and reported
+         caves as far closer to shore than they are. */
+      const freeUW = (b) => b === B2.UWCAVE || b === B2.ABYSSAL;
       {
         const idx = (x, y) => y * N2 + x, dist = new Int32Array(N2 * N2).fill(-1), q = [];
         for (let y = 0; y < N2; y++) for (let x = 0; x < N2; x++) {
           const b = window.biomeAt(x, y);
-          if (b !== B2.DEEP && b !== B2.UWCAVE) { dist[idx(x, y)] = 0; q.push([x, y]); }
+          if (b !== B2.DEEP && !freeUW(b)) { dist[idx(x, y)] = 0; q.push([x, y]); }
         }
         for (let head = 0; head < q.length; head++) {
           const [cx, cy] = q[head], d = dist[idx(cx, cy)];
@@ -448,29 +547,32 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             const nx = cx + dx, ny = cy + dy;
             if (nx < 0 || ny < 0 || nx >= N2 || ny >= N2 || dist[idx(nx, ny)] !== -1) continue;
             const b = window.biomeAt(nx, ny);
-            if (b !== B2.DEEP && b !== B2.UWCAVE) continue;
-            dist[idx(nx, ny)] = b === B2.UWCAVE ? d : d + 1;
+            if (b !== B2.DEEP && !freeUW(b)) continue;
+            dist[idx(nx, ny)] = freeUW(b) ? d : d + 1;
             q.push([nx, ny]);
           }
         }
-        const seenP = new Set(), pockets = [];
-        for (let y = 0; y < N2; y++) for (let x = 0; x < N2; x++) {
-          if (window.biomeAt(x, y) !== B2.UWCAVE || seenP.has(idx(x, y))) continue;
-          let n = 0, best = Infinity; const st = [[x, y]]; seenP.add(idx(x, y));
-          while (st.length) {
-            const [cx, cy] = st.pop(); n++; best = Math.min(best, dist[idx(cx, cy)]);
-            for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
-              const nx = cx + dx, ny = cy + dy;
-              if (nx < 0 || ny < 0 || nx >= N2 || ny >= N2 || seenP.has(idx(nx, ny))) continue;
-              if (window.biomeAt(nx, ny) !== B2.UWCAVE) continue;
-              seenP.add(idx(nx, ny)); st.push([nx, ny]);
-            }
-          }
-          pockets.push({ n, cross: best });
-        }
-        pockets.sort((a, b) => a.cross - b.cross);
         // one tank of air = BREATH_MAX seconds at PLAYER_SPEED tiles/second
         const budget = info.BREATH_MAX * 4.6;
+        const pocketsOf = (target) => {
+          const seenP = new Set(), out = [];
+          for (let y = 0; y < N2; y++) for (let x = 0; x < N2; x++) {
+            if (window.biomeAt(x, y) !== target || seenP.has(idx(x, y))) continue;
+            let n = 0, best = Infinity; const st = [[x, y]]; seenP.add(idx(x, y));
+            while (st.length) {
+              const [cx, cy] = st.pop(); n++; best = Math.min(best, dist[idx(cx, cy)]);
+              for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+                const nx = cx + dx, ny = cy + dy;
+                if (nx < 0 || ny < 0 || nx >= N2 || ny >= N2 || seenP.has(idx(nx, ny))) continue;
+                if (window.biomeAt(nx, ny) !== target) continue;
+                seenP.add(idx(nx, ny)); st.push([nx, ny]);
+              }
+            }
+            out.push({ n, cross: best });
+          }
+          return out.sort((a, b) => a.cross - b.cross);
+        };
+        const pockets = pocketsOf(B2.UWCAVE);
         console.log(`uwcave pockets (size/deep tiles to cross): ` +
                     pockets.map(p => `${p.n}/${p.cross}`).join('  '));
         results.push([`more than one Underwater Cave pocket (${pockets.length})`, pockets.length > 1]);
@@ -479,6 +581,19 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push([`at least one pocket is a real region, not a speck ` +
           `(largest ${Math.max(...pockets.map(p => p.n))} tiles)`,
           Math.max(...pockets.map(p => p.n)) >= 40]);
+
+        /* ===== v22 PART A: the Abyssal Hollow, held to exactly the same bar.
+           It is gated behind the same dive, so an unreachable pocket here is
+           the same failure it would be there. */
+        const abyss = pocketsOf(B2.ABYSSAL);
+        console.log(`abyssal pockets (size/deep tiles to cross): ` +
+                    abyss.map(p => `${p.n}/${p.cross}`).join('  '));
+        results.push([`more than one Abyssal Hollow pocket (${abyss.length})`, abyss.length > 1]);
+        results.push([`every Hollow pocket is reachable on one tank of air (budget ${budget} tiles)`,
+          abyss.length > 0 && abyss.every(p => p.cross <= budget)]);
+        results.push([`at least one Hollow pocket is a real region, not a speck ` +
+          `(largest ${Math.max(...abyss.map(p => p.n))} tiles)`,
+          Math.max(...abyss.map(p => p.n)) >= 40]);
       }
 
       /* ===== v21 PART A: the dive gate itself. This is the ONLY relaxation of
@@ -681,6 +796,66 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         !!ss && ss.loot.length >= 2 && ss.loot.every(l => l.chance >= 0.6)]);
       results.push(['sea_serpent is the hardest non-boss mob in the world',
         !!ss && Object.entries(info.MOBS).every(([k, d]) => k === 'sea_serpent' || d.hp < ss.hp)]);
+
+      /* ===== v22 PARTS B & C: Storm Dragon on B.PEAK, Shadow Dragon in the
+         Abyssal Hollow, both exactly where the locked spec puts them. */
+      const sdSpots = info.wildSpots.filter(w => w.species === 'storm_dragon');
+      const kdSpots = info.wildSpots.filter(w => w.species === 'shadow_dragon');
+      console.log('storm_dragon spots:', JSON.stringify(sdSpots));
+      console.log('shadow_dragon spots:', JSON.stringify(kdSpots));
+      results.push([`Storm Dragon reaches its peaks (${sdSpots.length} spawned)`, sdSpots.length === 3]);
+      results.push([`every Storm Dragon stands on a PEAK tile`,
+        sdSpots.length > 0 && sdSpots.every(w =>
+          window.biomeAt(Math.floor(w.x), Math.floor(w.y)) === B2.PEAK)]);
+      results.push([`Shadow Dragon reaches the Abyssal Hollow (${kdSpots.length} spawned)`,
+        kdSpots.length === 3]);
+      results.push([`every Shadow Dragon stands on an ABYSSAL tile`,
+        kdSpots.length > 0 && kdSpots.every(w =>
+          window.biomeAt(Math.floor(w.x), Math.floor(w.y)) === B2.ABYSSAL)]);
+      results.push(['Storm Dragon spawns on PEAK ONLY',
+        info.WILD_SPECIES.storm_dragon.biomes.length === 1 &&
+        info.WILD_SPECIES.storm_dragon.biomes[0] === B2.PEAK]);
+      results.push(['Shadow Dragon spawns in the Abyssal Hollow ONLY (Dark Dungeons deferred)',
+        info.WILD_SPECIES.shadow_dragon.biomes.length === 1 &&
+        info.WILD_SPECIES.shadow_dragon.biomes[0] === B2.ABYSSAL]);
+
+      /* B.PEAK is in BLOCKED and always has been (Griffin has spawned there
+         since v14), so a Storm Dragon deep inside a massif can be seen but
+         never reached: taming needs the player within nearestWild()'s 1.8
+         tiles of its wandering position, and the player can only stand on
+         non-BLOCKED ground. The spec pins the spawn to B.PEAK, so this is
+         MEASURED and reported rather than second-guessed — but a version
+         where NONE of them is reachable would be a pet that cannot be
+         tamed at all, and that is a hard failure. */
+      {
+        const dPtSq = (px, py, tx, ty) => Math.hypot(
+          Math.max(tx - px, 0, px - (tx + 1)), Math.max(ty - py, 0, py - (ty + 1)));
+        let reach = 0;
+        for (const s of sdSpots) {
+          let bestW = Infinity;
+          for (let k = 0; k < 360; k++) {                 // its wander ellipse
+            const a = k / 360 * Math.PI * 2;
+            const wx = s.x + Math.cos(a) * 0.9, wy = s.y + Math.sin(a) * 0.7;
+            for (let y = Math.max(0, Math.floor(wy) - 5); y <= Math.min(N2 - 1, Math.floor(wy) + 5); y++)
+              for (let x = Math.max(0, Math.floor(wx) - 5); x <= Math.min(N2 - 1, Math.floor(wx) + 5); x++) {
+                if (dbk0 && dbk0(window.biomeAt(x, y))) continue;
+                const d = dPtSq(wx, wy, x, y);
+                if (d < bestW) bestW = d;
+              }
+          }
+          const ok = bestW < 1.8;
+          if (ok) reach++;
+          console.log(`  storm_dragon @${s.x},${s.y}: closest a player can get ` +
+                      `${bestW.toFixed(2)} tiles (tame needs < 1.8) — ${ok ? 'TAMEABLE' : 'OUT OF REACH'}`);
+        }
+        results.push([`at least one Storm Dragon is actually tameable (${reach}/${sdSpots.length} in this seed)`,
+          reach > 0]);
+      }
+      // the Shadow Dragon's own biome is walkable, so every one of them is
+      // reachable by definition once a diver gets there — assert it anyway
+      results.push([`every Shadow Dragon stands somewhere a player can stand`,
+        kdSpots.length > 0 && kdSpots.every(w =>
+          dbk0 && dbk0(window.biomeAt(Math.floor(w.x), Math.floor(w.y))) === false)]);
 
       // ===== v19 PART E: the scale-up's own proof gates =====
       const H = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
