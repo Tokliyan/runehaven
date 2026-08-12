@@ -102,91 +102,145 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v22 — Abyssal Hollow + Sunforge Caldera, Storm Dragon, Shadow Dragon)
+## Confirmed, locked spec for the next build (v23 — QOL: keybind remapping, settings menu, audio engine, credits, favicon)
 
-v21 shipped successfully — 282/282 in run4, landed directly on main.
-This section replaces the v21 entry as the current locked target.
+v22 shipped successfully — 324/324 in run4, landed directly on main. This
+section replaces the v22 entry as the current locked target. This version
+is deliberately NOT new content — no new species, no new biomes. It's
+quality-of-life and infrastructure, confirmed scoped with the person
+directly: **no gamepad/controller support, ever** — keyboard only,
+permanently. Everything below was checked against the live code before
+being written.
 
-This version is deliberately scoped to species and biomes that reuse
-already-built art and already-proven techniques. Crystal Golem, Krakenling,
-and Salamander King need genuinely new art and (for Salamander King) a new
-mechanic — they're v23, not this version.
+**PART A — centralize every keybind through one config object, then build
+a remapping UI on top of it.**
 
-**Confirmed directly before writing this spec:** `DRAGON_PAL.storm` and
-`DRAGON_PAL.shadow` already exist in the live file, pre-staged since v18,
-unused until now. `dragonV2()` already handles the `"storm"` and
-`"shadow"` variant branches (lightning flicker, layered shadow trail) —
-confirmed present in the shared function, not something to add.
+Confirmed directly: there are 11 real keybind check sites total —
+`keys["shift"]` (line ~503, block-pose gate), `keys["w"/"s"/"a"/"d"]`
+(movement, ~3075-3078), `keys["e"]` (interact-range check, ~3136), and
+`k === "e"/" "/"i"/"c"/"p"/"f"` (single-press actions, ~3022-3033).
 
-**PART A — two new biome pockets, same proven technique as every one
-before them (Enchanted Forest, Sacred Meadow, Underground Caves,
-Underwater Caves).**
+Introduce a single `KEYBINDS` object, e.g.:
+```js
+let KEYBINDS = { up:"w", down:"s", left:"a", right:"d", interact:"e",
+  attack:" ", inventory:"i", craft:"c", pets:"p", dive:"f", block:"shift" };
+```
+Load from `localStorage` on boot if present (localStorage usage already
+exists elsewhere in the file — follow the same pattern), fall back to the
+defaults above if not. Replace every one of the 11 hardcoded literal
+checks with a lookup against `KEYBINDS` instead (e.g. `keys[KEYBINDS.up]`
+instead of `keys["w"]`). This is the entire mechanical requirement — every
+other line at each site stays exactly as it is.
 
-**Abyssal Hollow** — bible: "Deepest point in world, Shadow Dragon
-territory." Carve from `B.DEEP` tiles specifically (own independent noise
-field, own seed offset — do not reuse `UWCAVE_RARITY`'s field), propose
-`ABYSSAL_RARITY = 0.90` (deliberately rarer than Underwater Caves — this is
-meant to feel like the genuine bottom of the map, not just "more ocean").
-New enum value `B.ABYSSAL`. Do NOT add to `BLOCKED` — same as every prior
-pocket, this alone makes it walkable once reached. Since it's carved from
-`B.DEEP`, reaching it requires the existing v21 dive mechanic — no new
-access logic needed, this is a direct, deliberate reuse. Visual: darker and
-colder than Underwater Caves — near-black blue, minimal bioluminescence,
-sparse.
+Build a remapping screen (reachable from the new settings menu, Part B):
+list each bindable action with its current key, clicking one enters a
+"press any key" capture state, the next keypress becomes the new binding,
+save to `localStorage` immediately. Prevent binding two actions to the
+same key — reject the attempt and show a brief inline message instead of
+silently creating a conflict.
 
-**Sunforge Caldera** — bible: "Beyond the volcano, blinding heat, rare
-dragonsteel." Carve from `B.VOLROCK` tiles (own independent noise field),
-propose `CALDERA_RARITY = 0.85`. New enum value `B.CALDERA`. Not in
-`BLOCKED` — walkable, reached on foot like any land pocket, no dive
-mechanic involved (this is the volcanic side, not the ocean). Visual:
-brighter and hotter than plain `VOLROCK` — near-white/orange glow,
-heat-shimmer particle if a cheap one already exists in the render code,
-skip it if not (do not build a new particle system for this alone).
+**PART B — a real settings menu, reachable from the login screen.**
 
-Standard worldgen sanity check for both: confirm at least one tile of each
-new biome exists in the test seed.
+Add a small gear/settings icon or link on the `#login` card (confirmed
+clean insertion point — right below the tagline or near the top-right of
+the card, styled consistent with the existing login UI, not a new visual
+language). Opens a settings panel with these sections:
 
-**PART B — Storm Dragon (Rare pet, tame as hatchling).**
+- **Graphics**: a fullscreen toggle (use the Fullscreen API,
+  `requestFullscreen()` — confirmed unused anywhere in the file currently),
+  and a "reduce motion / reduce particles" toggle that lowers or disables
+  the more decorative particle effects already in the render code (motes,
+  embers, sparkles) — this should read as one honest toggle serving both
+  lower-end performance and motion sensitivity, not two separate settings.
+- **Accessibility**: a text-size option (small/medium/large, applied via a
+  root font-size or CSS custom property, not per-element overrides), and a
+  colorblind-friendly palette toggle — propose a Deuteranopia-safe swap for
+  the handful of pure red/green contrasts already in the UI (HP-red vs
+  weakened-green tame ring is the clearest existing case to check first).
+- **Audio**: master/music/SFX volume sliders (0-100) and a mute toggle for
+  each, wired to the audio engine in Part C. No tracks exist yet — these
+  controls exist and function, there's just nothing playing through them
+  yet.
+- **Controls**: the keybind remapping screen from Part A lives here.
+- **Credits**: see Part E.
 
-Bible: "Mountaintop storms, tame as hatchling." Spawn location: `B.PEAK`
-tiles. Add `species === "storm_dragon"` to `drawSpecies`, calling
-`dragonV2(sx, sy, DRAGON_PAL.storm, t, "storm")` — the entire art
-requirement. Stats, already locked from the v16 table: 55 HP / 12 dmg /
-1.6s cooldown / PvP-capable. Tame base chance: 0.25, matching Fire/Water
-Dragon. Add `storm_dragon: 1.30` to `SPECIES_K`. Mount status: on the
-bible's mountable list, DEFERRED same as every dragon so far.
+All settings persist via `localStorage`, loaded on boot, same pattern as
+the keybinds.
 
-**PART C — Shadow Dragon (Rare pet, tame as hatchling).**
+**PART C — a real audio engine, infrastructure only, no tracks yet.**
 
-Bible: "Dark dungeons, tame as hatchling" AND, separately, "The Abyssal
-Hollow... Shadow Dragon territory." Dungeons don't exist yet — spawn in
-`B.ABYSSAL` this version (bible-supported, and this version's own new
-biome), defer the Dark Dungeons spawn location until Dungeons ship (same
-precedent as Dark Wraith's second location in v18). Add
-`species === "shadow_dragon"` calling
-`dragonV2(sx, sy, DRAGON_PAL.shadow, t, "shadow")`. Same stats as Storm
-Dragon: 55/12/1.6s/PvP-capable, tame base 0.25. Add
-`shadow_dragon: 1.30` to `SPECIES_K`. Same deferred mount status.
+Nothing exists currently — confirmed zero `Audio`/`AudioContext`/`<audio>`
+anywhere in the file. Build using the Web Audio API (more flexible for
+independent volume channels than raw `<audio>` elements):
 
-**PART D — proof gates, standard gauntlet plus:**
-- Worldgen sanity: confirm `B.ABYSSAL` and `B.CALDERA` tiles both exist in
-  the test seed.
-- Confirm Storm Dragon spawns on `B.PEAK`, Shadow Dragon on `B.ABYSSAL`,
-  in the test seed.
-- Confirm both dragons render without error and both use `dragonV2()`
-  correctly (no repeat of the `P`/`PAL` parameter collision from before —
-  that's long fixed, but worth a quick grep to be sure nothing regressed).
-- Extend `run5.js` coverage for both new species and both new biome tiles.
+```js
+const AudioEngine = {
+  ctx: null, masterGain: null, musicGain: null, sfxGain: null,
+  musicSource: null,
+  init() { /* create AudioContext + gain nodes on first user interaction —
+             browsers block autoplay before interaction, gate this behind
+             the login button click, not page load */ },
+  playMusic(url, loop = true) { /* stop any current track, load and play */ },
+  playSFX(url) { /* fire-and-forget, respects sfxGain */ },
+  setMasterVolume(v) {}, setMusicVolume(v) {}, setSFXVolume(v) {},
+  muteMaster(b) {}, muteMusic(b) {}, muteSFX(b) {},
+};
+```
+Wire the settings-menu sliders/toggles from Part B directly to these
+methods. Do NOT invent placeholder trigger points for combat/UI sounds —
+there's nothing to play yet, wiring imagined trigger calls to nonexistent
+files would just be dead code. This version ships the engine ready to
+receive `AudioEngine.playMusic(url)` calls once real tracks exist; that
+wiring is a small follow-up, not part of this version.
 
-**Explicitly not touched this version:** Crystal Golem, Krakenling,
-Salamander King (v23 — new art and, for Salamander King, a new feeding
-mechanic, deserve their own dedicated pass). Dungeons themselves and Shadow
-Dragon's second spawn location. Mounting. Dragonsteel acquisition from
-Sunforge Caldera specifically (the biome exists this version; the "rare
-dragonsteel" resource-drop detail can be added once there's an actual
-reason to visit beyond the dragon, e.g. alongside Dungeons/dragonsteel
-crafting).
+**PART D — favicon, ready to embed now (the one asset that's actually
+final).**
 
-**After v22 ships successfully, do not start any further version
+Base64-encoded .ico, generated from the approved hashbrown mark (icon only,
+not the "HASH BROWN" text — confirmed illegible at favicon size, cropped
+tight to just the mark), pre-built and verified legible at 32px:
+
+```html
+<link rel="icon" type="image/x-icon" href="data:image/x-icon;base64,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">
+```
+
+Insert this `<link>` tag in the `<head>`. This is the entire requirement
+for this part — do not build the full logo splash/animation sequence,
+that's explicitly a future version once the rest of the logo set arrives.
+
+**PART E — credits screen, structure now, placeholder content.**
+
+Reachable from the settings menu (Part B). Simple scrollable panel, styled
+consistent with existing panels (inventory/craft/pet panel treatment).
+Content is a clear placeholder for now:
+```
+RUNEHAVEN
+Created by [Your Name] and the RuneHaven development team
+Built with Claude
+```
+Structure the content as a simple array of `{role, name}` or plain text
+lines so swapping in real names later is a one-line data change, not a
+markup change.
+
+**PART F — proof gates, standard gauntlet plus:**
+- Confirm all 11 keybind sites correctly read from `KEYBINDS` and that
+  rebinding a key in the settings UI actually changes real in-game
+  behavior (e.g., rebind "up" to a different key, confirm movement
+  responds to the new key and not "w" anymore).
+- Confirm settings persist across a simulated reload (write to
+  `localStorage`, re-read, values match).
+- Confirm `AudioEngine` methods all exist and don't throw when called with
+  no track loaded (calling `setMasterVolume` before `playMusic` should be
+  safe, not assume a track is already playing).
+- Confirm the favicon `<link>` renders without breaking anything in `<head>`.
+- Confirm the credits panel opens and closes cleanly like other panels.
+
+**Explicitly not touched this version:** any new species or biome (Crystal
+Golem, Krakenling, Salamander King — still next after this), the full logo
+splash/animation sequence, gamepad/controller support (never — confirmed
+permanently out of scope), any actual music or sound-effect files, real
+credits names.
+
+**After v23 ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated with the next
 target.
