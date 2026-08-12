@@ -1,1 +1,1 @@
-Build exactly per the "Confirmed, locked spec for the next build — v22" section in README.md.
+Build exactly per the "Confirmed, locked spec for the next build — v23" section in README.md.
