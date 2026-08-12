@@ -55,6 +55,152 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-12 (v23 — QOL: settings menu, accessibility, credits, favicon)
+No new species, no new biomes, no change to a single world colour. v23 is
+quality-of-life and infrastructure — the keybind config object, the audio
+engine and the persistence layer live in the README + commit message. Below is
+only what changed about how the game LOOKS.
+- **The settings panel is the existing panel language, reused, not a new one.**
+  Dark `--panel` card, `--panel-edge` hairline, Almendra Display gold header,
+  Barlow body, the same 5px radius and blur as Inventory/Crafting/Companions.
+  The only new component is the tab strip, and it is the class-card selection
+  treatment (gold border + gold text on the active one) at button scale. A
+  settings menu that invented its own visual language would read as a
+  different program bolted onto the game.
+- **The entry point is a bordered text button under the tagline**, not a bare
+  gear glyph — `⚙ SETTINGS` in dim text with a `--panel-edge` border that goes
+  gold on hover, which is the login card's own idiom (`#connectBox summary`).
+  It sits between the tagline and the name field, in the one place on that
+  card where nothing had to move to make room.
+- **Text size is ONE root-level lever, `--ui-scale`.** Small 0.88 / medium 1 /
+  large 1.18, applied as `zoom` to the HUD, the panels, the toast, the HP bar,
+  the settings card and the CHILDREN of the two full-viewport overlays. The
+  children, not the overlays themselves, so `#login` and `#deathOverlay` keep
+  their own full-screen flex layout and only their contents grow.
+- **`#login` gained `justify-content: safe center`.** At "large" the login card
+  outgrows the viewport, and centred flex content clips at the TOP of a scroll
+  container instead of scrolling to it — the logo and the name field were
+  unreachable. `safe` falls back to start-alignment only in the overflow case,
+  so the default screen is pixel-identical. Verified in real Chromium at
+  1280x820 both before and after.
+- **Colourblind mode moves the GREENS and never the reds.** Deuteranopia kills
+  red-vs-green; red-vs-blue survives it, so every pure green that pairs against
+  a red becomes `#4bb8e8` — the mob HP bar (against `#c84838`), the weakened
+  tame ring and its name tag, the HUD HP numbers, the player HP bar fill and
+  the connection dot. The reds stay exactly where they are: shifting both ends
+  would have been a whole second palette to keep coherent. Canvas side is
+  `tameCol()` / `tameRgb()`, CSS side is the `body.cb` rules — two halves of
+  one decision, change them together.
+- **The gold pet HP bar and the gold-green downed arc were deliberately left
+  alone.** Neither of them reads against a red — the v16 rule is that gold
+  means friendly and red means hostile, which is exactly the distinction that
+  survives deuteranopia already. Recolouring them would have cost the v16
+  read for nothing.
+- **Reduce motion is one honest toggle over the AMBIENT spawner only** — the
+  motes, fireflies, embers, snow, butterflies, bugs and the forge chimney
+  smoke. Combat, death and dive particles are untouched, because those are
+  feedback: a player who cannot see a hit burst cannot read the fight. One
+  switch serving both low-end performance and motion sensitivity, as specced,
+  and it drains the existing particles rather than snapping them off — `run4`
+  pins it at zero ambient particles alive after 11 simulated seconds.
+- **Credits are the panel treatment again**, a dim letter-spaced role over the
+  name, and both the credits list and the Collaborations list build from data
+  arrays so swapping real names in is a one-line change, never a markup edit.
+- **The STG Records logo keeps its `#e8e4da` backing and 6px padding.** The
+  mark is near-black line work on a near-black field; on the dark panel
+  without the pale plate it renders as an empty square. Confirmed by eye in
+  real Chromium — the coin reads clearly on the plate. **Do not remove it.**
+- **Favicon**: the approved hashbrown mark, icon only, embedded as the
+  pre-built two-size (16 + 32) `.ico` data URI. No splash, no animation —
+  that is explicitly a later version once the rest of the logo set arrives.
+- **⚠️ The settings panel is reachable from the login screen and nowhere
+  else**, which is exactly what the spec scoped. Once you are in the world the
+  gear is gone with the login card, so a player cannot rebind a key, change
+  text size or mute the game mid-session. This is the single most likely thing
+  to want next; the panel itself is already a fixed overlay at `z-index: 40`
+  above everything, so surfacing it in-game is a hotkey and a HUD button, not
+  a rebuild.
+- **⚠️ Nothing in the world canvas was seen rendered this version.** The login
+  screen and all five settings sections were screenshotted in real Chromium,
+  but entering the world needs live Supabase creds, so the colourblind swap on
+  the tame ring / mob HP bar and the text-size lever on the HUD are proven by
+  assertion (`run4`, `run5`) and not by eye. Worth one screenshot next to a
+  weakened creature with the toggle on.
+- **⚠️ `zoom` scales padding and borders with the text, not just glyphs.** That
+  is what keeps the HUD boxes proportioned instead of bursting, but it means
+  "large" is really a UI scale. On a short viewport the panels are `max-height:
+  70vh` scrolling already, so nothing is cut off — but a very small screen at
+  "large" will have the HUD taking noticeably more of it.
+
+## JUDGMENT CALLS THIS VERSION
+Calls made where the locked spec was silent, or where following its wording
+literally would have shipped a half-applied feature. All verified through the
+full gate (371/371 in `run4`, zero FAILs, `run3` and `run5` clean) —
+refinements to consider, not unfinished work.
+- **"11 keybind check sites" is 11 bindable ACTIONS across 13 lines, and all 13
+  were converted.** The spec's own enumeration lists twelve checks for eleven
+  actions — `interact` is checked twice, once as a single-press action and once
+  as the held key that sustains the taming channel. On top of that its list
+  omits the two keyup twins (`cancelTaming` on interact-up, `sendMove` on
+  block-up, plus the raw `e.key === "Shift"` compare). Leaving those literal
+  would have shipped a rebind that half-applies: rebind interact and the taming
+  channel never cancels; rebind block and the pose never drops. Every site that
+  keys off one of the 11 actions now reads `KEYBINDS`, and `run4` greps the
+  source for both halves — the new lookups present, the old literals gone.
+- **The arrow keys stay hardcoded as a second movement binding.** They are not
+  one of the 11 actions and the spec said every other line at each site stays
+  as it is, so `keys[KEYBINDS.up] || keys["arrowup"]` is the shape. Asserted, so
+  a future pass does not "finish" them by accident.
+- **Text size is `zoom: var(--ui-scale)`, not a root font-size.** Every size in
+  the stylesheet is a px literal, so changing the root font-size moves nothing
+  without rewriting each rule — which is the per-element override the spec
+  explicitly ruled out. One custom property on `:root`, one rule, no duplicated
+  numbers. 0.88 / 1 / 1.18 are tunables.
+- **`#4bb8e8` for the colourblind green** and the matching `#2c6f96 → #4bb8e8`
+  HP-bar gradient. The spec asked for a Deuteranopia-safe swap and gave no
+  values; this is the existing `--runic` cyan family pulled toward blue so it
+  cannot be confused with the runic tier colour it sits near.
+- **Which contrasts count as "the handful".** Swapped: mob HP bar, weakened
+  tame ring, weakened name tag, HUD HP numbers, player HP bar, connection dot.
+  Not swapped: the gold pet bar and the gold-green downed arc (see above), and
+  the biome palette, which has no red/green pair a player must tell apart.
+- **Fullscreen is not re-requested on boot.** The API only works inside a user
+  gesture, so a stored `true` cannot be honoured at page load without a click
+  to hang it on. The stored value is what the panel last showed and the request
+  itself only ever fires from the button. Flagged because "all settings persist"
+  is true of the preference here, not of the state.
+- **Default volumes 80 / 70 / 80 and all three unmuted.** Unspecified; music
+  sits under SFX so a future track cannot drown combat feedback on first boot.
+- **The HUD help line is now generated from `KEYBINDS`.** Not asked for, but it
+  was a hardcoded "WASD move • SPACE attack • …" string that would have started
+  lying the moment anyone rebound anything. `run4` asserts it re-renders as
+  "TASD" after rebinding up to T.
+- **Rebinding refuses duplicates rather than stealing the key**, with the reason
+  said out loud in an inline message under the list — the spec asked for exactly
+  this. ESCAPE and TAB are additionally unbindable: ESC is the capture-cancel
+  key, and TAB would trap keyboard focus in the panel.
+- **Credits placeholder is two `{role, name}` rows**, not three lines — "Created
+  by [Your Name] and the RuneHaven development team" is one credit with one
+  role, and splitting it would have made the array shape wrong for the real
+  names it exists to receive.
+- **`debugSettingsInfo()` and `debugAudioEngine()` — two new harness hooks**,
+  beside `debugWorldInfo()` / `debugSetPlayer()`. `KEYBINDS`, `SETTINGS` and
+  `particles` are all top-level `let`s, which never land on `window`, so PART
+  F's gates cannot see any of them otherwise. Copies, except the deliberate
+  live handle to the audio engine so its methods can actually be called.
+- **`loadSettings()` resets to the defaults before reading storage**, which is
+  what makes calling it a genuine reload of the subsystem — that is what the
+  persistence gate leans on, and it is also correct behaviour for a key that
+  was removed from storage.
+- **`run4` installs a real in-memory `localStorage` for the persistence gate.**
+  The shared harness header stubs it to a no-op, which cannot prove a round
+  trip; the probe only replaces it if writes are not already sticking, so the
+  header is untouched.
+- **`run5` gained a v23 sweep** — every mob drawn weakened through both sides of
+  the colourblind swap, and `updateParticles` through both sides of the
+  reduce-motion gate. 660 → 718 coverage draws. Extend it whenever another
+  colour or ambient effect learns a v23 twin.
+
 ### 2026-08-11 (v22 — Abyssal Hollow + Sunforge Caldera, Storm Dragon, Shadow Dragon)
 Two more rare biome pockets and the last two dragons the bible lists. Nothing
 here needed new art: both biomes are the proven pocket technique a fifth and

@@ -1056,6 +1056,218 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['setActivePet/petInterposes exist', false]);
     }
 
+    /* ===== v23 PART F — keybinds, settings persistence, audio, favicon, credits
+       Everything below is QOL/infrastructure: no world state is asserted here,
+       and the player is put back where it was found at the end. ============== */
+    if (window.debugSettingsInfo && window.setKeybind && window.setSetting) {
+      const dsi = window.debugSettingsInfo;
+      const ACTIONS = ['up', 'down', 'left', 'right', 'interact', 'attack',
+                       'inventory', 'craft', 'pets', 'dive', 'block'];
+      const info23 = dsi();
+
+      // ---- PART A: the config object itself
+      results.push(['KEYBINDS carries all 11 bindable actions',
+        Object.keys(info23.KEYBINDS).length === 11 &&
+        ACTIONS.every(a => typeof info23.KEYBINDS[a] === 'string')]);
+      results.push(['KEYBIND defaults are exactly the locked spec',
+        ACTIONS.map(a => info23.KEYBIND_DEFAULTS[a]).join('|') ===
+        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift'].join('|')]);
+
+      // ---- PART A: every check site reads KEYBINDS, no literals left behind
+      const SITES = ['keys[KEYBINDS.up]', 'keys[KEYBINDS.down]', 'keys[KEYBINDS.left]',
+        'keys[KEYBINDS.right]', 'keys[KEYBINDS.interact]', 'keys[KEYBINDS.block]',
+        'k === KEYBINDS.interact', 'k === KEYBINDS.attack', 'k === KEYBINDS.inventory',
+        'k === KEYBINDS.craft', 'k === KEYBINDS.pets', 'k === KEYBINDS.dive',
+        'k === KEYBINDS.block'];
+      const missing = SITES.filter(s => gameScript.indexOf(s) < 0);
+      results.push(['every keybind check site reads KEYBINDS' +
+        (missing.length ? ' (missing ' + missing.join(', ') + ')' : ''), missing.length === 0]);
+      const LITERALS = ['keys["w"]', 'keys["s"]', 'keys["a"]', 'keys["d"]',
+                        'keys["e"]', 'keys["shift"]', 'e.key === "Shift"'];
+      const leftover = LITERALS.filter(s => gameScript.indexOf(s) >= 0);
+      results.push(['no hardcoded keybind literals remain' +
+        (leftover.length ? ' (found ' + leftover.join(', ') + ')' : ''), leftover.length === 0]);
+      // the arrow keys are a deliberate fixed secondary binding, not a miss
+      results.push(['arrow keys survive as the fixed secondary movement binding',
+        gameScript.indexOf('keys["arrowup"]') >= 0 && gameScript.indexOf('keys["arrowleft"]') >= 0]);
+
+      // ---- PART A: rebinding changes REAL in-game behaviour, end to end
+      const dsp23 = window.debugSetPlayer, dwi23 = window.debugWorldInfo;
+      const SP23 = dwi23().SPAWN;
+      const press23 = (key, type) => window.dispatchEvent(
+        new window.KeyboardEvent(type, { key, bubbles: true }));
+      const walk23 = (n, base) => { for (let i = 0; i < n; i++) window.update(0.05, base + i * 50); };
+      const northFrom = (key, base) => {
+        dsp23({ x: SP23.x + 0.5, y: SP23.y + 0.5, diving: false, hp: 100 });
+        press23(key, 'keydown');
+        walk23(20, base);
+        press23(key, 'keyup');
+        return (SP23.y + 0.5) - dwi23().player.y;      // >0 means it moved north
+      };
+      results.push(['default binding: W walks the player north', northFrom('w', 200000) > 0.05]);
+      results.push(['default binding: T does nothing', Math.abs(northFrom('t', 210000)) < 1e-9]);
+      const reb = window.setKeybind('up', 't');
+      results.push(['rebinding "up" to T is accepted', reb.ok === true]);
+      results.push(['after the rebind, T walks the player north', northFrom('t', 220000) > 0.05]);
+      results.push(['after the rebind, W no longer moves the player',
+        Math.abs(northFrom('w', 230000)) < 1e-9]);
+      const dup = window.setKeybind('down', 't');
+      results.push(['binding a key already in use is refused, with a reason',
+        dup.ok === false && typeof dup.msg === 'string' && dup.msg.length > 0]);
+      results.push(['the refused bind left "down" untouched', dsi().KEYBINDS.down === 's']);
+      results.push(['the help line is regenerated from KEYBINDS, never hardcoded',
+        (doc.getElementById('hudHelp').textContent || '').indexOf('TASD') === 0]);
+      window.setKeybind('up', 'w');
+      results.push(['rebinding back to W restores the original behaviour',
+        dsi().KEYBINDS.up === 'w' && northFrom('w', 240000) > 0.05]);
+
+      // ---- PART B: settings persist across a simulated reload
+      if (window.localStorage.getItem('rh_probe') !== '1') {
+        try { window.localStorage.setItem('rh_probe', '1'); } catch (e) {}
+      }
+      if (window.localStorage.getItem('rh_probe') !== '1') {
+        // the shared harness header stubs localStorage to a no-op; persistence
+        // is not testable through that, so install a real in-memory store.
+        const store = {};
+        window.localStorage = {
+          getItem: k => (Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null),
+          setItem: (k, v) => { store[k] = String(v); },
+          removeItem: k => { delete store[k]; },
+        };
+      }
+      let lsOk = false;
+      try { window.localStorage.setItem('rh_probe2', 'x'); lsOk = window.localStorage.getItem('rh_probe2') === 'x'; } catch (e) {}
+      results.push(['harness has a working localStorage for the persistence gate', lsOk]);
+      window.setSetting('textSize', 'large');
+      window.setSetting('colorblind', true);
+      window.setSetting('volMusic', 33);
+      window.setSetting('muteSfx', true);
+      window.setKeybind('dive', 'g');
+      window.loadSettings();                     // <- exactly what a reload does
+      window.applySettings();
+      const after = dsi();
+      results.push(['settings survive a simulated reload (text size, colourblind, volume, mute)',
+        after.SETTINGS.textSize === 'large' && after.SETTINGS.colorblind === true &&
+        after.SETTINGS.volMusic === 33 && after.SETTINGS.muteSfx === true]);
+      results.push(['keybinds survive the same reload', after.KEYBINDS.dive === 'g']);
+      results.push(['the colourblind swap actually reaches the canvas colours',
+        after.tameCol === '#4bb8e8' && dsi().tameRgb === '75,184,232']);
+      results.push(['the colourblind swap reaches the CSS side too', after.colorblindClass === true]);
+      results.push(['the text-size lever writes one root custom property',
+        after.uiScale === '1.18']);
+      window.setSetting('colorblind', false);
+      results.push(['colourblind off restores the original green',
+        dsi().tameCol === '#7fd45a' && dsi().colorblindClass === false]);
+      window.setSetting('textSize', 'medium');
+      window.setKeybind('dive', 'f');
+      window.setSetting('volMusic', 70);
+      window.setSetting('muteSfx', false);
+
+      // ---- PART B: the reduce-motion / reduce-particles toggle
+      const vol23 = dwi23().VOLCANO;
+      dsp23({ x: vol23.x + 0.5, y: vol23.y + 0.5, diving: false, hp: 100 });
+      window.setSetting('reduceMotion', false);
+      for (let i = 0; i < 60; i++) window.updateParticles(0.05, 300000 + i * 50);
+      const pOn = dsi().particleCount;
+      results.push([`ambient particles spawn normally (${pOn} alive at the volcano)`, pOn > 0]);
+      window.setSetting('reduceMotion', true);
+      for (let i = 0; i < 220; i++) window.updateParticles(0.05, 400000 + i * 50);
+      const pOff = dsi().particleCount;
+      results.push([`reduce motion stops every ambient spawner (${pOff} left after 11s)`, pOff === 0]);
+      window.setSetting('reduceMotion', false);
+      dsp23({ x: SP23.x + 0.5, y: SP23.y + 0.5, diving: false, hp: 100 });
+
+      // ---- PART C: the audio engine exists, and is safe with no track loaded
+      const AE = window.debugAudioEngine ? window.debugAudioEngine() : null;
+      const AE_API = ['init', 'playMusic', 'playSFX', 'setMasterVolume', 'setMusicVolume',
+                      'setSFXVolume', 'muteMaster', 'muteMusic', 'muteSFX'];
+      results.push(['AudioEngine exposes every method the spec names',
+        !!AE && AE_API.every(m => typeof AE[m] === 'function')]);
+      results.push(['AudioEngine exposes the spec\'s node/source fields',
+        !!AE && 'ctx' in AE && 'masterGain' in AE && 'musicGain' in AE &&
+        'sfxGain' in AE && 'musicSource' in AE]);
+      let aeThrew = null;
+      try {
+        AE.setMasterVolume(0.5); AE.setMusicVolume(0.25); AE.setSFXVolume(0.9);
+        AE.muteMaster(true); AE.muteMaster(false); AE.muteMusic(true); AE.muteMusic(false);
+        AE.muteSFX(true); AE.muteSFX(false); AE.init(); AE.stopMusic();
+      } catch (e) { aeThrew = e; }
+      results.push(['every AudioEngine setter is safe before any track is loaded', !aeThrew]);
+      results.push(['volume state is kept even with no AudioContext available',
+        Math.abs(AE.vol.master - 0.5) < 1e-9 && Math.abs(AE.vol.music - 0.25) < 1e-9]);
+      let pmThrew = null, pmRes = null, sfxRes = null;
+      try { pmRes = await AE.playMusic('nothing-yet.ogg'); sfxRes = await AE.playSFX('nothing-yet.ogg'); }
+      catch (e) { pmThrew = e; }
+      results.push(['playMusic/playSFX resolve false instead of throwing with no track',
+        !pmThrew && pmRes === false && sfxRes === false]);
+      const initAt = gameScript.indexOf('AudioEngine.init();');
+      results.push(['the AudioContext is created on the ENTER click, never at page load',
+        initAt >= 0 && gameScript.slice(initAt, initAt + 220).indexOf('connectSupabase();') > 0]);
+      results.push(['no imagined music/SFX trigger points were wired to files that do not exist',
+        gameScript.split('AudioEngine.playSFX(').length === 1 &&
+        gameScript.split('AudioEngine.playMusic(').length === 1]);
+      window.applySettings();   // put the gains back where the settings say
+
+      // ---- PART D: the favicon
+      const icon = doc.querySelector('link[rel="icon"]');
+      results.push(['favicon <link> is present, and inside <head>',
+        !!icon && icon.parentNode === doc.head]);
+      results.push(['favicon is the approved pre-built .ico data URI',
+        !!icon && (icon.getAttribute('href') || '').indexOf('data:image/x-icon;base64,AAABAAIAEBAAAAAAIAAZAwAAJgAAACAgAAAAACAALAgAAD8DAACJUE5H') === 0]);
+      results.push(['<head> is otherwise intact (title + stylesheet still there)',
+        (doc.querySelector('title') || {}).textContent === 'RuneHaven' &&
+        doc.head.querySelectorAll('style').length === 1]);
+
+      // ---- PART B/E: the settings panel and the credits screen
+      const ov = doc.getElementById('settingsOverlay');
+      results.push(['a settings entry point sits on the login card',
+        !!doc.getElementById('settingsBtn') &&
+        doc.getElementById('settingsBtn').parentNode === doc.getElementById('login')]);
+      results.push(['the settings panel starts closed', !!ov && !ov.classList.contains('open')]);
+      window.openSettings('credits');
+      results.push(['the settings panel opens', ov.classList.contains('open')]);
+      results.push(['every spec section is present',
+        ['secGraphics', 'secAccess', 'secAudio', 'secControls', 'secCredits']
+          .every(id => !!doc.getElementById(id))]);
+      results.push(['the credits tab is the one showing',
+        doc.getElementById('secCredits').classList.contains('shown') &&
+        !doc.getElementById('secGraphics').classList.contains('shown')]);
+      results.push(['the remapping screen lists all 11 actions',
+        doc.getElementById('keybindList').children.length === 11]);
+      results.push(['credits render from the CREDITS array',
+        doc.getElementById('creditsList').children.length === dsi().CREDITS.length &&
+        dsi().CREDITS.length === 2]);
+      const collab = doc.getElementById('collabList');
+      const cimg = collab.querySelector('img');
+      results.push(['Collaborations renders the one approved entry', collab.children.length === 1]);
+      results.push(['the STG Records logo is embedded, not a placeholder',
+        !!cimg && (cimg.getAttribute('src') || '').indexOf('data:image/png;base64,iVBORw0KGgo') === 0 &&
+        (cimg.getAttribute('src') || '').length > 50000]);
+      results.push(['the logo keeps its pale backing (it is near-black on near-black)',
+        !!cimg && (cimg.getAttribute('style') || '').indexOf('#e8e4da') >= 0]);
+      results.push(['the collaboration caption reads from the data, not markup',
+        (collab.textContent || '').indexOf('STG Records') >= 0 &&
+        (collab.textContent || '').indexOf('music') >= 0]);
+      window.showSettingsTab('graphics');
+      results.push(['tabs switch cleanly',
+        doc.getElementById('secGraphics').classList.contains('shown') &&
+        !doc.getElementById('secCredits').classList.contains('shown')]);
+      window.closeSettings();
+      results.push(['the settings panel closes cleanly, like every other panel',
+        !ov.classList.contains('open') && dsi().capturing === null]);
+
+      // put every v23 setting back to its shipped default
+      try { window.localStorage.removeItem('rh_keybinds'); window.localStorage.removeItem('rh_settings'); } catch (e) {}
+      window.loadSettings();
+      window.applySettings();
+      const fin = dsi();
+      results.push(['clearing storage falls back to the shipped defaults',
+        fin.KEYBINDS.up === 'w' && fin.SETTINGS.textSize === 'medium' &&
+        fin.SETTINGS.colorblind === false && fin.SETTINGS.reduceMotion === false]);
+    } else {
+      results.push(['v23 settings subsystem is reachable from the harness', false]);
+    }
+
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
     process.exit(allOk && !caught ? 0 : 1);

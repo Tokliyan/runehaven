@@ -172,6 +172,34 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         }
       }
     }
+    /* v23: the colourblind palette is a real render branch — the weakened
+       tame ring, the mob HP bar and the weakened name tag all read tameCol()
+       / tameRgb(). Sweep every mob through BOTH sides of it, and both sides
+       of the reduce-motion gate. EXTEND THIS whenever another colour or
+       ambient effect learns a v23 twin. */
+    if (window.drawMob && window.setSetting && window.debugSettingsInfo) {
+      const wasCB = window.debugSettingsInfo().SETTINGS.colorblind;
+      for (const cbOn of [true, false]) {
+        window.setSetting('colorblind', cbOn);
+        for (const mk of MOBK) {
+          // hp well under the wear-down gate, so the weakened treatment draws
+          const m = { id: mk + ':cb', kind: mk, x: 41, y: 51, hx: 41, hy: 51, hp: 4, maxHp: 80,
+                      state: "cower", winding: false, flash: 0, fx: 1, fy: 0,
+                      dead: false, target: null, ph: 1 };
+          window.drawMob(m, 800);
+          n += 1;
+        }
+      }
+      window.setSetting('colorblind', wasCB);
+      if (window.updateParticles) {
+        const wasRM = window.debugSettingsInfo().SETTINGS.reduceMotion;
+        for (const rmOn of [true, false]) {
+          window.setSetting('reduceMotion', rmOn);
+          for (let i = 0; i < 20; i++) { window.updateParticles(0.05, 500000 + i * 50); n += 1; }
+        }
+        window.setSetting('reduceMotion', wasRM);
+      }
+    }
     // v16: pet combat render states — following, lunging, damaged, downed.
     // Uses a stand-in host so the local-only overlays are exercised directly.
     if (window.drawPet && window.petOverlays) {
