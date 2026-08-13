@@ -182,7 +182,8 @@
      override. The two full-viewport overlays keep their own layout and scale
      their CHILDREN instead, so "large" cannot push them past the viewport. */
   :root { --ui-scale: 1; }
-  .hud, .panel, #toast, #hpBarWrap, #settingsCard, #login > *, #deathOverlay > * {
+  .hud, .panel, #toast, #hpBarWrap, #settingsCard, #login > *, #deathOverlay > *,
+  #introCard > * {
     zoom: var(--ui-scale);
   }
   /* At "large" the login card can outgrow the viewport, and centred flex
@@ -260,9 +261,60 @@
     font-family: inherit; font-weight: 700; font-size: 13px; letter-spacing: 2px;
     padding: 9px 26px; cursor: pointer; border-radius: 3px; margin-top: 16px;
   }
+
+  /* ---------- v24: THE INTRO CARD ----------
+     A cover, not a screen of its own. The login card is already built and
+     sitting underneath at opacity 0, so the card's EXIT is the crossfade —
+     the login starts fading in while the card is still leaving, never after.
+     Pure typography, no image assets. Eased, never linear. */
+  #introCard {
+    position: fixed; inset: 0; z-index: 50; display: none;
+    background:
+      radial-gradient(ellipse at 50% 45%, rgba(232,182,76,0.09), transparent 58%),
+      linear-gradient(180deg, #070a0f 0%, #0a0d13 62%, #100d1a 100%);
+    flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; padding: 24px; text-align: center;
+    opacity: 0; transform: scale(0.86);
+    transition: opacity 700ms cubic-bezier(.22,.68,.28,1),
+                transform 700ms cubic-bezier(.22,.68,.28,1);
+  }
+  #introCard.shown { opacity: 1; transform: scale(1); }
+  #introCard.out { opacity: 0; transform: scale(1.07); }
+  .intro-studio {
+    font-family: 'Almendra Display', serif; color: var(--gold);
+    font-size: 30px; letter-spacing: 5px;
+    text-shadow: 0 0 26px rgba(232,182,76,0.32);
+  }
+  .intro-with {
+    color: var(--text-dim); font-size: 13px; letter-spacing: 4px;
+    max-width: 640px; line-height: 1.7;
+  }
+  .intro-title {
+    font-family: 'Almendra Display', serif; color: var(--gold);
+    font-size: 62px; letter-spacing: 11px; margin-top: 4px;
+    text-shadow: 0 0 38px rgba(232,182,76,0.45), 0 2px 0 #6b5320;
+  }
+  /* The login's fade is the other half of that same crossfade — but only on the
+     way OUT. `intro-exit` is what carries the transition, so the initial hide is
+     INSTANT: with the transition on #login itself the login screen was briefly
+     visible at load, fading out under a card that had not faded in yet (seen in
+     real Chromium). Its duration is set inline to match the card, so a skipped
+     exit crossfades as fast as the card does. `intro-lock` deliberately outlives
+     the fade: it is what stops the click that skipped the card from also landing
+     on the login form underneath. */
+  body.intro-hide #login { opacity: 0; }
+  body.intro-exit #login { transition: opacity 700ms cubic-bezier(.22,.68,.28,1); }
+  body.intro-lock #login { pointer-events: none; }
 </style>
 </head>
 <body>
+
+<!-- v24: the intro cover. Sits on top; the login card below is already built. -->
+<div id="introCard">
+  <div class="intro-studio">Hashbrown Studios</div>
+  <div class="intro-with">in collaboration with STG Records presents</div>
+  <div class="intro-title">RuneHaven</div>
+</div>
 
 <div id="login">
   <h1>RUNEHAVEN</h1>
@@ -2183,7 +2235,9 @@ enterBtn.onclick = async () => {
   errEl.textContent = "";
   enterBtn.textContent = "ENTERING…";
   try {
-    AudioEngine.init();          // v23: first real user gesture — autoplay gate
+    /* v23: first real user gesture — autoplay gate, and the only place init()
+       is allowed to be called from. v24: the same gesture starts the rotation. */
+    if (AudioEngine.init()) playNextBgTrack();
     connectSupabase();
     await loadWorld();
     placeLandmarks();
@@ -2768,6 +2822,7 @@ function tryAttack(aimX, aimY) {
   const now = performance.now();
   if (now - lastAttack < (w.cd || 450)) return;
   lastAttack = now;
+  combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;   // v24: combat music signal
 
   let dir;
   if (aimX !== undefined) {
@@ -2861,6 +2916,7 @@ function applyDamage(dmg, from, opts = {}) {
   const arm = ARMORS[me.armor];
   if (arm) dmg = Math.max(1, Math.round(dmg * (1 - arm.reduce)));
   me.hp -= dmg;
+  combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;   // v24: combat music signal
   hitFlash = performance.now();
   shakeT = performance.now();
   // v10: stagger recoil + knockback shove in the hit direction
@@ -3286,6 +3342,7 @@ function update(dt, t) {
       if (me.hp > 1) {
         const tick = Math.min(3, me.hp - 1);
         me.hp -= tick;
+        combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;   // v24: combat music signal
         addFloat(me.x, me.y, `-${tick}`, "#7fd45a");
         sendMove(true);
       }
@@ -3368,6 +3425,21 @@ function update(dt, t) {
     f.z += 22 * dt;
     if (f.life <= 0) floatTexts.splice(i, 1);
   }
+  /* v24: the music channel switch. `combatMusicUntil` is pushed forward by the
+     two existing combat signals; this is only the check, and it is throttled
+     to roughly once a second rather than run every frame. */
+  const nowT = performance.now();
+  if (nowT >= musicCheckAt) {
+    musicCheckAt = nowT + 1000;
+    if (nowT < combatMusicUntil && !inCombatMusic) {
+      inCombatMusic = true;
+      AudioEngine.playMusic("audio/nu_metal.mp3", true);   // true: this one DOES loop, it's a single track
+    } else if (nowT >= combatMusicUntil && inCombatMusic) {
+      inCombatMusic = false;
+      playNextBgTrack();   // resumes the rotation from wherever bgIndex is
+    }
+  }
+
   if (now - lastSave > SAVE_EVERY) savePlayer();
 }
 
@@ -6695,9 +6767,9 @@ const AudioEngine = {
     try { this.musicSource.disconnect(); } catch (e) {}
     this.musicSource = null;
   },
-  /* Ready to receive a real call the moment a track exists. Nothing in the
-     game calls it yet on purpose — wiring imagined trigger points to files
-     that do not exist would only be dead code. */
+  /* v24: real tracks exist now and this is called from the playlist layer
+     below. The engine itself is unchanged — `loop` is what tells it whether a
+     track owns the channel forever (combat) or hands it back (rotation). */
   async playMusic(url, loop = true) {
     if (!this.init()) return false;
     this.stopMusic();
@@ -6725,6 +6797,51 @@ const AudioEngine = {
     } catch (e) { return false; }
   },
 };
+
+/* --- v24 PARTS B/C: the playlist layer -------------------------------------
+   A thin layer ON TOP of the v23 engine — playMusic/playSFX and the gain-node
+   setup are confirmed working and are deliberately not touched. The tracks are
+   separate files under audio/, referenced by relative URL, not inlined.
+   The sixth file in audio/ is deliberately held out of both rotations this
+   version, so its name appears nowhere in this file at all. */
+const BG_PLAYLIST = ["audio/Pop.mp3", "audio/Slower_Jamz.mp3",
+  "audio/Long_Way_Home.mp3", "audio/song.mp3"];
+let bgIndex = 0, inCombatMusic = false;
+
+async function playNextBgTrack() {
+  if (inCombatMusic) return;   // combat owns the music channel right now
+  const url = BG_PLAYLIST[bgIndex % BG_PLAYLIST.length];
+  bgIndex++;
+  await AudioEngine.playMusic(url, false);   // false: don't loop this one track forever
+  if (AudioEngine.musicSource) {
+    AudioEngine.musicSource.onended = () => { if (!inCombatMusic) playNextBgTrack(); };
+  }
+}
+
+/* The two signals that already mean "the player is in a fight right now" —
+   every attack the player makes, and every hit the player takes — push this
+   timestamp forward. No third detection system was built. */
+let combatMusicUntil = 0, musicCheckAt = 0;
+const COMBAT_MUSIC_LINGER = 6000;   // ms after the last hit before reverting
+
+/* v24: harness hook — the playlist state is top-level `let`s, which never land
+   on window. Copies, plus the one setter PART D's gate needs to place a linger
+   window without waiting six real seconds. */
+function debugMusicInfo() {
+  return {
+    BG_PLAYLIST: BG_PLAYLIST.slice(),
+    bgIndex, inCombatMusic, combatMusicUntil, musicCheckAt,
+    COMBAT_MUSIC_LINGER,
+    hasMusicSource: !!AudioEngine.musicSource,
+  };
+}
+function debugSetMusicState(o) {
+  if (!o) return;
+  if ("bgIndex" in o) bgIndex = o.bgIndex | 0;
+  if ("inCombatMusic" in o) inCombatMusic = !!o.inCombatMusic;
+  if ("combatMusicUntil" in o) combatMusicUntil = +o.combatMusicUntil;
+  if ("musicCheckAt" in o) musicCheckAt = +o.musicCheckAt;
+}
 
 /* --- applying a setting --------------------------------------------------- */
 function applySettings() {
@@ -7003,9 +7120,102 @@ function debugSettingsInfo() {
 }
 function debugAudioEngine() { return AudioEngine; }
 
+/* =========================================================
+   v24 PART A — THE INTRO CARD
+   Shown once per page load, before the login screen becomes visible. The login
+   card is already loaded underneath it — the same "cover sits on top" pattern
+   every other full-viewport overlay in this file uses — so the card's exit IS
+   the crossfade rather than something that happens before one.
+   Deliberately NO localStorage skip-forever: it plays every time, and any
+   keypress or click during it cuts straight to the login screen.
+   ========================================================= */
+const INTRO_IN_MS = 700, INTRO_HOLD_MS = 1200, INTRO_OUT_MS = 700, INTRO_SKIP_MS = 250;
+let introEl = null, introPhase = "idle", introTimers = [], introSkipped = false;
+
+function introAt(ms, fn) { introTimers.push(setTimeout(fn, ms)); }
+function introClearTimers() { for (const id of introTimers) clearTimeout(id); introTimers = []; }
+
+/* One handler for both skip signals. It fires only while the card is coming in
+   or holding — during the exit and after it, it is a no-op. That, plus the
+   `intro-lock` class outliving the fade, is what stops a skip click from
+   double-triggering into the login form underneath. */
+function introSkip() {
+  if (introPhase === "in" || introPhase === "hold") endIntro(true);
+}
+
+function playIntro() {
+  introEl = document.getElementById("introCard");
+  if (!introEl) return false;
+  introClearTimers();
+  introSkipped = false;
+  introPhase = "in";
+  document.body.classList.remove("intro-exit");   // the hide itself is instant
+  document.body.classList.add("intro-hide", "intro-lock");
+  loginEl.style.transitionDuration = "";
+  introEl.style.display = "flex";
+  introEl.style.transitionDuration = INTRO_IN_MS + "ms";
+  introEl.classList.remove("shown", "out");
+  removeEventListener("keydown", introSkip, true);
+  removeEventListener("click", introSkip, true);
+  addEventListener("keydown", introSkip, true);
+  addEventListener("click", introSkip, true);
+  /* The entry state has to be COMMITTED before the class that transitions away
+     from it, or the two collapse into the end state and the card just pops in.
+     A rAF is not enough here — the element is coming out of `display: none`, and
+     Chromium starts no transition from a display:none before-change style.
+     Reading a layout property forces the flush synchronously. (Verified in real
+     Chromium: with the rAF the fade-in never ran at all.) */
+  void introEl.offsetWidth;
+  introEl.classList.add("shown");
+  introAt(INTRO_IN_MS, () => { if (introPhase === "in") introPhase = "hold"; });
+  introAt(INTRO_IN_MS + INTRO_HOLD_MS, () => endIntro(false));
+  return true;
+}
+
+function endIntro(skipped) {
+  if (introPhase !== "in" && introPhase !== "hold") return;
+  introClearTimers();
+  introPhase = "out";
+  introSkipped = !!skipped;
+  const ms = skipped ? INTRO_SKIP_MS : INTRO_OUT_MS;
+  introEl.style.transitionDuration = ms + "ms";
+  introEl.classList.remove("shown");
+  introEl.classList.add("out");
+  /* both halves of the crossfade, in the same style change and at the same
+     duration: the login fades in DURING the exit, never after it */
+  loginEl.style.transitionDuration = ms + "ms";
+  document.body.classList.add("intro-exit");
+  document.body.classList.remove("intro-hide");
+  introAt(ms, () => {
+    introPhase = "done";
+    introEl.style.display = "none";
+    document.body.classList.remove("intro-lock", "intro-exit");
+    loginEl.style.transitionDuration = "";
+    removeEventListener("keydown", introSkip, true);
+    removeEventListener("click", introSkip, true);
+    introTimers = [];               // nothing of the intro is left pending
+  });
+}
+
+/* v24: harness hook — the intro state is top-level `let`s, which never land on
+   window. Copies only. */
+function debugIntroInfo() {
+  const el = document.getElementById("introCard");
+  return {
+    phase: introPhase, skipped: introSkipped,
+    display: el ? el.style.display : null,
+    classes: el ? el.className : "",
+    text: el ? (el.textContent || "").replace(/\s+/g, " ").trim() : "",
+    loginHidden: document.body.classList.contains("intro-hide"),
+    loginLocked: document.body.classList.contains("intro-lock"),
+    timers: introTimers.length,
+  };
+}
+
 loadSettings();
 applySettings();
 wireSettingsUI();
+playIntro();
 </script>
 </body>
 </html>

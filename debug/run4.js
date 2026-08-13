@@ -1200,12 +1200,16 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       catch (e) { pmThrew = e; }
       results.push(['playMusic/playSFX resolve false instead of throwing with no track',
         !pmThrew && pmRes === false && sfxRes === false]);
-      const initAt = gameScript.indexOf('AudioEngine.init();');
+      /* v24: init() is still called from exactly one place — the ENTER click —
+         but it now gates the start of the background rotation on its result. */
+      const initAt = gameScript.indexOf('if (AudioEngine.init()) playNextBgTrack();');
       results.push(['the AudioContext is created on the ENTER click, never at page load',
-        initAt >= 0 && gameScript.slice(initAt, initAt + 220).indexOf('connectSupabase();') > 0]);
-      results.push(['no imagined music/SFX trigger points were wired to files that do not exist',
-        gameScript.split('AudioEngine.playSFX(').length === 1 &&
-        gameScript.split('AudioEngine.playMusic(').length === 1]);
+        initAt >= 0 && gameScript.slice(initAt, initAt + 260).indexOf('connectSupabase();') > 0 &&
+        gameScript.split('AudioEngine.init()').length === 2]);   // exactly one call site in the whole file
+      results.push(['SFX stays unwired — no sound-effect files have been provided yet',
+        gameScript.split('AudioEngine.playSFX(').length === 1]);
+      results.push(['music is wired from exactly the two v24 sites (rotation + combat switch)',
+        gameScript.split('AudioEngine.playMusic(').length === 3]);
       window.applySettings();   // put the gains back where the settings say
 
       // ---- PART D: the favicon — deliberately removed, confirm it's genuinely gone
@@ -1268,6 +1272,251 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         fin.SETTINGS.colorblind === false && fin.SETTINGS.reduceMotion === false]);
     } else {
       results.push(['v23 settings subsystem is reachable from the harness', false]);
+    }
+
+    /* ===== v24 PART D — the intro card + the music rotation ==================
+       Audio is mocked, not played: a fake AudioContext and a recording fetch
+       stand in for the browser, the same way the canvas context and supabase
+       are stubbed above. The player is put back at spawn at the end. ========= */
+    const path = require('path');
+    const AUDIO_DIR = path.join(path.dirname(path.resolve(FILE)), 'audio');
+    const AUDIO_FILES = ['nu_metal.mp3', 'Pop.mp3', 'Slower_Jamz.mp3',
+                         'Long_Way_Home.mp3', 'seduced.mp3', 'song.mp3'];
+    const missingAudio = AUDIO_FILES.filter(f => {
+      try { return fs.statSync(path.join(AUDIO_DIR, f)).size < 1024; }
+      catch (e) { return true; }
+    });
+    results.push(['all 6 audio files are present at audio/<name>.mp3' +
+      (missingAudio.length ? ' (missing ' + missingAudio.join(', ') + ')' : ''),
+      missingAudio.length === 0]);
+
+    if (window.debugMusicInfo && window.debugSetMusicState && window.playNextBgTrack) {
+      const dmi = window.debugMusicInfo, dsms = window.debugSetMusicState;
+
+      // ---- the fetch/AudioContext mock. Every URL asked for is recorded.
+      const fetched = [];
+      window.fetch = async (url) => {
+        fetched.push(String(url));
+        const real = path.join(path.dirname(path.resolve(FILE)), String(url));
+        if (!fs.existsSync(real)) throw new Error('404 ' + url);   // relative path must resolve
+        return { arrayBuffer: async () => new ArrayBuffer(8) };
+      };
+      const sources = [];
+      const gain = () => ({ gain: { value: 1 }, connect() {}, disconnect() {} });
+      window.AudioContext = function () {
+        this.state = 'running';
+        this.destination = {};
+        this.createGain = gain;
+        this.decodeAudioData = async () => ({ duration: 120 });
+        this.createBufferSource = () => {
+          const s = { buffer: null, loop: false, onended: null,
+                      connect() {}, disconnect() {},
+                      start() { s.started = true; }, stop() { s.stopped = true; } };
+          sources.push(s);
+          return s;
+        };
+        this.resume = async () => {};
+      };
+      const AE24 = window.debugAudioEngine();
+      AE24.ctx = null;                       // let init() build against the mock
+      results.push(['AudioEngine.init() succeeds against a real AudioContext', AE24.init() === true]);
+
+      // ---- PART B: the four-track rotation, and the wrap back to track 0
+      dsms({ bgIndex: 0, inCombatMusic: false });
+      const PLAYLIST = dmi().BG_PLAYLIST;
+      results.push(['the background rotation is the four locked tracks, in order',
+        PLAYLIST.join('|') === ['audio/Pop.mp3', 'audio/Slower_Jamz.mp3',
+                                'audio/Long_Way_Home.mp3', 'audio/song.mp3'].join('|')]);
+      fetched.length = 0;
+      await window.playNextBgTrack();
+      results.push(['the first track is requested from its relative path',
+        fetched[0] === 'audio/Pop.mp3' && dmi().bgIndex === 1]);
+      results.push(['a rotation track is started NOT looping, so it can hand the channel back',
+        !!AE24.musicSource && AE24.musicSource.loop === false && AE24.musicSource.started === true]);
+      results.push(['the rotation installs an onended handler to advance itself',
+        typeof AE24.musicSource.onended === 'function']);
+      /* Firing onended is exactly what the browser does when a track finishes.
+         The handler itself is not async, so the fetch/decode it kicks off has
+         to be allowed to settle before the next track can be asserted. */
+      const settle = () => new Promise(r => setTimeout(r, 0));
+      for (let i = 1; i < 4; i++) {
+        AE24.musicSource.onended();
+        await settle();
+        results.push([`onended advances the rotation to ${PLAYLIST[i]}`,
+          fetched[i] === PLAYLIST[i] && dmi().bgIndex === i + 1]);
+      }
+      AE24.musicSource.onended();
+      await settle();
+      results.push(['after the 4th track the rotation wraps back to track 0',
+        fetched[4] === 'audio/Pop.mp3' && dmi().bgIndex === 5 &&
+        PLAYLIST[dmi().bgIndex % PLAYLIST.length] === 'audio/Slower_Jamz.mp3']);
+      results.push(['every URL the rotation asked for resolved to a real file',
+        fetched.length === 5 && fetched.every(u => fs.existsSync(
+          path.join(path.dirname(path.resolve(FILE)), u)))]);
+
+      // ---- PART C: the two real combat signals set the linger window
+      const dsp24 = window.debugSetPlayer, dwi24 = window.debugWorldInfo;
+      const SP24 = dwi24().SPAWN;
+      results.push(['all three combat-signal sites carry the linger line',
+        gameScript.split('combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;').length === 4]);
+      results.push(['the linger is the locked 6s', dmi().COMBAT_MUSIC_LINGER === 6000]);
+      dsms({ combatMusicUntil: 0, inCombatMusic: false, musicCheckAt: 0 });
+      const tAtk = window.performance.now();
+      window.tryAttack();                       // the real `lastAttack = now;` path
+      const afterAtk = dmi().combatMusicUntil;
+      results.push(['an attack pushes combatMusicUntil ~6s out',
+        afterAtk >= tAtk + 5900 && afterAtk <= window.performance.now() + 6000]);
+      dsms({ combatMusicUntil: 0 });
+      // applyDamage returns early inside a safe zone, so take the hit outside one
+      const OUT = { x: SP24.x + 60.5, y: SP24.y + 60.5 };
+      dsp24({ x: OUT.x, y: OUT.y, diving: false, hp: 100 });
+      const safeThere = window.inSafeZone(OUT.x, OUT.y);
+      const tHit = window.performance.now();
+      window.applyDamage(3, 'goblin');
+      const afterHit = dmi().combatMusicUntil;
+      results.push(['taking damage pushes combatMusicUntil ~6s out (tested outside a safe zone)',
+        safeThere === false && afterHit >= tHit + 5900 &&
+        afterHit <= window.performance.now() + 6000]);
+
+      // ---- PART C: the throttled loop check flips the channel BOTH ways
+      dsms({ inCombatMusic: false, musicCheckAt: 0,
+             combatMusicUntil: window.performance.now() + 6000 });
+      fetched.length = 0;
+      window.update(0.016, 500000);
+      results.push(['inside the linger window the loop check switches to combat music',
+        dmi().inCombatMusic === true && fetched.length === 1]);
+      await new Promise(r => setTimeout(r, 0));
+      results.push(['the combat track is nu_metal.mp3, looping (it is a single track)',
+        fetched[0] === 'audio/nu_metal.mp3' && !!AE24.musicSource &&
+        AE24.musicSource.loop === true]);
+      const bgAt = dmi().bgIndex;
+      // still inside the window: the check must not restart the track every frame
+      dsms({ musicCheckAt: 0 });
+      fetched.length = 0;
+      window.update(0.016, 500100);
+      results.push(['a second check inside the window does not restart the track',
+        dmi().inCombatMusic === true && fetched.length === 0]);
+      results.push(['the check is throttled, not run every frame',
+        dmi().musicCheckAt > window.performance.now() + 900]);
+      // past the linger window: back to the rotation, from where it left off
+      dsms({ combatMusicUntil: window.performance.now() - 1, musicCheckAt: 0 });
+      window.update(0.016, 501000);
+      await new Promise(r => setTimeout(r, 0));
+      results.push(['past the linger window the loop check reverts to the rotation',
+        dmi().inCombatMusic === false && fetched[0] === PLAYLIST[bgAt % 4] &&
+        dmi().bgIndex === bgAt + 1]);
+      results.push([`the rotation resumed mid-playlist (track ${bgAt % 4}), not back at 0`,
+        bgAt === 5 && fetched[0] === 'audio/Slower_Jamz.mp3' &&
+        fetched[0] !== PLAYLIST[0]]);
+      // a rotation track that ends while combat owns the channel must not butt in
+      dsms({ inCombatMusic: true });
+      fetched.length = 0;
+      await window.playNextBgTrack();
+      results.push(['playNextBgTrack is a no-op while combat owns the channel',
+        fetched.length === 0]);
+      dsms({ inCombatMusic: false, combatMusicUntil: 0, musicCheckAt: 0 });
+
+      // ---- PART D: seduced.mp3 was deliberately held out this version
+      results.push(['the held-out sixth track is referenced nowhere in the game file',
+        gameScript.indexOf('seduced') < 0 && html.indexOf('seduced') < 0 &&
+        PLAYLIST.every(u => u.indexOf('seduced') < 0)]);
+      results.push(['audio ships as separate files, never inlined as base64',
+        html.indexOf('data:audio') < 0]);
+
+      dsp24({ x: SP24.x + 0.5, y: SP24.y + 0.5, diving: false, hp: 100 });
+      window.applySettings();
+    } else {
+      results.push(['v24 music layer is reachable from the harness', false]);
+    }
+
+    // ---- PART A: the intro card
+    if (window.playIntro && window.debugIntroInfo) {
+      const dii = window.debugIntroInfo;
+      const card = doc.getElementById('introCard');
+      results.push(['the intro card exists as its own overlay', !!card]);
+      results.push(['the copy is exactly the locked line, unshortened',
+        dii().text === 'Hashbrown Studios in collaboration with STG Records presents RuneHaven']);
+      results.push(['it is split across 3 lines, not one run-on',
+        card.children.length === 3]);
+      results.push(['it sits above the login screen it covers',
+        html.indexOf('#introCard {') >= 0 &&
+        html.slice(html.indexOf('#introCard {')).slice(0, 200).indexOf('z-index: 50') > 0]);
+      results.push(['the animation is eased, never linear, and mirrors on the way out',
+        html.indexOf('transition: opacity 700ms cubic-bezier(.22,.68,.28,1)') > 0 &&
+        html.indexOf('#introCard.shown { opacity: 1; transform: scale(1); }') > 0]);
+      /* Two fixes found by eye in real Chromium, pinned here so they cannot
+         silently come back: the login's hide must be instant (with the
+         transition on #login itself it was briefly visible at load, fading out
+         under a card that had not faded in yet), and the entry state must be
+         flushed synchronously (out of display:none, a rAF was not enough and
+         the fade-in never ran at all). */
+      results.push(['the login hide is instant — only the exit is transitioned',
+        html.indexOf('body.intro-hide #login { opacity: 0; }') > 0 &&
+        html.indexOf('body.intro-exit #login { transition: opacity 700ms') > 0 &&
+        html.indexOf('\n  #login { transition: opacity') < 0]);   // the unscoped rule is the bug
+      results.push(['the entry state is committed before the class that animates away from it',
+        gameScript.indexOf('void introEl.offsetWidth;') > 0 &&
+        gameScript.indexOf('void introEl.offsetWidth;') <
+        gameScript.indexOf('introEl.classList.add("shown");')]);
+      results.push(['both halves of the crossfade run at the same duration',
+        gameScript.indexOf('loginEl.style.transitionDuration = ms + "ms";') > 0]);
+      results.push(['nothing about the intro is persisted — it plays every load',
+        gameScript.indexOf('rh_intro') < 0 &&
+        gameScript.slice(gameScript.indexOf('function playIntro()'),
+                         gameScript.indexOf('function endIntro(')).indexOf('localStorage') < 0]);
+
+      // ---- skip via keypress
+      window.playIntro();
+      const inPhase = dii();
+      results.push(['playing the card hides the login underneath it and locks it',
+        inPhase.phase === 'in' && inPhase.display === 'flex' &&
+        inPhase.loginHidden === true && inPhase.loginLocked === true]);
+      let entered = 0;
+      const btn24 = doc.getElementById('enterBtn');
+      const realOnclick = btn24.onclick;
+      btn24.onclick = () => { entered++; };      // would fire if a skip fell through
+      window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      const afterKey = dii();
+      results.push(['a keypress skips the card', afterKey.phase === 'out' && afterKey.skipped === true]);
+      results.push(['skipping starts the login crossfade immediately',
+        afterKey.loginHidden === false]);
+      results.push(['the login stays locked until the card is fully gone',
+        afterKey.loginLocked === true]);
+      await new Promise(r => setTimeout(r, 400));
+      const doneKey = dii();
+      results.push(['the card removes itself and unlocks the login when it finishes',
+        doneKey.phase === 'done' && doneKey.display === 'none' &&
+        doneKey.loginLocked === false && doneKey.timers === 0]);
+      results.push(['the skip never reached the login form underneath', entered === 0]);
+
+      // ---- skip via click
+      window.playIntro();
+      results.push(['the card can play again from a clean state', dii().phase === 'in']);
+      card.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      results.push(['a click skips the card too', dii().phase === 'out' && dii().skipped === true]);
+      results.push(['the click did not double-trigger into the login form', entered === 0]);
+      await new Promise(r => setTimeout(r, 400));
+      results.push(['the click path also ends clean',
+        dii().phase === 'done' && dii().loginLocked === false]);
+      // a click after it is over is inert, not a second run
+      card.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      results.push(['clicking after the card is done does nothing at all',
+        dii().phase === 'done' && entered === 0]);
+
+      // ---- the unskipped path runs in + hold + out on its own
+      // (700ms in, 1200ms hold, 700ms out — the waits below straddle each edge)
+      window.playIntro();
+      await new Promise(r => setTimeout(r, 800));
+      results.push(['left alone, the card holds fully visible after the fade-in',
+        dii().phase === 'hold' && dii().skipped === false]);
+      await new Promise(r => setTimeout(r, 1300));
+      results.push(['then it fades itself out, un-skipped', dii().phase === 'out' && dii().skipped === false]);
+      await new Promise(r => setTimeout(r, 900));
+      results.push(['and lands in the same finished state as a skip',
+        dii().phase === 'done' && dii().display === 'none' && dii().loginLocked === false]);
+      btn24.onclick = realOnclick;
+    } else {
+      results.push(['v24 intro card is reachable from the harness', false]);
     }
 
     let allOk = true;

@@ -55,6 +55,111 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-13 (v24 — the intro card + real background/combat music)
+No new species, no new biomes, no world colour touched. The rendering scope of
+v24 is one screen that plays before the game does; the music rotation, the
+combat switch and the audio file layout live in the README + commit message,
+not here.
+- **The intro card is a COVER, not a screen of its own.** The login card is
+  already built and sitting underneath it — the same pattern the death and
+  settings overlays use — so the card's *exit* is the crossfade rather than
+  something that happens before one. Measured in real Chromium: at 2040ms the
+  card is at 0.57 and the login at 0.43, at 2160ms 0.25 / 0.75. If those two
+  ever stop overlapping, the crossfade has been broken back into a cut.
+- **Pure typography, no image assets**, in the login screen's own language:
+  Almendra Display gold for the two named lines, dim letter-spaced Barlow for
+  the connective one, over the login's dark ground with the same warm radial
+  behind it. Nothing here is new art — it is the logo treatment, reused.
+- **Three lines, and the sentence itself is untouched**: "Hashbrown Studios" /
+  "in collaboration with STG Records presents" / "RuneHaven". The line is the
+  locked copy word for word; only where it wraps was a choice.
+- **700ms fade+scale in (0.86 → 1), 1200ms hold, 700ms fade+scale out (1 →
+  1.07)**, all on one eased `cubic-bezier(.22,.68,.28,1)` — never linear, and
+  the exit deliberately mirrors the entrance rather than inventing a second
+  motion. Traced frame by frame in real Chromium on a cold load.
+- **BUG FOUND AND FIXED BY EYE: the login screen was briefly visible at load.**
+  The transition sat on `#login` itself, so the initial hide *animated* — for
+  the first few hundred ms you watched the login fade out underneath a card
+  that had not faded in yet. The hide is now instant (`body.intro-hide`) and
+  only the reveal is transitioned (`body.intro-exit`). Lesson, and it is the
+  v9 draw-order lesson again in CSS: a transition you only want in one
+  direction has to be scoped to that direction.
+- **BUG FOUND AND FIXED BY EYE: the fade-in never ran at all.** The card comes
+  out of `display: none`, and Chromium starts no transition from a
+  display:none before-change style — so the entry class and the class that
+  animates away from it collapsed into one and the card simply popped in. A
+  `requestAnimationFrame` was NOT enough; it takes a synchronous layout read
+  (`void introEl.offsetWidth`) to commit the entry state first. **Both of
+  these looked completely correct in the harness** — jsdom has no computed
+  transitions — which is exactly why they were caught in a browser and are now
+  pinned by source assertions in `run4`.
+- **Any keypress or click skips it, and the skip cannot fall through.** The
+  card is the click target while it is up, the handler is inert once the exit
+  has started, and `intro-lock` keeps the login's `pointer-events: none` until
+  the card is fully gone. Proven, not assumed: `run4` clicks with a counter on
+  the ENTER button, and the real-Chromium pass clicks at the exact coordinates
+  of ENTER underneath — 0 triggers both times.
+- **It plays every page load, deliberately.** No localStorage skip-forever,
+  and `run4` asserts the intro code touches no storage at all.
+- **⚠️ Nothing about the music is visible.** There is no now-playing readout,
+  no audio cue in the HUD, and no visual tell that the combat track has taken
+  over. That was not in the spec and is not obviously wanted, but it means the
+  only feedback that the rotation is alive is the sound itself.
+- **⚠️ The card is never seen by a returning player any differently.** It is
+  the same 2.6s every load, skippable, with no shorter second-time variant —
+  which is what "plays every time" asks for, but is the first thing to want
+  changed if it starts to feel long.
+
+## JUDGMENT CALLS THIS VERSION
+Calls made where the locked spec was silent, or where it explicitly asked to be
+told. All verified through the full gate (420/420 in `run4`, zero FAILs, `run3`
+and `run5` clean) plus a real-Chromium pass — refinements to consider, not
+unfinished work.
+- **The track roles are the spec's own proposal, shipped as proposed and
+  flagged here because the spec asked for exactly that.** `nu_metal.mp3` is the
+  combat track; `Pop` / `Slower_Jamz` / `Long_Way_Home` / `song` are the
+  four-track rotation, in that order; the sixth file is held out of both. If
+  any of those roles is wrong, changing it is one line in `BG_PLAYLIST` or one
+  string in the loop check — nothing else in the wiring depends on which file
+  is which.
+- **The held-out sixth track's filename appears nowhere in `runehaven.html`,
+  not even in a comment.** That is what lets its gate be a blunt "this string
+  is not in the file" rather than a judgement about what counts as wiring.
+- **Line 2 carries "presents"** rather than giving it a fourth line of its own.
+  The spec allowed 2–3 lines; a studio line, a connective line and the title is
+  the shape that fits in three without splitting the title away from it.
+- **Timings 700 / 1200 / 700ms** — inside the spec's 0.6–0.8 / 1–1.5 / 0.6–0.8
+  windows, and picked at the middle rather than the edges. The **250ms skip
+  exit** is not in the spec at all: a skip that took the full 700ms would not
+  read as "straight to the login screen", and both halves of the crossfade are
+  driven off that one number so they can never drift apart.
+- **`z-index: 50`, above even the settings overlay's 40.** The card covers the
+  whole app while it is up, and the settings panel is unreachable underneath it
+  by definition.
+- **The card scales with the v23 `--ui-scale` lever** — `#introCard > *` joins
+  the existing zoom rule. Same decision v23 made for the two full-viewport
+  overlays: the children scale, never the overlay.
+- **The music check lives at the end of `update()`**, the per-frame game logic,
+  with `musicCheckAt` as a next-check timestamp ~1s out. The spec said "in the
+  main game loop... throttled to roughly once a second" and gave no mechanism;
+  a timestamp is the same shape as every other throttle in this file, and
+  `run4` asserts a second check inside the window re-fetches nothing.
+- **Three new harness hooks** — `debugIntroInfo()`, `debugMusicInfo()` and
+  `debugSetMusicState()`, beside the v21/v23 ones. The intro and playlist state
+  are all top-level `let`s, which never land on `window`; copies, except the
+  setter, which exists so the combat gate can place a linger window without
+  waiting six real seconds.
+- **Two v23 `run4` assertions were updated, not relaxed.** "No imagined
+  music/SFX trigger points" pinned `playMusic` at *zero* call sites, which was
+  the correct v23 state and is exactly what v24 was asked to change; it is now
+  pinned at two (rotation + combat switch), with SFX still pinned at zero
+  because no sound-effect files have been provided. The ENTER-gesture assertion
+  follows `init()` into its new `if (AudioEngine.init()) playNextBgTrack();`
+  shape and additionally pins it as the only `init()` call site in the file.
+- **`AudioEngine` itself was not touched**, as instructed — the rotation is a
+  layer on top. The one edit inside it is a three-line comment that said
+  nothing in the game calls `playMusic` on purpose, which stopped being true.
+
 ### 2026-08-12 (v23 — QOL: settings menu, accessibility, credits, favicon)
 No new species, no new biomes, no change to a single world colour. v23 is
 quality-of-life and infrastructure — the keybind config object, the audio
