@@ -1208,12 +1208,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         gameScript.split('AudioEngine.playMusic(').length === 1]);
       window.applySettings();   // put the gains back where the settings say
 
-      // ---- PART D: the favicon
+      // ---- PART D: the favicon — deliberately removed, confirm it's genuinely gone
       const icon = doc.querySelector('link[rel="icon"]');
-      results.push(['favicon <link> is present, and inside <head>',
-        !!icon && icon.parentNode === doc.head]);
-      results.push(['favicon is the approved pre-built .ico data URI',
-        !!icon && (icon.getAttribute('href') || '').indexOf('data:image/x-icon;base64,AAABAAIAEBAAAAAAIAAZAwAAJgAAACAgAAAAACAALAgAAD8DAACJUE5H') === 0]);
+      results.push(['favicon <link> is deliberately absent (removed on request)', !icon]);
       results.push(['<head> is otherwise intact (title + stylesheet still there)',
         (doc.querySelector('title') || {}).textContent === 'RuneHaven' &&
         doc.head.querySelectorAll('style').length === 1]);
@@ -1239,10 +1236,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         dsi().CREDITS.length === 2]);
       const collab = doc.getElementById('collabList');
       const cimg = collab.querySelector('img');
-      results.push(['Collaborations renders the one approved entry', collab.children.length === 1]);
+      results.push(['Collaborations renders all 3 entries (STG Records + 2 text-only)',
+        collab.children.length === 3]);
       results.push(['the STG Records logo is embedded, not a placeholder',
         !!cimg && (cimg.getAttribute('src') || '').indexOf('data:image/png;base64,iVBORw0KGgo') === 0 &&
         (cimg.getAttribute('src') || '').length > 50000]);
+      results.push(['the two text-only entries render without a broken <img>',
+        collab.querySelectorAll('img').length === 1]);
+      results.push(['Skeptik and Advay both actually appear in the credited text',
+        collab.textContent.indexOf('Skeptik') !== -1 && collab.textContent.indexOf('Advay') !== -1]);
       results.push(['the logo keeps its pale backing (it is near-black on near-black)',
         !!cimg && (cimg.getAttribute('style') || '').indexOf('#e8e4da') >= 0]);
       results.push(['the collaboration caption reads from the data, not markup',
