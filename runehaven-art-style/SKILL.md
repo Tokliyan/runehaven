@@ -55,6 +55,94 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-15 (v25 — Crystal Golem, Krakenling, Salamander King)
+Three new species, no new biomes and no world colour touched. All three bodies
+are approved concept art from the locked spec, **ported verbatim** into the
+existing `P`/`EY` helper convention in the `drawSpecies` chain — not redrawn,
+not reinterpreted. Spawn gating, stats and the feeding mechanic live in the
+README + commit message; below is only how they look.
+- **Crystal Golem** (Rare, mountain ruins). Deliberately the *same silhouette*
+  as the young Golem — same blocky two-facet body, same head slab, same arm
+  blocks — re-cut in pale crystal (`#9fc4e8` / `#5a7fb0`, `#d4e8f8` top facet).
+  That sameness is the point: it must read instantly as "a Golem, but made of
+  something else", the bible's own framing. The tells that separate them are a
+  **violet core glow** (`#e8a8f8` + a soft square halo) where Golem has its
+  runic-cyan eye, **facet lines** where Golem has cracks, a white shine facet,
+  and **no moss** — moss is the old-stone Golem's signature and must never be
+  added here.
+- **Krakenling** (Epic, Abyssal Hollow). Deep-violet mantle (`#5a3a6e` /
+  `#7a5a92`) over five tentacles that sway on a per-tentacle sine offset, big
+  pale eyes, and three slow-pulsing bioluminescent dots along the mantle. It is
+  the only cephalopod in the game and shares nothing with the dragon bodies it
+  lives beside on `B.ABYSSAL` — at that depth the Shadow Dragon is the only
+  other thing down there, so the two must not converge.
+- **Salamander King** (Epic, Sunforge Caldera). Long, low and horizontal —
+  molten orange (`#d84a28` / `#f07038`) with a dark `#8c2c14` jaw, a three-peak
+  **gold crown ridge** (`#f4c020`) that is what makes it a *King* rather than a
+  big lizard, matching gold belly marks, and a single hard heat-shimmer stroke.
+  Its palette is the Caldera's own (`#f2c884` ground), so it reads as native to
+  that biome rather than dropped onto it.
+- **One branch, both forms.** The Salamander King's hostile rampage form draws
+  from the exact same `drawSpecies` branch as the tamed companion, via the v14
+  `def.tameable` route in `drawMob` — same creature, same art, which is the
+  whole point of a pet that can turn on you. It therefore inherits the walk
+  bob, sun shadow, `x+y` depth sort, the amber "!" wind-up tell, the red mob HP
+  bar and the pale-green weakened tame ring with no per-species special casing.
+- **Companion panel**: the Salamander King's row carries a `N% fed` readout.
+  Below 30% it flips to the HUD's existing low-HP language — the same
+  `var(--danger)` red, the same "this is going wrong" read — plus a "feed it!"
+  nudge. This is deliberately **not** new panel chrome, and it is **not** the
+  pet HP bar, the downed ring or the tame ring: happiness is a fourth state and
+  reuses the low-HP colour only, never those shapes.
+- All three are ground species, so they take the standard walk bob, sun shadow,
+  depth sort and every v16 combat overlay unchanged. `SPECIES_K`: Crystal Golem
+  1.50, Krakenling 1.10, Salamander King 1.20.
+
+## JUDGMENT CALLS THIS VERSION
+Five, all flagged in code at the site of each. Everything here shipped through
+the full gate (parse, run3 clean, run4 476/476 with zero FAIL, run5 clean) —
+this is a complete version, and these are refinements to consider, not
+unfinished work.
+1. **Crystal Golem's `SPECIES_K` is 1.50, not the spec's literal 1.15.** The
+   spec asked for both "1.15" and "slightly smaller than regular Golem's
+   existing entry — confirm against Golem's actual current value and stay close
+   to it, don't invent a wildly different scale". Golem is **1.65**. 1.15 is not
+   slightly smaller than 1.65; it is Stag's value, a deer, and would have made
+   the Rare variant a third smaller than the Uncommon one it is meant to read as
+   a rarer sibling of. The confirm-against-the-real-value clause is what caught
+   it, so it won. **One-line revert if the smaller silhouette was intended.**
+2. **The Krakenling art's branch head was changed from `kind ===` to
+   `species ===`.** The drawing body is untouched, exactly as specified. The
+   spec placed the branch "alongside the other wild species checks", and that
+   chain dispatches on `species` — there is no `kind` in scope anywhere in
+   `drawSpecies`, so `kind === "krakenling"` would have thrown on every frame.
+   Krakenling is a wild pet, not a mob, so `drawMob`'s `m.kind` chain was not
+   its home either. Only one location was ever possible.
+3. **Crystal Golem's tame base is 0.25, but not "matching Golem's".** The spec
+   said 0.25 "matching Golem's"; Golem's actual base is **0.50**. 0.25 was kept
+   because it is the Rare-tier baseline every other Rare pet in the file already
+   uses (Unicorn and all four dragons) — the number is right, only the stated
+   reason was wrong.
+4. **Every rostered Salamander King is checked for starvation, not just the
+   active one.** The spec gated *feeding* on being the active companion but did
+   not say which pets the rampage check walks. Checking only the active one
+   would mean a benched King rampaged the instant it was brought back out, with
+   no way to have prevented it. Feeding still works exactly as specified — select
+   the pet, then Feed.
+5. **`last_fed_at` persistence degrades instead of failing.** The feed clock is
+   written to a `last_fed_at` column on the `pets` table, un-awaited and
+   error-swallowing, and falls back to `tamed_at` (which *is* the spec's
+   "tame-time on capture") when the column is absent. **A small v25 SQL update
+   is needed for feeds to survive a reload** — `alter table pets add column
+   last_fed_at timestamptz;` — but the game is fully playable without it and
+   nothing can throw either way.
+
+Also noted, no action taken: the bible **does** list Crystal Golem on its
+MOUNTABLE PETS line, where the spec said it did not. No riding code was added
+anyway, because riding is deferred for *every* species alike — the same
+standing position v21 and v22 recorded for the dragons. Nothing to revisit until
+mounting itself is built.
+
 ### 2026-08-13 (v24 — the intro card + real background/combat music)
 No new species, no new biomes, no world colour touched. The rendering scope of
 v24 is one screen that plays before the game does; the music rotation, the

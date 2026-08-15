@@ -199,6 +199,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         // fourth time: Rare tier, PvP-capable, stat-identical to their siblings
         ['storm_dragon', 55, 12, 1600, true],
         ['shadow_dragon', 55, 12, 1600, true],
+        // v25 — the last three off the same locked table. Crystal Golem is
+        // Rare and the two others Epic, so all three are PvP-capable.
+        ['crystal_golem', 70, 9, 2200, true],
+        ['krakenling', 60, 12, 1800, true],
+        ['salamander_king', 75, 13, 1800, true],
       ];
       for (const [s, hp, dmg, cd, pvp] of TBL) {
         const d = pcd(s, 'Ranger');
@@ -222,8 +227,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // be pre-built — extend this list as each one actually ships
       // v21: water_dragon has left this list — it SHIPPED, and is asserted at
       // its locked stats in TBL above instead.
-      for (const s of ['crystal_golem', 'basilisk',
-                       'krakenling', 'salamander_king', 'duskfox_elder',
+      // v25: crystal_golem, krakenling and salamander_king have left it for
+      // the same reason — all three shipped this version.
+      for (const s of ['basilisk', 'duskfox_elder',
                        'golem_elder', 'dragon_elder', 'unicorn_elder']) {
         results.push([`${s} not pre-built`, pcd(s, 'Beastmaster') === null]);
       }
@@ -339,7 +345,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          locked spec's, exactly as v18's was; it is not a floor or a guess. */
       const MOB_COUNTS = { goblin: 9, bandit: 9, troll: 6, boar: 6, bear: 6,
                            griffin: 3, phoenix: 3, dark_wraith: 6,
-                           sea_serpent: 3 };   // v21: designed tunable
+                           sea_serpent: 3,     // v21: designed tunable
+                           // v25: 0 on purpose — the ONLY hostile Salamander
+                           // Kings in the world are rampaged pets.
+                           salamander_king: 0 };
       for (const [k, want] of Object.entries(MOB_COUNTS)) {
         results.push([`MOBS.${k}.count = ${want}`, info.MOBS[k] && info.MOBS[k].count === want]);
       }
@@ -350,7 +359,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                           shadowfox: 4, unicorn: 4, lightfox: 4,
                           fire_dragon: 3, glow_moth: 9,
                           water_dragon: 3,     // v21: Fire Dragon's count
-                          storm_dragon: 3, shadow_dragon: 3 };  // v22: same
+                          storm_dragon: 3, shadow_dragon: 3,    // v22: same
+                          // v25 designed tunables. crystal_golem is lowest of
+                          // the three — only a subset of Ruins can host it;
+                          // krakenling matches the other doubly-gated rares.
+                          crystal_golem: 2, krakenling: 4, salamander_king: 3 };
       for (const [k, want] of Object.entries(SP_COUNTS)) {
         results.push([`WILD_SPECIES.${k}.count = ${want}`,
           info.WILD_SPECIES[k] && info.WILD_SPECIES[k].count === want]);
@@ -1517,6 +1530,175 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       btn24.onclick = realOnclick;
     } else {
       results.push(['v24 intro card is reachable from the harness', false]);
+    }
+
+    /* =====================================================================
+       v25 PART D — the locked spec's own proof gates, in its own order.
+       ===================================================================== */
+    const dwi5 = window.debugWorldInfo;
+    const info5 = dwi5 ? dwi5() : null;
+
+    // ---- PART A: the mountain-ruin tag is real, and it means something ----
+    if (info5 && window.elevRaw) {
+      const er = window.elevRaw, RF = info5.RUIN_FOOT;
+      const tagged = info5.RUINS.filter(r => r.mtn);
+      const plain = info5.RUINS.filter(r => !r.mtn);
+      console.log('ruin elevations:', JSON.stringify(
+        info5.RUINS.map(r => ({ x: r.x, y: r.y, e: +er(r.x, r.y).toFixed(3), mtn: r.mtn }))));
+      /* The spec's own words: "if none do, Crystal Golem is unreachable and
+         the threshold needs lowering, don't ship an unreachable species." */
+      results.push([`at least one Ruin is a mountain ruin (${tagged.length}/${info5.RUINS.length})`,
+        tagged.length >= 1]);
+      results.push(['but NOT all of them — the gate actually excludes ruins',
+        plain.length >= 1]);
+      results.push([`every mtn tag equals elevRaw >= ${info5.MOUNTAIN_RUIN_ELEV}`,
+        info5.RUINS.every(r => r.mtn === (er(r.x, r.y) >= info5.MOUNTAIN_RUIN_ELEV))]);
+
+      // ---- PART A: Crystal Golem lands ONLY on tagged clusters ----
+      // wildSpots carry tile+0.5; subtract it back to compare against the
+      // integer-tile test the spawn gate itself ran.
+      const inRuin = (w, r) => Math.hypot((w.x - 0.5) - r.x, (w.y - 0.5) - r.y) < RF;
+      const cg = info5.wildSpots.filter(w => w.species === 'crystal_golem');
+      results.push([`crystal_golem actually reached the world (${cg.length})`, cg.length > 0]);
+      results.push(['every crystal_golem sits inside a TAGGED mountain ruin',
+        cg.length > 0 && cg.every(w => tagged.some(r => inRuin(w, r)))]);
+      results.push(['no crystal_golem sits in an untagged ruin',
+        cg.every(w => !plain.some(r => inRuin(w, r)))]);
+      // ...and the plain Golem is completely unaffected by any of it
+      const gg = info5.wildSpots.filter(w => w.species === 'golem');
+      results.push([`golem still spawns as before (${gg.length})`, gg.length === 3]);
+      results.push(['golem is NOT restricted to tagged ruins — it still reaches plain ones',
+        gg.some(w => plain.some(r => inRuin(w, r)))]);
+      results.push(['only crystal_golem carries the mountainRuinOnly gate',
+        Object.entries(info5.WILD_SPECIES)
+          .filter(([, d]) => d.mountainRuinOnly).map(([k]) => k).join(',') === 'crystal_golem']);
+    } else {
+      results.push(['v25 PART A worldgen hooks are reachable', false]);
+    }
+
+    // ---- PART B: the Krakenling window genuinely gates on dayNum % 10 ----
+    const kwo = window.krakenlingWindowOpen;
+    if (kwo && info5 && window.worldDayNum) {
+      const opens = [], shuts = [];
+      for (let d = 1; d <= 60; d++) (kwo(d) ? opens : shuts).push(d);
+      results.push(['the window opens on exactly every 10th day across 1..60',
+        opens.join(',') === '10,20,30,40,50,60']);
+      results.push(['and is shut on all 54 other days in that range', shuts.length === 54]);
+      results.push(['shut on day 1', kwo(1) === false]);
+      results.push(['shut on day 9', kwo(9) === false]);
+      results.push(['OPEN on day 10', kwo(10) === true]);
+      results.push(['shut on day 11', kwo(11) === false]);
+      results.push(['OPEN on day 100 — the cycle does not drift', kwo(100) === true]);
+      results.push(['a species with no dayCycle is never day-gated',
+        window.dayWindowOpen({}, 7) === true && window.dayWindowOpen({}, 10) === true]);
+      results.push(['krakenling carries the bible\'s 10-day cycle',
+        info5.WILD_SPECIES.krakenling.dayCycle === 10]);
+      results.push(['and keeps a presence roll stacked on top of it',
+        info5.WILD_SPECIES.krakenling.presenceRoll === 0.55]);
+      results.push(['nothing else in the roster is day-gated',
+        Object.entries(info5.WILD_SPECIES).filter(([, d]) => d.dayCycle).length === 1]);
+      // the live world must agree with its own day counter
+      const live = window.worldDayNum();
+      const liveOpen = kwo();
+      results.push([`the live window agrees with the live day counter (day ${live})`,
+        liveOpen === ((live % 10) === 0)]);
+      const kl = info5.wildSpots.filter(w => w.species === 'krakenling').length;
+      console.log(`krakenling: day ${live}, window ${liveOpen ? 'OPEN' : 'shut'}, spawned ${kl}`);
+      results.push([`no Krakenling exists while the window is shut (day ${live}, ${kl} spawned)`,
+        liveOpen || kl === 0]);
+    } else {
+      results.push(['v25 PART B day-window hooks are reachable', false]);
+    }
+
+    // ---- PART C: the whole feeding cycle, end to end ----
+    const gp = window.debugGrantPet, sh = window.salamanderHappiness,
+          fed = window.feedSalamander, canFeed = window.canFeedSalamander,
+          setP = window.debugSetPlayer, cwdt5 = window.canWearDownTame;
+    if (gp && sh && fed && canFeed && setP && info5) {
+      const H = 3600000, STARVE = info5.SALAMANDER_STARVE_H, WARN = info5.SALAMANDER_WARN_HAPPY;
+      const row = gp('salamander_king');
+      results.push(['a tamed Salamander King lands on the roster',
+        !!row && row.species === 'salamander_king']);
+      results.push(['happiness starts at 100 the moment it is tamed', Math.round(sh(row)) === 100]);
+
+      // ---- it decays correctly against simulated elapsed time ----
+      row.lastFedAt = Date.now() - 2 * H;
+      results.push([`2h unfed of ${STARVE}h -> 75%`, Math.round(sh(row)) === 75]);
+      row.lastFedAt = Date.now() - 4 * H;
+      results.push(['4h unfed -> 50%', Math.round(sh(row)) === 50]);
+      row.lastFedAt = Date.now() - (STARVE - 1) * H;
+      const late = sh(row);
+      results.push([`${STARVE - 1}h unfed is under the ${WARN}% warning line but not yet lost`,
+        late < WARN && late > 0]);
+      results.push([`exactly ${STARVE}h unfed is 0`, sh({ lastFedAt: Date.now() - STARVE * H }) === 0]);
+      results.push(['happiness never goes negative past that',
+        sh({ lastFedAt: Date.now() - 100 * H }) === 0]);
+
+      // ---- feeding costs a rare_herb and resets the clock ----
+      setP({ inv: {} });
+      results.push(['cannot feed with no rare_herb in the bag', canFeed(row) === false]);
+      results.push(['a refused feed reports failure and changes nothing', fed(row) === false]);
+      setP({ inv: { rare_herb: 2 } });
+      row.lastFedAt = Date.now() - 6 * H;
+      results.push(['can feed while holding a rare_herb', canFeed(row) === true]);
+      results.push(['feeding succeeds', fed(row) === true]);
+      results.push(['feeding resets happiness to 100', Math.round(sh(row)) === 100]);
+      results.push(['feeding consumed exactly one rare_herb',
+        (dwi5().player.inv.rare_herb || 0) === 1]);
+      results.push(['no other species can be fed', canFeed({ species: 'golem' }) === false]);
+
+      // ---- 0 happiness rampages: off the roster, back to the caldera ----
+      const before = dwi5().mobKinds.filter(k => k === 'salamander_king').length;
+      row.lastFedAt = Date.now() - 99 * H;
+      results.push(['starved all the way to 0', sh(row) === 0]);
+      window.checkSalamanderRampage();
+      const after = dwi5();
+      results.push(['the rampaged King left the tamed roster',
+        !after.myPets.some(p => p.id === row.id)]);
+      results.push(['and is no longer the active companion',
+        !after.activePet || after.activePet.id !== row.id]);
+      const nMobs = after.mobKinds.filter(k => k === 'salamander_king').length;
+      results.push([`it came back as a hostile mob (${before} -> ${nMobs})`, nMobs === before + 1]);
+      const spot = after.mobSpots.filter(m => m.kind === 'salamander_king').pop();
+      results.push(['the hostile King stands on a Sunforge Caldera tile',
+        !!spot && window.biomeAt(Math.floor(spot.x), Math.floor(spot.y)) === after.B.CALDERA]);
+
+      // ---- the rampage's own return value: the brief aggro tick ----
+      const row2 = gp('salamander_king', Date.now() - 99 * H);
+      results.push(['a back-dated King is already starved on arrival', sh(row2) === 0]);
+      const m2 = window.salamanderRampage(row2);
+      results.push(['the rampage builds and returns the mob',
+        !!m2 && m2.kind === 'salamander_king']);
+      results.push(['it opens with one aggro tick on the player who neglected it',
+        !!m2 && m2.state === 'aggro' && !!m2.target]);
+      results.push(['the hostile form arrives at its full MOBS hp',
+        !!m2 && m2.hp === info5.MOBS.salamander_king.hp && m2.maxHp === 75 && m2.dead === false]);
+      results.push(['salamander_king never spawns hostile at worldgen',
+        info5.MOBS.salamander_king.count === 0]);
+      results.push(['a rampaged King can be won back by wearing it down',
+        info5.MOBS.salamander_king.tameable === true &&
+        cwdt5({ id: 'sk:t', kind: 'salamander_king', hp: 10, maxHp: 75, dead: false }) === true]);
+      results.push(['but not while it is still strong',
+        cwdt5({ id: 'sk:t', kind: 'salamander_king', hp: 70, maxHp: 75, dead: false }) === false]);
+      results.push(['happiness is this species only — nothing else grew a feed clock',
+        Object.keys(info5.WILD_SPECIES).filter(s => window.isSalamander({ species: s }))
+          .join(',') === 'salamander_king']);
+    } else {
+      results.push(['v25 PART C feeding hooks are reachable', false]);
+    }
+
+    // ---- PART D: all three new art branches render without error ----
+    if (window.drawSpecies) {
+      let artOk = true, artErr = null;
+      try {
+        const cc = window.document.createElement('canvas').getContext('2d');
+        for (const sp of ['crystal_golem', 'krakenling', 'salamander_king']) {
+          for (const mv of [true, false]) window.drawSpecies(sp, 90, 90, 900, mv);
+        }
+        void cc;
+      } catch (e) { artOk = false; artErr = e; }
+      results.push(['the three v25 art branches draw without throwing' +
+        (artErr ? ' — ' + artErr.message : ''), artOk]);
     }
 
     let allOk = true;

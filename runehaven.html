@@ -827,7 +827,16 @@ function debugWorldInfo() {
               harness, along with the separation constants they were placed
               against. Copies, not the live arrays. */
            RUIN_FOOT, ZONE_R, RUIN_SEP, ZONE_SEP, RUIN_ZONE_SEP,
-           RUINS: RUINS.map(r => ({ x: r.x, y: r.y })),
+           /* v25 PART A: `mtn` is the mountain-ruin tag, plus the threshold it
+              was decided by, so run4 can prove both that at least one cluster
+              qualifies and that Crystal Golem lands only on tagged ones. */
+           MOUNTAIN_RUIN_ELEV,
+           RUINS: RUINS.map(r => ({ x: r.x, y: r.y, mtn: !!r.mtn })),
+           /* v25 PART C: the roster and the feeding constants — myPets is a
+              top-level `let`, so the rampage path is otherwise unobservable. */
+           SALAMANDER_STARVE_H, SALAMANDER_WARN_HAPPY,
+           myPets: myPets.map(p => ({ id: p.id, species: p.species,
+                                      active: !!p.active, lastFedAt: p.lastFedAt })),
            OTHER_SAFE_ZONES: OTHER_SAFE_ZONES.map(z => ({ x: z.x, y: z.y })),
            /* v20: mob home spots and the ruin set-piece list, so the harness
               can prove Golem/Bandit reach more than one cluster and that a
@@ -861,7 +870,9 @@ function debugWorldInfo() {
    are settable, and only ones the game itself already writes every frame. */
 function debugSetPlayer(patch) {
   if (!me || !patch) return null;
-  for (const k of ["x", "y", "hp", "diving", "breath", "maxBreath", "charm"]) {
+  /* v25: + inv, so the feeding proof can hand the player a rare_herb through
+     the same door. Still only fields the game itself already writes. */
+  for (const k of ["x", "y", "hp", "diving", "breath", "maxBreath", "charm", "inv"]) {
     if (k in patch) me[k] = patch[k];
   }
   /* v22: snapping the position now snaps the camera with it. The camera
@@ -871,6 +882,25 @@ function debugSetPlayer(patch) {
      never ran. This is the same assignment login and respawn already make. */
   if ("x" in patch || "y" in patch) { cam.x = me.x; cam.y = me.y; }
   return debugWorldInfo().player;
+}
+/* v25: harness hook, the same shape and the same reason as the two above.
+   PART D has to prove the whole feeding cycle end to end, which needs a tamed
+   Salamander King on the roster, and `myPets` is a top-level `let` no harness
+   can reach. This builds exactly the roster row the real tame path inserts —
+   nothing more — and optionally back-dates the feed clock so starvation can be
+   simulated without waiting eight real hours. */
+function debugGrantPet(species, lastFedAt) {
+  if (!me || !WILD_SPECIES[species]) return null;
+  const row = {
+    id: "dbg:" + species + ":" + myPets.length,
+    owner: me.username, species,
+    pet_name: WILD_SPECIES[species].name + " #dbg",
+    active: false, tamed_at: new Date().toISOString(),
+  };
+  if (lastFedAt !== undefined) row.lastFedAt = lastFedAt;
+  myPets.push(row);
+  setActivePet(row);
+  return row;
 }
 /* v12 roster — seven bible-accurate species (Fox/Fawn/Owl retired).
    flier: circling hover-follow at `alt` px. nightOnly: hidden + untameable by
@@ -934,6 +964,19 @@ const MOBS = {
      rate, matching how hard the fight and the trip to it are. */
   sea_serpent: { name: "Sea Serpent", biomes: [B.UWCAVE], hp: 130, dmg: 18, atkRange: 1.8, atkCooldownMs: 1900, windupMs: 700, aggroRadius: 7, leashRadius: 12, moveSpeed: 1.5, count: 3, tameable: false,
     loot: [{ type: "runic_stone", qty: 2, chance: 0.8 }, { type: "iron_bar", qty: 2, chance: 0.9 }] },
+  /* v25 PART C: the rampaged Salamander King. Bible — "must be fed and kept
+     happy or it will rampage and return to the caldera" — so this is NOT an
+     ambient worldgen spawn: count is 0 on purpose, and the ONLY thing that
+     ever creates one is salamanderRampage() putting a neglected pet back into
+     the world at the Caldera. Same creature, same art, hostile form — exactly
+     the v14 fight-to-tame shape, which is why tameable is true: wearing it
+     back down is how a player recovers the pet they neglected, and it is also
+     what routes drawMob through drawSpecies to its own art instead of the
+     humanoid chain. hp/dmg are its locked pet stats (75 / 13); windupMs,
+     atkRange, cooldown, aggro/leash, moveSpeed and the loot rates are
+     designed tunables, matched to Phoenix as the nearest Volcano-tier beast. */
+  salamander_king: { name: "Salamander King", biomes: [B.CALDERA], hp: 75, dmg: 13, atkRange: 1.5, atkCooldownMs: 1800, windupMs: 600, aggroRadius: 6.5, leashRadius: 12, moveSpeed: 1.8, count: 0, tameable: true,
+    loot: [{ type: "runic_stone", qty: 1, chance: 0.5 }, { type: "iron_bar", qty: 1, chance: 0.7 }] },
 };
 const WEARDOWN_THRESHOLD = 0.25;   // generic fight-to-tame gate (inert in v13)
 const MOB_RESPAWN_MS = 60000;      // dev-island convenience: fights are repeatable
@@ -1014,6 +1057,36 @@ const WILD_SPECIES = {
      the Dark Wraith's second location set in v18. */
   storm_dragon:  { name: "Storm Dragon",  base: 0.25, flier: false, count: 3, biomes: [B.PEAK],    bloodFavored: false, shunnedByBlood: false },
   shadow_dragon: { name: "Shadow Dragon", base: 0.25, flier: false, count: 3, biomes: [B.ABYSSAL], bloodFavored: false, shunnedByBlood: false },
+  /* v25 — the last three species the bible's pet table lists for biomes that
+     already exist in this file. All three are PASSIVE tames (hold-E channel,
+     v12 formula); the bible names no fight for any of them.
+
+     Crystal Golem — bible: "Found young in mountain ruins only, adults are
+     hostile enemies", the Golem line's framing with a different material. It
+     shares B.RUINB with Golem, and adds ONE new gate on top: mountainRuinOnly,
+     which restricts it to Ruin clusters tagged mtn at worldgen (elevRaw at the
+     cluster centre >= MOUNTAIN_RUIN_ELEV). Golem still spawns at every Ruin,
+     unchanged. base 0.25 is the Rare-tier baseline every other Rare pet in
+     this file already uses (Unicorn and all four dragons); count is a designed
+     tunable, deliberately low because only a subset of Ruins can host it.
+
+     Krakenling — bible: "The Abyssal Hollow, disappears after 10 day cycles
+     and returns to lay another egg, giving a one day window every 10 days to
+     capture it". dayCycle: 10 is that window, checked at spawn time only (see
+     dayWindowOpen) and stacked ON TOP of Shadowfox/Unicorn's existing presence
+     roll, which is why it is the scarcest thing in the file. When the window
+     is shut it simply never rolls present — nothing despawns, so an already
+     tamed Krakenling is unaffected. base 0.20 is Lightfox/Shadowfox's Epic
+     baseline; count matches the other gated rares.
+
+     Salamander King — bible: "The Sunforge Caldera, must be fed and kept happy
+     or it will rampage and return to the caldera". B.CALDERA, base 0.20 on the
+     same Epic baseline. The feeding half of that sentence is the real new
+     mechanic this version — see salamanderHappiness() and salamanderRampage()
+     further down. count is a designed tunable, matched to the dragons'. */
+  crystal_golem:   { name: "Crystal Golem",   base: 0.25, flier: false, count: 2, biomes: [B.RUINB],   mountainRuinOnly: true, bloodFavored: false, shunnedByBlood: false },
+  krakenling:      { name: "Krakenling",      base: 0.20, flier: false, count: 4, biomes: [B.ABYSSAL], dayCycle: 10, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
+  salamander_king: { name: "Salamander King", base: 0.20, flier: false, count: 3, biomes: [B.CALDERA], bloodFavored: false, shunnedByBlood: false },
 };
 /* v16: PET COMBAT — the locked spec table (see README "v16"). The bible gives
    pet rarity, taming method and flavour but ZERO combat numbers, so every
@@ -1050,6 +1123,14 @@ const PET_COMBAT = {
      dragons already shipped. */
   storm_dragon:  { hp: 55, dmg: 12, cdMs: 1600, pvp: true },
   shadow_dragon: { hp: 55, dmg: 12, cdMs: 1600, pvp: true },
+  /* v25 — the same locked v16 table, three more rows off it, unchanged since.
+     Crystal Golem is Rare and the other two Epic, so all three are PvP-capable
+     on Unicorn's gating. Crystal Golem reads as the tougher, slower Golem
+     variant it is (more HP and damage than Golem's 60/5, still the longest
+     cooldown of the three); the two Epics are fast glass by comparison. */
+  crystal_golem:   { hp: 70, dmg: 9,  cdMs: 2200, pvp: true },
+  krakenling:      { hp: 60, dmg: 12, cdMs: 1800, pvp: true },
+  salamander_king: { hp: 75, dmg: 13, cdMs: 1800, pvp: true },
 };
 const PET_ATK_RADIUS = 2.6;    // tunable: the spec's "short radius"
 const PET_DOWNED_MS = 75000;   // spec: ~75s recovery — pets are never lost
@@ -1173,6 +1254,18 @@ function placeLandmarks() {
 /* v20 placement constants. The separations from SPAWN/VOLCANO/MOUNT are the
    v19 Ruin's own numbers, unchanged. */
 const RUIN_COUNT = 6, ZONE_COUNT = 4;
+/* v25 PART A: what counts as a "mountain ruin" in this game's own terms. The
+   bible says Crystal Golems are "found young in mountain ruins only", and this
+   file has no separate mountain-ruin structure — so the tag is elevation at
+   the cluster centre. e >= 0.86 is B.PEAK and e < 0.86 is B.ROCK, and ruins
+   are only ever placed in the 0.44 <= e < 0.84 band (isPlaceableLand), so a
+   literal peak is impossible by construction; 0.72 sits high inside the band —
+   meaningfully elevated without demanding snow. Checked ONCE per cluster at
+   worldgen and cached on the RUINS entry as `mtn`. In the run3/run4/run5 seed
+   exactly one of the six clusters qualifies, which run4 asserts — if a future
+   seed change left none qualifying, Crystal Golem would be unreachable and
+   this threshold is the thing to lower. Tunable. */
+const MOUNTAIN_RUIN_ELEV = 0.72;
 const RUIN_FOOT = 4.5;      // carve radius of one Ruin cluster (v19 value)
 const ZONE_R = 8;           // a Safe Zone's grass clearing AND its protected radius
 const RUIN_SEP = 40;        // Ruin-to-Ruin
@@ -1215,7 +1308,10 @@ function placeRuinsAndZones() {
     if (H(tx, ty, VOLCANO) <= 42) continue;
     if (H(tx, ty, MOUNT) <= 42) continue;
     if (RUINS.some(r => H(tx, ty, r) <= RUIN_SEP)) continue;
-    RUINS.push({ x: tx, y: ty });
+    /* v25 PART A: tag the cluster mountain-or-not once, here, while elevRaw()
+       is already the safe thing to call (see isPlaceableLand's note — this
+       runs before tileCache.clear(), so biomeAt() must not be touched). */
+    RUINS.push({ x: tx, y: ty, mtn: elevRaw(tx, ty) >= MOUNTAIN_RUIN_ELEV });
   }
   for (let a = 0; a < 60000 && OTHER_SAFE_ZONES.length < ZONE_COUNT; a++) {
     const tx = Math.floor(hash2(a, 71, worldSeed + 8837) * N);
@@ -1583,6 +1679,10 @@ function buildFeatureList() {
   for (const [sp, def] of Object.entries(WILD_SPECIES)) {
     spSeed += 137;
     if (def.fightToTame) continue;   // v14: these spawn as hostile mobs, not wilds
+    /* v25 PART B: the cyclical window is checked BEFORE the presence roll, so
+       a shut window means the species never even rolls — the bible's "one day
+       window every 10 days", not a reduced chance on the other nine. */
+    if (!dayWindowOpen(def)) continue;
     if (def.presenceRoll && Math.random() > def.presenceRoll) continue;
     let placed = 0;
     /* v17: the placement search is a hashed sample of the map, so a species
@@ -1601,6 +1701,12 @@ function buildFeatureList() {
       const ty = Math.floor(hash2(a, 37 + placed, worldSeed + spSeed * 3) * N);
       if (!def.biomes.includes(biomeAt(tx, ty))) continue;
       if (Math.hypot(tx - SPAWN.x, ty - SPAWN.y) < 36) continue;
+      /* v25 PART A: Crystal Golem's extra gate, layered on top of the B.RUINB
+         biome check both Golems already share — the tile must belong to a
+         cluster tagged mtn at worldgen. Golem has no such field and is
+         completely unaffected: it still reaches every Ruin. */
+      if (def.mountainRuinOnly &&
+          !RUINS.some(r => r.mtn && Math.hypot(tx - r.x, ty - r.y) < RUIN_FOOT)) continue;
       if (wilds.some(w => Math.hypot(w.x - tx, w.y - ty) < 3)) continue;
       wilds.push({ id: sp + ":" + tx + "," + ty, species: sp, x: tx + 0.5, y: ty + 0.5, ph: a * 1.7 });
       placed++;
@@ -2601,6 +2707,26 @@ function tamingPos(tw, tNow) {
    nightAlpha >= 0.4 night check (which spans roughly 40% of the cycle). */
 const DAWN_END = 0.07;
 
+/* v25 PART B: the world day counter, promoted out of the HUD so the Krakenling
+   gate and the HUD read the SAME number. There is deliberately only one day
+   counter in this file — do not add a second one. */
+function worldDayNum() {
+  return Math.floor((Date.now() / 1000 - worldEpoch) / DAY_LENGTH) + 1;
+}
+/* v25 PART B: the bible's "one day window every 10 days". A species carrying
+   dayCycle: N may only roll present on days where dayNum % N === 0; everything
+   without the field is unaffected. `day` is injectable so the harness can
+   sweep a simulated range instead of only whatever day the test seed is on.
+   This is a SPAWN-TIME gate only — unlike nightOnly/dawnOnly it never hides or
+   despawns anything, so a Krakenling already tamed (or already standing in the
+   world this session) is untouched when the window shuts. */
+function dayWindowOpen(def, day) {
+  if (!def || !def.dayCycle) return true;
+  const d = day === undefined ? worldDayNum() : day;
+  return (d % def.dayCycle) === 0;
+}
+function krakenlingWindowOpen(day) { return dayWindowOpen(WILD_SPECIES.krakenling, day); }
+
 /* v12: night-only species are hidden and untameable by day
    v17: + dawn-only species, hidden and untameable outside the dawn window */
 function isWildVisible(w) {
@@ -3140,22 +3266,48 @@ function refreshPetPanel() {
     wind_sprite: "#dce8ec", wolf: "#9aa2ac", golem: "#8e8474", shadowfox: "#3c3a4a",
     boar: "#7a5f48", bear: "#8a6240", griffin: "#c8a35c", phoenix: "#e8641c",
     stag: "#c49a68", unicorn: "#f4f0e8", lightfox: "#f6e4ac",
+    crystal_golem: "#9fc4e8", krakenling: "#5a3a6e", salamander_king: "#d84a28",   // v25
   };
   list.innerHTML = myPets.map(pt => {
     const spName = WILD_SPECIES[pt.species]?.name || pt.species + " (retired)";
     // v16: surface the pet's combat role right in the roster
     const cdef = petCombatDef(pt.species);
     const stat = cdef ? `${cdef.hp} HP • ${cdef.dmg} dmg` : "no combat role";
+    /* v25 PART C: the Salamander King's happiness, and only its own. The
+       warning cue below SALAMANDER_WARN_HAPPY is the HUD's existing low-HP
+       language — the same two colours, the same "this is going wrong" read —
+       rather than any new panel chrome. .hpnum is scoped to .hud in the CSS,
+       so the colours are applied inline here to reuse the language without
+       reaching into the stylesheet. */
+    let extra = "";
+    if (isSalamander(pt)) {
+      const happy = Math.round(salamanderHappiness(pt));
+      const low = happy < SALAMANDER_WARN_HAPPY;
+      extra = ` &nbsp;•&nbsp; <span style="color:${low ? "var(--danger)" : "#7fc96b"}">` +
+              `${happy}% fed${low ? " — feed it!" : ""}</span>`;
+      if (pt.active && canFeedSalamander(pt)) {
+        extra += ` &nbsp;<span data-feed="${pt.id}" style="cursor:pointer;text-decoration:underline;color:#bee078">Feed</span>`;
+      }
+    }
     return `
     <div class="inv-row weapon ${pt.active ? "equipped" : ""}" data-pet="${pt.id}">
       <span class="iconwrap"><span class="icon" style="background:${cols[pt.species] || "#8a94a2"}"></span><span>${pt.pet_name || spName}</span></span>
-      <span class="qty">${pt.active ? "following" : spName} — ${stat}</span>
+      <span class="qty">${pt.active ? "following" : spName} — ${stat}${extra}</span>
     </div>`;
   }).join("");
   list.querySelectorAll("[data-pet]").forEach(el => {
     el.onclick = () => {
       const row = myPets.find(pt => String(pt.id) === el.dataset.pet);
       if (row && !row.active) setActivePet(row);
+    };
+  });
+  /* v25: the Feed control sits inside the row, whose click selects the pet —
+     so it has to swallow its own click or feeding would also re-select. */
+  list.querySelectorAll("[data-feed]").forEach(el => {
+    el.onclick = (ev) => {
+      ev.stopPropagation();
+      const row = myPets.find(pt => String(pt.id) === el.dataset.feed);
+      if (row) feedSalamander(row);
     };
   });
 }
@@ -3369,6 +3521,7 @@ function update(dt, t) {
   // v11: active companions follow (species from roster / broadcast)
   updatePet(me, (activePet && activePet.species) || null, dt, t, iAmMoving);
   updatePetCombat(mobNow);   // v16: local pet auto-attack / recovery tick
+  checkSalamanderRampage();  // v25: the one species with a happiness clock
   for (const [, o] of others) if (!o.dead) updatePet(o, o.pe || null, dt, t, (o.speed || 0) > 0.02);
 
   cam.x += (me.x - cam.x) * Math.min(1, dt * 6);
@@ -4618,9 +4771,29 @@ const SPECIES_K = {
   fire_dragon: 1.30, glow_moth: 0.32,                 // v18
   water_dragon: 1.30,                                 // v21: Fire Dragon's ratio, same body
   storm_dragon: 1.30, shadow_dragon: 1.30,            // v22: same shared body again
+  /* v25. Krakenling 1.10 and Salamander King 1.20 are the locked spec's, taken
+     as written — neither has a sibling in the file to be inconsistent with.
+
+     CRYSTAL GOLEM IS A FLAGGED JUDGMENT CALL. The spec asks for two things
+     that cannot both hold: the literal value 1.15, AND "slightly smaller than
+     regular Golem's existing entry ... confirm against Golem's actual current
+     value and stay close to it, don't invent a wildly different scale". Golem
+     is 1.65. 1.15 is not slightly smaller than 1.65 — it is Stag's value, a
+     deer, and would render the Rare Golem variant a third smaller than the
+     Uncommon one it is supposed to read as a rarer sibling of. The confirm-
+     against-the-real-value clause exists precisely to catch this, so it wins:
+     1.50 is slightly smaller than 1.65, close to it, and still visibly the
+     junior of the two. Pure render scale (it also scales the v16 overlay
+     offsets) — nothing else reads it, so flipping it back to 1.15 is a
+     one-line change if the smaller silhouette was genuinely intended. */
+  crystal_golem: 1.50,
+  krakenling: 1.10, salamander_king: 1.20,
 };
 const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94, dark_wraith: 1.30, sea_serpent: 2.60 };
-const MOB_TALL = { troll: 22, bandit: 4, bear: 5, griffin: 8, phoenix: 6, dark_wraith: 4, sea_serpent: 15 };
+/* v25: salamander_king joins the list for its hostile rampage form only. Its
+   art is long and low — the body tops out ~7px above the baseline, well under
+   Bear's — so its overlays sit lower than any other beast's. Tunable. */
+const MOB_TALL = { troll: 22, bandit: 4, bear: 5, griffin: 8, phoenix: 6, dark_wraith: 4, sea_serpent: 15, salamander_king: 4 };
 
 const KIT = {
   Ranger:      { trim: "#2e4a22", accent: "#c8b078", cloth: "#5a4a30" },
@@ -5235,6 +5408,124 @@ function updatePet(h, species, dt, t, moving) {
   }
 }
 
+/* =========================================================
+   v25 PART C — SALAMANDER KING: FEEDING, HAPPINESS, RAMPAGE
+   Bible: "The Sunforge Caldera, must be fed and kept happy or it will rampage
+   and return to the caldera." Nothing of this shape existed before v25.
+   Deliberately scoped to this ONE species: no other pet has happiness, and
+   nothing below is consulted for any other species.
+   ========================================================= */
+const SALAMANDER_STARVE_H = 8;      // hours from just-fed to 0 happiness. TUNABLE.
+const SALAMANDER_WARN_HAPPY = 30;   // panel warning cue below this. TUNABLE.
+
+/* The feed clock. `lastFedAt` lives on the roster row. It persists through a
+   last_fed_at column on the pets table when that column exists, and falls back
+   to tamed_at — which IS the spec's "set to tame-time on capture" — when it
+   does not, so a world whose DB has not had the small v25 SQL update applied
+   still behaves correctly for a freshly tamed pet rather than breaking.
+   A row carrying neither timestamp starts from now, same meaning. */
+function petLastFedAt(row) {
+  if (!row) return Date.now();
+  if (typeof row.lastFedAt === "number") return row.lastFedAt;
+  const src = row.last_fed_at || row.tamed_at;
+  const ms = src ? new Date(src).getTime() : NaN;
+  row.lastFedAt = Number.isFinite(ms) ? ms : Date.now();
+  return row.lastFedAt;
+}
+
+/* Computed ON DEMAND — never ticked every frame. Reaches 0 at
+   SALAMANDER_STARVE_H hours unfed: long enough that a normal session never
+   brushes it by accident, short enough to be a real commitment across
+   several. */
+function salamanderHappiness(pet) {
+  const hoursSinceFed = (Date.now() - petLastFedAt(pet)) / 3600000;
+  return Math.max(0, 100 - hoursSinceFed * 100 / SALAMANDER_STARVE_H);
+}
+
+function isSalamander(row) { return !!row && row.species === "salamander_king"; }
+
+/* Feeding reuses rare_herb, gatherable but with no purpose at all since v17 —
+   this is the first thing in the game that consumes one. */
+function canFeedSalamander(row) {
+  return isSalamander(row) && !!me && !!me.inv && (me.inv.rare_herb || 0) >= 1;
+}
+function feedSalamander(row) {
+  if (!canFeedSalamander(row)) return false;
+  invSpend({ rare_herb: 1 });
+  row.lastFedAt = Date.now();
+  /* Best effort, and deliberately un-awaited: if the last_fed_at column is not
+     there yet the write simply fails server-side and the in-memory clock still
+     holds for this session. Feeding must never be able to throw. */
+  try {
+    sb.from("pets").update({ last_fed_at: new Date(row.lastFedAt).toISOString() }).eq("id", row.id);
+  } catch (e) { /* ignore — see above */ }
+  toast(`${row.pet_name || "Your Salamander King"} devours the rare herb — fully fed.`);
+  refreshPetPanel();
+  refreshPanels();
+  return true;
+}
+
+/* Where a rampaging Salamander King goes home to. Same hashed-sampling sweep
+   the wilds and mobs use at worldgen, one fixed stream of its own. */
+function calderaSpot() {
+  for (let a = 0; a < 36000; a++) {
+    const tx = Math.floor(hash2(a, 91, worldSeed + 9931) * N);
+    const ty = Math.floor(hash2(a, 97, worldSeed + 9941) * N);
+    if (biomeAt(tx, ty) === B.CALDERA) return { x: tx + 0.5, y: ty + 0.5 };
+  }
+  return null;
+}
+
+/* The rampage. Literally the bible's sentence: it leaves the roster, it goes
+   back to the caldera, and it turns on the player who neglected it — one brief
+   aggro tick, after which updateMob's own targeting takes over on the very
+   next frame and it settles into ordinary hostile-mob behaviour (which, from
+   the far side of the world, means walking home and idling). The mob object is
+   the same shape worldgen builds, so every existing system — the wind-up tell,
+   the HP bar, the wear-down tame gate that lets a player win it back — works
+   on it with no special casing.
+   NOT synced to peers: pets are owner-local state and remote clients build
+   their mob list deterministically at worldgen, so a rampaged King is the
+   owner's problem alone. Consistent with how pets already work; out of scope
+   here. */
+function salamanderRampage(row) {
+  if (!isSalamander(row)) return null;
+  const spot = calderaSpot();
+  myPets = myPets.filter(p => p.id !== row.id);
+  if (activePet && activePet.id === row.id) {
+    activePet = null;
+    if (me) me.pet = null;
+  }
+  try { sb.from("pets").delete().eq("id", row.id); } catch (e) { /* best effort */ }
+  toast(`${row.pet_name || "Your Salamander King"} rampages and returns to the caldera!`);
+  refreshPetPanel();
+  if (!spot) return null;   // no Caldera in this seed — it simply leaves
+  const def = MOBS.salamander_king;
+  const m = {
+    id: "salamander_king:rampage:" + row.id, kind: "salamander_king",
+    x: spot.x, y: spot.y, hx: spot.x, hy: spot.y,
+    hp: def.hp, maxHp: def.hp, state: "aggro", target: me || null,
+    atkAt: 0, windupStart: 0, winding: false, flash: 0, boltT: 0,
+    ph: 2.3, dead: false, respawnAt: 0, lastSync: 0, fx: 0, fy: 1,
+  };
+  mobs.push(m);
+  return m;
+}
+
+/* Per-frame check, deliberately cheap: it walks only the roster (a handful of
+   rows), and only calls salamanderHappiness on Salamander Kings. Every
+   rostered King is checked, not just the active one — the bible's rule is
+   about being fed, not about being deployed, and checking only the active one
+   would mean a benched King rampaged the instant it was brought back out. */
+function checkSalamanderRampage() {
+  if (!myPets.length) return;
+  for (const row of myPets.slice()) {
+    if (!isSalamander(row)) continue;
+    if (salamanderHappiness(row) > 0) continue;
+    salamanderRampage(row);
+  }
+}
+
 /* v16: pet combat tick — the LOCAL pet only. Remote clients render other
    players' pets but never simulate them; pet damage reaches the world through
    the same mobHit / dealHit broadcast pipelines the owner's own hits use. */
@@ -5436,6 +5727,30 @@ function drawSpecies(species, sx, sy, t, moving) {
     ctx.fillStyle = "#b4aa98";                                                                 // chipped corner
     P(ctx, [sx + 4.4, sy - 8.4, sx + 3, sy - 8.4, sx + 4.4, sy - 7], "#5e5648");
   
+  /* v25 PART A: Crystal Golem — approved concept art, inserted verbatim from
+     the locked spec in the existing P/EY convention. Same blocky Golem
+     silhouette, re-cut in pale crystal with a violet core glow instead of the
+     runic-cyan eye, facet lines where Golem has cracks, and no moss. */
+  } else if (species === "crystal_golem") {
+
+    P(ctx, [sx - 4.4, sy, sx - 4.4, sy - 8.4, sx + 4.4, sy - 8.4, sx + 4.4, sy], "#9fc4e8");     // body
+    P(ctx, [sx + 1.4, sy - 8.4, sx + 4.4, sy - 8.4, sx + 4.4, sy, sx + 1.4, sy], "#5a7fb0");
+    P(ctx, [sx - 4.4, sy - 8.4, sx - 1.6, sy - 9.8, sx + 4.4, sy - 8.4], "#d4e8f8");             // top facet
+    P(ctx, [sx - 2.6, sy - 8.6, sx - 2.6, sy - 12.6, sx + 2.6, sy - 12.6, sx + 2.6, sy - 8.6], "#b8d4ec"); // head
+    P(ctx, [sx + 0.6, sy - 12.6, sx + 2.6, sy - 12.6, sx + 2.6, sy - 8.6, sx + 0.6, sy - 8.6], "#7a9fc8");
+    ctx.fillStyle = "#e8a8f8";
+    ctx.fillRect(sx - 1.6, sy - 11.4, 1.4, 1.4);                                               // crystal core glow
+    ctx.fillStyle = "rgba(232,168,248,0.3)"; ctx.fillRect(sx - 2.6, sy - 12.2, 3.4, 3.4);
+    P(ctx, [sx - 6.6, sy - 7.4, sx - 4.4, sy - 7.4, sx - 4.4, sy - 2.4, sx - 6.6, sy - 2.4], "#8fb4dc"); // arms
+    P(ctx, [sx + 4.4, sy - 7.4, sx + 6.6, sy - 7.4, sx + 6.6, sy - 2.4, sx + 4.4, sy - 2.4], "#5a7fb0");
+    ctx.strokeStyle = "#d4e8f8"; ctx.lineWidth = 0.6;                                          // facet lines
+    ctx.beginPath();
+    ctx.moveTo(sx - 3, sy - 6.6); ctx.lineTo(sx - 1.4, sy - 4.6); ctx.lineTo(sx - 2.4, sy - 2.4); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(sx + 2, sy - 6.4); ctx.lineTo(sx + 3.4, sy - 4.4); ctx.stroke();
+    P(ctx, [sx - 3.6, sy - 7.8, sx - 2.2, sy - 7.8, sx - 2.8, sy - 5.6], "rgba(255,255,255,0.35)"); // shine facet
+    P(ctx, [sx + 4.4, sy - 8.4, sx + 3, sy - 8.4, sx + 4.4, sy - 7], "#7a9fc8");                // chipped corner
+
   } else if (species === "boar") {
 
     P(ctx, [sx - 7, sy, sx - 5.8, sy - 8.4, sx + 3, sy - 9.4, sx + 5.4, sy], "#7a5f48");
@@ -5698,6 +6013,53 @@ function drawSpecies(species, sx, sy, t, moving) {
   } else if (species === "shadow_dragon") {
 
     dragonV2(sx, sy, DRAGON_PAL.shadow, t, "shadow");
+
+  /* v25 PART B: Krakenling — approved concept art, inserted verbatim from the
+     locked spec. The spec wrote its branch head as `kind === "krakenling"`,
+     but it also placed it here, "alongside the other wild species checks", and
+     this chain dispatches on `species` — there is no `kind` in scope anywhere
+     in drawSpecies, so `kind ===` would throw on every frame. Krakenling is a
+     wild pet (WILD_SPECIES + presence roll), not a mob, so drawMob's `m.kind`
+     chain is not its home either. Branch head corrected to `species`; the
+     drawing body below is untouched, exactly as written. */
+  } else if (species === "krakenling") {
+
+    P(ctx, [sx - 5, sy - 6, sx - 4, sy - 11, sx + 4, sy - 11, sx + 5, sy - 6, sx + 2, sy - 3, sx - 2, sy - 3], "#5a3a6e"); // mantle
+    P(ctx, [sx - 4, sy - 11, sx + 4, sy - 11, sx + 3, sy - 9, sx - 3, sy - 9], "#7a5a92");      // mantle highlight
+    EY(ctx, sx - 1.8, sy - 8, 1.1, "#f0e8ff", "#1a0f28");
+    EY(ctx, sx + 1.8, sy - 8, 1.1, "#f0e8ff", "#1a0f28");
+    for (let i = 0; i < 5; i++) {
+      const tx = sx - 4 + i * 2, tang = Math.sin(t / 300 + i * 0.8) * 2;
+      P(ctx, [tx, sy - 3, tx + tang, sy + 2, tx + 0.8 + tang, sy + 2, tx + 0.8, sy - 3], "#4a2a5e");
+    }
+    for (let i = 0; i < 3; i++) {
+      const ph = (t / 700 + i * 0.33) % 1;
+      ctx.globalAlpha = 0.4 + 0.4 * Math.sin(ph * Math.PI);
+      ctx.fillStyle = "#c8a8f8";
+      ctx.beginPath(); ctx.arc(sx - 3 + i * 3, sy - 7, 0.5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+  /* v25 PART C: Salamander King — approved concept art, inserted verbatim.
+     One branch serves both forms, the same way every v14 fight-to-tame species
+     does: the tamed companion and the hostile mob it becomes after a rampage
+     are the same creature and draw from here. */
+  } else if (species === "salamander_king") {
+
+    P(ctx, [sx - 8, sy, sx - 6, sy - 4, sx + 4, sy - 4.4, sx + 7, sy], "#d84a28");              // body
+    P(ctx, [sx - 6, sy - 4, sx + 4, sy - 4.4, sx + 2, sy - 2, sx - 4, sy - 1.8], "#f07038");    // body highlight
+    P(ctx, [sx + 4, sy - 4.4, sx + 10, sy - 5.4, sx + 11, sy - 1.4, sx + 7, sy], "#c8401e");    // head
+    P(ctx, [sx + 10, sy - 5.4, sx + 11, sy - 1.4, sx + 9, sy - 1.6], "#8c2c14");
+    for (let i = 0; i < 3; i++) {                                                              // crown ridge
+      P(ctx, [sx + 5.4 + i * 1.4, sy - 5, sx + 6 + i * 1.4, sy - 7.4, sx + 6.6 + i * 1.4, sy - 5], "#f4c020");
+    }
+    EY(ctx, sx + 9, sy - 3.6, 1, "#ffe8a0", "#2a0e04");
+    ctx.fillStyle = "#f4c020";                                                                 // belly glow marks
+    ctx.fillRect(sx - 5, sy - 2.2, 1.6, 1); ctx.fillRect(sx - 1.6, sy - 1.8, 1.6, 1);
+    ctx.fillStyle = "#1c0e08";                                                                 // legs
+    ctx.fillRect(sx - 5.6, sy - 1.6, 1.6, 1.6); ctx.fillRect(sx + 1, sy - 2, 1.6, 1.6);
+    ctx.strokeStyle = "#ffb050"; ctx.lineWidth = 0.7;                                           // heat shimmer
+    ctx.beginPath(); ctx.moveTo(sx - 2, sy - 5); ctx.lineTo(sx - 1, sy - 7); ctx.stroke();
 
   } else if (species === "glow_moth") {
 
@@ -6571,7 +6933,7 @@ function updateHUD(dayT) {
     petHudLine();
 
   const phase = dayT < 0.25 ? "Morning" : dayT < 0.5 ? "Afternoon" : dayT < 0.62 ? "Dusk" : "Night";
-  const dayNum = Math.floor((Date.now() / 1000 - worldEpoch) / DAY_LENGTH) + 1;
+  const dayNum = worldDayNum();   // v25 PART B: one counter, shared with the Krakenling gate
   hudWorld.innerHTML =
     `Day <span class="gold">${dayNum}</span> — ${phase}<br>` +
     `<span class="dim">${others.size + 1} online</span>`;

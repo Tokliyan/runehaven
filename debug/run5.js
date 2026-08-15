@@ -133,10 +133,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                       "stag", "unicorn", "lightfox",                      // v17
                       "fire_dragon", "glow_moth",                         // v18
                       "water_dragon",                                     // v21
-                      "storm_dragon", "shadow_dragon"];                   // v22
+                      "storm_dragon", "shadow_dragon",                    // v22
+                      "crystal_golem", "krakenling", "salamander_king"];  // v25
     const MOBK = ["goblin", "bandit", "troll", "boar", "bear", "griffin", "phoenix",
                   "dark_wraith",                                          // v18
-                  "sea_serpent"];                                         // v21
+                  "sea_serpent",                                          // v21
+                  // v25: the Salamander King's hostile rampage form. It is
+                  // tameable:true, so it renders through drawSpecies like the
+                  // v14 beasts — sweep every mob state over that path too.
+                  "salamander_king"];
     let n = 0;
     if (window.drawUnit) {
       for (const cls of CLS) {
