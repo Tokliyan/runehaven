@@ -102,190 +102,123 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v25 — Crystal Golem, Krakenling, Salamander King)
+## Confirmed, locked spec for the next build (v26 — full mounting, all 9 bible species)
 
-v24 shipped successfully — 420/420 in run4, landed directly on main. This
-section replaces the v24 entry as the current locked target. All three
-species below have brand-new art, designed and syntax-verified against the
-real `P()`/`R()`/`EY()`/`SCL()` toolkit before being written into this spec
-— insert exactly as given, do not redraw.
+v25 shipped successfully — 476/476 in run4, landed directly on main. This
+section replaces the v25 entry as the current locked target.
 
-**PART A — Crystal Golem (Rare pet, found young in mountain ruins).**
+This version is mounting ONLY. Blood Moon and Meteor Shower move to v27 —
+checked directly against the live code before writing this: the existing
+gatherable system (`featureTypeAt`) is baked into world generation once, not
+designed for something to spawn and despawn live during play, which is
+exactly what Meteor Shower needs. That's real new infrastructure and
+deserves its own version, same reasoning as every prior split.
 
-Bible: "Found young in mountain ruins only, adults are hostile enemies" —
-same framing as regular Golem, different material. Confirmed directly:
-`e < 0.86` is `B.ROCK`, `e >= 0.86` is `B.PEAK` in this game's own terms —
-propose "mountain ruin" as any `RUINS[]` entry where `elevRaw(x, y) >= 0.72`
-(meaningfully elevated without requiring a literal peak). Check this once
-per ruin at worldgen and tag it; Golem keeps spawning at every ruin as
-before, Crystal Golem spawns ONLY at tagged mountain ruins, same `B.RUINB`
-tile gating both species already share.
+**Confirmed directly before writing this spec:** zero mounting
+infrastructure exists anywhere in the file. `R` is confirmed unbound —
+`KEYBIND_DEFAULTS` currently uses w/s/a/d/e/space/i/c/p/f/shift, nothing
+else. `PLAYER_SPEED = 4.6`. The camera already just tracks `me.x, me.y`
+directly (`cam.x = me.x; cam.y = me.y;`) — no camera changes needed at all,
+mounting doesn't touch it. `updatePet()` is the function that currently
+makes the active companion trail behind the player every frame — this is
+exactly what needs to be suspended while that same pet is being ridden.
 
-Art — insert as a new `species === "crystal_golem"` branch, adjacent to
-the existing golem branch:
+**PART A — the mountable set, exactly the bible's nine, no more.**
 
 ```js
-else if (species === "crystal_golem") {
+const MOUNTABLE_SPECIES = new Set(["stag", "griffin", "crystal_golem",
+  "water_dragon", "fire_dragon", "storm_dragon", "shadow_dragon",
+  "shadowfox", "lightfox"]);
+```
+Confirmed against the bible's own "Mountable Pets" line — do not add or
+remove anything from this set.
 
-    P(ctx, [sx - 4.4, sy, sx - 4.4, sy - 8.4, sx + 4.4, sy - 8.4, sx + 4.4, sy], "#9fc4e8");     // body
-    P(ctx, [sx + 1.4, sy - 8.4, sx + 4.4, sy - 8.4, sx + 4.4, sy, sx + 1.4, sy], "#5a7fb0");
-    P(ctx, [sx - 4.4, sy - 8.4, sx - 1.6, sy - 9.8, sx + 4.4, sy - 8.4], "#d4e8f8");             // top facet
-    P(ctx, [sx - 2.6, sy - 8.6, sx - 2.6, sy - 12.6, sx + 2.6, sy - 12.6, sx + 2.6, sy - 8.6], "#b8d4ec"); // head
-    P(ctx, [sx + 0.6, sy - 12.6, sx + 2.6, sy - 12.6, sx + 2.6, sy - 8.6, sx + 0.6, sy - 8.6], "#7a9fc8");
-    ctx.fillStyle = "#e8a8f8";
-    ctx.fillRect(sx - 1.6, sy - 11.4, 1.4, 1.4);                                               // crystal core glow
-    ctx.fillStyle = "rgba(232,168,248,0.3)"; ctx.fillRect(sx - 2.6, sy - 12.2, 3.4, 3.4);
-    P(ctx, [sx - 6.6, sy - 7.4, sx - 4.4, sy - 7.4, sx - 4.4, sy - 2.4, sx - 6.6, sy - 2.4], "#8fb4dc"); // arms
-    P(ctx, [sx + 4.4, sy - 7.4, sx + 6.6, sy - 7.4, sx + 6.6, sy - 2.4, sx + 4.4, sy - 2.4], "#5a7fb0");
-    ctx.strokeStyle = "#d4e8f8"; ctx.lineWidth = 0.6;                                          // facet lines
-    ctx.beginPath();
-    ctx.moveTo(sx - 3, sy - 6.6); ctx.lineTo(sx - 1.4, sy - 4.6); ctx.lineTo(sx - 2.4, sy - 2.4); ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(sx + 2, sy - 6.4); ctx.lineTo(sx + 3.4, sy - 4.4); ctx.stroke();
-    P(ctx, [sx - 3.6, sy - 7.8, sx - 2.2, sy - 7.8, sx - 2.8, sy - 5.6], "rgba(255,255,255,0.35)"); // shine facet
-    P(ctx, [sx + 4.4, sy - 8.4, sx + 3, sy - 8.4, sx + 4.4, sy - 7], "#7a9fc8");                // chipped corner
+**PART B — mount/dismount, `R`, new player state `me.mounted`.**
 
+Pressing `R`: if `activePet` exists and `MOUNTABLE_SPECIES.has(activePet's
+species)` and `me.mounted` is currently false, set `me.mounted = true`. If
+`me.mounted` is already true, set it false (dismount), regardless of what
+the active pet currently is. If neither condition holds (no eligible pet),
+`R` does nothing — no error, no toast spam, just a no-op.
+
+Auto-dismount safety: if `activePet` becomes null or changes species while
+`me.mounted` is true (pet swapped via the companion panel, pet removed,
+etc.), clear `me.mounted` back to false in the same place that change
+happens. Never leave `me.mounted` true while pointing at a pet that no
+longer qualifies.
+
+**PART C — speed bonus.**
+
+```js
+const MOUNT_SPEED_MULT = 1.6;   // TUNABLE
+```
+Wherever `PLAYER_SPEED` is currently used for the player's own movement
+(not pets, not mobs), multiply by `MOUNT_SPEED_MULT` when `me.mounted` is
+true. Do not touch `PLAYER_SPEED` itself or any other entity's speed.
+
+**PART D — rendering: suspend the trailing pet, seat the player on it
+instead.**
+
+While `me.mounted` is true, do NOT call the normal trailing-follow branch
+of `updatePet()` for the active pet — the mount should sit at/near the
+player's own position, not trail behind at the usual offset distance.
+Simplest correct approach: early-return from `updatePet()` when the pet
+being updated is the current mount, and instead position it directly at
+`h.x, h.y` (no lerp-toward-behind-the-player logic at all while mounted).
+
+Seat offset — scales with the mount's actual size, not a flat number for
+every species. Reuse the real `SPECIES_K` values already in the file
+(confirmed): shadowfox 1.66 (the largest of the nine, bigger than every
+dragon in this game's own art), crystal_golem 1.50, griffin 1.26, the four
+dragons 1.30 each, stag 1.15, lightfox 1.05 (the smallest).
+
+```js
+function mountSeatOffsetY(species) {
+  return -(2.2 * (SPECIES_K[species] || 1.2));   // TUNABLE base of 2.2
 }
 ```
+Draw the mount's body first (its existing `drawSpecies` branch, unchanged
+— no new art needed, all nine already exist), then draw the player sprite
+offset upward by `mountSeatOffsetY(activePet's species)` from the mount's
+position. Do not draw the player at their normal ground-level offset while
+mounted.
 
-Stats, locked from the original v16 table: 70 HP / 9 dmg / 2.2s cooldown /
-PvP-capable. Tame base chance: 0.25, matching Golem's. Add
-`crystal_golem: 1.15` to `SPECIES_K` (slightly smaller than regular Golem's
-existing entry, reads as a "younger/rarer variant" — confirm against
-Golem's actual current value and stay close to it, don't invent a wildly
-different scale). Mount status: NOT on the bible's mountable list — Golem
-line isn't rideable, don't add riding code.
+**PART E — two deliberate scope boundaries, stated explicitly so nothing
+gets invented at build time:**
+1. **Combat works fully while mounted, no restriction.** The bible doesn't
+   say otherwise, and inventing a "can't fight while riding" rule would be
+   unstated scope, not a real requirement.
+2. **Griffin's flight does not grant any special movement or terrain-
+   crossing power while mounted.** Confirmed Griffin is the only `flier:
+   true` species among the nine — every mount gives the exact same
+   `MOUNT_SPEED_MULT` benefit and nothing else. Building real flight-based
+   traversal is comparable in scope to the v21 dive mechanic and is
+   explicitly not this version's job.
 
-**PART B — Krakenling (Epic pet, Abyssal Hollow, cyclical spawn window).**
+**PART F — pet auto-attack is suspended while mounted.**
 
-Bible: "disappears after 10 day cycles and returns to lay another egg,
-giving a one day window every 10 days to capture it." Confirmed directly:
-`dayNum` is already computed from `worldEpoch`/`DAY_LENGTH` at the HUD
-display site — reuse the identical formula in the spawn-gating logic, do
-not add a second day-counter:
+The active pet's combat-assist behavior (auto-attacking nearby threats)
+should not fire while that same pet is currently being ridden — a mount
+lunging at something mid-ride doesn't make sense and isn't something the
+bible asks for. Resume normal pet-combat behavior immediately on dismount.
 
-```js
-const dayNum = Math.floor((Date.now() / 1000 - worldEpoch) / DAY_LENGTH) + 1;
-const krakenlingWindowOpen = (dayNum % 10) === 0;
-```
+**PART G — proof gates, standard gauntlet plus:**
+- Confirm `R` correctly mounts only when the active pet is one of the nine,
+  and does nothing otherwise.
+- Confirm dismounting via `R` a second time restores normal pet-trailing
+  behavior immediately.
+- Confirm the auto-dismount safety fires if the active pet changes while
+  mounted.
+- Confirm movement speed is genuinely `PLAYER_SPEED * 1.6` while mounted
+  and back to normal immediately on dismount.
+- Confirm pet auto-attack genuinely does not fire for a mount currently
+  being ridden, and does fire again immediately after dismounting.
+- Confirm all nine species can each be mounted without error in the test
+  harness — not just one or two as a sample.
 
-Only allow a Krakenling presence-roll (same pattern as Shadowfox/Unicorn's
-existing presence-roll gating) when `krakenlingWindowOpen` is true. Spawn
-location: `B.ABYSSAL` tiles. When the window is closed, Krakenling simply
-never rolls present — no despawn logic needed for existing tamed ones,
-this gate only affects new wild spawns appearing.
+**Explicitly not touched this version:** Blood Moon, Meteor Shower (v27).
+Bases. Any per-species mount ability beyond the shared speed bonus.
 
-Art — insert as a new `kind === "krakenling"` branch (wild-pet species
-branch, alongside the other wild species checks):
-
-```js
-else if (kind === "krakenling") {
-
-    P(ctx, [sx - 5, sy - 6, sx - 4, sy - 11, sx + 4, sy - 11, sx + 5, sy - 6, sx + 2, sy - 3, sx - 2, sy - 3], "#5a3a6e"); // mantle
-    P(ctx, [sx - 4, sy - 11, sx + 4, sy - 11, sx + 3, sy - 9, sx - 3, sy - 9], "#7a5a92");      // mantle highlight
-    EY(ctx, sx - 1.8, sy - 8, 1.1, "#f0e8ff", "#1a0f28");
-    EY(ctx, sx + 1.8, sy - 8, 1.1, "#f0e8ff", "#1a0f28");
-    for (let i = 0; i < 5; i++) {
-      const tx = sx - 4 + i * 2, tang = Math.sin(t / 300 + i * 0.8) * 2;
-      P(ctx, [tx, sy - 3, tx + tang, sy + 2, tx + 0.8 + tang, sy + 2, tx + 0.8, sy - 3], "#4a2a5e");
-    }
-    for (let i = 0; i < 3; i++) {
-      const ph = (t / 700 + i * 0.33) % 1;
-      ctx.globalAlpha = 0.4 + 0.4 * Math.sin(ph * Math.PI);
-      ctx.fillStyle = "#c8a8f8";
-      ctx.beginPath(); ctx.arc(sx - 3 + i * 3, sy - 7, 0.5, 0, Math.PI * 2); ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-
-}
-```
-
-Stats, locked from the original table: 60 HP / 12 dmg / 1.8s cooldown /
-PvP-capable. Tame base chance: 0.20, matching Lightfox/Shadowfox's Epic
-baseline. Add `krakenling: 1.10` to `SPECIES_K` (small, "-ling" reads as
-young). Mount status: not on the bible's list, don't add riding code.
-
-**PART C — Salamander King (Epic pet, Sunforge Caldera, real feeding
-system — the one genuinely new mechanic this version).**
-
-Bible: "must be fed and kept happy or it will rampage and return to the
-caldera." Nothing like this exists yet — designed here in full, not left
-to be invented at build time.
-
-New per-pet state on the tamed Salamander King specifically (not other
-species): `lastFedAt` (timestamp, set to tame-time on capture). Happiness
-is computed on demand, not ticked every frame:
-```js
-function salamanderHappiness(pet) {
-  const hoursSinceFed = (Date.now() - pet.lastFedAt) / 3600000;
-  return Math.max(0, 100 - hoursSinceFed * 100 / 8);   // reaches 0 at 8 hours unfed
-}
-```
-8 hours to fully starve — long enough that a normal play session never
-brushes it by accident, short enough to be a real commitment across
-multiple sessions. Flagged as tunable.
-
-Feeding: reuse `rare_herb` — confirmed genuinely unused since v17, this is
-its first real purpose. Add a "Feed" interaction to the companion panel
-when Salamander King is the active companion and the player holds at least
-one `rare_herb`: consuming it sets `lastFedAt = Date.now()` (happiness back
-to 100).
-
-Below 30 happiness: a visible warning cue on the companion panel (reuse
-the existing weakened/low-HP visual language, don't invent new UI chrome).
-At 0 happiness: the pet rampages — remove it from the player's tamed
-roster, spawn it back as a hostile mob at the Sunforge Caldera (reuse the
-existing mob-spawn pattern, not a new one), and give it one brief aggro
-tick on the player who neglected it before it resumes normal hostile-mob
-behavior — matches "rampage and return to the caldera" literally rather
-than just silently vanishing.
-
-Art — insert as a new `species === "salamander_king"` branch:
-
-```js
-else if (species === "salamander_king") {
-
-    P(ctx, [sx - 8, sy, sx - 6, sy - 4, sx + 4, sy - 4.4, sx + 7, sy], "#d84a28");              // body
-    P(ctx, [sx - 6, sy - 4, sx + 4, sy - 4.4, sx + 2, sy - 2, sx - 4, sy - 1.8], "#f07038");    // body highlight
-    P(ctx, [sx + 4, sy - 4.4, sx + 10, sy - 5.4, sx + 11, sy - 1.4, sx + 7, sy], "#c8401e");    // head
-    P(ctx, [sx + 10, sy - 5.4, sx + 11, sy - 1.4, sx + 9, sy - 1.6], "#8c2c14");
-    for (let i = 0; i < 3; i++) {                                                              // crown ridge
-      P(ctx, [sx + 5.4 + i * 1.4, sy - 5, sx + 6 + i * 1.4, sy - 7.4, sx + 6.6 + i * 1.4, sy - 5], "#f4c020");
-    }
-    EY(ctx, sx + 9, sy - 3.6, 1, "#ffe8a0", "#2a0e04");
-    ctx.fillStyle = "#f4c020";                                                                 // belly glow marks
-    ctx.fillRect(sx - 5, sy - 2.2, 1.6, 1); ctx.fillRect(sx - 1.6, sy - 1.8, 1.6, 1);
-    ctx.fillStyle = "#1c0e08";                                                                 // legs
-    ctx.fillRect(sx - 5.6, sy - 1.6, 1.6, 1.6); ctx.fillRect(sx + 1, sy - 2, 1.6, 1.6);
-    ctx.strokeStyle = "#ffb050"; ctx.lineWidth = 0.7;                                           // heat shimmer
-    ctx.beginPath(); ctx.moveTo(sx - 2, sy - 5); ctx.lineTo(sx - 1, sy - 7); ctx.stroke();
-
-}
-```
-
-Stats, locked from the original table: 75 HP / 13 dmg / 1.8s cooldown /
-PvP-capable. Tame base chance: 0.20. Add `salamander_king: 1.20` to
-`SPECIES_K`. Spawn location: `B.CALDERA` tiles. Mount status: not on the
-bible's list, don't add riding code.
-
-**PART D — proof gates, standard gauntlet plus:**
-- Confirm at least one of the 6 `RUINS[]` entries actually qualifies as a
-  "mountain ruin" (`elevRaw >= 0.72`) in the test seed — if none do,
-  Crystal Golem is unreachable and the threshold needs lowering, don't
-  ship an unreachable species.
-- Confirm Crystal Golem only spawns at tagged mountain ruins, never at the
-  others, in the test seed.
-- Confirm Krakenling's presence-roll genuinely gates on `dayNum % 10`,
-  tested across a simulated range of day values, not just the current one.
-- Confirm the full feeding cycle: happiness starts at 100 on tame, drops
-  correctly with simulated elapsed time, feeding resets it, and 0
-  happiness genuinely triggers the rampage-and-respawn path end to end.
-- Confirm all three new art branches render without error.
-- Extend `run5.js` coverage for all three new species.
-
-**Explicitly not touched this version:** mounting, Blood Moon, Meteor
-Shower (still v26 — Arc C's actual close), Dungeons, bases.
-
-**After v25 ships successfully, do not start any further version
+**After v26 ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated with the next
 target.
