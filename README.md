@@ -102,128 +102,190 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v24 — intro card + real music)
+## Confirmed, locked spec for the next build (v25 — Crystal Golem, Krakenling, Salamander King)
 
-v23 shipped successfully, plus a same-day hotfix (favicon removed, credits
-updated, Skeptik/Advay added to Collaborations) already verified and live
-on main. This section is the next locked target.
+v24 shipped successfully — 420/420 in run4, landed directly on main. This
+section replaces the v24 entry as the current locked target. All three
+species below have brand-new art, designed and syntax-verified against the
+real `P()`/`R()`/`EY()`/`SCL()` toolkit before being written into this spec
+— insert exactly as given, do not redraw.
 
-**Audio files already pushed to the repo, confirmed present:**
-`audio/nu_metal.mp3`, `audio/Pop.mp3`, `audio/Slower_Jamz.mp3`,
-`audio/Long_Way_Home.mp3`, `audio/seduced.mp3`, `audio/song.mp3` — all
-compressed from the original FLAC uploads to 128kbps MP3, ~2-5MB each.
-**These are separate files, referenced by relative URL, NOT embedded as
-base64 in runehaven.html** — deliberate architecture change, confirmed
-necessary: 140MB raw / 21MB compressed is far too large to inline the way
-the logo images were. This is the one part of the project that is no
-longer strictly "a single HTML file" — it's the HTML plus an `audio/`
-folder, deployed together.
+**PART A — Crystal Golem (Rare pet, found young in mountain ruins).**
 
-**Track roles — proposed, not confirmed, flag clearly if wrong:**
-`nu_metal.mp3` → combat/boss track. `Pop.mp3`, `Slower_Jamz.mp3`,
-`Long_Way_Home.mp3`, `song.mp3` → background rotation (four tracks,
-cycling). `seduced.mp3` → held out, NOT wired into either rotation this
-version — genuinely unclear what it's for, better to leave it unused than
-guess wrong and have to unwind it later.
+Bible: "Found young in mountain ruins only, adults are hostile enemies" —
+same framing as regular Golem, different material. Confirmed directly:
+`e < 0.86` is `B.ROCK`, `e >= 0.86` is `B.PEAK` in this game's own terms —
+propose "mountain ruin" as any `RUINS[]` entry where `elevRaw(x, y) >= 0.72`
+(meaningfully elevated without requiring a literal peak). Check this once
+per ruin at worldgen and tag it; Golem keeps spawning at every ruin as
+before, Crystal Golem spawns ONLY at tagged mountain ruins, same `B.RUINB`
+tile gating both species already share.
 
-**PART A — the intro card. Pure typography, no image assets needed.**
-
-A full-screen overlay shown once per page load, before the login screen
-becomes visible (same "cover sits on top, login is already loaded
-underneath" pattern already agreed on). Exact copy:
-"Hashbrown Studios in collaboration with STG Records presents RuneHaven"
-— reasonable to split across 2-3 lines for readability, do not shorten or
-paraphrase the line itself.
-
-Animation: fade+scale in (~0.6-0.8s, starts slightly smaller and fully
-transparent, grows to full size while becoming opaque), hold fully visible
-(~1-1.5s), fade+scale out (~0.6-0.8s, mirrors the entrance) with the login
-screen beginning to crossfade in during the fade-out, not after it. Use an
-eased timing function, not linear. Confirmed requirements from earlier
-discussion: plays every time by default (no localStorage skip-forever),
-but any keypress or click during the animation skips straight to the login
-screen — do not let a click during fade-in "double-trigger" or skip past
-login itself.
-
-**PART B — background music: a real rotation, not a single loop.**
-
-`AudioEngine.playMusic(url, loop)` currently only supports one track
-looping forever — for a 4-track rotation, add a thin playlist layer on
-top, do not modify `playMusic`/`playSFX`/the gain-node setup themselves,
-they're confirmed working as-is:
+Art — insert as a new `species === "crystal_golem"` branch, adjacent to
+the existing golem branch:
 
 ```js
-const BG_PLAYLIST = ["audio/Pop.mp3", "audio/Slower_Jamz.mp3",
-  "audio/Long_Way_Home.mp3", "audio/song.mp3"];
-let bgIndex = 0, inCombatMusic = false;
+else if (species === "crystal_golem") {
 
-async function playNextBgTrack() {
-  if (inCombatMusic) return;   // combat owns the music channel right now
-  const url = BG_PLAYLIST[bgIndex % BG_PLAYLIST.length];
-  bgIndex++;
-  await AudioEngine.playMusic(url, false);   // false: don't loop this one track forever
-  if (AudioEngine.musicSource) {
-    AudioEngine.musicSource.onended = () => { if (!inCombatMusic) playNextBgTrack(); };
-  }
+    P(ctx, [sx - 4.4, sy, sx - 4.4, sy - 8.4, sx + 4.4, sy - 8.4, sx + 4.4, sy], "#9fc4e8");     // body
+    P(ctx, [sx + 1.4, sy - 8.4, sx + 4.4, sy - 8.4, sx + 4.4, sy, sx + 1.4, sy], "#5a7fb0");
+    P(ctx, [sx - 4.4, sy - 8.4, sx - 1.6, sy - 9.8, sx + 4.4, sy - 8.4], "#d4e8f8");             // top facet
+    P(ctx, [sx - 2.6, sy - 8.6, sx - 2.6, sy - 12.6, sx + 2.6, sy - 12.6, sx + 2.6, sy - 8.6], "#b8d4ec"); // head
+    P(ctx, [sx + 0.6, sy - 12.6, sx + 2.6, sy - 12.6, sx + 2.6, sy - 8.6, sx + 0.6, sy - 8.6], "#7a9fc8");
+    ctx.fillStyle = "#e8a8f8";
+    ctx.fillRect(sx - 1.6, sy - 11.4, 1.4, 1.4);                                               // crystal core glow
+    ctx.fillStyle = "rgba(232,168,248,0.3)"; ctx.fillRect(sx - 2.6, sy - 12.2, 3.4, 3.4);
+    P(ctx, [sx - 6.6, sy - 7.4, sx - 4.4, sy - 7.4, sx - 4.4, sy - 2.4, sx - 6.6, sy - 2.4], "#8fb4dc"); // arms
+    P(ctx, [sx + 4.4, sy - 7.4, sx + 6.6, sy - 7.4, sx + 6.6, sy - 2.4, sx + 4.4, sy - 2.4], "#5a7fb0");
+    ctx.strokeStyle = "#d4e8f8"; ctx.lineWidth = 0.6;                                          // facet lines
+    ctx.beginPath();
+    ctx.moveTo(sx - 3, sy - 6.6); ctx.lineTo(sx - 1.4, sy - 4.6); ctx.lineTo(sx - 2.4, sy - 2.4); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(sx + 2, sy - 6.4); ctx.lineTo(sx + 3.4, sy - 4.4); ctx.stroke();
+    P(ctx, [sx - 3.6, sy - 7.8, sx - 2.2, sy - 7.8, sx - 2.8, sy - 5.6], "rgba(255,255,255,0.35)"); // shine facet
+    P(ctx, [sx + 4.4, sy - 8.4, sx + 3, sy - 8.4, sx + 4.4, sy - 7], "#7a9fc8");                // chipped corner
+
 }
 ```
 
-Call `playNextBgTrack()` once, right after `AudioEngine.init()` succeeds
-(the same ENTER-button user gesture that already creates the AudioContext
-— confirmed this is the only place `init()` is allowed to be called from).
+Stats, locked from the original v16 table: 70 HP / 9 dmg / 2.2s cooldown /
+PvP-capable. Tame base chance: 0.25, matching Golem's. Add
+`crystal_golem: 1.15` to `SPECIES_K` (slightly smaller than regular Golem's
+existing entry, reads as a "younger/rarer variant" — confirm against
+Golem's actual current value and stay close to it, don't invent a wildly
+different scale). Mount status: NOT on the bible's mountable list — Golem
+line isn't rideable, don't add riding code.
 
-**PART C — combat music: two existing signals, one new lightweight
-timestamp, no new detection system.**
+**PART B — Krakenling (Epic pet, Abyssal Hollow, cyclical spawn window).**
 
-Confirmed directly in the live code: `lastAttack` already updates the
-instant the player attacks anything (search `lastAttack = now;`), and
-`me.hp -= dmg` / `me.hp -= tick` already fire the instant the player takes
-damage. Both are real "the player is in a fight right now" signals —
-reuse both, don't build a third detection mechanism.
+Bible: "disappears after 10 day cycles and returns to lay another egg,
+giving a one day window every 10 days to capture it." Confirmed directly:
+`dayNum` is already computed from `worldEpoch`/`DAY_LENGTH` at the HUD
+display site — reuse the identical formula in the spawn-gating logic, do
+not add a second day-counter:
 
 ```js
-let combatMusicUntil = 0;
-const COMBAT_MUSIC_LINGER = 6000;   // ms after the last hit before reverting
+const dayNum = Math.floor((Date.now() / 1000 - worldEpoch) / DAY_LENGTH) + 1;
+const krakenlingWindowOpen = (dayNum % 10) === 0;
 ```
 
-At every site that sets `lastAttack = now;` AND at both `me.hp -= dmg;`
-and `me.hp -= tick;` sites, add: `combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;`
+Only allow a Krakenling presence-roll (same pattern as Shadowfox/Unicorn's
+existing presence-roll gating) when `krakenlingWindowOpen` is true. Spawn
+location: `B.ABYSSAL` tiles. When the window is closed, Krakenling simply
+never rolls present — no despawn logic needed for existing tamed ones,
+this gate only affects new wild spawns appearing.
 
-In the main game loop (wherever it already runs every frame), add a check,
-throttled to roughly once a second, not every frame:
+Art — insert as a new `kind === "krakenling"` branch (wild-pet species
+branch, alongside the other wild species checks):
 
 ```js
-const nowT = performance.now();
-if (nowT < combatMusicUntil && !inCombatMusic) {
-  inCombatMusic = true;
-  AudioEngine.playMusic("audio/nu_metal.mp3", true);   // true: this one DOES loop, it's a single track
-} else if (nowT >= combatMusicUntil && inCombatMusic) {
-  inCombatMusic = false;
-  playNextBgTrack();   // resumes the rotation from wherever bgIndex is
+else if (kind === "krakenling") {
+
+    P(ctx, [sx - 5, sy - 6, sx - 4, sy - 11, sx + 4, sy - 11, sx + 5, sy - 6, sx + 2, sy - 3, sx - 2, sy - 3], "#5a3a6e"); // mantle
+    P(ctx, [sx - 4, sy - 11, sx + 4, sy - 11, sx + 3, sy - 9, sx - 3, sy - 9], "#7a5a92");      // mantle highlight
+    EY(ctx, sx - 1.8, sy - 8, 1.1, "#f0e8ff", "#1a0f28");
+    EY(ctx, sx + 1.8, sy - 8, 1.1, "#f0e8ff", "#1a0f28");
+    for (let i = 0; i < 5; i++) {
+      const tx = sx - 4 + i * 2, tang = Math.sin(t / 300 + i * 0.8) * 2;
+      P(ctx, [tx, sy - 3, tx + tang, sy + 2, tx + 0.8 + tang, sy + 2, tx + 0.8, sy - 3], "#4a2a5e");
+    }
+    for (let i = 0; i < 3; i++) {
+      const ph = (t / 700 + i * 0.33) % 1;
+      ctx.globalAlpha = 0.4 + 0.4 * Math.sin(ph * Math.PI);
+      ctx.fillStyle = "#c8a8f8";
+      ctx.beginPath(); ctx.arc(sx - 3 + i * 3, sy - 7, 0.5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
 }
 ```
+
+Stats, locked from the original table: 60 HP / 12 dmg / 1.8s cooldown /
+PvP-capable. Tame base chance: 0.20, matching Lightfox/Shadowfox's Epic
+baseline. Add `krakenling: 1.10` to `SPECIES_K` (small, "-ling" reads as
+young). Mount status: not on the bible's list, don't add riding code.
+
+**PART C — Salamander King (Epic pet, Sunforge Caldera, real feeding
+system — the one genuinely new mechanic this version).**
+
+Bible: "must be fed and kept happy or it will rampage and return to the
+caldera." Nothing like this exists yet — designed here in full, not left
+to be invented at build time.
+
+New per-pet state on the tamed Salamander King specifically (not other
+species): `lastFedAt` (timestamp, set to tame-time on capture). Happiness
+is computed on demand, not ticked every frame:
+```js
+function salamanderHappiness(pet) {
+  const hoursSinceFed = (Date.now() - pet.lastFedAt) / 3600000;
+  return Math.max(0, 100 - hoursSinceFed * 100 / 8);   // reaches 0 at 8 hours unfed
+}
+```
+8 hours to fully starve — long enough that a normal play session never
+brushes it by accident, short enough to be a real commitment across
+multiple sessions. Flagged as tunable.
+
+Feeding: reuse `rare_herb` — confirmed genuinely unused since v17, this is
+its first real purpose. Add a "Feed" interaction to the companion panel
+when Salamander King is the active companion and the player holds at least
+one `rare_herb`: consuming it sets `lastFedAt = Date.now()` (happiness back
+to 100).
+
+Below 30 happiness: a visible warning cue on the companion panel (reuse
+the existing weakened/low-HP visual language, don't invent new UI chrome).
+At 0 happiness: the pet rampages — remove it from the player's tamed
+roster, spawn it back as a hostile mob at the Sunforge Caldera (reuse the
+existing mob-spawn pattern, not a new one), and give it one brief aggro
+tick on the player who neglected it before it resumes normal hostile-mob
+behavior — matches "rampage and return to the caldera" literally rather
+than just silently vanishing.
+
+Art — insert as a new `species === "salamander_king"` branch:
+
+```js
+else if (species === "salamander_king") {
+
+    P(ctx, [sx - 8, sy, sx - 6, sy - 4, sx + 4, sy - 4.4, sx + 7, sy], "#d84a28");              // body
+    P(ctx, [sx - 6, sy - 4, sx + 4, sy - 4.4, sx + 2, sy - 2, sx - 4, sy - 1.8], "#f07038");    // body highlight
+    P(ctx, [sx + 4, sy - 4.4, sx + 10, sy - 5.4, sx + 11, sy - 1.4, sx + 7, sy], "#c8401e");    // head
+    P(ctx, [sx + 10, sy - 5.4, sx + 11, sy - 1.4, sx + 9, sy - 1.6], "#8c2c14");
+    for (let i = 0; i < 3; i++) {                                                              // crown ridge
+      P(ctx, [sx + 5.4 + i * 1.4, sy - 5, sx + 6 + i * 1.4, sy - 7.4, sx + 6.6 + i * 1.4, sy - 5], "#f4c020");
+    }
+    EY(ctx, sx + 9, sy - 3.6, 1, "#ffe8a0", "#2a0e04");
+    ctx.fillStyle = "#f4c020";                                                                 // belly glow marks
+    ctx.fillRect(sx - 5, sy - 2.2, 1.6, 1); ctx.fillRect(sx - 1.6, sy - 1.8, 1.6, 1);
+    ctx.fillStyle = "#1c0e08";                                                                 // legs
+    ctx.fillRect(sx - 5.6, sy - 1.6, 1.6, 1.6); ctx.fillRect(sx + 1, sy - 2, 1.6, 1.6);
+    ctx.strokeStyle = "#ffb050"; ctx.lineWidth = 0.7;                                           // heat shimmer
+    ctx.beginPath(); ctx.moveTo(sx - 2, sy - 5); ctx.lineTo(sx - 1, sy - 7); ctx.stroke();
+
+}
+```
+
+Stats, locked from the original table: 75 HP / 13 dmg / 1.8s cooldown /
+PvP-capable. Tame base chance: 0.20. Add `salamander_king: 1.20` to
+`SPECIES_K`. Spawn location: `B.CALDERA` tiles. Mount status: not on the
+bible's list, don't add riding code.
 
 **PART D — proof gates, standard gauntlet plus:**
-- Confirm all 6 audio files fetch successfully from their relative paths
-  (mock `fetch` in the harness, confirm the correct URLs get requested,
-  same pattern already used to mock other browser APIs in run3/run4).
-- Confirm the background rotation actually advances `bgIndex` on a
-  simulated `onended` firing, and wraps back to 0 after the 4th track.
-- Confirm a simulated `lastAttack` update or `me.hp` decrease sets
-  `combatMusicUntil` correctly, and that the loop-check correctly flips
-  `inCombatMusic` both directions across the 6-second linger window.
-- Confirm `seduced.mp3` is NOT referenced anywhere in the wiring — it was
-  deliberately held out this version.
-- Confirm the intro overlay is skippable via keypress and via click, and
-  that skipping doesn't also trigger the login form underneath.
+- Confirm at least one of the 6 `RUINS[]` entries actually qualifies as a
+  "mountain ruin" (`elevRaw >= 0.72`) in the test seed — if none do,
+  Crystal Golem is unreachable and the threshold needs lowering, don't
+  ship an unreachable species.
+- Confirm Crystal Golem only spawns at tagged mountain ruins, never at the
+  others, in the test seed.
+- Confirm Krakenling's presence-roll genuinely gates on `dayNum % 10`,
+  tested across a simulated range of day values, not just the current one.
+- Confirm the full feeding cycle: happiness starts at 100 on tame, drops
+  correctly with simulated elapsed time, feeding resets it, and 0
+  happiness genuinely triggers the rampage-and-respawn path end to end.
+- Confirm all three new art branches render without error.
+- Extend `run5.js` coverage for all three new species.
 
-**Explicitly not touched this version:** Crystal Golem, Krakenling,
-Salamander King (still queued right after this — v25 now). SFX for
-individual game events (hits, taming, UI clicks) — `AudioEngine.playSFX()`
-exists and works, but no actual sound-effect files have been provided yet,
-same "don't wire imagined triggers to files that don't exist" rule from
-v23 applies here too.
+**Explicitly not touched this version:** mounting, Blood Moon, Meteor
+Shower (still v26 — Arc C's actual close), Dungeons, bases.
 
-**After v24 ships successfully, do not start any further version
+**After v25 ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated with the next
 target.
