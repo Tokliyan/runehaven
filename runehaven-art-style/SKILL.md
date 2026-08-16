@@ -55,6 +55,125 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-16 (v27 — five class abilities + real spear/staff identity)
+No new species, no new biomes, no world colour touched, and not one existing
+draw call altered. v27 is a mechanics version — the cooldowns, the damage
+multipliers, the cone angle and the counterplay rules live in the README + this
+commit message. Its whole rendering scope is **one new effect and one HUD
+line**, and both are things that already existed being pointed somewhere new.
+- **The AOE ring is `aura()`, reused, with exactly one thing added: `rx`
+  grows.** The v18 helper (pulsing radial wash + ground ellipse + rising
+  diamond motes) was written to be reused and this is the first time anything
+  has. Feeding it a radius that scales with the effect's own 0→1 life is what
+  turns a standing wash into a ring travelling outward; nothing inside `aura()`
+  was touched, and no second effect system was built. Radius is in **tiles**
+  converted at `IW2` — the tile half-width — which is what plants the ring on
+  the ground plane instead of floating it at an arbitrary pixel size.
+- **Two rings, one code path, deliberately the same violet.** Mystic's Arcane
+  Burst draws at 4 tiles, a staff orb's splash at 2, both in `#9670dc` — the
+  Mystic's own lit palette colour, as `"150,112,220"` because `aura()` wants a
+  triplet, not a css colour. They read as the same magic because they *are* the
+  same magic: the class most associated with area damage, and the weapon that
+  class carries. A staff splash in a different hue would have read as a second,
+  unrelated system.
+- **The ring draws after the entity pass and before the damage numbers** — over
+  the ground it covers, under the numbers it caused. Its alpha falls to zero
+  across its 520ms life, so it never lingers as a decal.
+- **The staff splash got a ring even though the spec only asked for one on the
+  Mystic.** This is the v18 wraith-bolt lesson again: a body dying 2 tiles away
+  from where the orb landed has no visible cause otherwise. Same helper, same
+  colour, smaller radius — a flagged call, not an addition to the art language.
+- **Ability feedback is the v9 floating-text language, not new HUD chrome.**
+  `GUARD BREAK` / `MARKED` / `ARCANE BURST` / `RALLY` / `QUICK BRACE` on cast,
+  and `GUARDED` on a hit the Knight's window absorbed — each in its own class
+  palette colour, in exactly the shape `POISONED`, `BLOCKED -n` and `RECOVERED`
+  already use. No new panel, no new bar, no aura on the character.
+- **The HUD help line gained `Q class ability`,** generated from `KEYBINDS` like
+  every other entry since v23, so it follows a rebind instead of lying about it.
+  The static fallback string in the markup was updated to match.
+- **⚠️ There is no cooldown readout anywhere.** Five abilities now sit on
+  cooldowns from 7s to 12s and the only feedback that one is ready is pressing
+  Q and having something happen. That was not in the spec and no HUD element
+  was invented for it, but it is the single most likely thing to want next —
+  and it is a HUD line, not a rebuild, since `debugAbilityInfo()` already
+  exposes every timestamp it would need.
+- **⚠️ Nothing distinguishes a Knight standing inside a Guard Break window.**
+  The cast floats once and then the buff is invisible until a hit lands on it.
+  Deliberate — the v12 rule that buffs are private and carry no character aura —
+  but worth a look now that an *enemy* has a reason to care (Marked Shot exists
+  specifically to punch through it, and a Ranger cannot see what they are
+  punching through).
+
+## JUDGMENT CALLS THIS VERSION
+Calls made where the locked spec was silent, plus one thing the spec asserted
+that is not true of this repo. All shipped through the full gate (parse clean,
+`run3` `CAUGHT ERROR: none`, `run4` **528/528 with zero FAIL**, `run5` 792
+coverage draws clean) — refinements to consider, not unfinished work.
+1. **⚠️ The spec opens "v26 shipped successfully". It did not — v26 was never
+   built in this repo.** `runehaven.html`'s last build commit is **v25**, this
+   skill's newest entry before today was **v25**, and there is no mounting code
+   and none of the v26 species in the file. v27 was built anyway, and
+   deliberately, because **v27 does not depend on v26 for anything**: every
+   claim it makes about the current code was re-verified directly before a line
+   was written — `tryAttack()`'s universal 1.6x backstab crit and per-type
+   knockback weights (`axe` 1.1 / `spear` 0.6 / `sword` 0.55 / `dagger` 0.2)
+   are exactly as described and untouched, `CLASSES` really was palette plus
+   flavour text, spears really did hit one target, staves really did fire a
+   single-target `"orb"`, `aura()` is present, and Q really was unbound. Nothing
+   in v27 references mounting or the v26 species. **If v26 was meant to ship
+   first, it is still outstanding and this version does not block it.**
+2. **Arcane Burst deals the equipped weapon's damage, unscaled.** The spec
+   locked the 4-tile radius and the `dealHit`/`mobHit` route but named no damage
+   number. Using `equippedWeapon().dmg` keeps it inside the existing damage
+   economy and lets it scale with gear like everything else, instead of adding a
+   flat constant that would be strong at iron tier and worthless at dragonsteel.
+   One line to change if a fixed number or a multiplier was wanted.
+3. **Marked Shot does NOT consume the Knight's Guard Break window.** The spec
+   says a Marked Shot "cannot be blocked by" the window — it does not say
+   whether it strips it. It punches through and leaves the guard standing for
+   the next ordinary hit, which is the reading that makes the pair genuine
+   counterplay rather than a dispel. `run4` pins both halves.
+4. **Knockback for the two new AOE paths: 0.3 (burst) and 0.15 (splash),
+   tunables.** Unspecified. Both deliberately lighter than a committed melee
+   swing, since neither is one. The spear thrust keeps v10's existing `0.6`
+   spear weight exactly — the spec said not to touch that table and nothing did.
+5. **Rally Companion loads its 3 charges whether or not a companion is out.**
+   The spec gates nothing on having one, and the charges are spent inside
+   `updatePetCombat()`, so with no pet nothing spends them and nothing breaks.
+   Casting it petless burns the 9s cooldown for no effect — the same shape as
+   Architect's deliberate no-op, and arguably the same thing to revisit.
+6. **The rally bonus multiplies the post-Beastmaster damage.** A Beastmaster's
+   own +20% passive (`PET_BM_BUFF`, v16) is already baked into `def.dmg`, so
+   +40% lands on top of it: a rallied wolf is 4 → 5 → 7. Adding the two as one
+   +60% instead would have been the other reading; this one keeps the passive a
+   passive.
+7. **The `ability` action is the 12th `KEYBIND_DEFAULTS` entry, labelled "Class
+   ability" in the remapping screen.** The two v23 `run4` assertions that pinned
+   "11 bindable actions" were **updated, not relaxed** — the count, the default
+   table and the check-site list all moved to 12, so a future pass cannot lose
+   the binding without failing. (Aside: the spec's parenthetical says the
+   current defaults include `r`. They do not, and never have — there are eleven
+   and `r` is not one of them. Q was unbound either way, which is the part that
+   mattered.)
+8. **`debugSetPlayer()` gained `cls`, `equipped` and `armor`; three new hooks
+   joined it.** `debugAbilityInfo()` / `debugSetAbility()` are copies and a
+   setter in the v21/v23/v25 pattern. `debugCombatHandles()` is the deliberate
+   exception: it returns **live** `others` / `mobs` / `projectiles`, because
+   PART D's gates have to stand real targets in the world to prove a burst, a
+   thrust and a splash hit more than one of them. Same reasoning
+   `debugAudioEngine()` used for its live handle.
+9. **`run4`'s v27 block reads `window.performance.now()`, never the bare Node
+   global.** The game runs on jsdom's clock and the harness on Node's; the two
+   have different time origins, so mixing them made every ability-window
+   comparison silently wrong. Found and fixed during this build — worth knowing
+   for any future gate that asserts against a timestamp.
+10. **`run5` gained an ability-ring sweep** — all five classes cast for real
+    with frames pumped while a ring is alive, plus the staff splash's own ring,
+    and it hard-fails if no ring was ever alive (the render branch is
+    unreachable in the plain 5-frame boot). 758 → **792** coverage draws. No
+    species, mob, weapon kind or class was added this version, so the existing
+    `*_LIST` arrays are already complete.
+
 ### 2026-08-15 (v25 — Crystal Golem, Krakenling, Salamander King)
 Three new species, no new biomes and no world colour touched. All three bodies
 are approved concept art from the locked spec, **ported verbatim** into the

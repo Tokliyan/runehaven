@@ -351,6 +351,49 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         }
       }
     }
+    /* v27: the ability AOE ring. It is drawn in render()'s own pass from
+       `abilityRings`, which is empty for the whole 5-frame boot — so the
+       aura() call that draws it is unreachable there. Cast each of the five
+       class abilities for real and pump frames while a ring is alive, so the
+       expanding-radius branch executes at several phases rather than none.
+       EXTEND THIS whenever another ability learns a render of its own. */
+    if (window.tryAbility && window.debugSetAbility && window.debugSetPlayer &&
+        window.debugAbilityInfo && window.debugWorldInfo) {
+      const wasA = window.debugAbilityInfo();
+      const wasP = window.debugWorldInfo().player;
+      let ringsSeen = 0;
+      for (const cls of CLS) {
+        window.debugSetPlayer({ cls, equipped: 'mystic_staff' });
+        window.debugSetAbility({ lastAbility: -1e9 });
+        window.tryAbility();
+        ringsSeen += window.debugAbilityInfo().rings.length;
+        n += 1;
+        // frames INSIDE the ring's 520ms life, so the growing-radius draw runs
+        for (let f = 300; f < 305; f++) {
+          const q = rafQ; rafQ = [];
+          for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+          n += 1;
+        }
+      }
+      // and the staff splash's own ring, at its own smaller radius
+      if (window.staffSplash) {
+        window.staffSplash({ x: wasP ? wasP.x : 60, y: wasP ? wasP.y : 60, dx: 1, dy: 0 }, 19, null, null);
+        ringsSeen += window.debugAbilityInfo().rings.length;
+        for (let f = 310; f < 314; f++) {
+          const q = rafQ; rafQ = [];
+          for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+          n += 1;
+        }
+      }
+      console.log('ability rings alive during the sweep:', ringsSeen);
+      if (!ringsSeen) {
+        console.log('COVERAGE GAP: no ability ring was ever alive — aura() in render() never drew');
+        process.exit(1);
+      }
+      window.debugSetPlayer({ cls: wasA.cls, equipped: wasA.equipped });
+      window.debugSetAbility({ lastAbility: 0, guardBreakUntil: 0,
+                               markedShotUntil: 0, rallyCharges: 0, rings: null });
+    }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {

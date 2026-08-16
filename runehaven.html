@@ -342,7 +342,7 @@
 <div class="hud" id="hudWorld"></div>
 <div class="hud" id="hudZone">SAFE ZONE — YOU ARE PROTECTED</div>
 <div class="hud" id="hudPrompt"></div>
-<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block (shield classes) &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions</div>
+<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block (shield classes) &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability</div>
 <div id="hpBarWrap"><div id="hpBar"></div></div>
 
 <div class="panel" id="invPanel">
@@ -510,6 +510,38 @@ const CLASSES = {
   Architect:   { body: "#54718c", lit: "#6c8aa6", dark: "#3f576e", desc: "Faster building, stronger structures", weapons: "Axes, shields" },
 };
 
+/* v27: class abilities — one each, on the Q key, routed through KEYBINDS like
+   every other action so they inherit remapping for free. Until now CLASSES was
+   a colour palette plus flavour text and nothing else; this is the first time
+   a class choice changes what the player can DO. Each ability reuses
+   infrastructure that already exists (the armour reduce math, dealHit/mobHit,
+   the v18 aura() helper, the pet combat tick) rather than inventing a system.
+   One `lastAbility` timestamp gates all five, exactly the way `lastAttack`
+   gates attacks — each class simply reads its own cdMs off this table. */
+const ABILITIES = {
+  Knight:      { name: "Guard Break",     cdMs: 8000,  winMs: 2000 },
+  Ranger:      { name: "Marked Shot",     cdMs: 10000, winMs: 3000 },
+  Mystic:      { name: "Arcane Burst",    cdMs: 12000 },
+  Beastmaster: { name: "Rally Companion", cdMs: 9000 },
+  Architect:   { name: "Quick Brace",     cdMs: 7000 },
+};
+const GUARD_BREAK_REDUCE = 0.50;   // spec: the next hit taken is halved
+const MARKED_SHOT_MULT   = 1.50;   // spec: the next ranged hit deals +50%
+const RALLY_MULT         = 1.40;   // spec: the companion's next hits deal +40%
+const RALLY_HITS         = 3;      // spec: three of them
+const ARCANE_BURST_R     = 4;      // spec: 4-tile radius, tiles not pixels
+const STAFF_SPLASH_R     = 2;      // spec: 2-tile splash on orb impact
+const SPEAR_CONE_DEG     = 25;     // spec's proposal: half-angle, tunable
+const SPEAR_CONE_COS     = Math.cos(SPEAR_CONE_DEG * Math.PI / 180);
+/* TUNABLE: knockback weights for the two new multi-target paths. Deliberately
+   lighter than a direct melee hit — neither is a committed swing at one body. */
+const ARCANE_BURST_KB    = 0.3;
+const STAFF_SPLASH_KB    = 0.15;
+/* The expanding ring both AOEs draw, in the Mystic's own lit violet. Fed to
+   aura(), which wants an "r,g,b" triplet rather than a css colour. */
+const ABILITY_RING_RGB   = "150,112,220";
+const ABILITY_RING_MS    = 520;
+
 const ITEM_META = {
   wood:         { name: "Wood",          color: "#a06a34" },
   stone:        { name: "Stone",         color: "#a8a8b2" },
@@ -653,6 +685,15 @@ let rawHCache = new Map();     // v11: pre-erosion heights
 let terrainBake = null;
 let bakeOX = 0, bakeOY = 0;
 let lastSave = 0, lastBroadcast = 0, lastGather = 0, lastAttack = 0;
+/* v27: the whole ability state, deliberately the same shape as lastAttack —
+   one timestamp for the shared cooldown, plus one live value per ability that
+   needs to outlive the cast. `winds` are absolute performance.now() deadlines
+   and `rallyCharges` is a plain count, so nothing here needs a per-frame tick. */
+let lastAbility = 0;            // last successful cast, any class
+let guardBreakUntil = 0;        // Knight: the next hit taken inside this is halved
+let markedShotUntil = 0;        // Ranger: the next ranged hit inside this is +50%
+let rallyCharges = 0;           // Beastmaster: companion attacks left at +40%
+let abilityRings = [];          // {x, y, t0, r} — the expanding AOE rings
 let facing = { x: 0, y: 1 };
 let swingT = 0, hitFlash = 0, shakeT = 0;
 let dead = false;
@@ -872,7 +913,12 @@ function debugSetPlayer(patch) {
   if (!me || !patch) return null;
   /* v25: + inv, so the feeding proof can hand the player a rare_herb through
      the same door. Still only fields the game itself already writes. */
-  for (const k of ["x", "y", "hp", "diving", "breath", "maxBreath", "charm", "inv"]) {
+  /* v27: + cls, equipped, armor. The five class abilities and the two weapon
+     paths cannot be proven without standing the player in the right class
+     holding the right weapon — and all three are fields the game already
+     writes itself (class select, equip, unequip). */
+  for (const k of ["x", "y", "hp", "diving", "breath", "maxBreath", "charm", "inv",
+                   "cls", "equipped", "armor"]) {
     if (k in patch) me[k] = patch[k];
   }
   /* v22: snapping the position now snaps the camera with it. The camera
@@ -902,6 +948,35 @@ function debugGrantPet(species, lastFedAt) {
   setActivePet(row);
   return row;
 }
+/* v27: harness hooks, the same shape and the same reason as the four above.
+   Every piece of ability state is a top-level `let` that never lands on
+   window, and the PART D gates have to prove a burst, a thrust and a splash
+   really hit more than one body — which needs real targets standing in the
+   world. `others`/`mobs`/`projectiles` are therefore LIVE handles, the same
+   deliberate exception debugAudioEngine() already makes; everything else is a
+   copy. Nothing here is reachable from the game itself. */
+function debugAbilityInfo() {
+  return {
+    ABILITIES: JSON.parse(JSON.stringify(ABILITIES)),
+    ability: KEYBINDS.ability, abilityDefault: KEYBIND_DEFAULTS.ability,
+    lastAbility, lastAttack, guardBreakUntil, markedShotUntil, rallyCharges,
+    rings: abilityRings.map(r => ({ x: r.x, y: r.y, r: r.r })),
+    GUARD_BREAK_REDUCE, MARKED_SHOT_MULT, RALLY_MULT, RALLY_HITS,
+    ARCANE_BURST_R, STAFF_SPLASH_R, SPEAR_CONE_DEG,
+    cls: (me && me.cls) || null, equipped: (me && me.equipped) || null,
+  };
+}
+function debugSetAbility(patch) {
+  if (!patch) return debugAbilityInfo();
+  if ("lastAbility" in patch) lastAbility = patch.lastAbility;
+  if ("lastAttack" in patch) lastAttack = patch.lastAttack;
+  if ("guardBreakUntil" in patch) guardBreakUntil = patch.guardBreakUntil;
+  if ("markedShotUntil" in patch) markedShotUntil = patch.markedShotUntil;
+  if ("rallyCharges" in patch) rallyCharges = patch.rallyCharges;
+  if ("rings" in patch && !patch.rings) abilityRings.length = 0;
+  return debugAbilityInfo();
+}
+function debugCombatHandles() { return { others, mobs, projectiles }; }
 /* v12 roster — seven bible-accurate species (Fox/Fawn/Owl retired).
    flier: circling hover-follow at `alt` px. nightOnly: hidden + untameable by
    day. presenceRoll: may simply not exist this session. bloodFavored /
@@ -2961,6 +3036,12 @@ function tryAttack(aimX, aimY) {
   if (w.type === "melee") {
     swingT = now;
     swingKind = wk || "fists";
+    /* v27 PART B: a spear is a line, not a point. Every player AND mob inside
+       the weapon's own range and within SPEAR_CONE_DEG of the aim direction is
+       run through the SAME crit and knockback logic the single-target path
+       below already uses — looped, not rewritten, and with no damage bonus for
+       hitting more than one. The value of a spear is reach and positioning. */
+    if (wk === "spear") { spearThrust(w, dir, now); return; }
     let best = null, bestD = w.range, bestO = null;
     for (const [name, o] of others) {
       if (o.dead) continue;
@@ -3002,7 +3083,10 @@ function tryAttack(aimX, aimY) {
     if (wk === "staff") pulseT = now;
     const pk = wk === "crossbow" ? "bolt" : wk === "staff" ? "orb" : "arrow";
     const col = tierColor(w.tier) || "#fff";
-    projectiles.push({ x: me.x, y: me.y, dx: dir.x, dy: dir.y, dmg: w.dmg, col, pk, dist: 0, max: w.range, mine: true });
+    // v27 PART C: the orb has to remember it came off a staff, so its impact
+    // can splash. Only `mine` projectiles ever resolve a hit, so the broadcast
+    // copy below needs no new field.
+    projectiles.push({ x: me.x, y: me.y, dx: dir.x, dy: dir.y, dmg: w.dmg, col, pk, wk, dist: 0, max: w.range, mine: true });
     channel.send({ type: "broadcast", event: "shot",
       payload: { u: me.username, x: me.x, y: me.y, dx: dir.x, dy: dir.y, rng: w.range, col, pk } });
   }
@@ -3017,6 +3101,7 @@ function dealHit(targetName, dmg, opts = {}) {
     cr: opts.crit ? 1 : 0, po: opts.pois ? 1 : 0,
     kx: +(opts.kx || 0).toFixed(2), ky: +(opts.ky || 0).toFixed(2), kb: opts.kb || 0,
     rn: opts.ranged ? 1 : 0,
+    mk: opts.marked ? 1 : 0,      // v27: a Marked Shot ignores Guard Break
   } });
   markPvpEngaged(targetName);   // v16: we are now in combat with them
   o.flash = performance.now();
@@ -3030,6 +3115,156 @@ function addFloat(wx, wy, txt, col, big = false) {
   floatTexts.push({ x: wx, y: wy, z: 22, txt, col, big, life: 0.95, maxLife: 0.95 });
 }
 
+/* =========================================================
+   v27: CLASS ABILITIES + THE TWO MULTI-TARGET WEAPON PATHS
+   One ability per class on the KEYBINDS.ability key, plus the spear's line
+   thrust and the staff orb's splash. Nothing here is a new system: every
+   effect lands through dealHit/mobHit/applyDamage, the ring is the v18
+   aura() helper, and the cooldown is one timestamp checked exactly the way
+   lastAttack is. Melee crit and per-weapon knockback (v10) are untouched.
+   ========================================================= */
+
+/* Is (tx, ty) inside the thrust cone — within `range` of the player and no
+   more than SPEAR_CONE_DEG off the aim direction? A narrow cone rather than a
+   circle is what makes this a thrust and not a spin attack. */
+function inThrustCone(tx, ty, dir, range) {
+  const dx = tx - me.x, dy = ty - me.y;
+  const d = Math.hypot(dx, dy);
+  if (d > range) return false;
+  if (d < 1e-6) return true;                       // standing on top of us
+  return (dx / d) * dir.x + (dy / d) * dir.y >= SPEAR_CONE_COS;
+}
+
+/* The spear's melee resolution. Same crit rule (backstab dot-product > 0.4,
+   1.6x) and same spear knockback weight (0.6) as the single-target path — the
+   only difference is that this one does not stop at the first body. */
+function spearThrust(w, dir, now) {
+  const kb = 0.6;                                   // v10's spear weight, unchanged
+  let hits = 0;
+  for (const [name, o] of others) {
+    if (o.dead) continue;
+    if (!inThrustCone(o.x, o.y, dir, w.range)) continue;
+    const al = Math.hypot(o.x - me.x, o.y - me.y) || 1;
+    const ndx = (o.x - me.x) / al, ndy = (o.y - me.y) / al;
+    const tf = { x: o.fx ?? 0, y: o.fy ?? 1 };
+    const crit = (ndx * tf.x + ndy * tf.y) > 0.4;
+    dealHit(name, crit ? Math.round(w.dmg * 1.6) : w.dmg, { crit, kx: ndx, ky: ndy, kb });
+    hits++;
+  }
+  for (const m of mobs) {
+    if (m.dead) continue;
+    if (!inThrustCone(m.x, m.y, dir, w.range)) continue;
+    const al = Math.hypot(m.x - me.x, m.y - me.y) || 1;
+    const ndx = (m.x - me.x) / al, ndy = (m.y - me.y) / al;
+    const mcrit = (ndx * m0f(m.fx) + ndy * m0f(m.fy)) > 0.4;
+    mobHit(m, mcrit ? Math.round(w.dmg * 1.6) : w.dmg, { crit: mcrit, kx: ndx, ky: ndy, kb });
+    hits++;
+  }
+  if (hits) shakeT = now;
+  return hits;
+}
+
+/* Ranger's Marked Shot, consumed at the moment a ranged hit connects rather
+   than when it is fired — the mark is on the hit, which is what makes a 3s
+   window meaningful at all. Returns the damage to actually deal plus whether
+   the mark was spent, so the caller can flag it on the wire. */
+function markedShotBonus(dmg) {
+  if (performance.now() >= markedShotUntil) return { dmg, marked: false };
+  markedShotUntil = 0;                              // "next hit" — exactly one
+  return { dmg: Math.round(dmg * MARKED_SHOT_MULT), marked: true };
+}
+
+/* PART C: a staff orb detonates on impact. Everything ELSE inside
+   STAFF_SPLASH_R of the impact point takes the same damage the direct target
+   just took — the direct target is excluded because it has already had it. */
+function staffSplash(p, dmg, hitName, hitMob) {
+  let hits = 0;
+  for (const [name, o] of others) {
+    if (o.dead || name === hitName) continue;
+    if (Math.hypot(o.x - p.x, o.y - p.y) > STAFF_SPLASH_R) continue;
+    dealHit(name, dmg, { ranged: true, kx: p.dx, ky: p.dy, kb: STAFF_SPLASH_KB });
+    hits++;
+  }
+  for (const m of mobs) {
+    if (m.dead || m === hitMob) continue;
+    if (Math.hypot(m.x - p.x, m.y - p.y) > STAFF_SPLASH_R) continue;
+    mobHit(m, dmg, { kx: p.dx, ky: p.dy, kb: STAFF_SPLASH_KB });
+    hits++;
+  }
+  /* A 2-tile area effect with no visible cause is the v18 wraith-bolt lesson
+     again — the ring is what tells the player why a second creature died. */
+  abilityRings.push({ x: p.x, y: p.y, t0: performance.now(), r: STAFF_SPLASH_R });
+  return hits;
+}
+
+/* Mystic's Arcane Burst: a genuine AOE, not flavour text. Everything within
+   ARCANE_BURST_R of the caster at cast time takes the equipped weapon's
+   damage — the existing damage economy, not a second invented number. */
+function arcaneBurst() {
+  const w = equippedWeapon();
+  const dmg = w.dmg;                                // TUNABLE: weapon damage, unscaled
+  let hits = 0;
+  for (const [name, o] of others) {
+    if (o.dead) continue;
+    const d = Math.hypot(o.x - me.x, o.y - me.y);
+    if (d > ARCANE_BURST_R) continue;
+    const l = d || 1;
+    dealHit(name, dmg, { kx: (o.x - me.x) / l, ky: (o.y - me.y) / l, kb: ARCANE_BURST_KB });
+    hits++;
+  }
+  for (const m of mobs) {
+    if (m.dead) continue;
+    const d = Math.hypot(m.x - me.x, m.y - me.y);
+    if (d > ARCANE_BURST_R) continue;
+    const l = d || 1;
+    mobHit(m, dmg, { kx: (m.x - me.x) / l, ky: (m.y - me.y) / l, kb: ARCANE_BURST_KB });
+    hits++;
+  }
+  abilityRings.push({ x: me.x, y: me.y, t0: performance.now(), r: ARCANE_BURST_R });
+  return hits;
+}
+
+/* The one entry point, off KEYBINDS.ability. Returns whether a cast actually
+   happened, so the cooldown is provable from outside. */
+function tryAbility() {
+  if (dead || !me) return false;
+  const ab = ABILITIES[me.cls];
+  if (!ab) return false;                            // no class, or an unknown one
+  const now = performance.now();
+  if (now - lastAbility < ab.cdMs) return false;    // same shape as lastAttack
+  lastAbility = now;
+  switch (me.cls) {
+    case "Knight":
+      /* Defensive, not damage — the frontline read. The reduction itself
+         lives in applyDamage() beside the armour it stacks with. */
+      guardBreakUntil = now + ab.winMs;
+      addFloat(me.x, me.y, "GUARD BREAK", "#aab6c4");
+      break;
+    case "Ranger":
+      markedShotUntil = now + ab.winMs;
+      addFloat(me.x, me.y, "MARKED", "#649a4c");
+      break;
+    case "Mystic":
+      addFloat(me.x, me.y, "ARCANE BURST", "#9670dc");
+      arcaneBurst();
+      break;
+    case "Beastmaster":
+      /* Reinforces "pet stat buffs" and touches nothing outside combat — no
+         taming odds, no roster. Charges are spent in updatePetCombat(). */
+      rallyCharges = RALLY_HITS;
+      addFloat(me.x, me.y, "RALLY", "#ba854e");
+      break;
+    case "Architect":
+      /* Quick Brace completes a structure placement instantly — and bases do
+         not exist yet, so there is deliberately nothing to complete. Per the
+         locked spec this is an inert no-op until they ship, NOT a bug and NOT
+         a slot to fill with a substitute effect. It must never throw. */
+      addFloat(me.x, me.y, "QUICK BRACE", "#6c8aa6");
+      break;
+  }
+  return true;
+}
+
 function applyDamage(dmg, from, opts = {}) {
   if (inSafeZone(me.x, me.y)) return;
   // v16: only a PLAYER attacker opens the pet-assist window (mobs pass a
@@ -3041,6 +3276,16 @@ function applyDamage(dmg, from, opts = {}) {
   // v10: armor — flat % reduction on everything, applied after block
   const arm = ARMORS[me.armor];
   if (arm) dmg = Math.max(1, Math.round(dmg * (1 - arm.reduce)));
+  /* v27: Knight's Guard Break — the next hit taken inside the window is
+     halved. Deliberately the armour reduce math reused, so the two stack
+     multiplicatively rather than summing to an accidental immunity. A
+     Ranger's Marked Shot (mk) punches straight through it and does NOT
+     consume it: that is the explicit counterplay pair between the two. */
+  if (guardBreakUntil > performance.now() && !opts.mk) {
+    guardBreakUntil = 0;                       // "next hit taken" — exactly one
+    dmg = Math.max(1, Math.round(dmg * (1 - GUARD_BREAK_REDUCE)));
+    addFloat(me.x, me.y, "GUARDED", "#aab6c4");
+  }
   me.hp -= dmg;
   combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;   // v24: combat music signal
   hitFlash = performance.now();
@@ -3403,6 +3648,7 @@ addEventListener("keydown", e => {
   if (k === KEYBINDS.craft) { craftPanel.style.display = craftPanel.style.display === "block" ? "none" : "block"; refreshPanels(); }
   if (k === KEYBINDS.pets) { petPanel.style.display = petPanel.style.display === "block" ? "none" : "block"; refreshPetPanel(); }
   if (k === KEYBINDS.dive && !e.repeat) toggleDive();       // v21: dive toggle
+  if (k === KEYBINDS.ability && !e.repeat) tryAbility();    // v27: class ability
   if (k === KEYBINDS.block) sendMove(true);                 // v10: block pose on
 });
 addEventListener("keyup", e => {
@@ -3548,7 +3794,10 @@ function update(dt, t) {
       for (const [name, o] of others) {
         if (o.dead) continue;
         if (Math.hypot(o.x - p.x, o.y - p.y) < 0.7) {
-          dealHit(name, p.dmg, { ranged: true, kx: p.dx, ky: p.dy, kb: 0.25 });
+          // v27: the Ranger's mark is spent HERE, on the hit, not on the shot
+          const ms = markedShotBonus(p.dmg);
+          dealHit(name, ms.dmg, { ranged: true, marked: ms.marked, kx: p.dx, ky: p.dy, kb: 0.25 });
+          if (p.wk === "staff") staffSplash(p, ms.dmg, name, null);   // v27 PART C
           gone = true;
           break;
         }
@@ -3557,7 +3806,9 @@ function update(dt, t) {
         for (const m of mobs) {
           if (m.dead) continue;
           if (Math.hypot(m.x - p.x, m.y - p.y) < 0.8) {
-            mobHit(m, p.dmg, { kx: p.dx, ky: p.dy, kb: 0.25 });
+            const msm = markedShotBonus(p.dmg);                       // v27
+            mobHit(m, msm.dmg, { kx: p.dx, ky: p.dy, kb: 0.25 });
+            if (p.wk === "staff") staffSplash(p, msm.dmg, null, m);   // v27 PART C
             gone = true;
             break;
           }
@@ -3577,6 +3828,11 @@ function update(dt, t) {
     f.life -= dt;
     f.z += 22 * dt;
     if (f.life <= 0) floatTexts.splice(i, 1);
+  }
+  // v27: the AOE rings expire on wall-clock, the same way the swing/pulse
+  // timestamps do — nothing about them integrates dt.
+  for (let i = abilityRings.length - 1; i >= 0; i--) {
+    if (now - abilityRings[i].t0 >= ABILITY_RING_MS) abilityRings.splice(i, 1);
   }
   /* v24: the music channel switch. `combatMusicUntil` is pushed forward by the
      two existing combat signals; this is only the check, and it is throttled
@@ -5572,8 +5828,14 @@ function updatePetCombat(now) {
   pet.swingT = now;                      // lunge only — pets get no wind-up
   const dl = Math.hypot(tgt.x - pet.x, tgt.y - pet.y) || 1;
   pet.ax = (tgt.x - pet.x) / dl; pet.ay = (tgt.y - pet.y) / dl;
-  if (tgtName) dealHit(tgtName, def.dmg, { kx: pet.ax, ky: pet.ay, kb: 0.15 });
-  else mobHit(tgt, def.dmg, { kx: pet.ax, ky: pet.ay, kb: 0.15 });
+  /* v27: Beastmaster's Rally Companion — the next RALLY_HITS attacks this
+     companion makes land at +40%. Applied on top of the v16 Beastmaster +20%
+     already baked into def.dmg, since that is a passive class trait and this
+     is a cast; a charge is spent per attack, hostile or PvP alike. */
+  let pdmg = def.dmg;
+  if (rallyCharges > 0) { rallyCharges--; pdmg = Math.round(pdmg * RALLY_MULT); }
+  if (tgtName) dealHit(tgtName, pdmg, { kx: pet.ax, ky: pet.ay, kb: 0.15 });
+  else mobHit(tgt, pdmg, { kx: pet.ax, ky: pet.ay, kb: 0.15 });
 }
 
 /* v16: a mob swinging at its owner connects with whichever of the two bodies
@@ -6750,6 +7012,21 @@ function render(t) {
     ctx.fillText("Taming…", bx2, by2 - 8);
   }
 
+  /* v27: the AOE rings — Mystic's Arcane Burst and the staff orb's splash.
+     This is the v18 aura() helper, reused exactly as it stands: the only new
+     thing is that `rx` GROWS over the effect's life, which is what turns a
+     standing wash into an expanding ring. Drawn after the entity pass and
+     before the damage numbers, so it reads over the ground it covers and
+     under the numbers it caused. Radius is in tiles; IW2 is the half-width of
+     a tile in screen px, which is what puts the ring on the ground plane. */
+  for (const ring of abilityRings) {
+    const ph = Math.min(1, (performance.now() - ring.t0) / ABILITY_RING_MS);
+    const [rx2, ry2] = worldToScreen(ring.x, ring.y, groundZ(ring.x, ring.y));
+    ctx.globalAlpha = 1 - ph;
+    aura(rx2, ry2, ABILITY_RING_RGB, Math.max(2, ring.r * IW2 * ph), t, { motes: 5 });
+    ctx.globalAlpha = 1;
+  }
+
   // v9: floating damage numbers, drawn over entities
   if (floatTexts.length) {
     ctx.textAlign = "center";
@@ -7013,12 +7290,17 @@ function toast(msg) {
 
 /* --- PART A: every bindable action in the game, in one place --------------- */
 const KEYBIND_DEFAULTS = { up: "w", down: "s", left: "a", right: "d", interact: "e",
-  attack: " ", inventory: "i", craft: "c", pets: "p", dive: "f", block: "shift" };
+  attack: " ", inventory: "i", craft: "c", pets: "p", dive: "f", block: "shift",
+  /* v27: the class ability. Q was the only sensible letter still unbound — it
+     joins the table rather than being hardcoded anywhere, so it is remappable,
+     conflict-checked and persisted by the v23 machinery with no new code. */
+  ability: "q" };
 /* display order + labels for the remapping screen */
 const KEYBIND_LABELS = [
   ["up", "Move up"], ["down", "Move down"], ["left", "Move left"], ["right", "Move right"],
   ["interact", "Gather / pick up / tame"], ["attack", "Attack"], ["inventory", "Inventory"],
   ["craft", "Crafting"], ["pets", "Companions"], ["dive", "Dive"], ["block", "Block"],
+  ["ability", "Class ability"],
 ];
 let KEYBINDS = Object.assign({}, KEYBIND_DEFAULTS);
 let kbCapture = null;           // action awaiting a keypress, or null
@@ -7313,7 +7595,8 @@ function refreshHelpLine() {
     K("dive") + " dive (deep water)" + dot +
     K("inventory") + " inventory" + dot +
     K("craft") + " craft" + dot +
-    K("pets") + " companions";
+    K("pets") + " companions" + dot +
+    K("ability") + " class ability";
 }
 
 /* --- PART B/E: the settings panel ----------------------------------------- */

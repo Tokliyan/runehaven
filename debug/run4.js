@@ -1074,24 +1074,27 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
        and the player is put back where it was found at the end. ============== */
     if (window.debugSettingsInfo && window.setKeybind && window.setSetting) {
       const dsi = window.debugSettingsInfo;
+      // v27: `ability` is the twelfth bindable action — the class-ability key.
+      // Updated, not relaxed: the count and the default table both move with it.
       const ACTIONS = ['up', 'down', 'left', 'right', 'interact', 'attack',
-                       'inventory', 'craft', 'pets', 'dive', 'block'];
+                       'inventory', 'craft', 'pets', 'dive', 'block', 'ability'];
       const info23 = dsi();
 
       // ---- PART A: the config object itself
-      results.push(['KEYBINDS carries all 11 bindable actions',
-        Object.keys(info23.KEYBINDS).length === 11 &&
+      results.push(['KEYBINDS carries all 12 bindable actions',
+        Object.keys(info23.KEYBINDS).length === 12 &&
         ACTIONS.every(a => typeof info23.KEYBINDS[a] === 'string')]);
       results.push(['KEYBIND defaults are exactly the locked spec',
         ACTIONS.map(a => info23.KEYBIND_DEFAULTS[a]).join('|') ===
-        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift'].join('|')]);
+        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift', 'q'].join('|')]);
 
       // ---- PART A: every check site reads KEYBINDS, no literals left behind
       const SITES = ['keys[KEYBINDS.up]', 'keys[KEYBINDS.down]', 'keys[KEYBINDS.left]',
         'keys[KEYBINDS.right]', 'keys[KEYBINDS.interact]', 'keys[KEYBINDS.block]',
         'k === KEYBINDS.interact', 'k === KEYBINDS.attack', 'k === KEYBINDS.inventory',
         'k === KEYBINDS.craft', 'k === KEYBINDS.pets', 'k === KEYBINDS.dive',
-        'k === KEYBINDS.block'];
+        'k === KEYBINDS.block',
+        'k === KEYBINDS.ability'];   // v27: the class-ability key is bound, not hardcoded
       const missing = SITES.filter(s => gameScript.indexOf(s) < 0);
       results.push(['every keybind check site reads KEYBINDS' +
         (missing.length ? ' (missing ' + missing.join(', ') + ')' : ''), missing.length === 0]);
@@ -1246,8 +1249,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['the credits tab is the one showing',
         doc.getElementById('secCredits').classList.contains('shown') &&
         !doc.getElementById('secGraphics').classList.contains('shown')]);
-      results.push(['the remapping screen lists all 11 actions',
-        doc.getElementById('keybindList').children.length === 11]);
+      results.push(['the remapping screen lists all 12 actions',
+        doc.getElementById('keybindList').children.length === 12]);
       results.push(['credits render from the CREDITS array',
         doc.getElementById('creditsList').children.length === dsi().CREDITS.length &&
         dsi().CREDITS.length === 2]);
@@ -1699,6 +1702,299 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       } catch (e) { artOk = false; artErr = e; }
       results.push(['the three v25 art branches draw without throwing' +
         (artErr ? ' — ' + artErr.message : ''), artOk]);
+    }
+
+    /* ===================== v27 PART D: class abilities + spear/staff =========
+       Five abilities on one remappable key, and the two weapon types that
+       finally got real mechanical identity. Every gate here drives the REAL
+       functions — tryAbility(), tryAttack(), applyDamage(), the live
+       projectile loop — never a reimplementation of their arithmetic.
+       `others`/`mobs`/`projectiles` come from the live-handles hook, because a
+       burst, a thrust and a splash cannot be proven against an empty world.
+       NOTE: every clock read here is window.performance.now(), never the bare
+       Node global — the game runs on jsdom's clock and the two have different
+       time origins, so mixing them silently breaks every window comparison. */
+    const dai = window.debugAbilityInfo, dsa = window.debugSetAbility,
+          dch = window.debugCombatHandles, setP7 = window.debugSetPlayer;
+    if (dai && dsa && dch && setP7 && window.tryAbility && window.inSafeZone) {
+      const A0 = dai();
+      const H = dch();
+      const CLS = ['Knight', 'Ranger', 'Mystic', 'Beastmaster', 'Architect'];
+      const wasCls = A0.cls, wasEq = A0.equipped;
+
+      // ---- PART A: the five abilities exist, and Q reaches them via KEYBINDS
+      results.push(['all five classes have an ability with a name and a cooldown',
+        Object.keys(A0.ABILITIES).length === 5 &&
+        CLS.every(c => A0.ABILITIES[c] && typeof A0.ABILITIES[c].name === 'string' &&
+                       A0.ABILITIES[c].cdMs > 0)]);
+      results.push(['the ability key defaults to Q and is a real KEYBINDS action',
+        A0.abilityDefault === 'q' && A0.ability === 'q']);
+      results.push(['the keydown site reads KEYBINDS.ability, never a literal key',
+        gameScript.indexOf('k === KEYBINDS.ability') > 0]);
+      // the real proof that it is bound and not hardcoded: rebind it and look
+      const rb = window.setKeybind('ability', 'z');
+      results.push(['the ability key is genuinely remappable through the v23 system',
+        rb.ok === true && dai().ability === 'z' &&
+        (doc.getElementById('hudHelp').textContent || '').indexOf('Z class ability') > 0]);
+      window.setKeybind('ability', 'q');
+      results.push(['and it rebinds back to Q', dai().ability === 'q']);
+      results.push(['the locked cooldowns: Knight 8s / Ranger 10s / Mystic 12s / BM 9s / Architect 7s',
+        A0.ABILITIES.Knight.cdMs === 8000 && A0.ABILITIES.Ranger.cdMs === 10000 &&
+        A0.ABILITIES.Mystic.cdMs === 12000 && A0.ABILITIES.Beastmaster.cdMs === 9000 &&
+        A0.ABILITIES.Architect.cdMs === 7000]);
+      results.push(['Mystic\'s is the longest of the five and Architect\'s the shortest',
+        Math.max(...CLS.map(c => A0.ABILITIES[c].cdMs)) === A0.ABILITIES.Mystic.cdMs &&
+        Math.min(...CLS.map(c => A0.ABILITIES[c].cdMs)) === A0.ABILITIES.Architect.cdMs]);
+
+      /* Stand the player somewhere real: walkable, OUT of every safe zone (which
+         would refuse every hit these gates need to land), and with no live mob
+         of the world's own within 10 tiles — otherwise a wandering goblin can
+         silently become the nearest melee target and the line tests measure it
+         instead of the dummies. */
+      const w7 = window.debugWorldInfo();
+      let spot7 = null;
+      for (let r = 30; r < w7.N / 2 - 10 && !spot7; r += 2) {
+        for (const [ox, oy] of [[r, 0], [0, r], [-r, 0], [0, -r], [r, r], [-r, -r], [r, -r], [-r, r]]) {
+          const x = Math.floor(w7.SPAWN.x + ox), y = Math.floor(w7.SPAWN.y + oy);
+          if (x < 8 || y < 8 || x > w7.N - 10 || y > w7.N - 10) continue;
+          const b = window.biomeAt(x, y);
+          if (b !== w7.B.PLAINS && b !== w7.B.MEADOW && b !== w7.B.FOREST) continue;
+          if (window.inSafeZone(x + 0.5, y + 0.5)) continue;
+          if (H.mobs.some(m => !m.dead && Math.hypot(m.x - x, m.y - y) < 10)) continue;
+          spot7 = [x + 0.5, y + 0.5]; break;
+        }
+      }
+      results.push(['a clear walkable non-safe-zone test spot exists', !!spot7]);
+      const [PX, PY] = spot7 || [w7.SPAWN.x, w7.SPAWN.y];
+      setP7({ x: PX, y: PY, hp: 5000, armor: null });
+
+      /* Dummy targets are real mob objects pushed into the live array and
+         removed again, so nothing here leaks into the gates around it. */
+      const made7 = [];
+      const dummy = (tag, x, y) => {
+        const m = { id: 'v27:' + tag, kind: 'goblin', x, y, hx: x, hy: y, hp: 9000, maxHp: 9000,
+                    state: 'idle', winding: false, flash: 0, fx: 0, fy: 1,
+                    dead: false, target: null, ph: 1 };
+        H.mobs.push(m); made7.push(m); return m;
+      };
+      const dropDummies = () => {
+        for (const m of made7) { const i = H.mobs.indexOf(m); if (i >= 0) H.mobs.splice(i, 1); }
+        made7.length = 0;
+      };
+
+      // ---- PART A: each ability respects its OWN independent cooldown
+      for (const c of CLS) {
+        const cd = A0.ABILITIES[c].cdMs;
+        setP7({ cls: c });
+        dsa({ lastAbility: -1e9 });
+        const first = window.tryAbility();
+        const again = window.tryAbility();
+        dsa({ lastAbility: window.performance.now() - cd + 200 });
+        const early = window.tryAbility();
+        dsa({ lastAbility: window.performance.now() - cd - 50 });
+        const ready = window.tryAbility();
+        results.push([`${c}: casts, is refused until its own ${cd}ms has elapsed, then casts again`,
+          first === true && again === false && early === false && ready === true]);
+      }
+
+      // ---- PART A: Mystic's Arcane Burst hits EVERYTHING in 4 tiles
+      dropDummies();
+      setP7({ cls: 'Mystic', equipped: 'mystic_staff' });
+      dsa({ lastAbility: -1e9, rings: null });
+      const near7 = dummy('burst-near', PX + 1.0, PY);
+      const mid7  = dummy('burst-mid',  PX + 3.4, PY);
+      const far7  = dummy('burst-far',  PX + 5.6, PY);
+      const ghost = { x: PX - 1.4, y: PY, dead: false, fx: 0, fy: 1,
+                      tx: PX - 1.4, ty: PY, flash: 0, lastHeard: window.performance.now() };
+      H.others.set('BurstDummy', ghost);
+      const hp7 = [near7.hp, mid7.hp, far7.hp];
+      results.push(['Arcane Burst casts', window.tryAbility() === true]);
+      results.push(['it damaged BOTH mobs inside 4 tiles, not just the nearest one',
+        near7.hp < hp7[0] && mid7.hp < hp7[1]]);
+      results.push(['both took the same 19 — an AOE at weapon damage, not a falloff curve',
+        (hp7[0] - near7.hp) === 19 && (hp7[1] - mid7.hp) === 19]);
+      results.push(['the mob at 5.6 tiles was outside the radius and took nothing',
+        far7.hp === hp7[2]]);
+      results.push(['the burst reaches players as well as mobs', ghost.flash > 0]);
+      results.push(['and it drew a real expanding ring through aura(), not flavour text',
+        dai().rings.some(r => r.r === A0.ARCANE_BURST_R)]);
+      H.others.delete('BurstDummy');
+      dropDummies();
+
+      // ---- PART A: Knight's Guard Break vs Ranger's Marked Shot — the counterplay
+      setP7({ cls: 'Knight', hp: 5000, armor: null });
+      dsa({ lastAbility: -1e9, markedShotUntil: 0, guardBreakUntil: 0 });
+      results.push(['Guard Break casts and opens a real 2s window',
+        window.tryAbility() === true &&
+        dai().guardBreakUntil > window.performance.now() &&
+        dai().guardBreakUntil <= window.performance.now() + 2000]);
+      let hpA = window.debugWorldInfo().player.hp;
+      window.applyDamage(20, 'Attacker', { rn: 1 });
+      results.push(['an ordinary hit inside the window is halved (20 -> 10)',
+        hpA - window.debugWorldInfo().player.hp === 10]);
+      results.push(['and that one hit spends the window', dai().guardBreakUntil === 0]);
+      hpA = window.debugWorldInfo().player.hp;
+      window.applyDamage(20, 'Attacker', { rn: 1 });
+      results.push(['the very next hit lands in full again (20)',
+        hpA - window.debugWorldInfo().player.hp === 20]);
+
+      dsa({ lastAbility: -1e9 });
+      window.tryAbility();
+      hpA = window.debugWorldInfo().player.hp;
+      window.applyDamage(20, 'Ranger', { rn: 1, mk: 1 });
+      results.push(['a MARKED shot is not blocked by Guard Break — it lands in full',
+        hpA - window.debugWorldInfo().player.hp === 20]);
+      results.push(['and does not consume the window either — the guard still stands',
+        dai().guardBreakUntil > window.performance.now()]);
+      hpA = window.debugWorldInfo().player.hp;
+      window.applyDamage(20, 'Attacker', { rn: 1 });
+      results.push(['so the guard is still there for the NEXT unmarked hit (20 -> 10)',
+        hpA - window.debugWorldInfo().player.hp === 10]);
+      dsa({ guardBreakUntil: 0 });
+
+      // Guard Break stacks with armour multiplicatively, never additively
+      setP7({ armor: 'runic_armor' });
+      dsa({ lastAbility: -1e9 });
+      window.tryAbility();
+      hpA = window.debugWorldInfo().player.hp;
+      window.applyDamage(20, 'Attacker', { rn: 1 });
+      results.push(['Guard Break stacks multiplicatively with Runic Armor (20 -> 14 -> 7)',
+        hpA - window.debugWorldInfo().player.hp === 7]);
+      setP7({ armor: null });
+      dsa({ guardBreakUntil: 0 });
+
+      // the mark itself: +50%, spent on the HIT, and exactly one of them
+      setP7({ cls: 'Ranger' });
+      dsa({ lastAbility: -1e9, markedShotUntil: 0 });
+      results.push(['Marked Shot casts and opens a 3s window',
+        window.tryAbility() === true &&
+        dai().markedShotUntil > window.performance.now() &&
+        dai().markedShotUntil <= window.performance.now() + 3000]);
+      const mk1 = window.markedShotBonus(20);
+      results.push(['the first ranged hit inside it deals +50% (20 -> 30)',
+        mk1.dmg === 30 && mk1.marked === true]);
+      const mk2 = window.markedShotBonus(20);
+      results.push(['the SECOND hit is ordinary again — the mark was one shot',
+        mk2.dmg === 20 && mk2.marked === false]);
+      dsa({ markedShotUntil: window.performance.now() - 1 });
+      const mk3 = window.markedShotBonus(20);
+      results.push(['an expired mark does nothing', mk3.dmg === 20 && mk3.marked === false]);
+
+      // ---- PART A: Beastmaster's Rally is three charges, spent by pet attacks
+      setP7({ cls: 'Beastmaster' });
+      dsa({ lastAbility: -1e9, rallyCharges: 0 });
+      window.tryAbility();
+      results.push(['Rally Companion loads exactly 3 charges', dai().rallyCharges === 3]);
+      results.push(['a rallied wolf hits for +40% of its post-Beastmaster damage (5 -> 7)',
+        Math.round(window.petCombatDef('wolf', 'Beastmaster').dmg * A0.RALLY_MULT) === 7]);
+      results.push(['the charge is spent inside the pet combat tick, not anywhere else',
+        gameScript.indexOf('if (rallyCharges > 0) { rallyCharges--;') > 0]);
+
+      // ---- PART A: Architect's is a deliberate no-op, not an error
+      setP7({ cls: 'Architect' });
+      dsa({ lastAbility: -1e9, guardBreakUntil: 0, markedShotUntil: 0, rallyCharges: 0 });
+      let archOk = true, archErr = null;
+      try { window.tryAbility(); dsa({ lastAbility: -1e9 }); window.tryAbility(); }
+      catch (e) { archOk = false; archErr = e; }
+      const archInfo = dai();
+      results.push(['Quick Brace casts without throwing, with bases not built yet' +
+        (archErr ? ' — ' + archErr.message : ''), archOk]);
+      results.push(['and it is a true no-op — no window, no charges, nothing invented',
+        archInfo.guardBreakUntil === 0 && archInfo.markedShotUntil === 0 &&
+        archInfo.rallyCharges === 0]);
+
+      // ---- PART B: the spear is a LINE, and the cone genuinely excludes
+      dropDummies();
+      setP7({ cls: 'Beastmaster', equipped: 'iron_spear' });
+      dsa({ lastAttack: -1e9 });
+      const lineA = dummy('spear-near', PX + 1.0, PY);
+      const lineB = dummy('spear-far',  PX + 2.2, PY);
+      const offC  = dummy('spear-off',  PX + 1.0, PY + 1.0);   // 45deg — outside 25deg
+      const outD  = dummy('spear-out',  PX + 3.2, PY);         // on the line, past range 2.5
+      const hpS = [lineA.hp, lineB.hp, offC.hp, outD.hp];
+      window.tryAttack(PX + 60, PY);                            // aim straight along +x
+      results.push(['ONE spear thrust connected with BOTH targets standing in line',
+        lineA.hp < hpS[0] && lineB.hp < hpS[1]]);
+      results.push(['a target 45 degrees off the aim was outside the cone and untouched',
+        offC.hp === hpS[2]]);
+      results.push(['a target on the line but past the spear\'s 2.5 range was untouched',
+        outD.hp === hpS[3]]);
+      results.push(['hitting two did not raise the damage either took (12 each)',
+        (hpS[0] - lineA.hp) === 12 && (hpS[1] - lineB.hp) === 12]);
+      results.push(['the cone predicate agrees: on-axis in, 45 degrees out, past range out',
+        window.inThrustCone(PX + 2.0, PY, { x: 1, y: 0 }, 2.5) === true &&
+        window.inThrustCone(PX + 1.0, PY + 1.0, { x: 1, y: 0 }, 2.5) === false &&
+        window.inThrustCone(PX + 3.2, PY, { x: 1, y: 0 }, 2.5) === false]);
+
+      // the same layout with a SWORD must still resolve to exactly one target
+      dropDummies();
+      dsa({ lastAttack: -1e9 });
+      const swA = dummy('sword-a', PX + 1.0, PY);
+      const swB = dummy('sword-b', PX + 1.4, PY);
+      const hpW = [swA.hp, swB.hp];
+      setP7({ equipped: 'iron_sword' });
+      window.tryAttack(PX + 60, PY);
+      results.push(['a SWORD in the identical line still hits exactly one — spear only',
+        (swA.hp < hpW[0] ? 1 : 0) + (swB.hp < hpW[1] ? 1 : 0) === 1]);
+
+      // ---- PART C: the staff orb splashes, and 2 tiles really is the edge
+      dropDummies();
+      setP7({ cls: 'Mystic', equipped: 'mystic_staff' });
+      dsa({ rings: null });
+      const tgtS  = dummy('splash-hit',  PX + 3.0, PY);
+      const nearS = dummy('splash-near', PX + 4.4, PY);   // ~1.4 from impact — inside 2
+      const farS  = dummy('splash-far',  PX + 6.2, PY);   // ~3.2 from impact — outside 2
+      const hpP = [tgtS.hp, nearS.hp, farS.hp];
+      H.projectiles.push({ x: PX + 2.8, y: PY, dx: 1, dy: 0, dmg: 19, col: '#fff',
+                           pk: 'orb', wk: 'staff', dist: 0, max: 7, mine: true });
+      for (let f = 200; f < 202; f++) {
+        const q = rafQ; rafQ = [];
+        for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+      }
+      results.push(['the staff orb struck its direct target', tgtS.hp < hpP[0]]);
+      results.push(['and splashed the SAME damage onto a second body ~1.4 tiles away',
+        nearS.hp < hpP[1] && (hpP[1] - nearS.hp) === (hpP[0] - tgtS.hp)]);
+      results.push(['a third body ~3.2 tiles from the impact took nothing',
+        farS.hp === hpP[2]]);
+      results.push(['the splash drew its own ring at the impact point',
+        dai().rings.some(r => r.r === A0.STAFF_SPLASH_R)]);
+
+      // an ARROW in the identical layout must not splash — staff only
+      dropDummies();
+      const arT = dummy('arrow-hit',  PX + 3.0, PY);
+      const arN = dummy('arrow-near', PX + 4.4, PY);
+      const hpAr = [arT.hp, arN.hp];
+      H.projectiles.push({ x: PX + 2.8, y: PY, dx: 1, dy: 0, dmg: 18, col: '#fff',
+                           pk: 'arrow', wk: 'bow', dist: 0, max: 9, mine: true });
+      for (let f = 210; f < 212; f++) {
+        const q = rafQ; rafQ = [];
+        for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+      }
+      results.push(['a BOW arrow hits one body and splashes nothing — staff only',
+        arT.hp < hpAr[0] && arN.hp === hpAr[1]]);
+
+      // ---- preservation: v27 built on what was there, it did not replace it
+      results.push(['the v10 melee crit and per-weapon knockback table is untouched',
+        gameScript.indexOf('wk === "axe" ? 1.1 : wk === "dagger" ? 0.2 : wk === "spear" ? 0.6') > 0 &&
+        gameScript.indexOf('Math.round(w.dmg * 1.6)') > 0]);
+      results.push(['Guard Break reuses the armour reduce math beside it, not a new system',
+        gameScript.indexOf('dmg * (1 - GUARD_BREAK_REDUCE)') > 0 &&
+        gameScript.indexOf('dmg * (1 - arm.reduce)') > 0]);
+      results.push(['the ring is the v18 aura() helper, not a second effect system',
+        gameScript.indexOf('aura(rx2, ry2, ABILITY_RING_RGB') > 0]);
+      results.push(['no base/structure system was invented for the Architect',
+        gameScript.indexOf('placeStructure') < 0 && gameScript.indexOf('BASES') < 0]);
+      results.push(['Blood Moon and Meteor Shower were NOT started this version',
+        gameScript.toLowerCase().indexOf('blood moon') < 0 &&
+        gameScript.toLowerCase().indexOf('meteor') < 0]);
+
+      dropDummies();
+      H.projectiles.length = 0;
+      setP7({ cls: wasCls, equipped: wasEq, hp: 100, armor: null });
+      dsa({ lastAbility: -1e9, lastAttack: 0, guardBreakUntil: 0,
+            markedShotUntil: 0, rallyCharges: 0, rings: null });
+    } else {
+      results.push(['v27 PART D ability hooks are reachable', false]);
     }
 
     let allOk = true;
