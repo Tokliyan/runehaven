@@ -102,123 +102,100 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v26 — full mounting, all 9 bible species)
+## Confirmed, locked spec for the next build (v27 — class abilities + real weapon-type identity)
 
-v25 shipped successfully — 476/476 in run4, landed directly on main. This
-section replaces the v25 entry as the current locked target.
+v26 shipped successfully. This section replaces it as the current locked
+target. Not new content — five classes and two weapon types get real
+mechanical identity for the first time, on top of what already exists.
 
-This version is mounting ONLY. Blood Moon and Meteor Shower move to v27 —
-checked directly against the live code before writing this: the existing
-gatherable system (`featureTypeAt`) is baked into world generation once, not
-designed for something to spawn and despawn live during play, which is
-exactly what Meteor Shower needs. That's real new infrastructure and
-deserves its own version, same reasoning as every prior split.
+**Correction against an earlier assumption, confirmed directly in
+`tryAttack()` before writing this:** melee combat already has real per-
+weapon-type identity — a universal backstab crit (1.6x, checked via facing
+dot-product) and per-type knockback weight (`axe` heaviest at 1.1, `spear`
+0.6, `sword` 0.55, `dagger` lightest at 0.2). Do not touch or duplicate any
+of this. The genuine gaps, checked directly: `CLASSES` is confirmed to be
+color palette plus flavor text only, no mechanic. Spears hit exactly one
+target despite their reach. Staves fire a single-target projectile despite
+"area damage" being their class's own stated description.
 
-**Confirmed directly before writing this spec:** zero mounting
-infrastructure exists anywhere in the file. `R` is confirmed unbound —
-`KEYBIND_DEFAULTS` currently uses w/s/a/d/e/space/i/c/p/f/shift, nothing
-else. `PLAYER_SPEED = 4.6`. The camera already just tracks `me.x, me.y`
-directly (`cam.x = me.x; cam.y = me.y;`) — no camera changes needed at all,
-mounting doesn't touch it. `updatePet()` is the function that currently
-makes the active companion trail behind the player every frame — this is
-exactly what needs to be suspended while that same pet is being ridden.
+**PART A — five class abilities, one each, reusing infrastructure that
+already exists rather than inventing new systems.**
 
-**PART A — the mountable set, exactly the bible's nine, no more.**
+Trigger key: propose `Q` — confirmed unbound (current `KEYBIND_DEFAULTS`
+uses w/s/a/d/e/space/i/c/p/f/shift/r only). Add `ability: "q"` to
+`KEYBIND_DEFAULTS` and route it through `KEYBINDS` exactly like every
+other action, so it inherits full remapping support automatically.
 
-```js
-const MOUNTABLE_SPECIES = new Set(["stag", "griffin", "crystal_golem",
-  "water_dragon", "fire_dragon", "storm_dragon", "shadow_dragon",
-  "shadowfox", "lightfox"]);
-```
-Confirmed against the bible's own "Mountable Pets" line — do not add or
-remove anything from this set.
+Each ability has its own cooldown, tracked the same way `lastAttack`
+already is (a single timestamp per player, checked against `now -
+lastAbility < cooldownMs`).
 
-**PART B — mount/dismount, `R`, new player state `me.mounted`.**
+- **Knight — Guard Break.** 8s cooldown. For 2s, the Knight's next hit
+  taken is reduced 50% (reuse the existing armor `reduce` stat's math,
+  stack multiplicatively). A defensive, frontline-appropriate power spike,
+  not damage — matches "melee tank, frontline fighter" directly.
+- **Ranger — Marked Shot.** 10s cooldown. The Ranger's next ranged hit
+  within 3s deals +50% damage and cannot be blocked by the Knight's Guard
+  Break window above (explicitly the counterplay pair between these two).
+- **Mystic — Arcane Burst.** 12s cooldown, the highest of the five —
+  matches "area damage" being the most powerful single moment. On cast,
+  reuse the existing `aura(sx, sy, col, rx, t, o)` function (present since
+  v18, used for dragon effects) to draw a real expanding ring, and apply
+  `dealHit`/`mobHit` to every player/mob within a 4-tile radius of the
+  Mystic's position at cast time. This is a genuine AOE, not flavor text.
+- **Beastmaster — Rally Companion.** 9s cooldown. The active companion's
+  next 3 attacks deal +40% damage. Directly reinforces "pet stat buffs"
+  without touching taming odds or any system outside combat.
+- **Architect — Quick Brace.** 7s cooldown, the shortest — matches
+  "faster building" being a utility-speed identity, not a combat one. If
+  cast while actively placing a structure (once bases exist — until then,
+  this ability is inert and does nothing, which is fine, not a bug),
+  instantly completes that placement. Until bases ship, this ability
+  simply has no effect when cast — do not invent a temporary substitute
+  effect for it.
 
-Pressing `R`: if `activePet` exists and `MOUNTABLE_SPECIES.has(activePet's
-species)` and `me.mounted` is currently false, set `me.mounted = true`. If
-`me.mounted` is already true, set it false (dismount), regardless of what
-the active pet currently is. If neither condition holds (no eligible pet),
-`R` does nothing — no error, no toast spam, just a no-op.
+**PART B — Spear: real line-hit, not just reach.**
 
-Auto-dismount safety: if `activePet` becomes null or changes species while
-`me.mounted` is true (pet swapped via the companion panel, pet removed,
-etc.), clear `me.mounted` back to false in the same place that change
-happens. Never leave `me.mounted` true while pointing at a pet that no
-longer qualifies.
+In `tryAttack()`'s melee branch, when `wk === "spear"`: instead of hitting
+only the single nearest target within range, hit every player AND mob
+whose position falls within `w.range` along the aim direction, in a narrow
+cone (propose 25 degrees half-angle, tunable) — not everything in a circle,
+a genuine line/thrust. Apply the same crit/knockback logic per-target as
+already exists, just looped instead of single-target. Damage does not
+increase for hitting multiple targets — this is reach and positioning
+value, not a damage multiplier.
 
-**PART C — speed bonus.**
+**PART C — Staff: real splash, not single-target.**
 
-```js
-const MOUNT_SPEED_MULT = 1.6;   // TUNABLE
-```
-Wherever `PLAYER_SPEED` is currently used for the player's own movement
-(not pets, not mobs), multiply by `MOUNT_SPEED_MULT` when `me.mounted` is
-true. Do not touch `PLAYER_SPEED` itself or any other entity's speed.
+Confirmed: staff attacks already fire a projectile (`pk = "orb"`). On that
+projectile's impact (wherever `updateProjectiles` currently resolves a hit
+and calls `dealHit`/`mobHit`), when the projectile's weapon kind is
+`"staff"`, apply the same damage to every other player/mob within a 2-tile
+radius of the impact point, not just the one it directly struck. This
+finally makes "Magic attacks, buffs, area damage" true for the class most
+associated with it.
 
-**PART D — rendering: suspend the trailing pet, seat the player on it
-instead.**
+**PART D — proof gates, standard gauntlet plus:**
+- Confirm all five abilities exist, are bound to `Q` through the real
+  `KEYBINDS` system (not hardcoded), and each respects its own independent
+  cooldown.
+- Confirm Mystic's Arcane Burst genuinely hits multiple targets in a
+  simulated multi-target scenario, not just the nearest one.
+- Confirm Knight's Guard Break and Ranger's Marked Shot correctly resolve
+  against each other when both are active at once (the explicit
+  counterplay case).
+- Confirm Spear's line-hit genuinely connects with 2+ targets in a
+  straight line and misses a target clearly outside the cone angle.
+- Confirm Staff splash genuinely damages a second nearby target on impact
+  and does not affect a target outside the 2-tile radius.
+- Confirm Architect's ability is a safe no-op right now, not an error,
+  given bases don't exist yet.
 
-While `me.mounted` is true, do NOT call the normal trailing-follow branch
-of `updatePet()` for the active pet — the mount should sit at/near the
-player's own position, not trail behind at the usual offset distance.
-Simplest correct approach: early-return from `updatePet()` when the pet
-being updated is the current mount, and instead position it directly at
-`h.x, h.y` (no lerp-toward-behind-the-player logic at all while mounted).
+**Explicitly not touched this version:** Blood Moon, Meteor Shower (still
+next, v28 now). Bases. Any weapon besides Spear and Staff — Sword, Axe,
+Dagger, Bow, and Crossbow already have real identity via the existing
+crit/knockback system and don't need new mechanics invented for them here.
 
-Seat offset — scales with the mount's actual size, not a flat number for
-every species. Reuse the real `SPECIES_K` values already in the file
-(confirmed): shadowfox 1.66 (the largest of the nine, bigger than every
-dragon in this game's own art), crystal_golem 1.50, griffin 1.26, the four
-dragons 1.30 each, stag 1.15, lightfox 1.05 (the smallest).
-
-```js
-function mountSeatOffsetY(species) {
-  return -(2.2 * (SPECIES_K[species] || 1.2));   // TUNABLE base of 2.2
-}
-```
-Draw the mount's body first (its existing `drawSpecies` branch, unchanged
-— no new art needed, all nine already exist), then draw the player sprite
-offset upward by `mountSeatOffsetY(activePet's species)` from the mount's
-position. Do not draw the player at their normal ground-level offset while
-mounted.
-
-**PART E — two deliberate scope boundaries, stated explicitly so nothing
-gets invented at build time:**
-1. **Combat works fully while mounted, no restriction.** The bible doesn't
-   say otherwise, and inventing a "can't fight while riding" rule would be
-   unstated scope, not a real requirement.
-2. **Griffin's flight does not grant any special movement or terrain-
-   crossing power while mounted.** Confirmed Griffin is the only `flier:
-   true` species among the nine — every mount gives the exact same
-   `MOUNT_SPEED_MULT` benefit and nothing else. Building real flight-based
-   traversal is comparable in scope to the v21 dive mechanic and is
-   explicitly not this version's job.
-
-**PART F — pet auto-attack is suspended while mounted.**
-
-The active pet's combat-assist behavior (auto-attacking nearby threats)
-should not fire while that same pet is currently being ridden — a mount
-lunging at something mid-ride doesn't make sense and isn't something the
-bible asks for. Resume normal pet-combat behavior immediately on dismount.
-
-**PART G — proof gates, standard gauntlet plus:**
-- Confirm `R` correctly mounts only when the active pet is one of the nine,
-  and does nothing otherwise.
-- Confirm dismounting via `R` a second time restores normal pet-trailing
-  behavior immediately.
-- Confirm the auto-dismount safety fires if the active pet changes while
-  mounted.
-- Confirm movement speed is genuinely `PLAYER_SPEED * 1.6` while mounted
-  and back to normal immediately on dismount.
-- Confirm pet auto-attack genuinely does not fire for a mount currently
-  being ridden, and does fire again immediately after dismounting.
-- Confirm all nine species can each be mounted without error in the test
-  harness — not just one or two as a sample.
-
-**Explicitly not touched this version:** Blood Moon, Meteor Shower (v27).
-Bases. Any per-species mount ability beyond the shared speed bonus.
-
-**After v26 ships successfully, do not start any further version
+**After v27 ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated with the next
 target.
