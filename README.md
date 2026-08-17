@@ -102,114 +102,17 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v29 — real cave interiors, Underwater Caves as the proof of concept)
+## Confirmed, locked spec for the next build (v30 — Elder Drake, ruin variety, idle-wander, real gathering + Pickaxe)
 
-v28 (mounting) shipped successfully. This section replaces it as the
-current locked target. This is a genuinely large, foundational system —
-scoped deliberately to ONE biome first. Abyssal Hollow gets the same
-system reused, not redesigned, once this is proven. This also lays real
-groundwork for Dungeons later, which need the identical "enter, arrive
-somewhere separate" pattern — do not build anything here that is specific
-to water and cannot be reused.
-
-**Confirmed directly before writing this spec:** one shared Supabase
-channel handles all sync (`channel.send({ type: "broadcast", event:
-"move", ...})`), payload currently has these short-named fields: `u, x, y,
-c, l, h, m, t, d, wk, at, pe`. Breath already stops draining the instant
-`here === B.UWCAVE` (confirmed: drain condition is specifically `here ===
-B.DEEP`, so any non-DEEP tile including UWCAVE already halts it) — this is
-the exact existing moment to hook the space-transition into, not a new
-detection. `wilds.push({ id: sp + ":" + tx + "," + ty, species: sp, x: tx
-+ 0.5, y: ty + 0.5, ph })` is the real spawn call for every wild species
-including `water_dragon`, currently placed directly on the main grid.
-
-**PART A — the space system itself.**
-
-New player state: `me.space` (string, default `"main"`). Add one field to
-the move broadcast payload: `sp: me.space`. On the receiving end
-(`channel.on("broadcast", { event: "move" }, ...)`), only render/collide
-with another player if `p.sp === me.space` — this is the entire
-multiplayer mechanism. No new channel, no new sync system.
-
-**PART B — entry trigger, reusing the exact existing moment.**
-
-The instant a diving player's current tile biome becomes `B.UWCAVE`
-(exactly where breath already stops draining today), instead of just
-continuing to stand on that tile: identify which connected UWCAVE cluster
-they touched (flood-fill from that tile, same technique already used to
-verify pocket counts in past worldgen sanity checks), take that cluster's
-lowest-`(tx,ty)` tile as its anchor point, and transition `me.space` to
-`"cave:uwcave:" + anchorX + "," + anchorY`. Store the player's surface
-position and the anchor before transitioning, so exit can restore both.
-
-**PART C — the interior itself, reusing the main world's own generation
-technique at a smaller scale.**
-
-A 26x26 tile interior grid, generated on first entry from a seed derived
-from the cluster's anchor point plus `worldSeed` (deterministic — every
-player who ever enters that same physical cave gets the identical
-interior, every time, with nothing stored server-side). Reuse
-`valueNoise()` and the same cave-tone palette already established for
-`B.UWCAVE`'s surface rendering — real rock walls forming tunnels and
-chambers, not open water. One tile marked as the exit point, placed near
-the generated entrance corner.
-
-While `me.space !== "main"`: redirect the tile-lookup and camera-following
-that currently point at the main world's grid to this interior grid
-instead. `cam.x = me.x; cam.y = me.y;` — same tracking, same code, just
-operating on interior-local coordinates. Breath does not drain at all
-while inside (already true structurally, since interior tiles are never
-`B.DEEP`).
-
-**PART D — the creatures move in, they do not duplicate.**
-
-Remove `water_dragon` and `sea_serpent` from the main-grid `wilds.push()`
-spawn path for `B.UWCAVE` tiles entirely — they no longer spawn on the
-surface. Instead, spawn both inside the generated interior the first time
-it is created, using their existing stats and art completely unchanged.
-This is a move, not new content.
-
-**PART E — the resource this biome was always supposed to have.**
-
-New gatherable item, `aquatic_essence` (the bible's own words: "rare
-aquatic resources"), placed as real nodes inside the interior alongside
-the creatures — 3 to 5 per interior, propose reusing the existing
-gather-node interaction pattern. No new crafting recipe this version — the
-resource existing and being gatherable is the whole scope here.
-
-**PART F — exit.**
-
-Walking onto the interior's marked exit tile: transition `me.space` back
-to `"main"`, restore the player's stored surface position (the same
-`(tx,ty)` where they originally touched the `B.UWCAVE` tile, or the
-nearest non-blocked tile if that spot is somehow occupied).
-
-**PART G — proof gates, standard gauntlet plus:**
-- Confirm two simulated players entering the SAME cluster's anchor point
-  both land in `me.space` values that match each other exactly.
-- Confirm a simulated player in `"main"` and one in a cave `space` do NOT
-  render or collide with each other.
-- Confirm the interior is generated deterministically — entering the same
-  cluster twice produces identical interior tiles both times.
-- Confirm Water Dragon and Sea Serpent no longer spawn via the main-grid
-  `wilds` path for any `B.UWCAVE` tile.
-- Confirm both species DO spawn inside a freshly-generated interior.
-- Confirm `aquatic_essence` nodes exist and are gatherable inside.
-- Confirm exiting restores the exact stored surface position.
-- Confirm breath does not drain at any point while `me.space !== "main"`.
-
-**Explicitly not touched this version:** Abyssal Hollow (same system
-reused later). Blood Moon, Meteor Shower. Dungeons themselves — this
-version builds the pattern they will need, not Dungeons. Mounting — this
-version does not include mounting, that ships separately.
-
-**After v29 ships successfully, do not start any further version
-automatically** — wait for `NEXT_BUILD.md` to be updated with the next
-target.
-
----
-
-## DRAFT — staged for review only, NOT the active build target (v30 — Elder Drake, ruin variety, idle-wander, real gathering + Pickaxe)
+v29 (cave interiors) and v31 (Blood Moon + Meteor Shower) both shipped
+successfully since this spec was first drafted — confirmed directly
+against the live file before promoting this draft, not assumed still
+accurate. Parts A, B, and C below are unchanged and were re-checked clean.
+**Part D — real gathering — needed a real rewrite**, not just a promotion:
+`nearestGatherable()` and its completion path both grew a second and third
+branch since this was first written (v29's interior nodes, v31's meteor
+ore), and the original draft only accounted for the single surface-feature
+case. The corrected Part D is below; nothing else changed.
 
 **This is not what `NEXT_BUILD.md` points at.** v29 (cave interiors) remains
 the active locked spec above. This section becomes real only once
@@ -355,37 +258,49 @@ exists per-species, no new stat): propose amplitude =
 don't all switch in sync) rather than continuous drift. This is a
 numbers-and-timing change to an existing function, not new architecture.
 
-**PART D — real gathering: durability, channeled collection, Pickaxe.**
+**PART D — real gathering: durability, channeled collection, Pickaxe.
+Rewritten against the real current structure — confirmed `nearestGatherable()`
+now has THREE branches, not one: interior nodes (v29), meteor sites (v31),
+and surface features. This applies to the third, and to meteor ore
+specifically since it is conceptually the same "mine it" action — it does
+NOT touch interior `aquatic_essence` nodes, which stay the simple instant
+pickup v29 designed them as; they are a collected resource, not something
+you mine through.**
 
-Confirmed current gathering is instant, one `E` press, zero tool check,
-zero durability of any kind — the entire redesign below replaces that.
+Each gatherable feature (trees, iron, runic ore) AND each meteor site gets
+HP (propose trees: 30, ore/meteor nodes: 50). Gathering becomes a hold-`E`
+channel, reusing the exact mechanical shape the taming channel already
+uses — cancels on release/move/distance — rather than a new interaction
+paradigm. Confirmed exact insertion points: the check inside
+`nearestGatherable()`'s surface-feature loop (after the v29 interior branch
+and the v31 meteor branch, both of which return/continue before reaching
+it — leave both of those completely untouched) and the completion logic
+at `const g = nearestGatherable(); if (g && g._node) { ... return; } if (g)
+{ ... }` — the `g._node` branch (interior nodes) is v29's and must not be
+touched; the durability/channel logic replaces the body of the general
+`if (g)` branch, which is where both surface features AND meteor ore
+(`g.type === "meteor"`) currently complete instantly.
 
-Each gatherable feature gets HP (propose trees: 30, ore nodes: 50 —
-ore harder than wood, matching intuition and the bible's own material-tier
-framing). Gathering becomes a hold-`E` channel, reusing the exact
-mechanical shape the taming channel already uses (progress state, cancels
-on release/move/distance) rather than a new interaction paradigm — each
-channel tick deals damage to the node's HP equal to the equipped weapon's
-existing `dmg` stat (no new "mining damage" number — a Dragonsteel axe is
-already stronger than an Iron one via a stat that already exists).
-Completing the channel (HP reaches 0) awards the resource exactly as
-before.
+Each channel tick deals damage to the node's HP equal to the equipped
+weapon's existing `dmg` stat — no new "mining damage" number, a
+Dragonsteel axe is already stronger than an Iron one via a stat that
+already exists. Completing the channel (HP reaches 0) awards the resource
+exactly as the instant version did today, through the same `FEATURE_GIVES`
+lookup (and for meteor sites, `FEATURE_GIVES.meteor` which v31 already set
+to `runic_stone`).
 
-**Pickaxe — confirmed this does not exist anywhere in the bible's
-crafting tables.** Add it as new content, Iron and Runic tiers (matching
-what's fully modeled currently — Dragonsteel tier smelting requires The
-Ancient Forge, which doesn't exist as a built landmark yet, so Dragonsteel
-Pickaxe is deferred until that does):
+**Pickaxe — confirmed this still does not exist anywhere.** Add it as new
+content, Iron and Runic tiers (Dragonsteel deferred — requires The Ancient
+Forge, not built yet):
 ```js
 { out: "iron_pickaxe",  mats: { iron_bar: 3, wood: 2 },        where: "forge", label: "Forge Iron Pickaxe" },
 { out: "runic_pickaxe", mats: { runic_stone: 2, iron_bar: 2 }, where: "forge", label: "Forge Runic Pickaxe" },
 ```
 Add `if (id.includes("pickaxe")) return "pickaxe";` to `weaponKind()`,
-BEFORE the axe check (confirmed current fallback for unmatched IDs is
-`"sword"`, which would silently misclassify pickaxes if this isn't placed
-correctly). Restrict ORE gathering specifically to axe or pickaxe equipped
-— wood gathering stays axe-only, matching genre convention that a pickaxe
-doesn't chop trees.
+BEFORE the axe check — confirmed the current fallback for an unmatched ID
+is `"sword"`, which would silently misclassify pickaxes if placed wrong.
+Restrict ORE gathering (including meteor sites) specifically to axe or
+pickaxe equipped — wood gathering stays axe-only.
 
 **PART E — proof gates, standard gauntlet plus:**
 - Confirm Elder Drake spawns near `VOLCANO`, has exactly one instance, and
