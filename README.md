@@ -199,3 +199,115 @@ Bases. Any per-species mount ability beyond the shared speed bonus.
 **After v28 ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated with the next
 target.
+
+---
+
+## DRAFT — staged for review only, NOT the active build target (v29 — real cave interiors, Underwater Caves as the proof of concept)
+
+**This is not what `NEXT_BUILD.md` points at.** v28 (mounting) is still
+the active locked spec above, still unbuilt as of this push. This section
+is here for review only — it becomes the real target only once explicitly
+confirmed, and only after v28 is verified actually built first, not
+assumed. This is a genuinely large, foundational system —
+scoped deliberately to ONE biome first. Abyssal Hollow gets the same
+system reused, not redesigned, once this is proven. This also lays real
+groundwork for Dungeons later, which need the identical "enter, arrive
+somewhere separate" pattern — do not build anything here that's specific
+to water and can't be reused.
+
+**Confirmed directly before writing this spec:** one shared Supabase
+channel handles all sync (`channel.send({ type: "broadcast", event:
+"move", ...})`), payload currently has these short-named fields: `u, x, y,
+c, l, h, m, t, d, wk, at, pe`. Breath already stops draining the instant
+`here === B.UWCAVE` (confirmed: drain condition is specifically `here ===
+B.DEEP`, so any non-DEEP tile including UWCAVE already halts it) — this is
+the exact existing moment to hook the space-transition into, not a new
+detection. `wilds.push({ id: sp + ":" + tx + "," + ty, species: sp, x: tx
++ 0.5, y: ty + 0.5, ph })` is the real spawn call for every wild species
+including `water_dragon`, currently placed directly on the main grid.
+
+**PART A — the space system itself.**
+
+New player state: `me.space` (string, default `"main"`). Add one field to
+the move broadcast payload: `sp: me.space`. On the receiving end (`channel.on("broadcast", { event: "move" }, ...)`), only render/collide
+with another player if `p.sp === me.space` — this is the entire
+multiplayer mechanism. No new channel, no new sync system.
+
+**PART B — entry trigger, reusing the exact existing moment.**
+
+The instant a diving player's current tile biome becomes `B.UWCAVE`
+(exactly where breath already stops draining today), instead of just
+continuing to stand on that tile: identify which connected UWCAVE cluster
+they touched (flood-fill from that tile, same technique already used to
+verify pocket counts in past worldgen sanity checks), take that cluster's
+lowest-`(tx,ty)` tile as its anchor point, and transition `me.space` to
+`"cave:uwcave:" + anchorX + "," + anchorY`. Store the player's surface
+position and the anchor before transitioning, so exit can restore both.
+
+**PART C — the interior itself, reusing the main world's own generation
+technique at a smaller scale.**
+
+A 26x26 tile interior grid, generated on first entry from a seed derived
+from the cluster's anchor point plus `worldSeed` (deterministic — every
+player who ever enters that same physical cave gets the identical
+interior, every time, with nothing stored server-side). Reuse
+`valueNoise()` and the same cave-tone palette already established for
+`B.UWCAVE`'s surface rendering — real rock walls forming tunnels and
+chambers, not open water. One tile marked as the exit point, placed near
+the generated entrance corner.
+
+While `me.space !== "main"`: redirect the tile-lookup and camera-following
+that currently point at the main world's grid to this interior grid
+instead. `cam.x = me.x; cam.y = me.y;` — same tracking, same code, just
+operating on interior-local coordinates. Breath does not drain at all
+while inside (already true structurally, since interior tiles are never
+`B.DEEP`).
+
+**PART D — the creatures move in, they don't duplicate.**
+
+Remove `water_dragon` and `sea_serpent` from the main-grid `wilds.push()`
+spawn path for `B.UWCAVE` tiles entirely — they no longer spawn on the
+surface. Instead, spawn both inside the generated interior the first time
+it's created, using their existing stats and art completely unchanged.
+This is a move, not new content.
+
+**PART E — the resource this biome was always supposed to have.**
+
+New gatherable item, `aquatic_essence` (the bible's own words: "rare
+aquatic resources"), placed as real nodes inside the interior alongside
+the creatures — 3-5 per interior, propose reusing the existing gather-node
+interaction pattern. This is the fix for the gap confirmed a few messages
+back: the bible promised this and nothing was ever built for it. No new
+crafting recipe this version — the resource existing and being gatherable
+is the whole scope here, what it crafts into can come later once there's
+an actual reason to build one.
+
+**PART F — exit.**
+
+Walking onto the interior's marked exit tile: transition `me.space` back
+to `"main"`, restore the player's stored surface position (the same
+`(tx,ty)` where they originally touched the `B.UWCAVE` tile, or the
+nearest non-blocked tile if that spot is somehow occupied).
+
+**PART G — proof gates, standard gauntlet plus:**
+- Confirm two simulated players entering the SAME cluster's anchor point
+  both land in `me.space` values that match each other exactly.
+- Confirm a simulated player in `"main"` and one in a cave `space` do NOT
+  render or collide with each other.
+- Confirm the interior is generated deterministically — entering the same
+  cluster twice (simulated) produces identical interior tiles both times.
+- Confirm Water Dragon and Sea Serpent no longer spawn via the main-grid
+  `wilds` path for any `B.UWCAVE` tile.
+- Confirm both species DO spawn inside a freshly-generated interior.
+- Confirm `aquatic_essence` nodes exist and are gatherable inside.
+- Confirm exiting restores the exact stored surface position.
+- Confirm breath does not drain at any point while `me.space !== "main"`.
+
+**Explicitly not touched this version:** Abyssal Hollow (v30 or later,
+same system reused). Blood Moon, Meteor Shower (pushed back one slot).
+Dungeons themselves — this version builds the pattern they'll need, not
+Dungeons.
+
+**After v29 ships successfully, do not start any further version
+automatically** — wait for `NEXT_BUILD.md` to be updated with the next
+target.
