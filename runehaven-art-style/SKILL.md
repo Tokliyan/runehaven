@@ -55,6 +55,48 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-17 (v28 — full mounting, all nine bible species)
+
+Built directly in-session rather than overnight. Mounting had been deferred
+five separate times (v16/v17/v18/v19/v21) and then lost entirely once — a v26
+spec was written, never verified as built, and quietly overwritten while the
+conversation moved on. This is the same design, re-verified line by line
+against the real post-v27 file before a single edit.
+
+- `MOUNTABLE_SPECIES` — the bible's nine, exactly: stag, griffin,
+  crystal_golem, the four dragons, shadowfox, lightfox.
+- `R` joins `KEYBIND_DEFAULTS` as `mount`, so it inherits the v23 remapping,
+  conflict-checking and persistence with no new code. Nothing hardcoded.
+- `MOUNT_SPEED_MULT = 1.6`, applied only to the player's own movement — it
+  multiplies alongside the existing SLOW/blocking factors rather than
+  replacing them.
+- `mountSeatOffsetY()` scales the rider's lift by the mount's own SPECIES_K,
+  because a lightfox (1.05) and a shadowfox (1.66) genuinely do not sit the
+  same height off the ground. Flat offsets were rejected for that reason.
+- `updatePet()` early-returns the pet to the rider's own tile while mounted —
+  no trailing, no circling glide — and the proof gate asserts BOTH directions:
+  seated while mounted, trailing again after dismount, so the suspend is real
+  and not just a coincidence of starting position.
+- `updatePetCombat()` returns early while mounted. A mount lunging at things
+  mid-ride isn't bible-required and reads wrong.
+- `mo` on the move broadcast, so remote players see a rider seated rather
+  than a rider standing next to a pet.
+- `enforceMountValidity()` runs every frame: swap or lose the active pet and
+  the rider is dismounted rather than left in a state pointing at nothing.
+
+JUDGMENT CALLS
+
+- **`MOUNT_SPEED_MULT = 1.6`** — unstated anywhere. Fast enough to be the
+  real reason to mount, slow enough that the world doesn't shrink. Tunable.
+- **`2.2` seat base** — the multiplier on SPECIES_K. Chosen so the smallest
+  mount still clearly carries the rider and the largest doesn't float.
+- **The v27 class ability works while mounted.** The original v26 draft could
+  not have accounted for this — abilities did not exist yet. Blocking it
+  would have been unstated scope, so it follows the same rule as combat:
+  fully allowed, and there is now a proof gate asserting it fires.
+- **`R` over any alternative.** Q went to the ability in v27; R was the only
+  remaining letter that reads as "ride" and collides with nothing.
+
 ### 2026-08-16 (v27 — five class abilities + real spear/staff identity)
 No new species, no new biomes, no world colour touched, and not one existing
 draw call altered. v27 is a mechanics version — the cooldowns, the damage
