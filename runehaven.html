@@ -2583,6 +2583,13 @@ async function mobKill(m, iKilled) {
 /* one AI tick for one mob — runs on every client every frame */
 function updateMob(m, dt, t, now) {
   const def = MOBS[m.kind];
+  /* hotfix: smooth, continuous correction toward the last mob_sync target,
+     replacing the old instant on-packet snap. Converges within a few
+     hundred ms, spread across many frames instead of one visible pop. */
+  if (m.syncTargetX !== undefined) {
+    m.x += (m.syncTargetX - m.x) * Math.min(1, dt * 6);
+    m.y += (m.syncTargetY - m.y) * Math.min(1, dt * 6);
+  }
   if (m.dead) {
     if (Date.now() >= m.respawnAt) {
       m.dead = false; m.hp = def.hp; m.x = m.hx; m.y = m.hy; m.state = "idle";
@@ -2885,9 +2892,14 @@ async function joinRealtime() {
   channel.on("broadcast", { event: "mob_sync" }, ({ payload: p }) => {
     const m = mobs.find(x => x.id === p.id);
     if (!m || m.dead) return;
-    // adopt the engaged-owner's authority; light lerp so it never pops
-    m.x += (p.x - m.x) * 0.5;
-    m.y += (p.y - m.y) * 0.5;
+    /* hotfix: store the target instead of snapping toward it instantly.
+       The old instant 50%-of-remaining-distance jump happened once per
+       packet with no time-smoothing, which reads as a visible stutter —
+       and the same relative correction is far more pixels on screen for
+       the largest sprites (Sea Serpent MOB_K 2.60, Troll 1.94), which is
+       exactly where this was reported. Actual blending now happens every
+       frame in updateMob(), smoothly, not here. */
+    m.syncTargetX = p.x; m.syncTargetY = p.y;
     m.hp = Math.min(m.hp, p.hp);
   });
 
@@ -5021,12 +5033,12 @@ function dragonV2(sx, sy, PAL, t, variant, S) {
    (× player height) converted to draw-scale over each branch's native px */
 const SPECIES_K = {
   tree_sprite: 0.53, water_sprite: 0.61, stone_sprite: 0.84, wind_sprite: 0.69,
-  wolf: 1.06, golem: 1.65, shadowfox: 1.66,
+  wolf: 1.06, golem: 1.85, shadowfox: 1.66,           // hotfix: golem sized up
   stag: 1.15, unicorn: 1.30, lightfox: 1.05,          // v17 reference-sheet ratios
-  boar: 1.12, bear: 1.60, griffin: 1.26, phoenix: 1.02,
-  fire_dragon: 1.30, glow_moth: 0.32,                 // v18
-  water_dragon: 1.30,                                 // v21: Fire Dragon's ratio, same body
-  storm_dragon: 1.30, shadow_dragon: 1.30,            // v22: same shared body again
+  boar: 1.12, bear: 1.60, griffin: 1.50, phoenix: 1.02, // hotfix: griffin sized up
+  fire_dragon: 1.55, glow_moth: 0.32,                 // v18 (hotfix: dragons sized up)
+  water_dragon: 1.55,                                 // v21: hotfix: matches fire_dragon's new size
+  storm_dragon: 1.55, shadow_dragon: 1.55,            // v22: hotfix: same shared body, sized up
   /* v25. Krakenling 1.10 and Salamander King 1.20 are the locked spec's, taken
      as written — neither has a sibling in the file to be inconsistent with.
 
@@ -5042,10 +5054,17 @@ const SPECIES_K = {
      junior of the two. Pure render scale (it also scales the v16 overlay
      offsets) — nothing else reads it, so flipping it back to 1.15 is a
      one-line change if the smaller silhouette was genuinely intended. */
-  crystal_golem: 1.50,
+  crystal_golem: 1.70,                                // hotfix: matches golem's new size ratio
   krakenling: 1.10, salamander_king: 1.20,
 };
-const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94, dark_wraith: 1.30, sea_serpent: 2.60 };
+const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94, dark_wraith: 1.30, sea_serpent: 2.85 };
+/* hotfix: sea_serpent was already the single largest creature in the game
+   by a wide margin (2.60, next highest was troll at 1.94) — bumped more
+   modestly than the others since it was already dominant in scale.
+   Elder Drake and Demon Knight were both requested bigger too, but
+   neither exists in the game yet (checked directly, zero hits for
+   elder_drake anywhere) — noted here for whenever they're actually
+   built, not applied now. */
 /* v25: salamander_king joins the list for its hostile rampage form only. Its
    art is long and low — the body tops out ~7px above the baseline, well under
    Bear's — so its overlays sit lower than any other beast's. Tunable. */
