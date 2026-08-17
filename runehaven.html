@@ -342,7 +342,7 @@
 <div class="hud" id="hudWorld"></div>
 <div class="hud" id="hudZone">SAFE ZONE — YOU ARE PROTECTED</div>
 <div class="hud" id="hudPrompt"></div>
-<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block (shield classes) &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability</div>
+<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block (shield classes) &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability</div>
 <div id="hpBarWrap"><div id="hpBar"></div></div>
 
 <div class="panel" id="invPanel">
@@ -977,6 +977,38 @@ function debugSetAbility(patch) {
   return debugAbilityInfo();
 }
 function debugCombatHandles() { return { others, mobs, projectiles }; }
+/* v28 mounting hook — same shape as debugAbilityInfo/debugSetAbility. */
+function debugMountInfo() {
+  return {
+    MOUNTABLE: Array.from(MOUNTABLE_SPECIES),
+    MOUNT_SPEED_MULT,
+    mount: KEYBINDS.mount, mountDefault: KEYBIND_DEFAULTS.mount,
+    mounted: !!(me && me.mounted),
+    activeSpecies: (activePet && activePet.species) || null,
+    canMount: canMountActivePet(),
+    seatOffsets: Array.from(MOUNTABLE_SPECIES).reduce((o, s) => {
+      o[s] = mountSeatOffsetY(s); return o;
+    }, {}),
+    petPos: (me && me.pet) ? { x: me.pet.x, y: me.pet.y } : null,
+    playerPos: me ? { x: me.x, y: me.y } : null,
+    petCombatRan: mountDebugPetCombatRan,
+  };
+}
+function debugSetMount(patch) {
+  if (!patch) return debugMountInfo();
+  if ("mounted" in patch) me.mounted = !!patch.mounted;
+  if ("toggle" in patch) toggleMount();
+  if ("enforce" in patch) enforceMountValidity();
+  if ("resetPetCombatFlag" in patch) mountDebugPetCombatRan = false;
+  /* one real updatePet tick for the local player — the harness cannot reach
+     `me` itself, and the seated-position gate needs a genuine tick, not a
+     reimplementation of the follow math. */
+  if ("tickPet" in patch) {
+    updatePet(me, (activePet && activePet.species) || null, 0.016, 0, false);
+  }
+  return debugMountInfo();
+}
+let mountDebugPetCombatRan = false;
 /* v12 roster — seven bible-accurate species (Fox/Fawn/Owl retired).
    flier: circling hover-follow at `alt` px. nightOnly: hidden + untameable by
    day. presenceRoll: may simply not exist this session. bloodFavored /
@@ -2945,6 +2977,7 @@ function sendMove(force) {
       wk: weaponKind(me.equipped) || 0,
       at: (ARMORS[me.armor] || {}).tier || 0,
       pe: (activePet && activePet.species) || 0,
+      mo: me.mounted ? 1 : 0,   // v28: mounted, so others seat us on the pet too
       ps: myPoison ? 1 : 0, bl: isBlocking() ? 1 : 0,
       fx: +facing.x.toFixed(2), fy: +facing.y.toFixed(2),
     },
@@ -3661,6 +3694,7 @@ addEventListener("keydown", e => {
   if (k === KEYBINDS.pets) { petPanel.style.display = petPanel.style.display === "block" ? "none" : "block"; refreshPetPanel(); }
   if (k === KEYBINDS.dive && !e.repeat) toggleDive();       // v21: dive toggle
   if (k === KEYBINDS.ability && !e.repeat) tryAbility();    // v27: class ability
+  if (k === KEYBINDS.mount && !e.repeat) toggleMount();     // v28: mount/dismount
   if (k === KEYBINDS.block) sendMove(true);                 // v10: block pose on
 });
 addEventListener("keyup", e => {
@@ -3712,7 +3746,8 @@ function update(dt, t) {
       const len = Math.hypot(dx, dy);
       facing = { x: dx / len, y: dy / len };
       const here = biomeAt(Math.floor(me.x), Math.floor(me.y));
-      const spd = PLAYER_SPEED * (SLOW.has(here) ? 0.55 : 1) * (isBlocking() ? 0.5 : 1);
+      const spd = PLAYER_SPEED * (SLOW.has(here) ? 0.55 : 1) * (isBlocking() ? 0.5 : 1)
+                * (me.mounted ? MOUNT_SPEED_MULT : 1);   // v28
       const nx = me.x + (dx / len) * spd * dt;
       const ny = me.y + (dy / len) * spd * dt;
       /* v21: the one movement gate the dive toggle touches — diveBlocked()
@@ -3778,6 +3813,7 @@ function update(dt, t) {
 
   // v11: active companions follow (species from roster / broadcast)
   updatePet(me, (activePet && activePet.species) || null, dt, t, iAmMoving);
+  enforceMountValidity();    // v28: never stay mounted on an invalid pet
   updatePetCombat(mobNow);   // v16: local pet auto-attack / recovery tick
   checkSalamanderRampage();  // v25: the one species with a happiness clock
   for (const [, o] of others) if (!o.dead) updatePet(o, o.pe || null, dt, t, (o.speed || 0) > 0.02);
@@ -5031,6 +5067,48 @@ function dragonV2(sx, sy, PAL, t, variant, S) {
 }
 /* per-species / per-mob render scale: reference-sheet approved size ratios
    (× player height) converted to draw-scale over each branch's native px */
+/* ============ v28: MOUNTING =====================================
+   The bible's "Mountable Pets" line, exactly — nine species, no more.
+   Deferred five times (v16/v17/v18/v19/v21) because it needed real design
+   rather than a bolt-on; this is that design. */
+const MOUNTABLE_SPECIES = new Set(["stag", "griffin", "crystal_golem",
+  "water_dragon", "fire_dragon", "storm_dragon", "shadow_dragon",
+  "shadowfox", "lightfox"]);
+const MOUNT_SPEED_MULT = 1.6;   // TUNABLE
+
+/* Seat height scales with the mount's own art ratio rather than one flat
+   number — a lightfox (1.05) and a shadowfox (1.66) genuinely do not sit
+   the same height off the ground. */
+function mountSeatOffsetY(species) {
+  return -(2.2 * (SPECIES_K[species] || 1.2));   // TUNABLE base of 2.2
+}
+
+function canMountActivePet() {
+  return !!activePet && MOUNTABLE_SPECIES.has(activePet.species);
+}
+
+function toggleMount() {
+  if (me.mounted) {
+    me.mounted = false;
+    toast("Dismounted");
+    sendMove(true);
+    return;
+  }
+  if (!canMountActivePet()) return;   // no-op, no error, no toast spam
+  me.mounted = true;
+  toast(`Mounted ${WILD_SPECIES[activePet.species].name}`);
+  sendMove(true);
+}
+
+/* Safety: never leave me.mounted true while pointing at a pet that no
+   longer qualifies (roster swap, pet removed, species changed). */
+function enforceMountValidity() {
+  if (me && me.mounted && !canMountActivePet()) {
+    me.mounted = false;
+    sendMove(true);
+  }
+}
+
 const SPECIES_K = {
   tree_sprite: 0.53, water_sprite: 0.61, stone_sprite: 0.84, wind_sprite: 0.69,
   wolf: 1.06, golem: 1.85, shadowfox: 1.66,           // hotfix: golem sized up
@@ -5657,6 +5735,13 @@ function updatePet(h, species, dt, t, moving) {
   if (!species || !WILD_SPECIES[species]) { h.pet = null; return; }
   if (!h.pet || h.pet.sp !== species) h.pet = { sp: species, x: h.x - 0.9, y: h.y + 0.6, ang: 0 };
   const pet = h.pet;
+  /* v28: while this pet is being ridden it IS the rider's position — no
+     trailing, no circling glide. Works for remote players too (h.mo comes
+     off their move broadcast), so everyone sees the same thing. */
+  if (h === me ? me.mounted : !!h.mo) {
+    pet.x = h.x; pet.y = h.y; pet.moving = moving;
+    return;
+  }
   const flier = WILD_SPECIES[species].flier;
   const fx = (h === me ? facing.x : (h.fx ?? 0)) || 0;
   const fy = (h === me ? facing.y : (h.fy ?? 1)) || 1;
@@ -5808,6 +5893,8 @@ function updatePetCombat(now) {
   const species = (activePet && activePet.species) || null;
   const pet = me && me.pet;
   if (!pet || !species) return;
+  if (me.mounted) return;   // v28: a mount mid-ride does not lunge at things
+  mountDebugPetCombatRan = true;
   const def = petCombatDef(species);
   if (!def) return;                      // Common pets: no combat role at all
   if (pet.maxHp === undefined) {         // fresh pet object (roster swap)
@@ -6511,7 +6598,15 @@ function drawPlayerEntity(p, name, t, isMe) {
     ry = (Math.random() - 0.5) * 1.5 * fp;
   }
 
-  drawUnit(ctx, sx + rx, sy - bob + ry, p.cls, S, tier, face, t, true, wkind, atier, blocking);
+  /* v28: while mounted the rider is drawn seated on the mount's back — the
+     mount's own body is already drawn by the normal pet pass at the same
+     tile, so this is purely a vertical lift of the rider sprite. Scales
+     with the mount's art ratio, not a flat number. */
+  const mountedNow = isMe ? !!me.mounted : !!p.mo;
+  const mountSp = isMe ? ((activePet && activePet.species) || null) : (p.pe || null);
+  const seatLift = (mountedNow && mountSp) ? mountSeatOffsetY(mountSp) * S : 0;
+  drawUnit(ctx, sx + rx, sy - bob + ry + seatLift, p.cls, S, tier, face, t,
+           !mountedNow, wkind, atier, blocking);
 
   // v10: poison motes — small green flecks rising while the DoT runs
   if (poisoned) {
@@ -7313,7 +7408,11 @@ const KEYBIND_DEFAULTS = { up: "w", down: "s", left: "a", right: "d", interact: 
   /* v27: the class ability. Q was the only sensible letter still unbound — it
      joins the table rather than being hardcoded anywhere, so it is remappable,
      conflict-checked and persisted by the v23 machinery with no new code. */
-  ability: "q" };
+  ability: "q",
+  /* v28: mount/dismount. R was the only sensible letter still unbound after
+     v27 took Q — it joins the table rather than being hardcoded, so it is
+     remappable, conflict-checked and persisted by the v23 machinery. */
+  mount: "r" };
 /* display order + labels for the remapping screen */
 const KEYBIND_LABELS = [
   ["up", "Move up"], ["down", "Move down"], ["left", "Move left"], ["right", "Move right"],
