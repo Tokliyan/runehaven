@@ -378,10 +378,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       for (const [k, def] of Object.entries(info.WILD_SPECIES)) {
         if (def.presenceRoll || def.fightToTame) continue;
         const n2 = spawned.filter(s => s === k).length;
+        if (k === 'water_dragon') continue;   // v29: lives inside caves now
         results.push([`${k} still spawns after the density cut (${n2})`, n2 > 0]);
       }
       for (const k of ['goblin', 'bandit', 'troll', 'boar', 'bear', 'griffin', 'phoenix']) {
         const n2 = spawnedMobs.filter(s => s === k).length;
+        if (k === 'sea_serpent') continue;    // v29: lives inside caves now
         results.push([`mob ${k} still spawns after the density cut (${n2})`, n2 > 0]);
       }
       /* v19: the Dark Wraith is now ASSERTED. v18 could not assert it because
@@ -782,19 +784,16 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const ssSpots = info.mobSpots.filter(m => m.kind === 'sea_serpent');
       console.log('water_dragon spots:', JSON.stringify(wdSpots));
       console.log('sea_serpent spots:', JSON.stringify(ssSpots));
-      results.push([`Water Dragon reaches its Underwater Caves (${wdSpots.length} spawned)`,
-        wdSpots.length === 3]);
-      results.push([`every Water Dragon stands on a UWCAVE tile`,
-        wdSpots.length > 0 && wdSpots.every(w =>
-          window.biomeAt(Math.floor(w.x), Math.floor(w.y)) === B2.UWCAVE)]);
-      results.push([`Sea Serpent reaches its Underwater Caves (${ssSpots.length} spawned)`,
-        ssSpots.length === 3]);
-      results.push([`every Sea Serpent stands on a UWCAVE tile`,
-        ssSpots.length > 0 && ssSpots.every(m =>
-          window.biomeAt(Math.floor(m.x), Math.floor(m.y)) === B2.UWCAVE)]);
-      results.push(['Water Dragon spawns in Underwater Caves ONLY',
-        info.WILD_SPECIES.water_dragon.biomes.length === 1 &&
-        info.WILD_SPECIES.water_dragon.biomes[0] === B2.UWCAVE]);
+      /* v29 CHANGED THIS DELIBERATELY: both creatures moved INSIDE the cave
+         interiors. They must no longer appear on the surface grid at all —
+         moved, not duplicated. The v21 assertions below are inverted on
+         purpose, and the interior spawn is proven in the v29 block. */
+      results.push([`Water Dragon no longer spawns on the surface (${wdSpots.length})`,
+        wdSpots.length === 0]);
+      results.push([`Sea Serpent no longer spawns on the surface (${ssSpots.length})`,
+        ssSpots.length === 0]);
+      results.push(['Water Dragon has no surface biome left — it lives inside',
+        info.WILD_SPECIES.water_dragon.biomes.length === 0]);
       // the Sea Serpent's locked stats
       const ss = info.MOBS.sea_serpent;
       results.push(['sea_serpent 130 HP',        !!ss && ss.hp === 130]);
@@ -803,8 +802,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['sea_serpent is not tameable', !!ss && ss.tameable === false]);
       results.push(['sea_serpent is melee, not ranged (the wraith stays the only ranged mob)',
         !!ss && ss.atkRange < 3]);
-      results.push(['sea_serpent spawns in Underwater Caves ONLY',
-        !!ss && ss.biomes.length === 1 && ss.biomes[0] === B2.UWCAVE]);
+      results.push(['sea_serpent has no surface biome left — it lives inside',
+        !!ss && ss.biomes.length === 0]);
       results.push(['sea_serpent drops existing materials generously',
         !!ss && ss.loot.length >= 2 && ss.loot.every(l => l.chance >= 0.6)]);
       results.push(['sea_serpent is the hardest non-boss mob in the world',
@@ -2116,6 +2115,98 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       dsm28({ mounted: false });
     } else {
       results.push(['v28 PART H mount hooks are reachable', false]);
+    }
+
+    /* ===================== v29 PART F: cave interiors ========================
+       Real proof against the actual spec, not just "the old gauntlet still
+       passes" — determinism, shared-space filtering, and that the two
+       relocated creatures genuinely spawn inside, not nowhere. ============= */
+    const dspc = window.debugSpaceInfo, dssp = window.debugSetSpace,
+          anchorOf = window.debugUwcaveAnchor;
+    if (typeof dspc === 'function' && typeof dssp === 'function') {
+      const info29 = window.debugWorldInfo();
+      const N29 = info29.N, B29 = info29.B;
+      let uw = null;
+      for (let y = 0; y < N29 && !uw; y++) for (let x = 0; x < N29; x++) {
+        if (window.biomeAt(x, y) === B29.UWCAVE) { uw = [x, y]; break; }
+      }
+      results.push(['a UWCAVE tile exists in the test seed to test against', !!uw]);
+
+      if (uw) {
+        // ---- two players resolve the SAME cluster to the SAME space id ----
+        const a1 = anchorOf(uw[0], uw[1]);
+        const a2 = anchorOf(uw[0] + 1, uw[1]);   // a neighbouring tile, same cluster
+        results.push(['the same physical cave resolves to the same anchor from two tiles',
+          !!a1 && !!a2 && a1[0] === a2[0] && a1[1] === a2[1]]);
+
+        // ---- entering actually moves the player into a non-main space ----
+        dssp({ clearCache: true });
+        dssp({ enterAt: uw });
+        const s1 = dspc();
+        results.push(['entering a cave leaves space "main"', s1.inInterior === true]);
+        results.push(['the interior grid is the spec\'s 26x26', s1.INTERIOR_N === 26]);
+
+        // ---- determinism: leaving and re-entering the SAME cave gives the
+        //      identical grid, generated fresh from the seed, not reused by
+        //      accident of still being cached from one visit ----
+        const grid1 = s1.grid;
+        dssp({ exit: true });
+        dssp({ clearCache: true });   // force a genuine regeneration, not the same object
+        dssp({ enterAt: uw });
+        const grid2 = dspc().grid;
+        results.push(['the interior regenerates identically from the same seed',
+          !!grid1 && !!grid2 && grid1.length === grid2.length &&
+          grid1.every((v, i) => v === grid2[i])]);
+
+        // ---- exit restores the exact stored surface position ----
+        const before29 = dspc();
+        dssp({ exit: true });
+        const after29 = dspc();
+        results.push(['exiting restores the exact surface position, not spawn',
+          after29.inInterior === false &&
+          Math.abs(after29.playerPos.x - uw[0] - 0.5) < 0.02 &&
+          Math.abs(after29.playerPos.y - uw[1] - 0.5) < 0.02]);
+
+        // ---- breath never drains inside, confirmed structurally not just by claim ----
+        dssp({ enterAt: uw });
+        dssp({ pos: [dspc().exit.x + 3, dspc().exit.y + 3] });   // somewhere inside, off the exit tile
+        const b0 = dspc().breath;
+        dssp({ tickBreath: 5 });
+        results.push(['breath never drains inside the interior, even after real time',
+          dspc().breath >= b0]);
+
+        // ---- the two relocated species genuinely spawn inside, not nowhere ----
+        const wilds29 = dspc().wilds || [], mobs29 = dspc().mobs || [];
+        results.push(['Water Dragon spawns inside the generated interior',
+          wilds29.some(w => w.species === 'water_dragon')]);
+        results.push(['Sea Serpent spawns inside the generated interior',
+          mobs29.some(m => m.kind === 'sea_serpent')]);
+
+        // ---- aquatic_essence nodes exist and are gatherable ----
+        const nodesBefore = (dspc().nodes || []).filter(n => !n.taken).length;
+        results.push(['aquatic_essence nodes exist inside (spec: 3-5 per interior)',
+          nodesBefore >= 3 && nodesBefore <= 5]);
+        const invBefore = (window.debugWorldInfo().player.inv || {}).aquatic_essence || 0;
+        dssp({ pos: [(dspc().nodes[0]).x, (dspc().nodes[0]).y] });
+        dssp({ gather: true });
+        const invAfter = (window.debugWorldInfo().player.inv || {}).aquatic_essence || 0;
+        results.push(['gathering an interior node awards aquatic_essence',
+          invAfter === invBefore + 1]);
+
+        // ---- shared, not private: the move payload actually carries space,
+        //      and the receive filter genuinely gates on it ----
+        results.push(['the move broadcast carries the player\'s space (shared-world mechanism)',
+          gameScript.indexOf('sp: me.space || "main"') > 0]);
+        results.push(['the receive filter gates rendering on matching space',
+          gameScript.indexOf('(o.space || "main") !== (me.space || "main")') > 0]);
+        results.push(['no second realtime channel was invented for this',
+          (gameScript.match(/sb\.channel\(/g) || []).length === 1]);
+
+        dssp({ exit: true });
+        dssp({ clearCache: true });
+      }
+    } else {
+      results.push(['v29 PART F cave-interior hooks are reachable', false]);
     }
 
     let allOk = true;
