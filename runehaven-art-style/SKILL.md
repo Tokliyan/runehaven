@@ -55,6 +55,49 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-18 (v31 — Blood Moon and Meteor Shower)
+
+Both world events, built in-session. Deliberately derived rather than
+broadcast: each is a pure function of worldEpoch + worldSeed, so every
+client computes the same Blood Moon on the same night and races for the
+same meteor rocks, with no new table, no new channel, and no authority
+problem over who "started" the event.
+
+- **Blood Moon**: `worldDayNum() % 12 === 0` and night. Mobs get x1.35 hp
+  and damage, x1.5 aggro radius ("more aggressive"), and rare species get
+  +0.30 on their presence roll — which is the roll that decides whether a
+  Shadowfox/Unicorn/Lightfox exists at all this session, so the bible's
+  "increase significantly" lands where it actually matters.
+- **Meteor Shower**: hashed per 15-minute slice at a 12% chance, so it is
+  genuinely unpredictable to a player but identical for every client. The
+  sites are hashed off the same slice, which is what makes the bible's
+  "scramble to reach them first" a real race — everyone sees the same
+  fourteen rocks. They are FINITE, so the first player there claims it.
+  None land in a safe zone.
+
+IMPORTANT NAMING NOTE: `bloodDecayFrac()` further up the file is NOT this.
+That is the v12 PvP-kill tame window and only shares the word "blood".
+Checked before writing a line, and deliberately named `bloodMoonActive()`
+so the two can never be confused by a future version.
+
+Two v27/v28 guard assertions asserting these events had NOT been started
+were retired on purpose and replaced with real proof gates.
+
+JUDGMENT CALLS
+
+- **x1.35 mob hp/dmg** — "stronger" is unquantified in the bible. Enough
+  to feel it, not enough to make a Blood Moon night unsurvivable. Tunable.
+- **x1.5 aggro radius** — the mechanical reading of "more aggressive".
+- **+0.30 presence roll** — applied to presence rather than count, so the
+  effect is "the rare thing is actually out tonight" rather than "there
+  are more of a thing that already spawned".
+- **15-minute slices at 12%** — "randomly with no fixed pattern" needed a
+  concrete shape. Averages a shower every couple of hours. Both tunable.
+- **14 sites per shower** — enough to be a real scramble on a 240x240 map
+  without blanketing it.
+- **Meteor ore yields runic_stone** — the bible says "rare ore" without
+  naming a new material, and inventing one would be unstated content.
+
 ### 2026-08-18 (v29 — real cave interiors, Underwater Caves as the proof of concept)
 
 Built directly in-session, same as v28. Genuinely new architecture — the
