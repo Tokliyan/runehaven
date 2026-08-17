@@ -1077,16 +1077,17 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // v27: `ability` is the twelfth bindable action — the class-ability key.
       // Updated, not relaxed: the count and the default table both move with it.
       const ACTIONS = ['up', 'down', 'left', 'right', 'interact', 'attack',
-                       'inventory', 'craft', 'pets', 'dive', 'block', 'ability'];
+                       'inventory', 'craft', 'pets', 'dive', 'block', 'ability',
+                       'mount'];   // v28
       const info23 = dsi();
 
       // ---- PART A: the config object itself
-      results.push(['KEYBINDS carries all 12 bindable actions',
-        Object.keys(info23.KEYBINDS).length === 12 &&
+      results.push(['KEYBINDS carries all 13 bindable actions',
+        Object.keys(info23.KEYBINDS).length === 13 &&
         ACTIONS.every(a => typeof info23.KEYBINDS[a] === 'string')]);
       results.push(['KEYBIND defaults are exactly the locked spec',
         ACTIONS.map(a => info23.KEYBIND_DEFAULTS[a]).join('|') ===
-        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift', 'q'].join('|')]);
+        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift', 'q', 'r'].join('|')]);
 
       // ---- PART A: every check site reads KEYBINDS, no literals left behind
       const SITES = ['keys[KEYBINDS.up]', 'keys[KEYBINDS.down]', 'keys[KEYBINDS.left]',
@@ -1995,6 +1996,126 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             markedShotUntil: 0, rallyCharges: 0, rings: null });
     } else {
       results.push(['v27 PART D ability hooks are reachable', false]);
+    }
+
+    /* ===================== v28 PART H: mounting ==============================
+       The bible's nine mountable species. Every proof gate from the locked
+       spec, including the one v26's draft could not have known about (the
+       v27 class ability must still fire while mounted). ==================== */
+    const dmi28 = window.debugMountInfo, dsm28 = window.debugSetMount;
+    if (typeof dmi28 === 'function' && typeof dsm28 === 'function') {
+      const BIBLE_NINE = ['stag', 'griffin', 'crystal_golem', 'water_dragon',
+        'fire_dragon', 'storm_dragon', 'shadow_dragon', 'shadowfox', 'lightfox'];
+      const m0 = dmi28();
+
+      results.push(['the mountable set is exactly the bible\'s nine species',
+        m0.MOUNTABLE.length === 9 &&
+        BIBLE_NINE.every(s => m0.MOUNTABLE.indexOf(s) !== -1)]);
+      results.push(['R is the mount key and it came from KEYBINDS, not a literal',
+        m0.mount === 'r' && m0.mountDefault === 'r' &&
+        gameScript.indexOf('k === KEYBINDS.mount') > 0]);
+      results.push(['MOUNT_SPEED_MULT is the spec\'s 1.6',
+        Math.abs(m0.MOUNT_SPEED_MULT - 1.6) < 1e-9]);
+      results.push(['the speed bonus is applied to the player\'s own movement only',
+        gameScript.indexOf('(me.mounted ? MOUNT_SPEED_MULT : 1)') > 0]);
+
+      // seat height genuinely scales per species, not one flat number
+      const so = m0.seatOffsets;
+      results.push(['seat height scales with each species\' own art ratio',
+        so.shadowfox < so.griffin && so.griffin < so.lightfox &&
+        Math.abs(so.lightfox - (-(2.2 * 1.05))) < 1e-9 &&
+        Math.abs(so.shadowfox - (-(2.2 * 1.66))) < 1e-9]);
+
+      // every one of the nine mounts without error — not a sample
+      let allNineOk = true, failedOn = null;
+      const gp28 = window.debugGrantPet;
+      for (const sp of BIBLE_NINE) {
+        gp28(sp);
+        dsm28({ mounted: false });
+        const before = dmi28();
+        if (!before.canMount) { allNineOk = false; failedOn = sp + ' (canMount false)'; break; }
+        dsm28({ toggle: true });
+        const after = dmi28();
+        if (!after.mounted) { allNineOk = false; failedOn = sp + ' (did not mount)'; break; }
+        dsm28({ toggle: true });
+        if (dmi28().mounted) { allNineOk = false; failedOn = sp + ' (did not dismount)'; break; }
+      }
+      results.push(['all nine species mount and dismount cleanly' +
+        (failedOn ? ' (failed on ' + failedOn + ')' : ''), allNineOk]);
+
+      // a NON-mountable pet must be a silent no-op
+      gp28('wolf');
+      dsm28({ mounted: false });
+      const wolfInfo = dmi28();
+      dsm28({ toggle: true });
+      results.push(['a non-mountable pet (wolf) cannot be mounted — silent no-op',
+        wolfInfo.canMount === false && dmi28().mounted === false]);
+
+      // auto-dismount safety: swap the pet out from under a mounted rider
+      gp28('stag');
+      dsm28({ mounted: false });
+      dsm28({ toggle: true });
+      const mountedOnStag = dmi28().mounted;
+      gp28('wolf');
+      dsm28({ enforce: true });
+      results.push(['swapping to an invalid pet auto-dismounts, never leaves a bad state',
+        mountedOnStag === true && dmi28().mounted === false]);
+
+      // the mount sits AT the rider, not trailing behind. updatePet is called
+      // directly rather than waiting on rAF, same as other direct-call gates.
+      gp28('fire_dragon');
+      dsm28({ mounted: true });
+      const seated = dsm28({ tickPet: true });
+      if (seated.petPos && seated.playerPos) {
+        results.push(['while mounted the mount is at the rider, not trailing behind',
+          Math.hypot(seated.petPos.x - seated.playerPos.x,
+                     seated.petPos.y - seated.playerPos.y) < 0.05]);
+      } else {
+        results.push(['while mounted the mount is at the rider, not trailing behind', false]);
+      }
+      // and on foot it genuinely DOES trail, proving the suspend is real
+      dsm28({ mounted: false });
+      /* the follow is a lerp, so one tick only closes part of the gap —
+         pump several, the same way the real game reaches it over frames. */
+      let onFoot = null;
+      for (let i = 0; i < 40; i++) onFoot = dsm28({ tickPet: true });
+      results.push(['on foot the pet trails behind again, so the suspend was real',
+        !!onFoot.petPos && Math.hypot(onFoot.petPos.x - onFoot.playerPos.x,
+                                      onFoot.petPos.y - onFoot.playerPos.y) > 0.1]);
+      dsm28({ mounted: true });
+
+      // pet auto-attack must NOT run while that same pet is being ridden
+      dsm28({ mounted: true, resetPetCombatFlag: true });
+      window.updatePetCombat(performance.now());
+      const ranWhileMounted = dmi28().petCombatRan;
+      dsm28({ mounted: false, resetPetCombatFlag: true });
+      window.updatePetCombat(performance.now());
+      const ranWhileOnFoot = dmi28().petCombatRan;
+      results.push(['pet auto-attack is suspended while ridden, and resumes on dismount',
+        ranWhileMounted === false && ranWhileOnFoot === true]);
+
+      // v27's class ability must still fire while mounted — the interaction
+      // the original v26 draft could not have known about
+      dsm28({ mounted: true });
+      window.debugSetAbility({ lastAbility: -1e9 });
+      const abilBefore = window.debugAbilityInfo().lastAbility;
+      window.tryAbility();
+      const abilAfter = window.debugAbilityInfo().lastAbility;
+      results.push(['the v27 class ability still fires while mounted (v28 spec Part E.2)',
+        abilAfter !== abilBefore]);
+
+      results.push(['mounted state is broadcast so other players see the rider seated',
+        gameScript.indexOf('mo: me.mounted ? 1 : 0') > 0]);
+      results.push(['Griffin gets no special flight power — one shared speed bonus only',
+        gameScript.indexOf('flier') > 0 &&
+        gameScript.indexOf('MOUNT_FLY') < 0 && gameScript.indexOf('mountFly') < 0]);
+      results.push(['Blood Moon and Meteor Shower were NOT started in this version either',
+        gameScript.toLowerCase().indexOf('blood moon') < 0 &&
+        gameScript.toLowerCase().indexOf('meteor') < 0]);
+
+      dsm28({ mounted: false });
+    } else {
+      results.push(['v28 PART H mount hooks are reachable', false]);
     }
 
     let allOk = true;
