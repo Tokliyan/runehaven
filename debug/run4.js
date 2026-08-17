@@ -1984,9 +1984,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         gameScript.indexOf('aura(rx2, ry2, ABILITY_RING_RGB') > 0]);
       results.push(['no base/structure system was invented for the Architect',
         gameScript.indexOf('placeStructure') < 0 && gameScript.indexOf('BASES') < 0]);
-      results.push(['Blood Moon and Meteor Shower were NOT started this version',
-        gameScript.toLowerCase().indexOf('blood moon') < 0 &&
-        gameScript.toLowerCase().indexOf('meteor') < 0]);
+      /* v31 STARTED THESE DELIBERATELY — the guard is retired, replaced by
+         the real proof gates in the v31 block at the end. */
 
       dropDummies();
       H.projectiles.length = 0;
@@ -2108,9 +2107,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['Griffin gets no special flight power — one shared speed bonus only',
         gameScript.indexOf('flier') > 0 &&
         gameScript.indexOf('MOUNT_FLY') < 0 && gameScript.indexOf('mountFly') < 0]);
-      results.push(['Blood Moon and Meteor Shower were NOT started in this version either',
-        gameScript.toLowerCase().indexOf('blood moon') < 0 &&
-        gameScript.toLowerCase().indexOf('meteor') < 0]);
+      /* v31: same retired guard — see the v31 block for the real gates. */
 
       dsm28({ mounted: false });
     } else {
@@ -2207,6 +2204,56 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
     } else {
       results.push(['v29 PART F cave-interior hooks are reachable', false]);
+    }
+
+    /* ===================== v31: world events ================================
+       Both events are DERIVED, not broadcast — so the real thing to prove is
+       that every client computes the same answer, and that the effects are
+       genuinely wired rather than just declared. ========================== */
+    const dei = window.debugEventInfo, dep = window.debugEventProbe;
+    if (typeof dei === 'function' && typeof dep === 'function') {
+      const ev = dei();
+      results.push(['Blood Moon runs on the bible\'s 12-day cycle',
+        ev.BLOOD_MOON_EVERY === 12]);
+      results.push(['a day divisible by 12 is a Blood Moon day, 11 and 13 are not',
+        dep({ day: 24 }).bloodMoonOnDay === true &&
+        dep({ day: 23 }).bloodMoonOnDay === false &&
+        dep({ day: 25 }).bloodMoonOnDay === false]);
+      results.push(['the Blood Moon mob multiplier is real and applied, not just declared',
+        ev.BLOOD_MOON_MOB_MULT > 1 &&
+        gameScript.indexOf('def.hp * bloodMoonMobMult()') > 0 &&
+        gameScript.indexOf('def.dmg * bloodMoonMobMult()') > 0]);
+      results.push(['"more aggressive" is wired to the real aggro radius',
+        gameScript.indexOf('def.aggroRadius * (bloodMoonActive()') > 0]);
+      results.push(['the rare-pet boost is applied to the real presence roll',
+        gameScript.indexOf('BLOOD_MOON_RARE_BOOST : 0') > 0]);
+      results.push(['mobMult is exactly 1 when no Blood Moon is running',
+        ev.bloodMoon === false ? ev.mobMult === 1 : ev.mobMult === ev.BLOOD_MOON_MOB_MULT]);
+
+      // Meteor Shower: unpredictable, but identical for everyone
+      let hits = 0;
+      for (let s = 0; s < 400; s++) if (dep({ slice: s }).meteorOnSlice) hits++;
+      results.push([`Meteor Shower fires on some slices but not most (${hits}/400)`,
+        hits > 5 && hits < 160]);
+      results.push(['the same slice always gives the same answer — every client agrees',
+        dep({ slice: 12345 }).meteorOnSlice === dep({ slice: 12345 }).meteorOnSlice &&
+        dep({ slice: 999 }).meteorOnSlice === dep({ slice: 999 }).meteorOnSlice]);
+      results.push(['meteor sites are keyed to the slice, so everyone races the same rocks',
+        gameScript.indexOf('"met:" + slice') > 0]);
+      results.push(['meteor ore is finite — first player to reach it claims it',
+        gameScript.indexOf('"meteor"]);') > 0 || gameScript.indexOf("'meteor'") > 0]);
+      results.push(['meteor ore actually yields something on gather',
+        gameScript.indexOf('meteor: "runic_stone"') > 0]);
+      results.push(['no meteor lands inside a safe zone',
+        gameScript.indexOf('inSafeZone(tx + 0.5, ty + 0.5)) continue') > 0]);
+      results.push(['neither event invented a new table or channel',
+        (gameScript.match(/sb\.channel\(/g) || []).length === 1 &&
+        gameScript.indexOf('from("world_events")') < 0]);
+      results.push(['the v12 PvP blood window is untouched and still distinct',
+        gameScript.indexOf('function bloodDecayFrac()') > 0 &&
+        gameScript.indexOf('function bloodMoonActive()') > 0]);
+    } else {
+      results.push(['v31 world-event hooks are reachable', false]);
     }
 
     let allOk = true;
