@@ -102,118 +102,15 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v28 — full mounting, all 9 bible species)
+## Confirmed, locked spec for the next build (v29 — real cave interiors, Underwater Caves as the proof of concept)
 
-v27 shipped successfully — 528/528 in run4, landed directly on main. This
-section replaces the v27 entry as the current locked target.
-
-**This spec was re-verified from scratch against the real current file,
-not resubmitted from the earlier v26 draft that never actually built.**
-Everything below was checked directly against `runehaven.html` as it
-stands after v27, including one new interaction v27 introduced that the
-earlier draft couldn't have accounted for.
-
-**Confirmed fresh:** zero mounting code exists anywhere. `R` is genuinely
-still unbound — `KEYBIND_DEFAULTS` now has 12 entries after v27 added
-`ability: "q"`, and `r` was never touched by that change. `PLAYER_SPEED =
-4.6`, camera still just tracks `cam.x = me.x; cam.y = me.y;` directly, no
-camera changes needed. `updatePet()` still makes the active companion
-trail the player every frame — exactly what needs suspending while that
-same pet is being ridden.
-
-**PART A — the mountable set, exactly the bible's nine.**
-
-```js
-const MOUNTABLE_SPECIES = new Set(["stag", "griffin", "crystal_golem",
-  "water_dragon", "fire_dragon", "storm_dragon", "shadow_dragon",
-  "shadowfox", "lightfox"]);
-```
-
-**PART B — mount/dismount, `R`, new player state `me.mounted`.**
-
-Pressing `R`: if `activePet` exists, its species is in
-`MOUNTABLE_SPECIES`, and `me.mounted` is false, set it true. If already
-true, `R` dismounts regardless of current pet. If neither condition holds,
-no-op, no error.
-
-Auto-dismount safety: if `activePet` becomes null or changes species while
-mounted, clear `me.mounted` in the same place that change happens.
-
-**PART C — speed bonus.**
-
-```js
-const MOUNT_SPEED_MULT = 1.6;   // TUNABLE
-```
-Multiply the player's own movement by this while `me.mounted` is true.
-Touch nothing else's speed.
-
-**PART D — rendering: suspend the trailing pet, seat the player on it.**
-
-While mounted, skip `updatePet()`'s normal trailing-follow branch for the
-active pet — position it at `h.x, h.y` directly instead. Seat offset scales
-with the real `SPECIES_K` values (confirmed fresh): shadowfox 1.66 (still
-the largest of the nine), crystal_golem 1.50, griffin 1.26, the four
-dragons 1.30 each, stag 1.15, lightfox 1.05 (smallest).
-
-```js
-function mountSeatOffsetY(species) {
-  return -(2.2 * (SPECIES_K[species] || 1.2));   // TUNABLE base of 2.2
-}
-```
-Draw the mount's existing `drawSpecies` body first (no new art — all nine
-already exist), then the player offset upward by
-`mountSeatOffsetY(activePet's species)`.
-
-**PART E — three deliberate scope boundaries, stated explicitly:**
-1. **Combat works fully while mounted, no restriction.**
-2. **The class ability from v27 (`Q`, tracked via `lastAbility`) also works
-   fully while mounted — same reasoning as combat, this is new territory
-   v27 introduced that didn't exist when mounting was first designed, and
-   it should follow the identical rule rather than being silently
-   forgotten or arbitrarily blocked.**
-3. **Griffin's flight grants no special movement or terrain-crossing power
-   while mounted.** Confirmed the only `flier: true` species among the
-   nine — every mount gives the same speed benefit and nothing else.
-   Building real flight traversal is its own version's worth of scope, not
-   this one's.
-
-**PART F — pet auto-attack is suspended while mounted**, resuming
-immediately on dismount, same reasoning as before: a mount lunging at
-something mid-ride doesn't make sense and isn't bible-required.
-
-**PART G — proof gates, standard gauntlet plus:**
-- Confirm `R` mounts only for the nine, no-ops otherwise.
-- Confirm dismounting restores normal pet-trailing immediately.
-- Confirm the auto-dismount safety fires on active-pet change.
-- Confirm speed is genuinely `PLAYER_SPEED * 1.6` while mounted, normal
-  immediately after.
-- Confirm the class ability (`Q`) still fires correctly while mounted —
-  new check this version, didn't exist before v27.
-- Confirm pet auto-attack doesn't fire for a currently-ridden mount, and
-  resumes immediately on dismount.
-- Confirm all nine species mount without error, not just a sample.
-
-**Explicitly not touched this version:** Blood Moon, Meteor Shower (v29).
-Bases. Any per-species mount ability beyond the shared speed bonus.
-
-**After v28 ships successfully, do not start any further version
-automatically** — wait for `NEXT_BUILD.md` to be updated with the next
-target.
-
----
-
-## DRAFT — staged for review only, NOT the active build target (v29 — real cave interiors, Underwater Caves as the proof of concept)
-
-**This is not what `NEXT_BUILD.md` points at.** v28 (mounting) is still
-the active locked spec above, still unbuilt as of this push. This section
-is here for review only — it becomes the real target only once explicitly
-confirmed, and only after v28 is verified actually built first, not
-assumed. This is a genuinely large, foundational system —
+v28 (mounting) shipped successfully. This section replaces it as the
+current locked target. This is a genuinely large, foundational system —
 scoped deliberately to ONE biome first. Abyssal Hollow gets the same
 system reused, not redesigned, once this is proven. This also lays real
 groundwork for Dungeons later, which need the identical "enter, arrive
-somewhere separate" pattern — do not build anything here that's specific
-to water and can't be reused.
+somewhere separate" pattern — do not build anything here that is specific
+to water and cannot be reused.
 
 **Confirmed directly before writing this spec:** one shared Supabase
 channel handles all sync (`channel.send({ type: "broadcast", event:
@@ -229,7 +126,8 @@ including `water_dragon`, currently placed directly on the main grid.
 **PART A — the space system itself.**
 
 New player state: `me.space` (string, default `"main"`). Add one field to
-the move broadcast payload: `sp: me.space`. On the receiving end (`channel.on("broadcast", { event: "move" }, ...)`), only render/collide
+the move broadcast payload: `sp: me.space`. On the receiving end
+(`channel.on("broadcast", { event: "move" }, ...)`), only render/collide
 with another player if `p.sp === me.space` — this is the entire
 multiplayer mechanism. No new channel, no new sync system.
 
@@ -263,24 +161,21 @@ operating on interior-local coordinates. Breath does not drain at all
 while inside (already true structurally, since interior tiles are never
 `B.DEEP`).
 
-**PART D — the creatures move in, they don't duplicate.**
+**PART D — the creatures move in, they do not duplicate.**
 
 Remove `water_dragon` and `sea_serpent` from the main-grid `wilds.push()`
 spawn path for `B.UWCAVE` tiles entirely — they no longer spawn on the
 surface. Instead, spawn both inside the generated interior the first time
-it's created, using their existing stats and art completely unchanged.
+it is created, using their existing stats and art completely unchanged.
 This is a move, not new content.
 
 **PART E — the resource this biome was always supposed to have.**
 
 New gatherable item, `aquatic_essence` (the bible's own words: "rare
 aquatic resources"), placed as real nodes inside the interior alongside
-the creatures — 3-5 per interior, propose reusing the existing gather-node
-interaction pattern. This is the fix for the gap confirmed a few messages
-back: the bible promised this and nothing was ever built for it. No new
-crafting recipe this version — the resource existing and being gatherable
-is the whole scope here, what it crafts into can come later once there's
-an actual reason to build one.
+the creatures — 3 to 5 per interior, propose reusing the existing
+gather-node interaction pattern. No new crafting recipe this version — the
+resource existing and being gatherable is the whole scope here.
 
 **PART F — exit.**
 
@@ -295,7 +190,7 @@ nearest non-blocked tile if that spot is somehow occupied).
 - Confirm a simulated player in `"main"` and one in a cave `space` do NOT
   render or collide with each other.
 - Confirm the interior is generated deterministically — entering the same
-  cluster twice (simulated) produces identical interior tiles both times.
+  cluster twice produces identical interior tiles both times.
 - Confirm Water Dragon and Sea Serpent no longer spawn via the main-grid
   `wilds` path for any `B.UWCAVE` tile.
 - Confirm both species DO spawn inside a freshly-generated interior.
@@ -303,10 +198,10 @@ nearest non-blocked tile if that spot is somehow occupied).
 - Confirm exiting restores the exact stored surface position.
 - Confirm breath does not drain at any point while `me.space !== "main"`.
 
-**Explicitly not touched this version:** Abyssal Hollow (v30 or later,
-same system reused). Blood Moon, Meteor Shower (pushed back one slot).
-Dungeons themselves — this version builds the pattern they'll need, not
-Dungeons.
+**Explicitly not touched this version:** Abyssal Hollow (same system
+reused later). Blood Moon, Meteor Shower. Dungeons themselves — this
+version builds the pattern they will need, not Dungeons. Mounting — this
+version does not include mounting, that ships separately.
 
 **After v29 ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated with the next
