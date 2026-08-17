@@ -55,6 +55,58 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-18 (v29 — real cave interiors, Underwater Caves as the proof of concept)
+
+Built directly in-session, same as v28. Genuinely new architecture — the
+first system in the game where a player's position isn't just an x,y on
+the one shared grid. Underwater Caves stop being a tinted patch of ocean
+tile and become an actual place you walk into, generated on demand,
+shared with anyone else who finds the same entrance.
+
+- One field, `sp`, added to the move broadcast. The receive side already
+  processes every broadcast on the one channel; it now skips rendering or
+  colliding with anyone whose space doesn't match. No second channel, no
+  new sync system — confirmed and asserted directly, not just claimed.
+- Each interior is a 26x26 grid generated once from a seed derived from
+  the physical cave's own connected-cluster anchor plus `worldSeed` —
+  nothing stored server-side, and two players entering the same cave get
+  provably identical geometry (asserted by regenerating from a cleared
+  cache and diffing every tile).
+- Entry hooks the exact moment breath already stopped draining on a
+  UWCAVE tile — no new detection, the interior IS the air pocket that
+  moment was always describing.
+- Water Dragon and Sea Serpent moved inside — removed from the surface
+  `biomes: []` entirely, not duplicated. Confirmed absent from the
+  surface and confirmed present inside, both directions asserted.
+- `aquatic_essence` — the bible's "rare aquatic resources," promised since
+  the biome list existed and unbuilt until now.
+
+A real bug found and fixed before this shipped: `me.space` was never
+initialized on player construction, only ever set inside `exitInterior()`.
+Every player counted as "inside a cave" from the moment they logged in,
+which silently broke breath everywhere. Fixed by making the interior check
+treat an unset space as "main" rather than trusting every construction
+path to remember a new field — six failing assertions, one root cause.
+
+A second, smaller issue: the debug hook for entering a cave called
+`enterInterior()` directly without first honoring the precondition its
+only real call site guarantees — that the player is already standing on
+the entry tile. Fixed the hook, not the game logic, which was correct the
+whole time.
+
+JUDGMENT CALLS
+
+- **26x26 interior size** — unstated. Big enough to feel like a real
+  space, small enough to generate and render cheaply. Tunable.
+- **3-5 aquatic_essence nodes per interior** — the spec's own range,
+  implemented as `3 + hash(...) * 3`.
+- **A single Water Dragon and single Sea Serpent per interior**, not a
+  population — matches how rare and dangerous finding one should feel,
+  distinct from a normal wilds density.
+- **The exit tile sits at the arrival corner**, not somewhere separate —
+  simplest correct choice for a first version; nothing stops a future
+  version from making entry and exit different points.
+
 ### 2026-08-17 (v28 — full mounting, all nine bible species)
 
 Built directly in-session rather than overnight. Mounting had been deferred
