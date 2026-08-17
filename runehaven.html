@@ -982,6 +982,30 @@ function debugSetAbility(patch) {
   return debugAbilityInfo();
 }
 function debugCombatHandles() { return { others, mobs, projectiles }; }
+/* v31 world-event hooks, same shape as the v27/v28/v29 hooks. */
+function debugEventInfo() {
+  return {
+    BLOOD_MOON_EVERY, BLOOD_MOON_MOB_MULT, BLOOD_MOON_AGGRO_MULT,
+    BLOOD_MOON_RARE_BOOST, METEOR_SLICE_MS, METEOR_CHANCE, METEOR_COUNT,
+    day: worldDayNum(),
+    bloodMoon: bloodMoonActive(),
+    mobMult: bloodMoonMobMult(),
+    meteorActive: meteorShowerActive(),
+    meteorSlice: meteorSliceNow(),
+    sites: meteorSites().map(s => ({ x: s.x, y: s.y, key: s.key })),
+  };
+}
+function debugEventProbe(patch) {
+  /* Pure functions of (day, slice, seed) — the probe recomputes the same
+     answer the real code would for a hypothetical day/slice, without
+     mutating any world state. */
+  const out = {};
+  if ("day" in patch) out.bloodMoonOnDay = (patch.day % BLOOD_MOON_EVERY === 0);
+  if ("slice" in patch) {
+    out.meteorOnSlice = hash2(patch.slice, 7, worldSeed + 9173) < METEOR_CHANCE;
+  }
+  return out;
+}
 /* v29 cave-interior hooks — same shape and reason as the v27/v28 hooks. */
 function debugSpaceInfo() {
   const rec = interiorCache.get(me && me.space);
@@ -1859,8 +1883,9 @@ function featureTypeAt(tx, ty) {
   return null;
 }
 const FEATURE_GIVES = { tree: "wood", rock: "stone", iron: "iron_ore", runic: "runic_stone",
-                        herb: "rare_herb", essence: "magic_essence" };
-const FINITE = new Set(["rock", "iron", "runic", "herb", "essence"]);   // FIX: ore mined once
+                        herb: "rare_herb", essence: "magic_essence",
+                        meteor: "runic_stone" };   // v31: the bible's "rare ore drops"
+const FINITE = new Set(["rock", "iron", "runic", "herb", "essence", "meteor"]);   // FIX: ore mined once
 /* v17: finite, but picked rather than mined — verb + toast wording only */
 const PICKED = new Set(["herb", "essence"]);
 
@@ -1968,7 +1993,14 @@ function buildFeatureList() {
        a shut window means the species never even rolls — the bible's "one day
        window every 10 days", not a reduced chance on the other nine. */
     if (!dayWindowOpen(def)) continue;
-    if (def.presenceRoll && Math.random() > def.presenceRoll) continue;
+    /* v31: the bible's "rare pet spawn chances increase significantly" during
+       a Blood Moon. Applied to the presence roll rather than the count, so a
+       species that normally may not exist at all this session is far more
+       likely to actually be out there. */
+    const presence = def.presenceRoll
+      ? Math.min(0.98, def.presenceRoll + (bloodMoonActive() ? BLOOD_MOON_RARE_BOOST : 0))
+      : null;
+    if (presence && Math.random() > presence) continue;
     let placed = 0;
     /* v17: the placement search is a hashed sample of the map, so a species
        whose biome covers only a handful of tiles (the new rare variants) can
@@ -2015,7 +2047,8 @@ function buildFeatureList() {
       mobs.push({
         id: mk + ":" + tx + "," + ty, kind: mk,
         x: tx + 0.5, y: ty + 0.5, hx: tx + 0.5, hy: ty + 0.5,
-        hp: def.hp, maxHp: def.hp, state: "idle", target: null,
+        hp: Math.round(def.hp * bloodMoonMobMult()),
+        maxHp: Math.round(def.hp * bloodMoonMobMult()), state: "idle", target: null,
         atkAt: 0, windupStart: 0, winding: false, flash: 0, boltT: 0,
         ph: a * 2.3, dead: false, respawnAt: 0, lastSync: 0, fx: 0, fy: 1,
       });
@@ -2802,7 +2835,10 @@ function updateMob(m, dt, t, now) {
   }
   if (m.dead) {
     if (Date.now() >= m.respawnAt) {
-      m.dead = false; m.hp = def.hp; m.x = m.hx; m.y = m.hy; m.state = "idle";
+      m.dead = false;
+      m.hp = Math.round(def.hp * bloodMoonMobMult());   // v31
+      m.maxHp = m.hp;
+      m.x = m.hx; m.y = m.hy; m.state = "idle";
     }
     return;
   }
@@ -2837,7 +2873,9 @@ function updateMob(m, dt, t, now) {
     return;
   }
   // pick target: nearest living player (me or others) in aggro range, not safe-zoned
-  let tgt = null, tgtD = def.aggroRadius, tgtIsMe = false;
+  /* v31: "more aggressive" — mobs notice you from further away on a Blood Moon. */
+  let tgt = null, tgtD = def.aggroRadius * (bloodMoonActive() ? BLOOD_MOON_AGGRO_MULT : 1),
+      tgtIsMe = false;
   if (!dead && !inSafeZone(me.x, me.y)) {
     const d = Math.hypot(me.x - m.x, me.y - m.y);
     if (d < tgtD) { tgt = me; tgtD = d; tgtIsMe = true; }
@@ -2890,8 +2928,9 @@ function updateMob(m, dt, t, now) {
         // mob damage runs the SAME pipeline as PvP — armor + block both work
         // v16: the pet is a body in the fight — if it is the closer target,
         // it eats the blow instead of its owner (this is what pet HP is for)
-        if (petInterposes(m, def)) petTakeDamage(def.dmg);
-        else applyDamage(def.dmg, def.name, { kx: (me.x - m.x) / d, ky: (me.y - m.y) / d, kb: 0.3 });
+        const bmDmg = Math.round(def.dmg * bloodMoonMobMult());   // v31
+        if (petInterposes(m, def)) petTakeDamage(bmDmg);
+        else applyDamage(bmDmg, def.name, { kx: (me.x - m.x) / d, ky: (me.y - m.y) / d, kb: 0.3 });
       }
     }
   }
@@ -3004,6 +3043,62 @@ const DAWN_END = 0.07;
    counter in this file — do not add a second one. */
 function worldDayNum() {
   return Math.floor((Date.now() / 1000 - worldEpoch) / DAY_LENGTH) + 1;
+}
+
+/* ============ v31: WORLD EVENTS ==================================
+   Both events are derived, not broadcast. Every client computes the same
+   answer from worldEpoch + worldSeed, so the whole server sees the same
+   Blood Moon on the same night with no new sync, no new table, and no
+   authority problem over who "started" it.
+
+   NOTE: bloodDecayFrac() further up is NOT this — that is the v12 PvP-kill
+   tame window, which only shares the word "blood". Deliberately distinct
+   names so the two never get confused. */
+const BLOOD_MOON_EVERY = 12;          // bible: "roughly every 12 day cycles"
+const BLOOD_MOON_MOB_MULT = 1.35;     // TUNABLE: mob hp/dmg while it runs
+const BLOOD_MOON_AGGRO_MULT = 1.5;    // TUNABLE: "more aggressive"
+const BLOOD_MOON_RARE_BOOST = 0.30;   // TUNABLE: added to presenceRoll
+
+function bloodMoonActive() {
+  if (!worldEpoch) return false;
+  /* Night only: a "Blood Moon" in daylight reads wrong, and the bible pairs
+     it with mobs being out in force. */
+  return (worldDayNum() % BLOOD_MOON_EVERY === 0) && nightAlpha(getDayT()) > 0.4;
+}
+function bloodMoonMobMult() { return bloodMoonActive() ? BLOOD_MOON_MOB_MULT : 1; }
+
+/* Meteor Shower: "randomly with no fixed pattern". Implemented as a hashed
+   roll per fixed time-slice — unpredictable to a player, identical for every
+   client, and it genuinely cannot be predicted from the day counter the way
+   the Blood Moon can. */
+const METEOR_SLICE_MS = 15 * 60 * 1000;   // a new roll every 15 real minutes
+const METEOR_CHANCE = 0.12;               // TUNABLE: ~1 slice in 8
+const METEOR_COUNT = 14;                  // TUNABLE: ore sites per shower
+function meteorSliceNow() {
+  return Math.floor((Date.now() - worldEpoch * 1000) / METEOR_SLICE_MS);
+}
+function meteorShowerActive() {
+  if (!worldEpoch) return false;
+  return hash2(meteorSliceNow(), 7, worldSeed + 9173) < METEOR_CHANCE;
+}
+/* The sites themselves are hashed off the same slice, so everyone racing for
+   them is racing for the SAME rocks — which is the whole point of the bible's
+   "scramble for players to reach them first". */
+function meteorSites() {
+  if (!meteorShowerActive()) return [];
+  const slice = meteorSliceNow(), out = [];
+  for (let i = 0; i < METEOR_COUNT * 40 && out.length < METEOR_COUNT; i++) {
+    const tx = Math.floor(hash2(i, slice, worldSeed + 4441) * N);
+    const ty = Math.floor(hash2(i, slice + 1, worldSeed + 4447) * N);
+    if (tx < 2 || ty < 2 || tx >= N - 2 || ty >= N - 2) continue;
+    if (!isPlaceableLand(tx, ty)) continue;
+    if (inSafeZone(tx + 0.5, ty + 0.5)) continue;   // no free ore inside spawn
+    const key = "met:" + slice + ":" + tx + "," + ty;
+    if (minedNodes.has(key)) continue;              // someone already claimed it
+    out.push({ type: "meteor", x: tx + 0.5, y: ty + 0.5, tx, ty, key,
+               h: hash2(tx, ty, 91) });
+  }
+  return out;
 }
 /* v25 PART B: the bible's "one day window every 10 days". A species carrying
    dayCycle: N may only roll present on days where dayNum % N === 0; everything
@@ -3631,6 +3726,12 @@ function nearestGatherable() {
     return best;
   }
   const cx = Math.floor(me.x), cy = Math.floor(me.y);
+  /* v31: meteor sites are not in featureIndex — they are derived per slice —
+     so they are checked alongside it, same range, same E key. */
+  for (const f of meteorSites()) {
+    const d = Math.hypot(f.x - me.x, f.y - me.y);
+    if (d < bestD) { best = f; bestD = d; }
+  }
   for (let ty = cy - 2; ty <= cy + 2; ty++) {
     for (let tx = cx - 2; tx <= cx + 2; tx++) {
       const feat = featureIndex.get(tx + "," + ty);
@@ -6091,7 +6192,8 @@ function salamanderRampage(row) {
   const m = {
     id: "salamander_king:rampage:" + row.id, kind: "salamander_king",
     x: spot.x, y: spot.y, hx: spot.x, hy: spot.y,
-    hp: def.hp, maxHp: def.hp, state: "aggro", target: me || null,
+    hp: Math.round(def.hp * bloodMoonMobMult()),
+    maxHp: Math.round(def.hp * bloodMoonMobMult()), state: "aggro", target: me || null,
     atkAt: 0, windupStart: 0, winding: false, flash: 0, boltT: 0,
     ph: 2.3, dead: false, respawnAt: 0, lastSync: 0, fx: 0, fy: 1,
   };
@@ -7214,6 +7316,12 @@ function render(t) {
     if (f.x < minX - 2 || f.x > maxX + 3 || f.y < minY - 2 || f.y > maxY + 3) continue;
     ents.push({ s: f.x + f.y, kind: f.type, f });
   }
+  /* v31: meteor sites are derived per time-slice rather than baked into the
+     feature list at worldgen, because they appear and expire mid-session. */
+  if (!inInterior()) for (const f of meteorSites()) {
+    if (f.x < minX - 2 || f.x > maxX + 3 || f.y < minY - 2 || f.y > maxY + 3) continue;
+    ents.push({ s: f.x + f.y, kind: "meteor", f });
+  }
   for (const rp of ruinPieces) {
     if (rp.x < minX - 2 || rp.x > maxX + 3 || rp.y < minY - 2 || rp.y > maxY + 3) continue;
     ents.push({ s: rp.x + rp.y + (rp.k === "lintelY" ? 0.02 : 0), kind: "ruinpiece", rp });
@@ -7282,6 +7390,15 @@ function render(t) {
     else if (e.kind === "rock") drawRockNode(e.f);
     else if (e.kind === "iron") drawIronNode(e.f);
     else if (e.kind === "runic") drawRunicNode(e.f, t);
+    else if (e.kind === "meteor") {          // v31: fallen ore, still glowing hot
+      const [mx, my] = worldToScreen(e.f.x, e.f.y, 0);
+      const gl = 0.55 + 0.45 * Math.sin(t / 260 + e.f.h * 9);
+      ctx.fillStyle = `rgba(255,150,70,${0.22 * gl})`;
+      ctx.beginPath(); ctx.ellipse(mx, my + 2, 13, 7, 0, 0, Math.PI * 2); ctx.fill();
+      drawRunicNode(e.f, t);
+      ctx.fillStyle = `rgba(255,196,120,${gl})`;
+      ctx.beginPath(); ctx.arc(mx, my - 6, 1.8, 0, Math.PI * 2); ctx.fill();
+    }
     else if (e.kind === "herb") drawHerbNode(e.f, t);
     else if (e.kind === "essence") drawEssenceNode(e.f, t);
     else if (e.kind === "inode") drawEssenceNode({ x: e.nd.x - 0.5, y: e.nd.y - 0.5 }, t);   // v29
@@ -7601,6 +7718,10 @@ function updateHUD(dayT) {
     `<span class="hpnum ${hpPct < 35 ? "low" : ""}">HP ${hpPct}/${me.maxHp}</span>` +
     (Date.now() < tameBuffUntil
       ? `<br><span style="color:#bee078">Shrine blessing ${fmtLeft(tameBuffUntil)}</span>` : "") +
+    (bloodMoonActive()
+      ? `<br><span style="color:#e04a3c">🌑 BLOOD MOON — mobs are stronger and hunting</span>` : "") +
+    (meteorShowerActive()
+      ? `<br><span style="color:#ffb050">☄ METEOR SHOWER — rare ore has fallen</span>` : "") +
     (bloodDecayFrac() > 0
       ? `<br><span style="color:#d0604c">Blooded +${Math.round(15 * bloodDecayFrac())}% (Shadowfox)</span>` : "") +
     /* v21: the breath readout appears only when it means something — while
