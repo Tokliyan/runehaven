@@ -572,6 +572,8 @@ const ITEM_META = {
   runic_longbow:{ name: "Runic Longbow", color: "#5ac8e0", weapon: true },
   venomblade:   { name: "Venomblade",    color: "#5ac8e0", weapon: true },
   runic_axe:    { name: "Runic Axe",     color: "#5ac8e0", weapon: true },
+  iron_pickaxe:  { name: "Iron Pickaxe",  color: "#b8b2a4", weapon: true },   // v30
+  runic_pickaxe: { name: "Runic Pickaxe", color: "#5ac8e0", weapon: true },
   runic_crossbow:{ name: "Runic Crossbow", color: "#5ac8e0", weapon: true },
   mystic_staff: { name: "Mystic Staff",  color: "#5ac8e0", weapon: true },
   dragonsteel_sword: { name: "Dragonsteel Sword", color: "#b06ce0", weapon: true },
@@ -622,6 +624,10 @@ const WEAPONS = {
   runic_blade:      { name: "Runic Blade",       tier: "runic",       type: "melee",  dmg: 25, range: MELEE_RANGE, cd: 450 },
   venomblade:       { name: "Venomblade",        tier: "runic",       type: "melee",  dmg: 20, range: 1.6, cd: 280 },
   runic_axe:        { name: "Runic Axe",         tier: "runic",       type: "melee",  dmg: 28, range: 2.0, cd: 650 },
+  /* v30: pickaxes are genuine weapons too — mediocre in a fight, but their
+     dmg IS their mining power, so tier already scales how fast they dig. */
+  iron_pickaxe:     { name: "Iron Pickaxe",     tier: "iron",        type: "melee",  dmg: 11, range: 1.6, cd: 700 },
+  runic_pickaxe:    { name: "Runic Pickaxe",    tier: "runic",       type: "melee",  dmg: 22, range: 1.6, cd: 680 },
   runic_longbow:    { name: "Runic Longbow",     tier: "runic",       type: "ranged", dmg: 18, range: 11, cd: 550 },
   runic_crossbow:   { name: "Runic Crossbow",    tier: "runic",       type: "ranged", dmg: 22, range: 9.5, cd: 700 },
   mystic_staff:     { name: "Mystic Staff",      tier: "runic",       type: "ranged", dmg: 19, range: 8.5, cd: 600 },
@@ -636,6 +642,9 @@ function weaponKind(id) {
   if (id.includes("sword") || id.includes("blade") && id !== "venomblade") return "sword";
   if (id === "venomblade" || id.includes("dagger")) return "dagger";
   if (id.includes("spear") || id.includes("lance")) return "spear";
+  /* v30: MUST precede the axe check — "pickaxe" contains "axe", and the
+     unmatched fallback is "sword", so order matters twice over. */
+  if (id.includes("pickaxe")) return "pickaxe";
   if (id.includes("axe") || id.includes("hatchet")) return "axe";
   if (id.includes("staff")) return "staff";
   return "sword";
@@ -656,6 +665,11 @@ const RECIPES = [
   { out: "runic_blade",       mats: { runic_stone: 2, iron_bar: 2 },          where: "forge",   label: "Forge Runic Blade" },
   { out: "venomblade",        mats: { runic_stone: 2, iron_bar: 1 },          where: "forge",   label: "Forge Venomblade" },
   { out: "runic_axe",         mats: { runic_stone: 2, iron_bar: 2, wood: 1 }, where: "forge",   label: "Forge Runic Axe" },
+  /* v30: the Pickaxe line. Confirmed absent from the bible's crafting
+     tables — new content, flagged as such. Dragonsteel tier deferred: it
+     requires The Ancient Forge landmark, which is not built yet. */
+  { out: "iron_pickaxe",      mats: { iron_bar: 3, wood: 2 },              where: "forge",   label: "Forge Iron Pickaxe" },
+  { out: "runic_pickaxe",     mats: { runic_stone: 2, iron_bar: 2 },       where: "forge",   label: "Forge Runic Pickaxe" },
   { out: "runic_longbow",     mats: { runic_stone: 2, wood: 3, iron_bar: 1 }, where: "forge",   label: "Craft Runic Longbow" },
   { out: "runic_crossbow",    mats: { runic_stone: 2, wood: 3, iron_bar: 2 }, where: "forge",   label: "Craft Runic Crossbow" },
   { out: "mystic_staff",      mats: { runic_stone: 3, wood: 2 },              where: "forge",   label: "Craft Mystic Staff" },
@@ -993,6 +1007,28 @@ function debugSetAbility(patch) {
   return debugAbilityInfo();
 }
 function debugCombatHandles() { return { others, mobs, projectiles }; }
+function debugV30Info() {
+  const ed = mobs.find(m => m.kind === "elder_drake") || null;
+  return {
+    drake: ed ? { x: ed.x, y: ed.y, hp: ed.hp, maxHp: ed.maxHp,
+                  phase: ed.hp / ed.maxHp > 0.6 ? 1 : (ed.hp / ed.maxHp > 0.3 ? 2 : 3) } : null,
+    drakeCount: mobs.filter(m => m.kind === "elder_drake").length,
+    volcano: { x: VOLCANO.x, y: VOLCANO.y },
+    respawnMs: ELDER_DRAKE_RESPAWN_MS,
+    MOB_K_drake: MOB_K.elder_drake,
+    ruinTemplates: RUINS.map(R => Math.floor(hash2(R.x, R.y, worldSeed + 77) * 3)),
+    ruinPieceCount: ruinPieces.length,
+    NODE_HP, nodeHPLive: Array.from(nodeHP.entries()),
+    pickaxeKind: weaponKind("iron_pickaxe"),
+    axeKind: weaponKind("runic_axe"),
+    pickaxeRecipes: RECIPES.filter(r => r.out.includes("pickaxe")).map(r => r.out),
+  };
+}
+function debugSetDrake(patch) {
+  const ed = mobs.find(m => m.kind === "elder_drake");
+  if (ed && patch && "hp" in patch) ed.hp = patch.hp;
+  return debugV30Info();
+}
 /* v31 world-event hooks, same shape as the v27/v28/v29 hooks. */
 function debugEventInfo() {
   return {
@@ -1110,6 +1146,14 @@ let mountDebugPetCombatRan = false;
    encounters rather than the same crowding spread over more room. Again only
    the counts moved. */
 const MOBS = {
+  /* v30: the bible's only boss-tier creature. count:1 because it is a named
+     world boss, not a spawned population — and a 6h respawn so killing it
+     stays an event rather than a farm. */
+  elder_drake: { name: "Elder Drake", biomes: [], hp: 900, dmg: 28, atkRange: 3.5,
+    atkCooldownMs: 1400, windupMs: 900, aggroRadius: 14, leashRadius: 24,
+    moveSpeed: 1.6, count: 1, tameable: false,
+    loot: [{ type: "dragonsteel", qty: 1, chance: 1.0 },
+           { type: "runic_stone", qty: 3, chance: 1.0 }] },
   goblin: { name: "Goblin", biomes: [B.FOREST, B.PLAINS], hp: 40, dmg: 6,  atkRange: 1.4, atkCooldownMs: 1400, windupMs: 550, aggroRadius: 5,   leashRadius: 11, moveSpeed: 1.55, count: 9, tameable: false,
     loot: [{ type: "wood", qty: 2, chance: 0.8 }, { type: "stone", qty: 1, chance: 0.5 }, { type: "iron_ore", qty: 1, chance: 0.2 }] },
   bandit: { name: "Bandit", biomes: [B.PLAINS, B.RUINB], hp: 55, dmg: 9,  atkRange: 1.5, atkCooldownMs: 1600, windupMs: 550, aggroRadius: 6.5, leashRadius: 13, moveSpeed: 1.85, count: 9, tameable: false,
@@ -1937,7 +1981,12 @@ function featureTypeAt(tx, ty) {
 const FEATURE_GIVES = { tree: "wood", rock: "stone", iron: "iron_ore", runic: "runic_stone",
                         herb: "rare_herb", essence: "magic_essence",
                         meteor: "runic_stone" };   // v31: the bible's "rare ore drops"
-const FINITE = new Set(["rock", "iron", "runic", "herb", "essence", "meteor"]);   // FIX: ore mined once
+const FINITE = new Set(["rock", "iron", "runic", "herb", "essence", "meteor"]);
+/* v30: node durability. Ore is tougher than wood; herb/essence stay a
+   one-press pick since they are gathered, not mined. */
+const NODE_HP = { tree: 30, rock: 40, iron: 50, runic: 55, meteor: 50, herb: 1, essence: 1 };
+const ELDER_DRAKE_RESPAWN_MS = 6 * 60 * 60 * 1000;   // v30: 6 real hours
+const nodeHP = new Map();   // key -> remaining hp, cleared when the node dies   // FIX: ore mined once
 /* v17: finite, but picked rather than mined — verb + toast wording only */
 const PICKED = new Set(["herb", "essence"]);
 
@@ -2083,6 +2132,23 @@ function buildFeatureList() {
   }
   // v13: hostile mob spawns — same hashed-placement pattern as wilds
   mobs = [];
+  /* v30: the Elder Drake is placed by hand, not by the hashed loop — it has
+     biomes:[] so the loop skips it entirely. One drake, near the Volcano,
+     the same fixed point for every player. */
+  const edPlace = () => {
+    for (let r = 3; r < 26; r++) {
+      for (let a = 0; a < 24; a++) {
+        const ang = (a / 24) * Math.PI * 2;
+        const tx = Math.round(VOLCANO.x + Math.cos(ang) * r);
+        const ty = Math.round(VOLCANO.y + Math.sin(ang) * r);
+        if (tx < 2 || ty < 2 || tx >= N - 2 || ty >= N - 2) continue;
+        const b = biomeAt(tx, ty);
+        if (b !== B.VOLROCK && b !== B.ROCK && b !== B.CALDERA) continue;
+        return [tx, ty];
+      }
+    }
+    return null;
+  };
   let mobSeed = 500;
   for (const [mk, def] of Object.entries(MOBS)) {
     mobSeed += 173;
@@ -2109,7 +2175,24 @@ function buildFeatureList() {
   }
   /* v20: one shared ruinPieces array, one cluster appended per Ruin centre. */
   ruinPieces = [];
-  for (const R of RUINS) buildRuinCluster(R);
+  /* v30: each ruin deterministically picks one of three layouts from its own
+     anchor, so the same ruin always looks the same for every player. */
+  /* v30: place the world boss now that the normal mob loop is done. */
+  {
+    const spot = edPlace();
+    if (spot) {
+      const ed = MOBS.elder_drake;
+      mobs.push({
+        id: "elder_drake:" + spot[0] + "," + spot[1], kind: "elder_drake",
+        x: spot[0] + 0.5, y: spot[1] + 0.5, hx: spot[0] + 0.5, hy: spot[1] + 0.5,
+        hp: Math.round(ed.hp * bloodMoonMobMult()),
+        maxHp: Math.round(ed.hp * bloodMoonMobMult()), state: "idle", target: null,
+        atkAt: 0, windupStart: 0, winding: false, flash: 0, boltT: 0,
+        ph: 1.7, dead: false, respawnAt: 0, lastSync: 0, fx: 0, fy: 1, boss: true,
+      });
+    }
+  }
+  for (const R of RUINS) buildRuinCluster(R, Math.floor(hash2(R.x, R.y, worldSeed + 77) * 3));
   /* v20: each Other Safe Zone is anchored by the existing ruin "well" set
      piece — the same stone well art, reused, no new drawing code. */
   for (const z of OTHER_SAFE_ZONES) ruinPieces.push({ k: "well", x: z.x, y: z.y });
@@ -2119,32 +2202,49 @@ function buildFeatureList() {
    deliberately arranged, open ground between them — not random rubble. */
 /* v20: was buildRuinPieces() building the one RUIN. Same composition, now
    built per centre and appended to the shared array — the caller resets it. */
-function buildRuinCluster(center) {
+function buildRuinCluster(center, template) {
   const R = center;
-  // Broken wall run along the north side, one gap, uneven heights
-  const wallSegs = [[-2.4, -2.2], [-1.4, -2.2], [-0.4, -2.2], [1.6, -2.2], [2.6, -2.2]];
-  wallSegs.forEach(([ox, oy], i) => {
-    ruinPieces.push({ k: "wallX", x: R.x + ox, y: R.y + oy, hp: 13 + hash2(i, 3, worldSeed) * 15 });
-  });
-  // Corner fragment (two short walls meeting) on the south-west
-  ruinPieces.push({ k: "wallX", x: R.x - 2.3, y: R.y + 2.0, hp: 25 });
-  ruinPieces.push({ k: "wallY", x: R.x - 2.7, y: R.y + 1.4, hp: 21 });
-  // Standing archway on the east: two columns carrying a lintel
-  ruinPieces.push({ k: "col", x: R.x + 2.4, y: R.y + 0.4, hp: 28 });
-  ruinPieces.push({ k: "col", x: R.x + 2.4, y: R.y + 1.6, hp: 28 });
-  ruinPieces.push({ k: "lintelY", x: R.x + 2.4, y: R.y + 1.0, z: 28 });
-  // One fallen column and sparse rubble, well spaced
-  ruinPieces.push({ k: "fallen", x: R.x - 0.3, y: R.y + 0.9 });
-  ruinPieces.push({ k: "rubble", x: R.x + 0.9, y: R.y - 0.8 });
-  ruinPieces.push({ k: "rubble", x: R.x - 1.4, y: R.y - 0.4 });
-  ruinPieces.push({ k: "col", x: R.x + 0.2, y: R.y + 2.3, hp: 12 });
-  // v8: stone well in the open ground — furniture, not a composition change
-  ruinPieces.push({ k: "well", x: R.x - 0.6, y: R.y + 0.1 });
-  /* v20: dark entrance set into the gap in the north wall run (segments sit
-     at x -2.4/-1.4/-0.4 and 1.6/2.6, so +0.6 is the gap). Bible: "Ruins —
-     ... dungeon entrances". Visual only — nothing behind it is enterable in
-     this version. */
-  ruinPieces.push({ k: "entrance", x: R.x + 0.6, y: R.y - 2.2 });
+
+  if (template === 1) {
+    // "Collapsed Tower" — dense, circular, total-collapse composition
+    const fallenAngles = [0, 0.9, 1.8, 2.7, 3.6, 4.5];
+    fallenAngles.forEach((a, i) => {
+      ruinPieces.push({ k: "fallen", x: R.x + Math.cos(a) * 1.6, y: R.y + Math.sin(a) * 1.6 });
+    });
+    ruinPieces.push({ k: "col", x: R.x + 0.3, y: R.y - 0.4, hp: 34 }); // one surviving fragment, off-center
+    ruinPieces.push({ k: "rubble", x: R.x - 2.2, y: R.y + 0.6 });
+    ruinPieces.push({ k: "rubble", x: R.x + 2.0, y: R.y - 1.4 });
+    ruinPieces.push({ k: "rubble", x: R.x - 0.6, y: R.y + 2.4 });
+    ruinPieces.push({ k: "entrance", x: R.x + 2.6, y: R.y + 0.2 });
+  } else if (template === 2) {
+    // "Sunken Courtyard" — open, sparse, boundary-only
+    ruinPieces.push({ k: "well", x: R.x, y: R.y });
+    ruinPieces.push({ k: "wallX", x: R.x - 2.8, y: R.y - 2.4, hp: 10 + hash2(0, 3, worldSeed) * 12 });
+    ruinPieces.push({ k: "wallX", x: R.x + 1.6, y: R.y - 2.4, hp: 10 + hash2(1, 3, worldSeed) * 12 });
+    ruinPieces.push({ k: "wallY", x: R.x - 3.0, y: R.y - 1.0, hp: 15 });
+    ruinPieces.push({ k: "wallY", x: R.x + 2.8, y: R.y - 0.6, hp: 15 });
+    ruinPieces.push({ k: "rubble", x: R.x - 1.2, y: R.y + 1.8 });
+    ruinPieces.push({ k: "rubble", x: R.x + 1.4, y: R.y + 2.0 });
+    ruinPieces.push({ k: "col", x: R.x - 2.6, y: R.y + 2.2, hp: 18 });
+    ruinPieces.push({ k: "entrance", x: R.x - 0.6, y: R.y - 2.4 });
+  } else {
+    // template 0 — the original "broken wall + archway" layout, unchanged
+    const wallSegs = [[-2.4, -2.2], [-1.4, -2.2], [-0.4, -2.2], [1.6, -2.2], [2.6, -2.2]];
+    wallSegs.forEach(([ox, oy], i) => {
+      ruinPieces.push({ k: "wallX", x: R.x + ox, y: R.y + oy, hp: 13 + hash2(i, 3, worldSeed) * 15 });
+    });
+    ruinPieces.push({ k: "wallX", x: R.x - 2.3, y: R.y + 2.0, hp: 25 });
+    ruinPieces.push({ k: "wallY", x: R.x - 2.7, y: R.y + 1.4, hp: 21 });
+    ruinPieces.push({ k: "col", x: R.x + 2.4, y: R.y + 0.4, hp: 28 });
+    ruinPieces.push({ k: "col", x: R.x + 2.4, y: R.y + 1.6, hp: 28 });
+    ruinPieces.push({ k: "lintelY", x: R.x + 2.4, y: R.y + 1.0, z: 28 });
+    ruinPieces.push({ k: "fallen", x: R.x - 0.3, y: R.y + 0.9 });
+    ruinPieces.push({ k: "rubble", x: R.x + 0.9, y: R.y - 0.8 });
+    ruinPieces.push({ k: "rubble", x: R.x - 1.4, y: R.y - 0.4 });
+    ruinPieces.push({ k: "col", x: R.x + 0.2, y: R.y + 2.3, hp: 12 });
+    ruinPieces.push({ k: "well", x: R.x - 0.6, y: R.y + 0.1 });
+    ruinPieces.push({ k: "entrance", x: R.x + 0.6, y: R.y - 2.2 });
+  }
 }
 function removeFeature(key) {
   const f = featureIndex.get(key);
@@ -2949,8 +3049,15 @@ function updateMob(m, dt, t, now) {
 
   if (m.state === "idle") {
     // deterministic drift near home — same language as wild wander
-    const dx2 = m.hx + Math.cos(t / 8000 + m.ph) * 0.8 - m.x;
-    const dy2 = m.hy + Math.sin(t / 6500 + m.ph * 1.3) * 0.6 - m.y;
+    /* v30: a real patrol, not the old fixed 0.8-tile shuffle. Amplitude
+       scales with the mob's own leashRadius (already per-species, no new
+       stat), and a pause/move cycle keyed off m.ph means they do not all
+       drift in sync. */
+    const amp = Math.min((def.leashRadius || 10) * 0.4, 4);
+    const cyc = (t / 1000 + m.ph * 7) % 8;
+    const moving30 = cyc > 4.5;              // ~3.5s paused, ~3.5s moving
+    const dx2 = moving30 ? (m.hx + Math.cos(t / 4200 + m.ph) * amp - m.x) : 0;
+    const dy2 = moving30 ? (m.hy + Math.sin(t / 3600 + m.ph * 1.3) * amp * 0.75 - m.y) : 0;
     m.x += dx2 * Math.min(1, dt * 1.5);
     m.y += dy2 * Math.min(1, dt * 1.5);
     if (Math.abs(dx2) > 0.05) { m.fx = Math.sign(dx2); m.fy = 0; }
@@ -2981,6 +3088,36 @@ function updateMob(m, dt, t, now) {
         // v16: the pet is a body in the fight — if it is the closer target,
         // it eats the blow instead of its owner (this is what pet HP is for)
         const bmDmg = Math.round(def.dmg * bloodMoonMobMult());   // v31
+        /* v30: the Elder Drake's three phases. Both special attacks reuse
+           v27 combat shapes rather than inventing new ones — the sweep is
+           the spear's cone at a wider angle, the breath is the staff's
+           splash used as an area hit. */
+        if (m.kind === "elder_drake") {
+          const frac = m.hp / (m.maxHp || 1);
+          const phase = frac > 0.6 ? 1 : (frac > 0.3 ? 2 : 3);
+          if (phase >= 2) {
+            const half = phase === 3 ? Math.PI * 0.5 : (50 * Math.PI / 180);
+            const reach = phase === 3 ? 6.5 : 5.0;
+            const aim = Math.atan2(me.y - m.y, me.x - m.x);
+            for (const [, o2] of others) {
+              if (o2.dead) continue;
+              if ((o2.space || "main") !== (me.space || "main")) continue;
+              const d2 = Math.hypot(o2.x - m.x, o2.y - m.y);
+              if (d2 > reach) continue;
+              if (Math.abs(Math.atan2(o2.y - m.y, o2.x - m.x) - aim) > half) continue;
+              dealHit(o2.name || o2.u, Math.round(bmDmg * 0.8), { kb: 0.5 });
+            }
+            const dMe = Math.hypot(me.x - m.x, me.y - m.y);
+            if (dMe <= reach && Math.abs(Math.atan2(me.y - m.y, me.x - m.x) - aim) <= half) {
+              applyDamage(Math.round(bmDmg * (phase === 3 ? 1.15 : 0.9)), def.name,
+                { kx: (me.x - m.x) / (dMe || 1), ky: (me.y - m.y) / (dMe || 1), kb: 0.6 });
+              shakeT = performance.now();
+            }
+            m.atkAt = now;
+            m.winding = false;
+            return;
+          }
+        }
         if (petInterposes(m, def)) petTakeDamage(bmDmg);
         else applyDamage(bmDmg, def.name, { kx: (me.x - m.x) / d, ky: (me.y - m.y) / d, kb: 0.3 });
       }
@@ -3247,7 +3384,10 @@ async function joinRealtime() {
   channel.on("broadcast", { event: "mob_dead" }, ({ payload: p }) => {
     const m = mobs.find(x => x.id === p.id);
     if (!m) return;
-    m.dead = true; m.hp = 0; m.respawnAt = p.until || (Date.now() + MOB_RESPAWN_MS);
+    m.dead = true; m.hp = 0;
+    /* v30: a world boss that respawns like a goblin is not a world boss. */
+    m.respawnAt = p.until || (Date.now() +
+      (m.kind === "elder_drake" ? ELDER_DRAKE_RESPAWN_MS : MOB_RESPAWN_MS));
   });
 
   channel.on("broadcast", { event: "mob_sync" }, ({ payload: p }) => {
@@ -3868,7 +4008,31 @@ async function doInteract() {
     return;
   }
   if (g) {
+    /* v30: gathering is no longer instant. Each node has HP and each press
+       deals the equipped weapon's own dmg to it — so a Dragonsteel axe
+       genuinely chops faster than an Iron one, using a stat that already
+       exists rather than a new "mining power" number.
+       Deliberately NOT applied to the g._node interior branch above: those
+       are a collected resource, not something you mine through. */
+    const kind30 = weaponKind(me.equipped);
+    const isOre30 = (g.type === "rock" || g.type === "iron" ||
+                     g.type === "runic" || g.type === "meteor");
+    if (isOre30 && kind30 !== "axe" && kind30 !== "pickaxe") {
+      toast("You need an axe or a pickaxe for that"); return;
+    }
+    if (g.type === "tree" && kind30 !== "axe" && kind30 !== "pickaxe") {
+      toast("You need an axe for that"); return;
+    }
+    const maxHp30 = NODE_HP[g.type] || 30;
+    const nkey30 = g.key || ("t:" + Math.floor(g.x) + "," + Math.floor(g.y));
+    const cur30 = (nodeHP.get(nkey30) ?? maxHp30) - Math.max(4, (WEAPONS[me.equipped] || {}).dmg || 6);
     lastGather = now;
+    if (cur30 > 0) {
+      nodeHP.set(nkey30, cur30);
+      burst(g.x, g.y, "#c9bfa4", 3, 1);
+      return;                                   // still chipping away at it
+    }
+    nodeHP.delete(nkey30);
     const got = FEATURE_GIVES[g.type];
     burst(g.x, g.y, ITEM_META[got].color, 7, 2);
     if (FINITE.has(g.type)) {
@@ -5519,7 +5683,8 @@ const SPECIES_K = {
   crystal_golem: 1.70,                                // hotfix: matches golem's new size ratio
   krakenling: 1.10, salamander_king: 1.20,
 };
-const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94, dark_wraith: 1.30, sea_serpent: 2.85 };
+const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94, dark_wraith: 1.30, sea_serpent: 2.85,
+  elder_drake: 3.40 };   // v30: the largest thing in the world, by design
 /* hotfix: sea_serpent was already the single largest creature in the game
    by a wide margin (2.60, next highest was troll at 1.94) — bumped more
    modestly than the others since it was already dominant in scale.
@@ -6797,6 +6962,38 @@ function drawSpecies(species, sx, sy, t, moving) {
      One branch serves both forms, the same way every v14 fight-to-tame species
      does: the tamed companion and the hostile mob it becomes after a rampage
      are the same creature and draw from here. */
+  } else if (species === "elder_drake") {
+
+        const stride = Math.sin(t / 260) * 1.4;
+        P(ctx, [sx - 14, sy - 1, sx - 11, sy - 9, sx + 9, sy - 10, sx + 15, sy - 2, sx + 10, sy + 2, sx - 8, sy + 2.5], "#2a2622"); // body
+        P(ctx, [sx - 11, sy - 9, sx + 9, sy - 10, sx + 6, sy - 5.5, sx - 8, sy - 5], "#403a34");   // back highlight
+        for (let i = 0; i < 7; i++) {                                                            // full-spine spike ridge
+          const rx = sx - 10 + i * 3.6, ry = sy - 9.4 + Math.sin(i * 0.5) * 1.2;
+          P(ctx, [rx - 1, ry, rx + 1, ry, rx, ry - 3.4 - (i % 3)], "#17140f");
+        }
+        ctx.fillStyle = "#c8501e";                                                                // ember cracks
+        for (let i = 0; i < 5; i++) {
+          const cx = sx - 8 + i * 4.4, cy = sy - 4 + Math.sin(i * 1.7) * 2;
+          ctx.fillRect(cx, cy, 1.6, 0.6); ctx.fillRect(cx + 0.4, cy + 0.8, 0.6, 1.2);
+        }
+        P(ctx, [sx - 14, sy - 1, sx - 20, sy - 3.4, sx - 21, sy + 0.6, sx - 15, sy + 1.6], "#221f1b"); // head/jaw
+        P(ctx, [sx - 20, sy - 3.4, sx - 21, sy + 0.6, sx - 24, sy + 0.4, sx - 22.4, sy - 3.8], "#17140f"); // lower jaw
+        ctx.fillStyle = "#f4f0e0";                                                                 // teeth
+        for (let i = 0; i < 4; i++) ctx.fillRect(sx - 21.4 - i * 0.9, sy - 2.2 + i * 0.7, 0.7, 1.4);
+        P(ctx, [sx - 19, sy - 3.6, sx - 17.6, sy - 7.2, sx - 16.4, sy - 3.4], "#0d0b09");           // single low horn
+        EY(ctx, sx - 18, sy - 2, 1.3, "#ff9838", "#1a0e04");
+        P(ctx, [sx - 8, sy + 2.5, sx - 6.6, sy + 6.4, sx - 4.6, sy + 6.2, sx - 5.8, sy + 2.2], "#221f1b"); // front leg
+        P(ctx, [sx + 6, sy + 1.4, sx + 7.2, sy + 6, sx + 9.2, sy + 5.8, sx + 8.4, sy + 1.2], "#17140f");   // back leg
+        ctx.fillStyle = "#0d0b09";                                                                 // claws
+        P(ctx, [sx - 7, sy + 6.4, sx - 6.2, sy + 8, sx - 5, sy + 6.6], "#0d0b09");
+        P(ctx, [sx + 7.6, sy + 6, sx + 8.6, sy + 7.6, sx + 9.8, sy + 6.2], "#0d0b09");
+        P(ctx, [sx + 15, sy - 2, sx + 24 + stride, sy - 4 + stride * 0.6, sx + 23 + stride, sy - 0.4], "#2a2622"); // tail
+        P(ctx, [sx + 24 + stride, sy - 4 + stride * 0.6, sx + 30 + stride, sy - 3 + stride * 0.5, sx + 28 + stride, sy], "#221f1b");
+        for (let i = 0; i < 3; i++) {
+          const tx2 = sx + 24 + stride + i * 2.6, ty2 = sy - 3.4 + stride * 0.5;
+          P(ctx, [tx2 - 0.6, ty2, tx2 + 0.6, ty2, tx2, ty2 - 2], "#17140f");
+        }
+
   } else if (species === "salamander_king") {
 
     P(ctx, [sx - 8, sy, sx - 6, sy - 4, sx + 4, sy - 4.4, sx + 7, sy], "#d84a28");              // body
