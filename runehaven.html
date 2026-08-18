@@ -120,7 +120,10 @@
   .hud .hpnum.low { color: var(--danger); }
 
   #hpBarWrap {
-    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    /* hotfix: was centred bottom, directly over the hint bar text — which
+       grew to 10 keybinds across v23/v27/v28 and now runs the full width.
+       Moved to the bottom-right corner, clear of it entirely. */
+    position: fixed; bottom: 16px; right: 16px;
     width: 270px; height: 16px; background: rgba(8,10,16,0.85);
     border: 1px solid var(--panel-edge); z-index: 5; border-radius: 8px; overflow: hidden;
   }
@@ -3041,7 +3044,15 @@ function updateMob(m, dt, t, now) {
   if (tgt && fromHome < def.leashRadius) {
     m.state = tgtD <= def.atkRange ? "attack" : "aggro";
     m.target = tgt;
-  } else if (fromHome > 0.6) {
+  /* hotfix: this threshold decides idle vs leash, but v30's wander code lets
+     a mob range up to `amp` tiles from home while still "idle" — the old
+     fixed 0.6 was tuned for the pre-v30 ~0.8-tile shuffle, so a wandering
+     mob would exceed it mid-patrol, get reclassified as "leash", get yanked
+     straight back by a different movement branch, drop back under 0.6,
+     flip back to "idle", and repeat — dozens of times a second. Confirmed
+     by simulation: 164 state flips in 10 seconds before this fix. Scaling
+     the threshold to match the same amp the wander code actually uses. */
+  } else if (fromHome > Math.min(def.leashRadius * 0.4, 4) + 0.5) {
     m.state = "leash"; m.target = null; m.winding = false;
   } else {
     m.state = "idle"; m.target = null; m.winding = false;
@@ -4014,15 +4025,14 @@ async function doInteract() {
        exists rather than a new "mining power" number.
        Deliberately NOT applied to the g._node interior branch above: those
        are a collected resource, not something you mine through. */
+    /* HOTFIX, same day: the original hard gate below completely locked new
+       players out of the game — starting inventory is empty ({}), and
+       every recipe needs wood + iron_bar, both of which required a tool
+       to gather that itself required those same materials to craft. No
+       way in, ever. Tools now make gathering FASTER (via their real dmg
+       stat, unchanged) rather than being a hard requirement — matches the
+       actual intent ("better tools mine faster") without the lockout. */
     const kind30 = weaponKind(me.equipped);
-    const isOre30 = (g.type === "rock" || g.type === "iron" ||
-                     g.type === "runic" || g.type === "meteor");
-    if (isOre30 && kind30 !== "axe" && kind30 !== "pickaxe") {
-      toast("You need an axe or a pickaxe for that"); return;
-    }
-    if (g.type === "tree" && kind30 !== "axe" && kind30 !== "pickaxe") {
-      toast("You need an axe for that"); return;
-    }
     const maxHp30 = NODE_HP[g.type] || 30;
     const nkey30 = g.key || ("t:" + Math.floor(g.x) + "," + Math.floor(g.y));
     const cur30 = (nodeHP.get(nkey30) ?? maxHp30) - Math.max(4, (WEAPONS[me.equipped] || {}).dmg || 6);
