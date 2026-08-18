@@ -55,6 +55,50 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-18 (v30 — Elder Drake, ruin variety, idle-wander, real gathering + Pickaxe)
+
+Four systems in one version. Built in-session after the spec was recovered
+from git history — it had been accidentally overwritten by the v32 spec
+push while NEXT_BUILD.md still pointed at it, which would have failed the
+overnight run with nothing to build.
+
+- **Elder Drake** — the bible's only boss-tier creature, absent from the
+  game until now. 900hp/28dmg, one instance, hand-placed near the Volcano
+  rather than by the hashed spawn loop (biomes:[] so the loop skips it).
+  Guaranteed Dragonsteel. 6-hour respawn. Three phases: normal above 60%,
+  a 50-degree cone sweep below it, a 90-degree breath below 30% — both
+  specials reuse v27's spear-cone and staff-splash shapes rather than
+  inventing new combat code.
+- **Ruin variety** — all six ruins previously called one hardcoded layout.
+  Now three (original, Collapsed Tower, Sunken Courtyard), picked
+  deterministically from each ruin's own anchor so it never changes.
+- **Idle-wander** — the old fixed 0.8-tile shuffle became a patrol scaled
+  to each mob's own leashRadius, with a real ~3.5s pause / ~3.5s move
+  cycle keyed off m.ph so mobs do not drift in sync.
+- **Real gathering** — nodes have HP, each press deals the equipped
+  weapon's own dmg, so tier already controls mining speed with no new
+  stat. Ore needs an axe or pickaxe. Pickaxe added at Iron and Runic
+  (Dragonsteel deferred: needs The Ancient Forge, unbuilt). weaponKind()
+  checks "pickaxe" BEFORE "axe" — "pickaxe" contains "axe", and the
+  unmatched fallback is "sword", so order mattered twice.
+
+Interior cave nodes were deliberately left as a one-press pick — they are
+a gathered resource, not something you mine through, and v29/v32's branch
+was left untouched.
+
+Three v13/v20 assertions were updated rather than forced: sea_serpent is
+still the hardest NON-BOSS mob (which is what it always meant), and the
+fixed per-piece ruin census no longer describes a world with three layouts.
+
+JUDGMENT CALLS
+- **900hp/28dmg, 6h respawn, MOB_K 3.40** — all unstated; sized so the
+  drake is unambiguously the largest and hardest thing in the world.
+- **Node HP 30 wood / 40-55 ore** — unstated. Ore tougher than wood.
+- **Pickaxe stats (11 and 22 dmg)** — deliberately weaker than the axe
+  line in a fight, since their dmg doubles as mining power.
+- **Cone angles 50 and 90 degrees** — unstated; wide enough that phase 3
+  is genuinely hard to sidestep.
+
 ### 2026-08-18 (v32 — Abyssal Hollow, reusing v29's interior system)
 
 Second interior-bearing biome. Generalized v29's system rather than
