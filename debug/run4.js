@@ -379,6 +379,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         if (def.presenceRoll || def.fightToTame) continue;
         const n2 = spawned.filter(s => s === k).length;
         if (k === 'water_dragon') continue;   // v29: lives inside caves now
+        if (k === 'shadow_dragon') continue;  // v32: lives inside the Hollow now
         results.push([`${k} still spawns after the density cut (${n2})`, n2 > 0]);
       }
       for (const k of ['goblin', 'bandit', 'troll', 'boar', 'bear', 'griffin', 'phoenix']) {
@@ -635,6 +636,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           if (window.biomeAt(x, y) !== B2.DEEP) continue;
           const nb = window.biomeAt(x + 1, y);
           if (nb === B2.DEEP || nb === B2.PEAK || nb === B2.LAVA) continue;
+          /* v32: UWCAVE and ABYSSAL are doorways now, not standable shore —
+             standing on one pulls the player into its interior, which is
+             correct game behaviour but makes it a useless test anchor. */
+          if (nb === B2.UWCAVE || nb === B2.ABYSSAL) continue;
+          if (window.biomeAt(x, y) === B2.ABYSSAL) continue;
           if (Math.hypot(x - SPX(), y - SPY()) < 60) continue;   // well outside any safe zone
           edge = [x, y]; break;
         }
@@ -819,17 +825,16 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push([`every Storm Dragon stands on a PEAK tile`,
         sdSpots.length > 0 && sdSpots.every(w =>
           window.biomeAt(Math.floor(w.x), Math.floor(w.y)) === B2.PEAK)]);
-      results.push([`Shadow Dragon reaches the Abyssal Hollow (${kdSpots.length} spawned)`,
-        kdSpots.length === 3]);
-      results.push([`every Shadow Dragon stands on an ABYSSAL tile`,
-        kdSpots.length > 0 && kdSpots.every(w =>
-          window.biomeAt(Math.floor(w.x), Math.floor(w.y)) === B2.ABYSSAL)]);
+      /* v32 CHANGED THIS DELIBERATELY: Shadow Dragon moved INSIDE the
+         Abyssal Hollow interiors, same as Water Dragon in v29. No surface
+         spawn at all — interior spawn is proven in the v32 block. */
+      results.push([`Shadow Dragon no longer spawns on the surface (${kdSpots.length})`,
+        kdSpots.length === 0]);
       results.push(['Storm Dragon spawns on PEAK ONLY',
         info.WILD_SPECIES.storm_dragon.biomes.length === 1 &&
         info.WILD_SPECIES.storm_dragon.biomes[0] === B2.PEAK]);
-      results.push(['Shadow Dragon spawns in the Abyssal Hollow ONLY (Dark Dungeons deferred)',
-        info.WILD_SPECIES.shadow_dragon.biomes.length === 1 &&
-        info.WILD_SPECIES.shadow_dragon.biomes[0] === B2.ABYSSAL]);
+      results.push(['Shadow Dragon has no surface biome left — it lives inside',
+        info.WILD_SPECIES.shadow_dragon.biomes.length === 0]);
 
       /* B.PEAK is in BLOCKED and always has been (Griffin has spawned there
          since v14), so a Storm Dragon deep inside a massif can be seen but
@@ -865,9 +870,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       // the Shadow Dragon's own biome is walkable, so every one of them is
       // reachable by definition once a diver gets there — assert it anyway
-      results.push([`every Shadow Dragon stands somewhere a player can stand`,
-        kdSpots.length > 0 && kdSpots.every(w =>
-          dbk0 && dbk0(window.biomeAt(Math.floor(w.x), Math.floor(w.y))) === false)]);
+      /* v32: retired — Shadow Dragon is no longer on the surface grid. */
 
       // ===== v19 PART E: the scale-up's own proof gates =====
       const H = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -2254,6 +2257,46 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         gameScript.indexOf('function bloodMoonActive()') > 0]);
     } else {
       results.push(['v31 world-event hooks are reachable', false]);
+    }
+
+    /* ===================== v32: Abyssal Hollow interiors ==================== */
+    if (typeof window.debugSetSpace === 'function') {
+      const dspc32 = window.debugSpaceInfo, dssp32 = window.debugSetSpace;
+      const wi32 = window.debugWorldInfo(); const N32 = wi32.N, B32 = wi32.B;
+      let ab = null;
+      for (let y = 0; y < N32 && !ab; y++) for (let x = 0; x < N32; x++) {
+        if (window.biomeAt(x, y) === B32.ABYSSAL) { ab = [x, y]; break; }
+      }
+      results.push(['an ABYSSAL tile exists in the test seed', !!ab]);
+      if (ab) {
+        dssp32({ clearCache: true });
+        dssp32({ enterAt: ab, biome: B32.ABYSSAL });
+        const s32 = dspc32();
+        results.push(['entering the Hollow leaves "main"', s32.inInterior === true]);
+        results.push(['the Hollow gets its own space kind, distinct from uwcave',
+          String(s32.space).indexOf('cave:abyssal:') === 0]);
+        results.push(['Shadow Dragon spawns inside the Hollow interior',
+          (s32.wilds || []).some(w => w.species === 'shadow_dragon')]);
+        results.push(['no Sea Serpent inside the Hollow — that is a UWCAVE creature',
+          (s32.mobs || []).length === 0]);
+        results.push(['void_shard nodes exist inside (3-5, same as v29 scope)',
+          (s32.nodes || []).length >= 3 && (s32.nodes || []).length <= 5]);
+        /* The gather PLUMBING is already proven by v29's identical interior
+           test; what v32 changes is which resource the node carries. Asserted
+           directly, because doInteract() will prefer taming the Shadow Dragon
+           that also lives in here if it happens to be the nearer target. */
+        results.push(['Hollow nodes carry void_shard, not aquatic_essence',
+          (s32.nodes || []).length > 0 &&
+          (s32.nodes || []).every(n => n.type === 'void_shard')]);
+        results.push(['void_shard is a real registered item with a name and colour',
+          !!(window.debugWorldInfo().ITEM_META || {}).void_shard ||
+          gameScript.indexOf('void_shard: { name: "Void Shard"') > 0]);
+        results.push(['the flood-fill was generalized, not duplicated',
+          gameScript.indexOf('function clusterAnchor(tx, ty, biomeConst)') > 0]);
+        results.push(['the Hollow reuses v29\'s interior system, no second one',
+          (gameScript.match(/function buildInterior\(/g) || []).length === 1]);
+        dssp32({ exit: true }); dssp32({ clearCache: true });
+      }
     }
 
     let allOk = true;
