@@ -55,6 +55,52 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
+### 2026-08-18 (v32 — Abyssal Hollow, reusing v29's interior system)
+
+Second interior-bearing biome. Generalized v29's system rather than
+duplicating it, specifically so Dungeons can be the third without another
+rewrite: `uwcaveClusterAnchor()` became `clusterAnchor(tx,ty,biomeConst)`,
+`enterInterior()` took a biome parameter (defaulted, so every v29 call site
+still works), and space ids became `cave:<kind>:<anchor>`.
+
+- Abyssal interiors read colder and near-black against the cave's
+  blue-grey, with violet bioluminescence instead of cyan.
+- Shadow Dragon moved INSIDE — `biomes: []`, no surface spawn, same as
+  Water Dragon in v29. Moved, not duplicated.
+- No hostile mob inside the Hollow: Sea Serpent is a UWCAVE creature and
+  the bible names none for the Hollow, so inventing one was declined.
+- `void_shard` added as the Hollow's resource. The bible names "rare
+  aquatic resources" for Underwater Caves but nothing for the Hollow, so
+  this is a deliberate new addition, flagged as such rather than presented
+  as implementing something already specified.
+
+Three issues found and fixed, none of them in the game logic:
+
+1. A debug teleport did not reset `me.space`, so a harness that walked
+   into a cave earlier in its sequence ran every later check from inside
+   one — six breath assertions failed from that single cause.
+2. The dive test picked its "shore" tile as anything not DEEP/PEAK/LAVA,
+   which now matches ABYSSAL — a doorway, not standable ground. The player
+   was teleported onto one and correctly pulled in. Test selection fixed;
+   the game behaviour was right.
+3. The interior debug hook ignored the biome parameter, so entering an
+   ABYSSAL tile still searched for a UWCAVE cluster and found nothing.
+
+One assertion was deliberately retargeted rather than forced: the gather
+plumbing is already proven by v29's identical test, and `doInteract()`
+will prefer taming the Shadow Dragon that also lives in the interior if it
+is the nearer target. The v32 change is which resource the node carries,
+so that is what is asserted.
+
+JUDGMENT CALLS
+
+- **`void_shard`** — name, colour, and existence all invented; no bible
+  text to implement. Flagged as new content, not interpretation.
+- **No mob in the Hollow** — declining to invent one, rather than reusing
+  Sea Serpent somewhere it does not belong.
+- **Same 3-5 node count and 26x26 grid as v29** — no reason to differ, and
+  differing would have been an unstated change.
+
 ### 2026-08-18 (v31 — Blood Moon and Meteor Shower)
 
 Both world events, built in-session. Deliberately derived rather than
