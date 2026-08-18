@@ -556,6 +556,10 @@ const ITEM_META = {
      rare_herb before v25 it has no recipe yet; existing and being
      gatherable is this version's whole scope. */
   aquatic_essence: { name: "Aquatic Essence", color: "#5ad8e0" },
+  /* v32: Abyssal Hollow's resource. The bible names one for Underwater
+     Caves ("rare aquatic resources") but never for the Hollow, so this is
+     a deliberate new addition rather than something being implemented. */
+  void_shard: { name: "Void Shard", color: "#8a6ade" },
   magic_essence:{ name: "Magic Essence", color: "#a88ce8" },
   iron_sword:   { name: "Iron Sword",    color: "#c8ccd4", weapon: true },
   iron_spear:   { name: "Iron Spear",    color: "#c8ccd4", weapon: true },
@@ -915,6 +919,13 @@ function debugWorldInfo() {
    that is reachable without being able to place the player. Only these fields
    are settable, and only ones the game itself already writes every frame. */
 function debugSetPlayer(patch) {
+  /* v32: a teleport to world coordinates inherently means "put me back in
+     the world" — otherwise a harness that walked into a cave earlier in its
+     sequence silently runs every later check from inside one. Debug-only;
+     real movement is unaffected. */
+  if (patch && ("x" in patch || "y" in patch) && !("keepSpace" in patch)) {
+    me.space = "main"; me.surfaceReturn = null;
+  }
   if (!me || !patch) return null;
   /* v25: + inv, so the feeding proof can hand the player a rare_herb through
      the same door. Still only fields the game itself already writes. */
@@ -1018,7 +1029,7 @@ function debugSpaceInfo() {
     cachedSpaces: Array.from(interiorCache.keys()),
     grid: rec ? Array.from(rec.grid) : null,
     exit: rec ? { ...rec.exit } : null,
-    nodes: rec ? (rec.nodes || []).map(n => ({ x: n.x, y: n.y, taken: n.taken })) : null,
+    nodes: rec ? (rec.nodes || []).map(n => ({ x: n.x, y: n.y, taken: n.taken, type: n.type })) : null,
     wilds: rec ? (rec.wilds || []).map(w => ({ species: w.species, x: w.x, y: w.y })) : null,
     mobs: rec ? (rec.mobs || []).map(m => ({ kind: m.kind, x: m.x, y: m.y })) : null,
     breath: me ? me.breath : null,
@@ -1034,7 +1045,10 @@ function debugSetSpace(patch) {
      can't actually happen in real play. */
   if ("enterAt" in patch) {
     me.x = patch.enterAt[0] + 0.5; me.y = patch.enterAt[1] + 0.5;
-    enterInterior(patch.enterAt[0], patch.enterAt[1]);
+    /* v32: which biome's interior — defaults to UWCAVE so every v29 call
+       site keeps working unchanged. */
+    enterInterior(patch.enterAt[0], patch.enterAt[1],
+                  "biome" in patch ? patch.biome : B.UWCAVE);
   }
   if ("exit" in patch) exitInterior();
   if ("clearCache" in patch) interiorCache.clear();
@@ -1234,7 +1248,9 @@ const WILD_SPECIES = {
      the Dark Dungeons spawn waits for Dungeons to ship — the same precedent
      the Dark Wraith's second location set in v18. */
   storm_dragon:  { name: "Storm Dragon",  base: 0.25, flier: false, count: 3, biomes: [B.PEAK],    bloodFavored: false, shunnedByBlood: false },
-  shadow_dragon: { name: "Shadow Dragon", base: 0.25, flier: false, count: 3, biomes: [B.ABYSSAL], bloodFavored: false, shunnedByBlood: false },
+  /* v32: moved INSIDE the Abyssal Hollow interiors, same as Water Dragon in
+     v29 — biomes:[] means no surface spawn at all. Moved, not duplicated. */
+  shadow_dragon: { name: "Shadow Dragon", base: 0.25, flier: false, count: 3, biomes: [], bloodFavored: false, shunnedByBlood: false },
   /* v25 — the last three species the bible's pet table lists for biomes that
      already exist in this file. All three are PASSIVE tames (hold-E channel,
      v12 formula); the bible names no fight for any of them.
@@ -1537,7 +1553,10 @@ const interiorCache = new Map();  // spaceId -> { grid, exit, spawnedAt }
 
 /* The anchor is the lowest (tx,ty) tile of a connected UWCAVE cluster, so
    every player touching any tile of that cluster resolves the SAME id. */
-function uwcaveClusterAnchor(tx, ty) {
+/* v32: parameterized by biome. v29 hardcoded B.UWCAVE because there was
+   only one interior-bearing biome; Abyssal Hollow is the second, and
+   Dungeons will be the third, so this generalizes rather than duplicates. */
+function clusterAnchor(tx, ty, biomeConst) {
   const seen = new Set(), stack = [[tx, ty]];
   let best = null, guard = 0;
   while (stack.length && guard++ < 6000) {
@@ -1545,16 +1564,33 @@ function uwcaveClusterAnchor(tx, ty) {
     const key = cy * N + cx;
     if (seen.has(key)) continue;
     if (cx < 0 || cy < 0 || cx >= N || cy >= N) continue;
-    if (biomeAt(cx, cy) !== B.UWCAVE) continue;
+    if (biomeAt(cx, cy) !== biomeConst) continue;
     seen.add(key);
     if (!best || cy < best[1] || (cy === best[1] && cx < best[0])) best = [cx, cy];
     stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
   }
   return best;
 }
+/* kept as a thin alias so nothing that already called it breaks */
+function uwcaveClusterAnchor(tx, ty) { return clusterAnchor(tx, ty, B.UWCAVE); }
 
-function uwcaveSpaceId(anchor) {
-  return "cave:uwcave:" + anchor[0] + "," + anchor[1];
+/* Which biomes have interiors, and what each one is called in its space id. */
+const INTERIOR_BIOMES = [
+  { biome: null, kind: "uwcave",  label: "cave" },      // filled below (B not ready at parse)
+  { biome: null, kind: "abyssal", label: "hollow" },
+];
+function interiorKindFor(biomeConst) {
+  if (biomeConst === B.UWCAVE)  return "uwcave";
+  if (biomeConst === B.ABYSSAL) return "abyssal";
+  return null;
+}
+function spaceIdFor(kind, anchor) {
+  return "cave:" + kind + ":" + anchor[0] + "," + anchor[1];
+}
+function uwcaveSpaceId(anchor) { return spaceIdFor("uwcave", anchor); }
+function spaceKindOf(spaceId) {
+  const p = String(spaceId || "").split(":");
+  return p.length >= 2 ? p[1] : null;
 }
 
 /* Deterministic from the anchor + worldSeed — nothing is stored server
@@ -1595,22 +1631,34 @@ function populateInterior(spaceId, rec) {
   if (!floors.length) return;
   const pick = (i) => floors[Math.floor(hash2(i, 7, seed) * floors.length)];
 
+  /* v32: what lives inside depends on which biome the interior belongs to.
+     Same structure, same counts — only the contents differ. */
+  const kind32 = spaceKindOf(spaceId);
+  const isAbyss = kind32 === "abyssal";
+  const nodeType = isAbyss ? "void_shard" : "aquatic_essence";
+  const dragonSp = isAbyss ? "shadow_dragon" : "water_dragon";
+
   rec.nodes = [];
   const nNodes = 3 + Math.floor(hash2(1, 1, seed) * 3);   // 3-5, per spec
   for (let i = 0; i < nNodes; i++) {
     const [x, y] = pick(i * 3 + 11);
-    rec.nodes.push({ x: x + 0.5, y: y + 0.5, type: "aquatic_essence", taken: false });
+    rec.nodes.push({ x: x + 0.5, y: y + 0.5, type: nodeType, taken: false });
   }
   rec.wilds = [];
   const [wx, wy] = pick(41);
-  rec.wilds.push({ id: spaceId + ":water_dragon", species: "water_dragon",
+  rec.wilds.push({ id: spaceId + ":" + dragonSp, species: dragonSp,
                    x: wx + 0.5, y: wy + 0.5, ph: hash2(2, 2, seed) * 6 });
   rec.mobs = [];
-  const [sx2, sy2] = pick(73);
-  rec.mobs.push({ id: spaceId + ":sea_serpent", kind: "sea_serpent",
-                  x: sx2 + 0.5, y: sy2 + 0.5, hx: sx2 + 0.5, hy: sy2 + 0.5,
-                  hp: MOBS.sea_serpent.hp, state: "idle", ph: hash2(3, 3, seed) * 6,
-                  fx: 1, fy: 0 });
+  /* Sea Serpent is an Underwater Caves creature specifically — the Hollow
+     is Shadow Dragon territory and the bible names no mob for it, so it
+     gets no hostile mob rather than an invented one. */
+  if (!isAbyss) {
+    const [sx2, sy2] = pick(73);
+    rec.mobs.push({ id: spaceId + ":sea_serpent", kind: "sea_serpent",
+                    x: sx2 + 0.5, y: sy2 + 0.5, hx: sx2 + 0.5, hy: sy2 + 0.5,
+                    hp: MOBS.sea_serpent.hp, state: "idle", ph: hash2(3, 3, seed) * 6,
+                    fx: 1, fy: 0 });
+  }
 }
 
 function interiorTileAt(tx, ty) {
@@ -1626,17 +1674,21 @@ function interiorTileAt(tx, ty) {
    as being inside a cave the moment they log in. */
 function inInterior() { return !!me && !!me.space && me.space !== "main"; }
 
-function enterInterior(tx, ty) {
-  const anchor = uwcaveClusterAnchor(tx, ty);
+function enterInterior(tx, ty, biomeConst) {
+  /* v32: default keeps every v29 call site working unchanged. */
+  const bc = (biomeConst === undefined) ? B.UWCAVE : biomeConst;
+  const kind = interiorKindFor(bc);
+  if (!kind) return false;
+  const anchor = clusterAnchor(tx, ty, bc);
   if (!anchor) return false;
-  const id = uwcaveSpaceId(anchor);
+  const id = spaceIdFor(kind, anchor);
   const rec = buildInterior(id, anchor);
   me.surfaceReturn = { x: me.x, y: me.y };
   me.space = id;
   me.x = rec.spawn.x; me.y = rec.spawn.y;
   cam.x = me.x; cam.y = me.y;
   populateInterior(id, rec);
-  toast("You slip into the cave");
+  toast(kind === "abyssal" ? "You sink into the hollow" : "You slip into the cave");
   sendMove(true);
   return true;
 }
@@ -3721,7 +3773,7 @@ function nearestGatherable() {
     for (const nd of rec.nodes) {
       if (nd.taken) continue;
       const d = Math.hypot(nd.x - me.x, nd.y - me.y);
-      if (d < bestD) { best = { x: nd.x, y: nd.y, type: "aquatic_essence", _node: nd }; bestD = d; }
+      if (d < bestD) { best = { x: nd.x, y: nd.y, type: nd.type || "aquatic_essence", _node: nd }; bestD = d; }
     }
     return best;
   }
@@ -3808,9 +3860,10 @@ async function doInteract() {
        reaches it first in that space. */
     lastGather = now;
     g._node.taken = true;
-    burst(g.x, g.y, ITEM_META.aquatic_essence.color, 7, 2);
-    invAdd("aquatic_essence", 1);
-    toast("+1 Aquatic Essence");
+    const got32 = g._node.type || "aquatic_essence";   // v32
+    burst(g.x, g.y, ITEM_META[got32].color, 7, 2);
+    invAdd(got32, 1);
+    toast("+1 " + ITEM_META[got32].name);
     savePlayer();
     return;
   }
@@ -4084,7 +4137,10 @@ function update(dt, t) {
       me.y = Math.max(1, Math.min(N - 1, me.y));
       /* v29: touching a UWCAVE tile is the entry trigger — exactly where
          breath already stops draining, so no new detection is needed. */
-      if (biomeAt(Math.floor(me.x), Math.floor(me.y)) === B.UWCAVE) enterInterior(Math.floor(me.x), Math.floor(me.y));
+      const hb32 = biomeAt(Math.floor(me.x), Math.floor(me.y));
+      if (hb32 === B.UWCAVE || hb32 === B.ABYSSAL) {
+        enterInterior(Math.floor(me.x), Math.floor(me.y), hb32);   // v32
+      }
       }
       sendMove(false);
     }
@@ -7061,10 +7117,15 @@ function renderInteriorGround(t) {
       const [sx, sy] = worldToScreen(tx, ty, 0);
       if (sx < -80 || sx > canvas.width + 80 || sy < -80 || sy > canvas.height + 120) continue;
       const ph = hash2(tx, ty, 55);
+      /* v32: Abyssal Hollow is the deepest point in the world — it reads
+         colder and near-black against the cave's blue-grey rock. */
+      const abyss32 = spaceKindOf(me.space) === "abyssal";
       let col;
-      if (v === IN_WALL)      col = ph > 0.7 ? "#1d2a33" : "#16212a";
-      else if (v === IN_EXIT) col = "#3f6f7a";
-      else                    col = ph > 0.72 ? "#263a44" : "#20323c";
+      if (v === IN_WALL)      col = abyss32 ? (ph > 0.7 ? "#0d1420" : "#080d16")
+                                            : (ph > 0.7 ? "#1d2a33" : "#16212a");
+      else if (v === IN_EXIT) col = abyss32 ? "#2a4a6a" : "#3f6f7a";
+      else                    col = abyss32 ? (ph > 0.72 ? "#131f30" : "#0f1927")
+                                            : (ph > 0.72 ? "#263a44" : "#20323c");
       const [ax, ay] = worldToScreen(tx, ty, 0);
       const [bx, by] = worldToScreen(tx + 1, ty, 0);
       const [cx2, cy2] = worldToScreen(tx + 1, ty + 1, 0);
@@ -7075,7 +7136,8 @@ function renderInteriorGround(t) {
       ctx.closePath(); ctx.fill();
       if (v === IN_FLOOR && ph > 0.93) {   // sparse bioluminescence
         const gl = 0.4 + 0.35 * Math.sin(t / 900 + ph * 9);
-        ctx.fillStyle = `rgba(90,216,224,${gl * 0.5})`;
+        ctx.fillStyle = abyss32 ? `rgba(150,110,220,${gl * 0.45})`
+                                : `rgba(90,216,224,${gl * 0.5})`;
         ctx.beginPath(); ctx.arc(sx + 12, sy + 6, 1.6, 0, Math.PI * 2); ctx.fill();
       }
       if (v === IN_EXIT) {
