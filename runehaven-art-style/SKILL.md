@@ -53,6 +53,23 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-18 (Elder Drake palette hotfix)
+
+Flagged by the user directly: the drake "looks like a normal goon" despite
+the silhouette matching the approved reference. Root cause found by
+re-reading this skill's own rule 20: the original palette was five shades
+of near-black muddy brown (#2a2622/#403a34/#17140f/#221f1b/#0d0b09) with
+only tiny decorative ember accents — a direct violation of "never
+desaturated/muddy" and the flat-colour-contrast identity rule. The
+reference image's painterly shadow-mood got pulled into the sprite instead
+of this game's bold flat-shaded language.
+
+FIXED: same geometry, unchanged — spine ridge, horn, hunched stance, teeth
+were never the problem. Body recoloured true near-black (#14100d), and the
+spine ridge / horn / tail spikes / vein cracks became bold glowing ember
+(#ff7a3c, matching the locked Lava palette entry) instead of tiny dark-on-
+dark decoration — real structural contrast, not an accent. Verified via
+node before touching main; full gauntlet re-run clean, 591/591.
 Dated entries, most recent first. When a build fixes one, mark it FIXED but don't delete it — it's a regression check for the future.
 
 ### 2026-08-18 (v30 — Elder Drake, ruin variety, idle-wander, real gathering + Pickaxe)
