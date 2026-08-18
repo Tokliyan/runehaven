@@ -2345,8 +2345,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         v30.pickaxeRecipes.length === 2]);
       results.push(['mining damage comes from the equipped weapon, no new stat',
         gameScript.indexOf('(WEAPONS[me.equipped] || {}).dmg') > 0]);
-      results.push(['ore requires an axe or pickaxe',
-        gameScript.indexOf('You need an axe or a pickaxe') > 0]);
+      /* HOTFIX: this requirement was removed the same day — it created a
+         hard bootstrap lockout (empty starting inventory, every recipe
+         needs wood+iron_bar, both gated behind a tool that itself needed
+         those materials). Tools now make gathering FASTER, not required. */
+      results.push(['gathering has no hard tool lockout for new players',
+        gameScript.indexOf('completely locked new') > 0]);
       results.push(['interior nodes were left as a one-press pick, not made mineable',
         gameScript.indexOf('not something you mine through') > 0]);
       results.push(['idle wander scales to each mob\'s own leash radius',
