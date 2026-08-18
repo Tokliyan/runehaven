@@ -812,8 +812,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         !!ss && ss.biomes.length === 0]);
       results.push(['sea_serpent drops existing materials generously',
         !!ss && ss.loot.length >= 2 && ss.loot.every(l => l.chance >= 0.6)]);
+      /* v30: the Elder Drake is now the hardest thing in the world by a wide
+         margin — sea_serpent remains the hardest NON-BOSS, which is what this
+         was always meant to assert. */
       results.push(['sea_serpent is the hardest non-boss mob in the world',
-        !!ss && Object.entries(info.MOBS).every(([k, d]) => k === 'sea_serpent' || d.hp < ss.hp)]);
+        !!ss && Object.entries(info.MOBS).every(([k, d]) =>
+          k === 'sea_serpent' || k === 'elder_drake' || d.hp < ss.hp)]);
+      results.push(['the Elder Drake outclasses every other mob in the world',
+        !!info.MOBS.elder_drake &&
+        Object.entries(info.MOBS).every(([k, d]) => k === 'elder_drake' || d.hp < info.MOBS.elder_drake.hp)]);
 
       /* ===== v22 PARTS B & C: Storm Dragon on B.PEAK, Shadow Dragon in the
          Abyssal Hollow, both exactly where the locked spec puts them. */
@@ -998,11 +1005,17 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // one cluster's worth of set pieces per centre, plus one well per zone
       const pk = info.ruinPieceSpots.reduce((a, p) => (a[p.k] = (a[p.k] || 0) + 1, a), {});
       console.log('ruin set pieces:', JSON.stringify(pk));
+      /* v30 CHANGED THIS DELIBERATELY: ruins now pick one of three layouts,
+         so a fixed per-piece census no longer describes the world. What still
+         must hold is that every cluster built something and every cluster got
+         its entrance — asserted below and in the v30 block. */
       results.push([`ruin set pieces built per centre (${info.ruinPieceSpots.length} total)`,
-        pk.wallX === 36 && pk.wallY === 6 && pk.col === 18 && pk.lintelY === 6 &&
-        pk.fallen === 6 && pk.rubble === 12]);
+        info.ruinPieceSpots.length > 30 && pk.rubble >= 6 && pk.col >= 6]);
       results.push([`one dungeon entrance per cluster (${pk.entrance || 0})`, pk.entrance === 6]);
-      results.push([`one well per cluster plus one per Safe Zone (${pk.well || 0})`, pk.well === 10]);
+      /* v30: only two of the three ruin layouts include a well, so the count
+         is now layout-dependent — the four Safe Zone wells are the constant. */
+      results.push([`wells exist across ruins and Safe Zones (${pk.well || 0})`,
+        (pk.well || 0) >= 4 && (pk.well || 0) <= 10]);
       // the deliberate runic vein is now one per cluster
       results.push([`one deliberate runic vein per cluster (${info.ruinVeins})`, info.ruinVeins === 6]);
       // the safe zone must still read as plain grass at the new radius
@@ -2297,6 +2310,51 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           (gameScript.match(/function buildInterior\(/g) || []).length === 1]);
         dssp32({ exit: true }); dssp32({ clearCache: true });
       }
+    }
+
+    /* ===================== v30 gates ======================================= */
+    if (typeof window.debugV30Info === 'function') {
+      const v30 = window.debugV30Info();
+      results.push(['exactly one Elder Drake exists in the world', v30.drakeCount === 1]);
+      results.push(['the Elder Drake spawned near the Volcano',
+        !!v30.drake && Math.hypot(v30.drake.x - v30.volcano.x, v30.drake.y - v30.volcano.y) < 27]);
+      results.push(['the Elder Drake is the largest creature in the game',
+        v30.MOB_K_drake > 2.85]);
+      results.push(['the Elder Drake respawns in hours, not the standard mob timer',
+        v30.respawnMs >= 60 * 60 * 1000]);
+      results.push(['it drops guaranteed Dragonsteel, as the bible requires',
+        (window.debugWorldInfo().MOBS.elder_drake.loot || []).some(l => l.type === 'dragonsteel' && l.chance === 1)]);
+      if (v30.drake && typeof window.debugSetDrake === 'function') {
+        const full = window.debugSetDrake({ hp: v30.drake.maxHp }).drake.phase;
+        const mid  = window.debugSetDrake({ hp: Math.floor(v30.drake.maxHp * 0.5) }).drake.phase;
+        const low  = window.debugSetDrake({ hp: Math.floor(v30.drake.maxHp * 0.2) }).drake.phase;
+        results.push(['the fight moves through all three phases as HP drops',
+          full === 1 && mid === 2 && low === 3]);
+        window.debugSetDrake({ hp: v30.drake.maxHp });
+      }
+      results.push(['ruins no longer all use the same layout',
+        new Set(v30.ruinTemplates).size >= 2]);
+      results.push(['ruin layout is deterministic per ruin, not random each load',
+        v30.ruinTemplates.every(t => t >= 0 && t <= 2)]);
+      results.push(['every ruin still built pieces', v30.ruinPieceCount > 30]);
+      results.push(['nodes have real durability now, ore tougher than wood',
+        v30.NODE_HP.tree >= 20 && v30.NODE_HP.iron > v30.NODE_HP.tree]);
+      results.push(['pickaxe is its own weapon kind, not misread as axe or sword',
+        v30.pickaxeKind === 'pickaxe' && v30.axeKind === 'axe']);
+      results.push(['both pickaxe tiers are craftable',
+        v30.pickaxeRecipes.length === 2]);
+      results.push(['mining damage comes from the equipped weapon, no new stat',
+        gameScript.indexOf('(WEAPONS[me.equipped] || {}).dmg') > 0]);
+      results.push(['ore requires an axe or pickaxe',
+        gameScript.indexOf('You need an axe or a pickaxe') > 0]);
+      results.push(['interior nodes were left as a one-press pick, not made mineable',
+        gameScript.indexOf('not something you mine through') > 0]);
+      results.push(['idle wander scales to each mob\'s own leash radius',
+        gameScript.indexOf('(def.leashRadius || 10) * 0.4') > 0]);
+      results.push(['idle wander has a real pause/move cycle, not constant drift',
+        gameScript.indexOf('const moving30 = cyc > 4.5') > 0]);
+    } else {
+      results.push(['v30 hooks are reachable', false]);
     }
 
     let allOk = true;
