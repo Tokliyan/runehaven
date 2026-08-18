@@ -38,9 +38,19 @@ const tableData = {
   players: null,          // null = new-player path
   ground_items: [],
   pets: [],
+  base_pieces: [],        // v33
 };
+/* v33: a real round trip is needed for exactly one table. PART D has to prove
+   a placed piece survives a reload — insert, then re-select, same data back —
+   and the plain stub returns the whole table for every call, so an insert
+   never actually lands anywhere. Deliberately scoped to this one table by
+   name so no existing assertion's behaviour can shift underneath it. */
+const INSERT_RECORDING = new Set(['base_pieces']);
+let insertSeq = 0;
 function chain(table) {
+  let pending = null;
   const result = () => {
+    if (pending) { const r = pending; pending = null; return { data: r, error: null }; }
     const d = tableData[table];
     return { data: d === undefined ? null : d, error: null };
   };
@@ -49,6 +59,16 @@ function chain(table) {
       if (prop === 'then') {
         const r = result();
         return (res) => res(r);
+      }
+      if (prop === 'insert' && INSERT_RECORDING.has(table)) {
+        return (rows) => {
+          const arr = Array.isArray(rows) ? rows : [rows];
+          // the insert is what mints the id, exactly as the real table does
+          const stamped = arr.map(r => Object.assign({ id: table + ':' + (++insertSeq) }, r));
+          tableData[table].push(...stamped);
+          pending = stamped;
+          return c;
+        };
       }
       return (...a) => c;
     },
@@ -1093,16 +1113,19 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // Updated, not relaxed: the count and the default table both move with it.
       const ACTIONS = ['up', 'down', 'left', 'right', 'interact', 'attack',
                        'inventory', 'craft', 'pets', 'dive', 'block', 'ability',
-                       'mount'];   // v28
+                       'mount',    // v28
+                       'build'];   // v33: the BUILD panel key
       const info23 = dsi();
 
       // ---- PART A: the config object itself
-      results.push(['KEYBINDS carries all 13 bindable actions',
-        Object.keys(info23.KEYBINDS).length === 13 &&
+      // v33: updated, not relaxed — the count, the default table and the
+      // remapping-screen row count all move with the new action.
+      results.push(['KEYBINDS carries all 14 bindable actions',
+        Object.keys(info23.KEYBINDS).length === 14 &&
         ACTIONS.every(a => typeof info23.KEYBINDS[a] === 'string')]);
       results.push(['KEYBIND defaults are exactly the locked spec',
         ACTIONS.map(a => info23.KEYBIND_DEFAULTS[a]).join('|') ===
-        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift', 'q', 'r'].join('|')]);
+        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift', 'q', 'r', 'b'].join('|')]);
 
       // ---- PART A: every check site reads KEYBINDS, no literals left behind
       const SITES = ['keys[KEYBINDS.up]', 'keys[KEYBINDS.down]', 'keys[KEYBINDS.left]',
@@ -1265,8 +1288,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['the credits tab is the one showing',
         doc.getElementById('secCredits').classList.contains('shown') &&
         !doc.getElementById('secGraphics').classList.contains('shown')]);
-      results.push(['the remapping screen lists all 12 actions',
-        doc.getElementById('keybindList').children.length === 12]);
+      results.push(['the remapping screen lists all 13 labelled actions',
+        doc.getElementById('keybindList').children.length === 13]);
       results.push(['credits render from the CREDITS array',
         doc.getElementById('creditsList').children.length === dsi().CREDITS.length &&
         dsi().CREDITS.length === 2]);
@@ -1998,8 +2021,16 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         gameScript.indexOf('dmg * (1 - arm.reduce)') > 0]);
       results.push(['the ring is the v18 aura() helper, not a second effect system',
         gameScript.indexOf('aura(rx2, ry2, ABILITY_RING_RGB') > 0]);
-      results.push(['no base/structure system was invented for the Architect',
-        gameScript.indexOf('placeStructure') < 0 && gameScript.indexOf('BASES') < 0]);
+      /* v33 STARTED THIS DELIBERATELY — the "no base/structure system was
+         invented for the Architect" guard is retired here, exactly as v31
+         retired its two event guards, and replaced by the real proof gates in
+         the v33 block at the end. What the guard was actually protecting is
+         still pinned: the Architect's own class tie-in (faster building,
+         stronger structures, resource generation) is v34's scope and is
+         asserted below to be genuinely absent, not quietly half-built. */
+      results.push(['the Architect class tie-in is still deliberately unbuilt (v34)',
+        gameScript.indexOf('ARCHITECT_BUILD') < 0 &&
+        gameScript.indexOf('architectBuild') < 0]);
       /* v31 STARTED THESE DELIBERATELY — the guard is retired, replaced by
          the real proof gates in the v31 block at the end. */
 
@@ -2359,6 +2390,210 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         gameScript.indexOf('const moving30 = cyc > 4.5') > 0]);
     } else {
       results.push(['v30 hooks are reachable', false]);
+    }
+
+    /* ============ v33 PART D: bases — placement & construction ============= */
+    if (typeof window.debugBaseInfo === 'function') {
+      const dbi = window.debugBaseInfo, dsb = window.debugSetBase;
+      const dsp33 = window.debugSetPlayer, dwi33 = window.debugWorldInfo;
+      const wi33 = dwi33();
+      const SP33 = wi33.SPAWN, N33 = wi33.N;
+      const B33 = dbi();
+      const wasP33 = wi33.player;
+
+      // ---- the five spec'd pieces plus the Generator, and the tier table
+      results.push(['all five spec pieces exist, plus the Generator',
+        ['foundation', 'wall', 'door', 'chest', 'forge', 'generator']
+          .every(k => !!B33.BASE_PIECES[k])]);
+      results.push(['costs use the bible\'s own five material tiers, no new item',
+        B33.BASE_TIERS.join('|') === 'wood|stone|iron|runic|dragonsteel' &&
+        ['wood', 'stone', 'iron_bar', 'runic_stone', 'dragonsteel']
+          .every(m => Object.values(B33.BASE_TIER_MAT).indexOf(m) >= 0)]);
+      results.push(['piece tinting reuses existing material colours, no new palette entry',
+        gameScript.indexOf('(ITEM_META[BASE_TIER_MAT[tier]] || {}).color') > 0]);
+
+      /* Find a build site: a run of clear ground far from spawn where the
+         whole six-piece layout fits under the real minimum-spacing rule.
+         basePlaceCheck('foundation', …) is the game's own ground/safe-zone/
+         edge test, so this is not a second opinion about what is buildable. */
+      dsb({ clear: true });
+      const OFF = [[0, 0], [3, 0], [6, 0], [0, 3], [3, 3], [6, 3]];
+      let site = null;
+      for (let y = 12; y < N33 - 12 && !site; y += 2) {
+        for (let x = 12; x < N33 - 12; x += 2) {
+          if (Math.hypot(x - SP33.x, y - SP33.y) < 40) continue;
+          if (OFF.every(o => window.basePlaceCheck('foundation', x + o[0] + 0.5, y + o[1] + 0.5).ok)) {
+            site = [x, y]; break;
+          }
+        }
+      }
+      results.push(['a clear build site exists outside every safe zone', !!site]);
+
+      if (site) {
+        const [BX, BY] = site;
+        const at = i => ({ x: BX + OFF[i][0] + 0.5, y: BY + OFF[i][1] + 0.5 });
+        const stock = () => dsp33({ x: BX + 0.5, y: BY - 4.5,
+          inv: { wood: 500, stone: 500, iron_bar: 500, runic_stone: 500,
+                 dragonsteel: 500, iron_ore: 500 } });
+
+        // ---- PART B: a Foundation must come first
+        stock();
+        const noAnchor = await window.placeBasePiece('wall', 'wood', at(1).x, at(1).y);
+        results.push(['a piece with no Foundation nearby is refused',
+          noAnchor.ok === false && /Foundation/.test(noAnchor.why)]);
+
+        // ---- PART A: every one of the six places, each on its own tier
+        const KINDS33 = ['foundation', 'wall', 'door', 'chest', 'forge', 'generator'];
+        const TIER33 = ['wood', 'stone', 'iron', 'runic', 'dragonsteel', 'wood'];
+        const placed = [];
+        for (let i = 0; i < KINDS33.length; i++) {
+          const p = at(i);
+          const r = await window.placeBasePiece(KINDS33[i], TIER33[i], p.x, p.y);
+          placed.push(r);
+        }
+        results.push(['all six piece types place successfully',
+          placed.every(r => r.ok === true)]);
+        results.push(['each placed piece kept the tier it was built from',
+          placed.every((r, i) => r.ok && r.piece.tier === TIER33[i])]);
+        results.push(['placing spent the material it cost',
+          (dwi33().player.inv.wood || 0) === 500 - (B33.BASE_PIECES.foundation.cost +
+            B33.BASE_PIECES.generator.cost)]);
+
+        // ---- PART B: safe zones are refused
+        const inZone = await window.placeBasePiece('foundation', 'wood', SP33.x, SP33.y);
+        results.push(['placement inside a safe zone is refused',
+          inZone.ok === false && /safe zone/i.test(inZone.why)]);
+
+        // ---- PART B: minimum spacing is a real, live rejection
+        const tooClose = await window.placeBasePiece('wall', 'wood',
+          BX + 1 + 0.5, BY + 0.5);
+        results.push(['an overlapping placement is refused by the spacing rule',
+          tooClose.ok === false && /Too close/.test(tooClose.why)]);
+        results.push(['the spacing rule is the spec\'s 3 tiles', B33.BASE_MIN_SEP === 3]);
+        const stillSix = dbi().pieces.length;
+        results.push(['neither refusal left a piece behind', stillSix === 6]);
+
+        // ---- PART A: a placed Forge really extends nearForge()
+        const forgeP = dbi().pieces.find(p => p.kind === 'forge');
+        const craftIron = () => {
+          const before = (dwi33().player.inv.iron_bar || 0);
+          window.craft({ out: 'iron_bar', mats: { iron_ore: 2 }, where: 'forge',
+                         label: 'Smelt Iron Bar' });
+          return (dwi33().player.inv.iron_bar || 0) - before;
+        };
+        dsp33({ x: forgeP.x + 0.9, y: forgeP.y + 0.9,
+                inv: { iron_ore: 20, wood: 400 } });
+        const farFromSpawn = Math.hypot(forgeP.x - (SP33.x + 4), forgeP.y - (SP33.y + 2));
+        results.push([`the placed Forge is genuinely far from SPAWN_FORGE (${Math.round(farFromSpawn)} tiles)`,
+          farFromSpawn > 20]);
+        results.push(['nearForge() answers for a player-placed Forge', window.nearForge() === true]);
+        results.push(['a forge recipe crafts at a placed Forge, far from spawn', craftIron() === 1]);
+
+        // regression: the Spawn Forge still works exactly as it always did
+        dsp33({ x: SP33.x + 4, y: SP33.y + 2, inv: { iron_ore: 20 } });
+        results.push(['the Spawn Forge still answers nearForge()', window.nearForge() === true]);
+        results.push(['a forge recipe still crafts at the Spawn Forge', craftIron() === 1]);
+
+        // and with neither in range, the recipe is still refused
+        dsp33({ x: BX + 0.5, y: BY - 20.5, inv: { iron_ore: 20 } });
+        results.push(['nearForge() is false with neither forge nearby', window.nearForge() === false]);
+        results.push(['a forge recipe is refused with no forge nearby', craftIron() === 0]);
+
+        // ---- PART A: the Storage Chest, opened through the real interact path
+        const chestP = dbi().pieces.find(p => p.kind === 'chest');
+        dsp33({ x: chestP.x - 1.0, y: chestP.y, inv: { wood: 5 } });
+        await new Promise(r => setTimeout(r, 750));   // clear GATHER_COOLDOWN
+        await window.doInteract();
+        results.push(['E beside a Storage Chest opens its panel',
+          doc.getElementById('chestPanel').style.display === 'block' &&
+          dbi().openChest === chestP.id]);
+        results.push(['the chest panel is the existing inventory row pattern, not new chrome',
+          doc.querySelectorAll('#chestMine .inv-row').length > 0 &&
+          doc.querySelectorAll('#chestList .inv-row').length > 0 &&
+          gameScript.indexOf('getElementById("chestMine")') > 0]);
+        const chestObj = { id: chestP.id };
+        const storedOk = window.chestStore(chestObj, 'wood', 1);
+        const afterStore = dwi33().player.inv.wood || 0;
+        const inChest = (dbi().chests.find(c => c.id === chestP.id) || { contents: {} }).contents.wood;
+        results.push(['storing an item moves it out of the pack and into the chest',
+          storedOk === true && afterStore === 4 && inChest === 1]);
+        const tookOk = window.chestTake(chestObj, 'wood', 1);
+        results.push(['taking it back returns it to the pack and empties the chest',
+          tookOk === true && (dwi33().player.inv.wood || 0) === 5 &&
+          !(dbi().chests.find(c => c.id === chestP.id) || { contents: {} }).contents.wood]);
+        results.push(['a take of something the chest does not hold is refused',
+          window.chestTake(chestObj, 'dragonsteel', 1) === false]);
+        dsb({ closeChest: true });
+
+        // ---- PART A: Door vs Wall collision, both directions
+        const doorP = dbi().pieces.find(p => p.kind === 'door');
+        const wallP = dbi().pieces.find(p => p.kind === 'wall');
+        results.push(['a Wall blocks movement onto its tile',
+          window.basePieceBlocks(wallP.x, wallP.y) === true]);
+        results.push(['a Foundation is walkable, not solid',
+          window.basePieceBlocks(BX + 0.5, BY + 0.5) === false]);
+        results.push(['the owner walks through their own Door',
+          window.basePieceBlocks(doorP.x, doorP.y) === false]);
+        // flip the stored owner and reload: the same door must now stop us
+        const doorRow = tableData.base_pieces.find(r => r.id === doorP.id);
+        const realOwner = doorRow.owner;
+        doorRow.owner = 'SomeoneElse';
+        await window.loadBasePieces();
+        results.push(['someone else\'s Door blocks',
+          window.basePieceBlocks(doorP.x, doorP.y) === true]);
+        doorRow.owner = realOwner;
+
+        // ---- PART C: persistence — insert, then re-select, same data back
+        await window.loadBasePieces();
+        const reloaded = dbi().pieces;
+        results.push(['every placed piece survives a simulated reload',
+          reloaded.length === 6 &&
+          KINDS33.every(k => reloaded.some(p => p.kind === k))]);
+        results.push(['the reloaded rows carry the same id, tier, position and owner',
+          placed.every(r => {
+            const back = reloaded.find(p => p.id === r.piece.id);
+            return back && back.kind === r.piece.kind && back.tier === r.piece.tier &&
+                   back.x === r.piece.x && back.y === r.piece.y && back.owner === r.piece.owner;
+          })]);
+        results.push(['base_pieces is exactly the spec\'s shape — id, kind, tier, x, y, owner',
+          tableData.base_pieces.every(r =>
+            Object.keys(r).sort().join(',') === 'id,kind,owner,tier,x,y')]);
+        results.push(['the table is loaded once on login, the ground_items way',
+          gameScript.indexOf('await loadBasePieces();') > 0 &&
+          gameScript.indexOf('await sb.from("base_pieces").select("*")') > 0]);
+        results.push(['a new piece is broadcast over the ONE existing channel',
+          gameScript.indexOf('event: "base_add"') > 0 &&
+          gameScript.indexOf('channel.on("broadcast", { event: "base_add" }') > 0 &&
+          (gameScript.match(/sb\.channel\(/g) || []).length === 1]);
+
+        // ---- PART D: the Generator places cleanly and does nothing yet
+        const genP = dbi().pieces.find(p => p.kind === 'generator');
+        results.push(['the Generator placed cleanly', !!genP]);
+        dsp33({ x: genP.x - 1.2, y: genP.y, inv: { wood: 7 } });
+        const invBefore = JSON.stringify(dwi33().player.inv);
+        for (let f = 900; f < 960; f++) {
+          window.update(0.05, f * 16.6);
+          const q = rafQ; rafQ = [];
+          for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+        }
+        results.push(['60 frames beside a Generator produce nothing and throw nothing',
+          JSON.stringify(dwi33().player.inv) === invBefore && !caught]);
+        results.push(['no passive generation tick was written this version',
+          gameScript.indexOf('produces nothing until v34') > 0]);
+
+        // ---- explicitly NOT this version: destruction, raiding, piece HP
+        results.push(['no piece HP, destruction or raiding was half-built (all v34)',
+          gameScript.indexOf('base_del') < 0 &&
+          gameScript.indexOf('destroyBasePiece') < 0 &&
+          gameScript.indexOf('raidBase') < 0]);
+
+        dsb({ clear: true });
+        tableData.base_pieces.length = 0;
+      }
+      if (wasP33) dsp33({ x: wasP33.x, y: wasP33.y, hp: 100, diving: false,
+                          inv: wasP33.inv });
+    } else {
+      results.push(['v33 PART D base hooks are reachable', false]);
     }
 
     let allOk = true;

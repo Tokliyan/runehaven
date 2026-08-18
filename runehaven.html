@@ -142,6 +142,12 @@
   #invPanel { right: 12px; }
   #craftPanel { left: 12px; width: 330px; }
   #petPanel { right: 326px; }
+  /* v33: the two base panels. Deliberately no new component styles — the
+     build list is the .craft-row treatment and every other row in both
+     panels is .inv-row, so a base panel reads as the same program as the
+     Inventory and Crafting panels rather than a bolted-on builder. */
+  #buildPanel { left: 352px; width: 330px; }
+  #chestPanel { right: 640px; }
   .inv-row {
     display: flex; justify-content: space-between; align-items: center;
     padding: 6px 8px; font-size: 14px; border-bottom: 1px solid rgba(42,54,68,0.5);
@@ -345,7 +351,7 @@
 <div class="hud" id="hudWorld"></div>
 <div class="hud" id="hudZone">SAFE ZONE — YOU ARE PROTECTED</div>
 <div class="hud" id="hudPrompt"></div>
-<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block (shield classes) &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability</div>
+<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block (shield classes) &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build</div>
 <div id="hpBarWrap"><div id="hpBar"></div></div>
 
 <div class="panel" id="invPanel">
@@ -358,6 +364,21 @@
   <h3>CRAFTING</h3>
   <div class="sub" id="craftWhere"></div>
   <div id="craftList"></div>
+</div>
+
+<div class="panel" id="buildPanel">
+  <h3>BUILD</h3>
+  <div class="sub" id="buildWhere"></div>
+  <div id="buildTierList"></div>
+  <div id="buildList"></div>
+</div>
+
+<div class="panel" id="chestPanel">
+  <h3>STORAGE CHEST</h3>
+  <div class="sub" id="chestWhere"></div>
+  <div id="chestList"></div>
+  <div class="sub">YOUR PACK — click a row to store one</div>
+  <div id="chestMine"></div>
 </div>
 
 <div class="panel" id="petPanel">
@@ -691,6 +712,13 @@ let worldSeed = 1, worldEpoch = 0;
 let me = null;
 let others = new Map();
 let groundItems = new Map();
+/* v33: placed base pieces, persisted in the `base_pieces` table. `baseIndex`
+   is the same rows keyed by tile, so the per-frame collision check is a map
+   lookup rather than a walk of every structure in the world. `chestContents`
+   is deliberately session-local — see the v33 block below. */
+let basePieces = new Map();          // id -> row
+let baseIndex = new Map();           // "tx,ty" -> row
+let chestContents = new Map();       // piece id -> { itemType: qty }
 let projectiles = [];
 let particles = [];
 let features = [];
@@ -2828,6 +2856,7 @@ enterBtn.onclick = async () => {
     bakeTerrain();
     await loginPlayer(username, chosenClass);
     await loadGroundItems();
+    await loadBasePieces();          // v33: one select on login, like ground_items
     await loadPets();
     await joinRealtime();
     loginEl.style.display = "none";
@@ -3383,6 +3412,13 @@ async function joinRealtime() {
   });
   channel.on("broadcast", { event: "item_del" }, ({ payload: p }) => {
     groundItems.delete(p.id);
+  });
+  /* v33: a base appears for everyone the moment it is built, over the one
+     existing channel — the same shape as item_add, no new channel. There is
+     deliberately no removal twin to this: nothing a player builds can be
+     destroyed until raiding ships in v34. */
+  channel.on("broadcast", { event: "base_add" }, ({ payload: p }) => {
+    (p.pieces || []).forEach(bp => baseAdd(bp));
   });
   channel.on("broadcast", { event: "mob_hit" }, ({ payload: p }) => {
     const m = mobs.find(x => x.id === p.id);
@@ -4003,6 +4039,11 @@ async function doInteract() {
     return;
   }
   const item = nearestGroundItem();
+  /* v33: a Storage Chest is opened with the same interact key everything else
+     uses. Checked before ground items so a chest standing over a dropped item
+     is still openable. */
+  const bchest = nearBaseChest();
+  if (bchest) { lastGather = now; openBaseChest(bchest); return; }
   if (item) { lastGather = now; tryPickup(item); return; }
   const g = nearestGatherable();
   if (g && g._node) {
@@ -4064,7 +4105,14 @@ async function doInteract() {
   }
 }
 
-function nearForge()   { return Math.hypot(me.x - SPAWN_FORGE.x, me.y - SPAWN_FORGE.y) < 4; }
+/* v33: this now answers for the Spawn Forge OR any player-placed Forge, at
+   the same radius. Every `where: "forge"` recipe reads this one function, so
+   extending it here is the whole of "crafting away from spawn" — no recipe,
+   no craft() branch and no UI gate had to learn about bases. */
+function nearForge()   {
+  if (Math.hypot(me.x - SPAWN_FORGE.x, me.y - SPAWN_FORGE.y) < 4) return true;
+  return !!nearPlacedForge();
+}
 function nearAncient() { return false; }
 
 function craft(recipe) {
@@ -4080,11 +4128,361 @@ function craft(recipe) {
 }
 
 /* =========================================================
+   v33 — BASES, PART 1: PLACEMENT & CONSTRUCTION
+   Bible (BASES): "Built anywhere outside safe zones — location is your primary
+   defence ... Store and passively generate resources over time ... Can be
+   fully raided and destroyed ... Higher material tiers are your backup defence
+   if found."
+
+   This version builds PLACEMENT and CONSTRUCTION ONLY. Raiding, destruction,
+   per-piece HP, the Generator's actual production tick and the Architect
+   class tie-in are v34 and are deliberately absent here rather than half
+   built — the same split every other large system in this file got.
+   ========================================================= */
+
+/* The bible's five material tiers, in its own order, each mapped to the
+   material item that ALREADY exists in ITEM_META. No new palette entry is
+   introduced anywhere below: a piece is tinted with its own material's
+   existing colour. */
+const BASE_TIERS = ["wood", "stone", "iron", "runic", "dragonsteel"];
+const BASE_TIER_MAT = {
+  wood: "wood", stone: "stone", iron: "iron_bar",
+  runic: "runic_stone", dragonsteel: "dragonsteel",
+};
+const BASE_TIER_NAME = {
+  wood: "Wood", stone: "Stone", iron: "Iron",
+  runic: "Runic Stone", dragonsteel: "Dragonsteel",
+};
+function baseTierColor(tier) {
+  return (ITEM_META[BASE_TIER_MAT[tier]] || {}).color || "#8a94a2";
+}
+
+/* PART A — the six placeable pieces. `cost` is how many units of the chosen
+   tier's material one piece takes; the bible sets no build costs, so every
+   one of these is a TUNABLE. `solid` is this version's entire collision
+   model: basic tile blocking, no HP and nothing destructible. */
+const BASE_PIECES = {
+  foundation: { name: "Foundation",    cost: 4, solid: false, anchor: true,
+                desc: "Required first — everything else anchors to one nearby." },
+  wall:       { name: "Wall",          cost: 3, solid: true,
+                desc: "The barrier itself. Durability arrives with raiding." },
+  door:       { name: "Door",          cost: 3, solid: true, door: true,
+                desc: "You pass through it; everyone else is stopped." },
+  chest:      { name: "Storage Chest", cost: 3, solid: true, store: true,
+                desc: "A container. Open it with the interact key." },
+  forge:      { name: "Forge",         cost: 5, solid: true, forge: true,
+                desc: "Smelt and forge away from spawn for the first time." },
+  generator:  { name: "Generator",     cost: 5, solid: true, gen: true,
+                desc: "Placeable now — it produces nothing until v34." },
+};
+const BASE_PIECE_ORDER = ["foundation", "wall", "door", "chest", "forge", "generator"];
+
+/* PART B — placement rules. Both distances are TUNABLE. BASE_MIN_SEP is the
+   locked spec's own proposal, and it is a live placement-time check rather
+   than worldgen, so it runs as the player builds. BASE_ANCHOR_R is what
+   "anchors everything else nearby" is measured in. BASE_FORGE_R deliberately
+   matches the Spawn Forge's own radius exactly, so a placed Forge behaves
+   identically to the one that has always existed. */
+const BASE_MIN_SEP = 3;
+const BASE_ANCHOR_R = 8;
+const BASE_FORGE_R = 4;
+const BASE_PLACE_DIST = 2;    // pieces are raised on the tile you face, 2 out
+
+let buildTier = "wood";       // the material selected in the BUILD panel
+let openChest = null;         // the Storage Chest whose panel is open, or null
+let lastBuildTile = "";       // throttles the BUILD panel's live re-render
+
+function baseKey(x, y) { return Math.floor(x) + "," + Math.floor(y); }
+function baseAdd(p) { basePieces.set(p.id, p); baseIndex.set(baseKey(p.x, p.y), p); }
+
+/* PART C — persistence, the same shape as ground_items: one select on login,
+   one insert on placement, one broadcast so the piece appears for everyone
+   the moment it is built. No new table shape and no new channel. */
+async function loadBasePieces() {
+  const { data } = await sb.from("base_pieces").select("*");
+  basePieces.clear();
+  baseIndex.clear();
+  (data || []).forEach(p => baseAdd(p));
+}
+
+/* The whole collision model this version has. A solid piece stops movement on
+   its own tile; a Door stops everyone except its owner. Real access control
+   is v34's job, once there is something to raid. */
+function basePieceBlocks(x, y) {
+  const p = baseIndex.get(baseKey(x, y));
+  if (!p) return false;
+  const def = BASE_PIECES[p.kind];
+  if (!def || !def.solid) return false;
+  if (def.door && me && p.owner === me.username) return false;
+  return true;
+}
+
+/* Every placement rule in one place, so the panel can grey out a button for
+   exactly the reason the placement itself would refuse. */
+function basePlaceCheck(kind, x, y) {
+  const def = BASE_PIECES[kind];
+  if (!def) return { ok: false, why: "No such piece" };
+  /* An interior is a different space entirely and a piece is stored in world
+     x/y — building inside a cave would drop the structure on the surface. */
+  if (inInterior()) return { ok: false, why: "You cannot build inside a cave" };
+  const tx = Math.floor(x), ty = Math.floor(y);
+  if (tx < 1 || ty < 1 || tx > N - 2 || ty > N - 2)
+    return { ok: false, why: "Too close to the edge of the world" };
+  const cx = tx + 0.5, cy = ty + 0.5;
+  // the bible's own rule: outside safe zones only
+  if (inSafeZone(cx, cy))
+    return { ok: false, why: "Bases cannot be built inside a safe zone" };
+  if (BLOCKED.has(biomeAt(tx, ty)))
+    return { ok: false, why: "Nothing will stand on that ground" };
+  /* Minimum spacing, measured against every piece already in the world —
+     anyone's, not only your own — so bases cannot be crammed edge to edge. */
+  for (const p of basePieces.values()) {
+    if (Math.hypot(p.x - cx, p.y - cy) < BASE_MIN_SEP)
+      return { ok: false, why: `Too close to an existing structure (${BASE_MIN_SEP} tiles minimum)` };
+  }
+  if (!def.anchor) {
+    let anchored = false;
+    for (const p of basePieces.values()) {
+      const pd = BASE_PIECES[p.kind];
+      if (pd && pd.anchor && Math.hypot(p.x - cx, p.y - cy) <= BASE_ANCHOR_R) { anchored = true; break; }
+    }
+    if (!anchored) return { ok: false, why: "Lay a Foundation first — everything else anchors to one" };
+  }
+  return { ok: true, why: "", x: cx, y: cy };
+}
+
+/* The tile a piece would be raised on: the one the player faces, two out, so
+   you are never standing inside your own wall the moment it appears. */
+function buildTarget() {
+  return { x: me.x + facing.x * BASE_PLACE_DIST, y: me.y + facing.y * BASE_PLACE_DIST };
+}
+
+async function placeBasePiece(kind, tier, x, y) {
+  if (!me || dead) return { ok: false, why: "Not now" };
+  const def = BASE_PIECES[kind];
+  if (!def) return { ok: false, why: "No such piece" };
+  if (BASE_TIERS.indexOf(tier) < 0) return { ok: false, why: "No such material tier" };
+  const chk = basePlaceCheck(kind, x, y);
+  if (!chk.ok) { toast(chk.why); return chk; }
+  const mat = BASE_TIER_MAT[tier];
+  if ((me.inv[mat] || 0) < def.cost) {
+    const why = `Needs ${def.cost} ${ITEM_META[mat].name}`;
+    toast(why);
+    return { ok: false, why };
+  }
+  invSpend({ [mat]: def.cost });
+  const row = { kind, tier, x: chk.x, y: chk.y, owner: me.username };
+  const { data } = await sb.from("base_pieces").insert(row).select();
+  /* The insert is what mints the id, exactly as ground_items does. A write
+     that comes back with nothing is refunded rather than kept locally — an
+     unsaved structure would vanish on the next login and take its materials
+     with it. */
+  if (!data || !data.length) {
+    invAdd(mat, def.cost);
+    toast("The ground refuses it — nothing was saved");
+    return { ok: false, why: "insert failed" };
+  }
+  data.forEach(baseAdd);
+  channel.send({ type: "broadcast", event: "base_add", payload: { pieces: data } });
+  toast(`${BASE_TIER_NAME[tier]} ${def.name} raised`);
+  burst(chk.x, chk.y, baseTierColor(tier), 8, 2);
+  refreshPanels();
+  refreshBuildPanel();
+  savePlayer();
+  return { ok: true, why: "", piece: data[0] };
+}
+
+/* PART A — the placed Forge. This is the one line that makes crafting
+   possible away from spawn for the first time: nearForge() now answers for
+   the Spawn Forge OR any player-placed one, at the same radius, so every
+   existing `where: "forge"` recipe follows with no recipe change at all. */
+function nearPlacedForge() {
+  for (const p of basePieces.values()) {
+    const def = BASE_PIECES[p.kind];
+    if (!def || !def.forge) continue;
+    if (Math.hypot(me.x - p.x, me.y - p.y) < BASE_FORGE_R) return p;
+  }
+  return null;
+}
+
+function nearBasePiece(pred) {
+  let best = null, bestD = 1.6;
+  for (const p of basePieces.values()) {
+    const def = BASE_PIECES[p.kind];
+    if (!def || !pred(def)) continue;
+    const d = Math.hypot(p.x - me.x, p.y - me.y);
+    if (d < bestD) { best = p; bestD = d; }
+  }
+  return best;
+}
+function nearBaseChest() { return nearBasePiece(d => d.store); }
+
+/* PART A — the Storage Chest's contents. ⚠️ SESSION-LOCAL, deliberately: the
+   locked spec pins `base_pieces` to exactly id/kind/tier/x/y/owner, with no
+   column for contents and no second table, so persisting what is inside a
+   chest is not something this version has a schema for. The chest itself
+   persists; what you leave in it does not survive a reload yet. */
+function chestInv(id) {
+  let c = chestContents.get(id);
+  if (!c) { c = {}; chestContents.set(id, c); }
+  return c;
+}
+function chestStore(piece, type, qty = 1) {
+  if (!piece || !me) return false;
+  if ((me.inv[type] || 0) < qty) return false;
+  invSpend({ [type]: qty });
+  const c = chestInv(piece.id);
+  c[type] = (c[type] || 0) + qty;
+  refreshPanels();
+  refreshChestPanel();
+  savePlayer();
+  return true;
+}
+function chestTake(piece, type, qty = 1) {
+  if (!piece || !me) return false;
+  const c = chestInv(piece.id);
+  if ((c[type] || 0) < qty) return false;
+  c[type] -= qty;
+  if (c[type] <= 0) delete c[type];
+  invAdd(type, qty);
+  refreshChestPanel();
+  savePlayer();
+  return true;
+}
+function openBaseChest(p) {
+  openChest = p;
+  chestPanel.style.display = "block";
+  refreshChestPanel();
+}
+function closeBaseChest() {
+  openChest = null;
+  chestPanel.style.display = "none";
+}
+
+/* --- the two panels. Both are the EXISTING panel language reused: the build
+   list is the .craft-row treatment the Crafting panel already uses, the tier
+   picker and both chest lists are .inv-row, and the selected tier wears the
+   same gold .equipped marker an equipped weapon does. No new component. --- */
+function refreshBuildPanel() {
+  if (!me) return;
+  const tgt = buildTarget();
+  lastBuildTile = baseKey(tgt.x, tgt.y);
+  const probe = basePlaceCheck("foundation", tgt.x, tgt.y);
+  document.getElementById("buildWhere").textContent =
+    "Pieces are raised on the tile you face. " +
+    (probe.ok ? "That ground is clear." : probe.why + ".");
+
+  const ic = col => `<span class="icon" style="background:${col}"></span>`;
+  document.getElementById("buildTierList").innerHTML = BASE_TIERS.map(tr => {
+    const meta = ITEM_META[BASE_TIER_MAT[tr]];
+    return `<div class="inv-row weapon ${buildTier === tr ? "equipped" : ""}" data-bt="${tr}">
+      <span class="iconwrap">${ic(meta.color)}<span>${BASE_TIER_NAME[tr]}</span></span>
+      <span class="qty">${me.inv[BASE_TIER_MAT[tr]] || 0} held</span></div>`;
+  }).join("");
+
+  const mat = BASE_TIER_MAT[buildTier];
+  document.getElementById("buildList").innerHTML = BASE_PIECE_ORDER.map(k => {
+    const def = BASE_PIECES[k];
+    const chk = basePlaceCheck(k, tgt.x, tgt.y);
+    const afford = (me.inv[mat] || 0) >= def.cost;
+    return `<div class="craft-row">
+      <div>${def.name}</div>
+      <div class="mats">${ITEM_META[mat].name} ×${def.cost}</div>
+      <div class="where">${chk.ok ? def.desc : chk.why}</div>
+      <button data-bp="${k}" ${afford && chk.ok ? "" : "disabled"}>PLACE</button>
+    </div>`;
+  }).join("");
+
+  document.getElementById("buildTierList").querySelectorAll("[data-bt]").forEach(el => {
+    el.onclick = () => { buildTier = el.dataset.bt; refreshBuildPanel(); };
+  });
+  document.getElementById("buildList").querySelectorAll("[data-bp]").forEach(el => {
+    el.onclick = () => {
+      const t2 = buildTarget();
+      placeBasePiece(el.dataset.bp, buildTier, t2.x, t2.y);
+    };
+  });
+}
+
+function refreshChestPanel() {
+  if (!me) return;
+  const ic = col => `<span class="icon" style="background:${col}"></span>`;
+  const row = (type, qty, attr) => {
+    const meta = ITEM_META[type] || { name: type, color: "#8a94a2" };
+    return `<div class="inv-row weapon" ${attr}="${type}">
+      <span class="iconwrap">${ic(meta.color)}<span>${meta.name}</span></span>
+      <span class="qty">×${qty}</span></div>`;
+  };
+  if (!openChest) {
+    document.getElementById("chestWhere").textContent = "No chest open.";
+    document.getElementById("chestList").innerHTML = "";
+    document.getElementById("chestMine").innerHTML = "";
+    return;
+  }
+  const def = BASE_PIECES[openChest.kind];
+  document.getElementById("chestWhere").textContent =
+    `${BASE_TIER_NAME[openChest.tier]} ${def.name} — ${openChest.owner}'s. ` +
+    "Click a stored row to take one back.";
+  const c = chestInv(openChest.id);
+  const stored = Object.entries(c);
+  document.getElementById("chestList").innerHTML = stored.length
+    ? stored.map(([t, q]) => row(t, q, "data-take")).join("")
+    : `<div class="inv-row"><span class="qty">Empty.</span></div>`;
+  const mine = Object.entries(me.inv);
+  document.getElementById("chestMine").innerHTML = mine.length
+    ? mine.map(([t, q]) => row(t, q, "data-store")).join("")
+    : `<div class="inv-row"><span class="qty">You carry nothing.</span></div>`;
+  document.getElementById("chestList").querySelectorAll("[data-take]").forEach(el => {
+    el.onclick = () => chestTake(openChest, el.dataset.take, 1);
+  });
+  document.getElementById("chestMine").querySelectorAll("[data-store]").forEach(el => {
+    el.onclick = () => chestStore(openChest, el.dataset.store, 1);
+  });
+}
+
+/* v33: harness hooks, the same shape and the same reason as every one above.
+   `basePieces`, `chestContents`, `buildTier` and `openChest` are all top-level
+   `let`s that never land on window, so PART D's gates cannot see any of them
+   otherwise. Copies. Placement itself is a real function the harness calls
+   directly, so the setter exists only to clear state between gates and to
+   open a chest without walking to it. */
+function debugBaseInfo() {
+  return {
+    BASE_TIERS: BASE_TIERS.slice(),
+    BASE_TIER_MAT: Object.assign({}, BASE_TIER_MAT),
+    BASE_PIECES: JSON.parse(JSON.stringify(BASE_PIECES)),
+    BASE_MIN_SEP, BASE_ANCHOR_R, BASE_FORGE_R, BASE_PLACE_DIST,
+    build: KEYBINDS.build, buildDefault: KEYBIND_DEFAULTS.build,
+    buildTier,
+    pieces: [...basePieces.values()].map(p => ({ id: p.id, kind: p.kind, tier: p.tier,
+                                                 x: p.x, y: p.y, owner: p.owner })),
+    chests: [...chestContents.entries()].map(([id, c]) => ({ id, contents: Object.assign({}, c) })),
+    openChest: openChest ? openChest.id : null,
+    nearForge: me ? nearForge() : false,
+    nearPlacedForge: me ? !!nearPlacedForge() : false,
+  };
+}
+function debugSetBase(patch) {
+  if (!patch) return debugBaseInfo();
+  if (patch.clear) {
+    basePieces.clear(); baseIndex.clear(); chestContents.clear();
+    openChest = null;
+    if (typeof chestPanel !== "undefined" && chestPanel) chestPanel.style.display = "none";
+  }
+  if ("buildTier" in patch) buildTier = patch.buildTier;
+  if (patch.openId) { const p = basePieces.get(patch.openId); if (p) openBaseChest(p); }
+  if (patch.closeChest) closeBaseChest();
+  return debugBaseInfo();
+}
+
+/* =========================================================
    PANELS (unchanged UI)
    ========================================================= */
 const invPanel = document.getElementById("invPanel");
 const craftPanel = document.getElementById("craftPanel");
 const petPanel = document.getElementById("petPanel");
+const buildPanel = document.getElementById("buildPanel");     // v33
+const chestPanel = document.getElementById("chestPanel");     // v33
 
 /* v11: companion roster — species icon, name, active state */
 function refreshPetPanel() {
@@ -4191,14 +4589,16 @@ function refreshPanels() {
 
   const cw = document.getElementById("craftWhere");
   cw.textContent = nearForge()
-    ? "You stand at the Spawn Forge — smelting and forging available."
-    : "Walk to the Spawn Forge (inside the safe zone) to smelt and forge.";
+    ? (nearPlacedForge()
+        ? "You stand at your own forge — smelting and forging available."
+        : "You stand at the Spawn Forge — smelting and forging available.")
+    : "Walk to the Spawn Forge, or raise a Forge at your base, to smelt and forge.";
   const cl = document.getElementById("craftList");
   cl.innerHTML = RECIPES.map((r, i) => {
     const mats = Object.entries(r.mats).map(([t, q]) => `${ITEM_META[t].name} ×${q}`).join(", ");
     const locOk = r.where === "ancient" ? nearAncient() : nearForge();
     const ok = invHas(r.mats) && locOk;
-    const whereTxt = r.where === "ancient" ? "The Ancient Forge (beyond this region)" : "Spawn Forge";
+    const whereTxt = r.where === "ancient" ? "The Ancient Forge (beyond this region)" : "Any forge";
     const w = WEAPONS[r.out];
     const ar = ARMORS[r.out];
     const ch = CHARMS[r.out];        // v21
@@ -4234,6 +4634,7 @@ addEventListener("keydown", e => {
   if (k === KEYBINDS.inventory) { invPanel.style.display = invPanel.style.display === "block" ? "none" : "block"; refreshPanels(); }
   if (k === KEYBINDS.craft) { craftPanel.style.display = craftPanel.style.display === "block" ? "none" : "block"; refreshPanels(); }
   if (k === KEYBINDS.pets) { petPanel.style.display = petPanel.style.display === "block" ? "none" : "block"; refreshPetPanel(); }
+  if (k === KEYBINDS.build) { buildPanel.style.display = buildPanel.style.display === "block" ? "none" : "block"; refreshBuildPanel(); }   // v33
   if (k === KEYBINDS.dive && !e.repeat) toggleDive();       // v21: dive toggle
   if (k === KEYBINDS.ability && !e.repeat) tryAbility();    // v27: class ability
   if (k === KEYBINDS.mount && !e.repeat) toggleMount();     // v28: mount/dismount
@@ -4305,8 +4706,12 @@ function update(dt, t) {
         me.y = Math.max(0.5, Math.min(INTERIOR_N - 0.5, me.y));
         if (interiorTileAt(Math.floor(me.x), Math.floor(me.y)) === IN_EXIT) exitInterior();
       } else {
-      if (!diveBlocked(biomeAt(Math.floor(nx), Math.floor(me.y)))) me.x = nx;
-      if (!diveBlocked(biomeAt(Math.floor(me.x), Math.floor(ny)))) me.y = ny;
+      /* v33: base pieces are the second thing that can stop a step. Solid
+         pieces stop everyone; a Door stops everyone but its owner. Same
+         per-axis shape as the terrain gate above, so sliding along a wall
+         still works exactly as sliding along a cliff does. */
+      if (!diveBlocked(biomeAt(Math.floor(nx), Math.floor(me.y))) && !basePieceBlocks(nx, me.y)) me.x = nx;
+      if (!diveBlocked(biomeAt(Math.floor(me.x), Math.floor(ny))) && !basePieceBlocks(me.x, ny)) me.y = ny;
       me.x = Math.max(1, Math.min(N - 1, me.x));
       me.y = Math.max(1, Math.min(N - 1, me.y));
       /* v29: touching a UWCAVE tile is the entry trigger — exactly where
@@ -6269,6 +6674,87 @@ function drawShrineEntity(t) {
 /* ⚠️ DEV-ONLY (v9): unlimited materials chest. Distinct wooden-chest
    silhouette so it can't be mistaken for rock/ore/building. REMOVE or
    admin-gate before any real/live launch. */
+/* v33: the placed base pieces. Flat-shaded boxes on the locked 0.72/0.55
+   facet split (drawBox does both faces itself), tinted with the piece's own
+   MATERIAL colour out of ITEM_META — no new palette entry, exactly as the
+   spec requires, and what makes tier legible at a glance from across a
+   valley. Hard-edged fills only; the single animated element is the Forge's
+   ember mouth, which is the Spawn Forge's own treatment reused smaller.
+   Every piece takes the standard sun shadow and the x+y depth sort. */
+function drawBasePiece(bp, t) {
+  const def = BASE_PIECES[bp.kind];
+  if (!def) return;
+  const col = baseTierColor(bp.tier);
+  const [sx, sy] = worldToScreen(bp.x, bp.y, groundZ(bp.x, bp.y));
+  if (bp.kind === "foundation") {
+    /* Low and walkable. The inset upper slab is what stops a bare foundation
+       reading as a painted patch of ground rather than something built. */
+    drawShadow(sx, sy, 30, 4);
+    drawBox(bp.x, bp.y, 0.94, 0.94, 3, col);
+    drawBox(bp.x, bp.y, 0.66, 0.66, 1.5, shade(col, 0.88), 3);
+  } else if (bp.kind === "wall") {
+    drawShadow(sx, sy, 30, 20);
+    drawBox(bp.x, bp.y, 0.9, 0.9, 20, col);
+    drawBox(bp.x, bp.y, 0.98, 0.98, 2.5, shade(col, 0.9), 20);   // capstone course
+  } else if (bp.kind === "door") {
+    /* Two jambs carrying a lintel over a flat dark opening — the v20 dungeon
+       entrance's language, in the piece's own material instead of ruin stone,
+       so a door reads as a gap in the wall run at a glance. The mouth is dark
+       because it is a dark colour, not because it is blurred. */
+    drawShadow(sx, sy, 30, 20);
+    const gz = groundZ(bp.x, bp.y);
+    const [mx0, my0] = worldToScreen(bp.x - 0.34, bp.y, gz);
+    const [mx1, my1] = worldToScreen(bp.x + 0.34, bp.y, gz);
+    ctx.fillStyle = "#181c22";
+    ctx.beginPath();
+    ctx.moveTo(mx0, my0);
+    ctx.lineTo(mx1, my1);
+    ctx.lineTo(mx1 - 1.5, my1 - 16);
+    ctx.lineTo(mx0 + 1.5, my0 - 16);
+    ctx.closePath();
+    ctx.fill();
+    drawBox(bp.x - 0.4, bp.y, 0.18, 0.52, 20, col);
+    drawBox(bp.x + 0.4, bp.y, 0.18, 0.52, 20, col);
+    drawBox(bp.x, bp.y, 0.98, 0.44, 4, shade(col, 0.92), 20);
+  } else if (bp.kind === "chest") {
+    /* The dev chest's silhouette, in the piece's material — and deliberately
+       WITHOUT its gold strap and DEV SUPPLY label, so the two can never be
+       confused for one another. */
+    drawShadow(sx, sy, 24, 12);
+    drawBox(bp.x, bp.y, 0.72, 0.5, 8, col);
+    drawBox(bp.x, bp.y, 0.78, 0.56, 4, shade(col, 0.9), 8);
+    const [, ty33] = worldToScreen(bp.x, bp.y, groundZ(bp.x, bp.y) + 12);
+    ctx.fillStyle = shade(col, 0.6);
+    ctx.fillRect(sx - 1.6, ty33 - 1, 3.2, 13);
+  } else if (bp.kind === "forge") {
+    drawShadow(sx, sy, 30, 22);
+    drawBox(bp.x, bp.y, 0.82, 0.7, 13, col);                          // furnace block
+    drawBox(bp.x + 0.26, bp.y - 0.22, 0.2, 0.2, 22, shade(col, 0.82)); // chimney
+    const ember = 0.6 + Math.sin(t / 300) * 0.3;
+    ctx.fillStyle = `rgba(255,170,80,${ember})`;
+    ctx.beginPath();
+    ctx.moveTo(sx - 9, sy - 10);
+    ctx.lineTo(sx - 2, sy - 6.5);
+    ctx.lineTo(sx - 2, sy - 1);
+    ctx.lineTo(sx - 9, sy - 4.5);
+    ctx.closePath();
+    ctx.fill();
+    // the Spawn Forge's own anvil, reused at the same colours and smaller
+    drawBox(bp.x - 0.06, bp.y + 0.56, 0.3, 0.18, 5, "#3e424a");
+    drawBox(bp.x - 0.06, bp.y + 0.56, 0.44, 0.14, 2.5, "#4a4f58", 5);
+  } else if (bp.kind === "generator") {
+    /* Deliberately inert. It is placeable this version and produces nothing,
+       so the core is a slow quiet pulse rather than a working animation — it
+       must not advertise output it does not have until v34. */
+    drawShadow(sx, sy, 26, 16);
+    drawBox(bp.x, bp.y, 0.76, 0.66, 12, col);
+    drawBox(bp.x, bp.y, 0.5, 0.44, 4, shade(col, 0.88), 12);
+    const gl = 0.28 + 0.18 * Math.sin(t / 900);
+    ctx.fillStyle = `rgba(232,182,76,${gl})`;
+    ctx.fillRect(sx - 3, sy - 13, 6, 4);
+  }
+}
+
 function drawChestEntity(t) {
   const cx2 = DEV_CHEST.x, cy2 = DEV_CHEST.y;
   const [sx, sy] = worldToScreen(cx2, cy2, groundZ(cx2, cy2));
@@ -7611,6 +8097,13 @@ function render(t) {
   ents.push({ s: SPAWN_FORGE.x + SPAWN_FORGE.y + 0.8, kind: "forge" });
   ents.push({ s: DEV_CHEST.x + DEV_CHEST.y + 0.3, kind: "chest" });   // ⚠️ DEV-ONLY
   ents.push({ s: SHRINE.x + SHRINE.y + 0.3, kind: "shrine" });
+  /* v33: placed base pieces, sorted by x+y like every other entity. Surface
+     only — a piece is stored in world coordinates and an interior is a
+     different space entirely. */
+  if (!inInterior()) for (const bp of basePieces.values()) {
+    if (bp.x < minX - 2 || bp.x > maxX + 2 || bp.y < minY - 2 || bp.y > maxY + 2) continue;
+    ents.push({ s: bp.x + bp.y, kind: "basepiece", bp });
+  }
   for (const it of groundItems.values()) {
     if (it.x < minX - 2 || it.x > maxX + 2 || it.y < minY - 2 || it.y > maxY + 2) continue;
     ents.push({ s: it.x + it.y, kind: "item", it });
@@ -7683,6 +8176,7 @@ function render(t) {
     else if (e.kind === "forge") drawForgeEntity(t);
     else if (e.kind === "chest") drawChestEntity(t);
     else if (e.kind === "shrine") drawShrineEntity(t);
+    else if (e.kind === "basepiece") drawBasePiece(e.bp, t);   // v33
     else if (e.kind === "item") drawItemEntity(e.it, t);
     else if (e.kind === "player") drawPlayerEntity(e.p, e.name, t, e.isMe);
     else if (e.kind === "proj") {
@@ -8029,14 +8523,29 @@ function updateHUD(dayT) {
   }
   else if (nearShrine()) { hudPrompt.textContent = "[E] Beastmaster Shrine — 3 Runic Stone for a taming blessing"; hudPrompt.style.display = "block"; }
   else if (nearChest()) { hudPrompt.textContent = "[E] Dev Supply Chest — stock all materials"; hudPrompt.style.display = "block"; }
+  else if (nearBaseChest()) { hudPrompt.textContent = "[E] Storage Chest — open"; hudPrompt.style.display = "block"; }
   else if (item) { hudPrompt.textContent = `[E] Pick up ${ITEM_META[item.type]?.name || item.type}`; hudPrompt.style.display = "block"; }
   else if (g) {
     const verb = (FINITE.has(g.type) && !PICKED.has(g.type)) ? "Mine" : "Gather";
     hudPrompt.textContent = `[E] ${verb} ${ITEM_META[FEATURE_GIVES[g.type]].name}`;
     hudPrompt.style.display = "block";
   }
-  else if (nearForge()) { hudPrompt.textContent = "[C] Spawn Forge — craft & smelt"; hudPrompt.style.display = "block"; }
+  else if (nearForge()) {
+    hudPrompt.textContent = nearPlacedForge()
+      ? "[C] Your Forge — craft & smelt" : "[C] Spawn Forge — craft & smelt";
+    hudPrompt.style.display = "block";
+  }
   else hudPrompt.style.display = "none";
+
+  /* v33: the two base panels track the world rather than going stale. The
+     chest closes when you walk away from it, and the BUILD panel re-renders
+     only when the tile you face actually changes — rebuilding it every frame
+     would destroy a button between mousedown and mouseup. */
+  if (openChest && Math.hypot(openChest.x - me.x, openChest.y - me.y) > 2.4) closeBaseChest();
+  if (buildPanel.style.display === "block") {
+    const tgt33 = buildTarget();
+    if (baseKey(tgt33.x, tgt33.y) !== lastBuildTile) refreshBuildPanel();
+  }
 
   if (dead && me.deadUntil) {
     const left = Math.max(0, me.deadUntil - Date.now());
@@ -8091,13 +8600,17 @@ const KEYBIND_DEFAULTS = { up: "w", down: "s", left: "a", right: "d", interact: 
   /* v28: mount/dismount. R was the only sensible letter still unbound after
      v27 took Q — it joins the table rather than being hardcoded, so it is
      remappable, conflict-checked and persisted by the v23 machinery. */
-  mount: "r" };
+  mount: "r",
+  /* v33: the BUILD panel. B was the only sensible letter still unbound after
+     v28 took R — it joins the table rather than being hardcoded, so it is
+     remappable, conflict-checked and persisted by the v23 machinery. */
+  build: "b" };
 /* display order + labels for the remapping screen */
 const KEYBIND_LABELS = [
   ["up", "Move up"], ["down", "Move down"], ["left", "Move left"], ["right", "Move right"],
   ["interact", "Gather / pick up / tame"], ["attack", "Attack"], ["inventory", "Inventory"],
   ["craft", "Crafting"], ["pets", "Companions"], ["dive", "Dive"], ["block", "Block"],
-  ["ability", "Class ability"],
+  ["ability", "Class ability"], ["build", "Build"],
 ];
 let KEYBINDS = Object.assign({}, KEYBIND_DEFAULTS);
 let kbCapture = null;           // action awaiting a keypress, or null
@@ -8393,7 +8906,8 @@ function refreshHelpLine() {
     K("inventory") + " inventory" + dot +
     K("craft") + " craft" + dot +
     K("pets") + " companions" + dot +
-    K("ability") + " class ability";
+    K("ability") + " class ability" + dot +
+    K("build") + " build";
 }
 
 /* --- PART B/E: the settings panel ----------------------------------------- */

@@ -37,6 +37,7 @@ const tableData = {
   mined_nodes: [],
   players: null,          // null = new-player path
   ground_items: [],
+  base_pieces: [],       // v33
   pets: [],
 };
 function chain(table) {

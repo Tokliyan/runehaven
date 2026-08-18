@@ -116,6 +116,137 @@ JUDGMENT CALLS
 - **Cone angles 50 and 90 degrees** — unstated; wide enough that phase 3
   is genuinely hard to sidestep.
 
+### 2026-08-18 (v33 — Bases part 1: placement & construction)
+
+The first thing in this world a player builds. Six placeable pieces —
+Foundation, Wall, Door, Storage Chest, Forge, Generator — across the bible's
+five material tiers. Raiding, destruction, per-piece HP, the Generator's
+actual production tick and the Architect class tie-in are v34 and are
+deliberately absent rather than half-built. Costs, spacing and persistence
+live in the README + commit message; below is only how it all looks.
+
+- **Not one new palette entry.** A piece is tinted with the colour its own
+  MATERIAL already has in `ITEM_META` — wood `#a06a34`, stone `#a8a8b2`, iron
+  bar `#d0d4dc`, runic stone `#5ac8e0`, dragonsteel `#b06ce0`. That is what
+  makes tier legible across a valley without a label, an icon or a badge, and
+  it means the bible's "higher material tiers are your backup defence" is
+  something you can read off a base from outside it. A dragonsteel wall is
+  violet because dragonsteel is violet.
+- **Every piece is `drawBox`, on the locked 0.72 / 0.55 facet split.** No new
+  shading path, no gradients, no outlines. They take the standard sun shadow
+  and sort by `x + y` with everything else, so a player can stand behind their
+  own wall and be occluded by it like any tree or rock.
+- **The Door is the v20 dungeon-entrance language, in the piece's own
+  material** — two jambs carrying a lintel over a flat near-black opening. The
+  mouth is dark because it is a dark colour, not because it is blurred. That
+  reuse is deliberate: a door has to read as a *gap in the wall run* at a
+  glance, and this file already had a shape that says "way through".
+- **The Storage Chest is the dev chest's silhouette, and deliberately NOT its
+  paint.** Same base box, same slightly-wider lid — but the gold strap and the
+  "DEV SUPPLY" label are gone, and the strap is the piece's own material
+  darkened. The two must never be confused; one is a ⚠️ DEV-ONLY object.
+- **The player Forge is the Spawn Forge shrunk, including its ember mouth and
+  its anvil colours (`#3e424a` / `#4a4f58`), reused verbatim.** It is the same
+  building, smaller — which is the read, since it does exactly the same job.
+  The Spawn Forge keeps its scale, its slate roof and its name plate; nothing
+  about it was touched.
+- **The Generator is deliberately inert-looking.** A slow, quiet core pulse
+  (`sin(t/900)`, alpha 0.28–0.46) rather than a working animation, because it
+  produces nothing this version and must not advertise output it does not
+  have. When v34 gives it a real tick, that is where the animation earns its
+  keep.
+- **A bare Foundation carries an inset upper slab.** Without it, a low flat
+  box at 3px reads as a painted patch of ground rather than as something
+  built — and the Foundation is the one piece you look at before there is
+  anything else there to give it context.
+- **Both new panels are the existing panel language, reused, with zero new
+  component styles.** The BUILD list is the `.craft-row` treatment the
+  Crafting panel already uses; the tier picker and both Storage Chest lists
+  are `.inv-row`, and the selected tier wears the same gold `.equipped`
+  marker an equipped weapon does. Only two lines of CSS were added, both of
+  them positions.
+- **⚠️ Walls have no orientation.** A Wall is a full-tile block, not an
+  axis-aligned panel, so a wall run reads as a row of cubes rather than as a
+  continuous barrier. Nothing in the spec asked for rotation and adding one
+  means a rotation control and a second silhouette — but this is the single
+  most likely thing to want next, and it is the difference between "a base"
+  and "a fence made of boxes".
+- **⚠️ Nothing marks a base as yours from outside it.** No owner name floats
+  over a piece, and the only owner-dependent behaviour in the world is that
+  your own Door lets you through. Correct for this version — the bible's whole
+  base pitch is that anyone who finds your base walks straight in — but it
+  means a Door is visually identical whether it will open for you or not.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent. All shipped through the full gate
+(parse clean, `run3` `CAUGHT ERROR: none`, `run4` **628/628 with zero FAIL**,
+`run5` 803 coverage draws clean) — refinements to consider, not unfinished
+work.
+
+1. **⚠️ A small v33 SQL update is needed before anyone can build.** The new
+   table is `create table base_pieces (id bigserial primary key, kind text,
+   tier text, x float8, y float8, owner text);` — exactly the spec's six
+   columns and exactly `ground_items`' shape. Without it, placement refunds
+   its materials and says so out loud rather than keeping an unsaved
+   structure that would vanish on the next login; everything else in the game
+   is unaffected. Same shape of note as v25's `last_fed_at` column.
+2. **Storage Chest contents are SESSION-LOCAL.** The spec pins `base_pieces`
+   to exactly id/kind/tier/x/y/owner — no contents column, no second table —
+   so there is no schema here for what is inside a chest. The chest itself
+   persists; what you leave in it does not, yet. Flagged rather than solved,
+   because solving it is a schema decision (a JSON column on the row, or a
+   `chest_items` table) and inventing one was not this version's job. This is
+   the same call v21 made for the charm slot.
+3. **Build costs: Foundation 4, Wall 3, Door 3, Chest 3, Forge 5, Generator
+   5 — units of the chosen tier's material.** The bible sets no build costs at
+   all. Deliberately flat across tiers, so choosing dragonsteel costs you
+   dragonsteel rather than *more* dragonsteel. Every one is a one-line tunable.
+4. **`BASE_ANCHOR_R = 8` tiles.** "Anchors everything else nearby" had to
+   become a number. Eight leaves room for a real structure around one
+   Foundation at the spec's 3-tile spacing without letting a single Foundation
+   licence a base that sprawls across a region. Tunable.
+5. **`BASE_PLACE_DIST = 2` — pieces are raised on the tile you face, two out.**
+   The spec says nothing about how a player aims a placement. Two tiles is
+   far enough that you can never seal yourself inside your own wall the moment
+   it appears, and it reuses `facing`, which every other directional thing in
+   this file already reads.
+6. **Terrain and interiors are refused as build sites, though the spec names
+   only safe zones.** A `BLOCKED` tile is lava, deep water or a peak — nothing
+   stands there — and an interior is a different space whose coordinates are
+   not world coordinates, so a piece built inside a cave would appear on the
+   surface. Only one reading of either is sensible.
+7. **Minimum spacing is measured against EVERYONE's pieces, not just your
+   own.** The spec says "between any two player pieces". Measuring only your
+   own would let two players interleave bases tile-by-tile, which is exactly
+   what the rule exists to prevent.
+8. **A failed insert refunds the materials rather than keeping the piece.**
+   The spec does not cover a write that comes back empty. Keeping it locally
+   would show the player a structure that silently vanishes on their next
+   login and takes its cost with it.
+9. **`B` is the BUILD key, the 14th `KEYBIND_DEFAULTS` entry**, labelled
+   "Build" in the remapping screen. It was the only sensible letter still
+   unbound after v27 took Q and v28 took R. The two v23/v27/v28 assertions
+   that pinned the counts were **updated, not relaxed** — 13 → 14 bindable
+   actions and 12 → 13 labelled rows — so a future pass cannot lose the
+   binding without failing.
+10. **The v27 guard asserting "no base/structure system was invented for the
+    Architect" is retired**, exactly as v31 retired its two event guards, and
+    replaced by the real proof gates above. What it was actually protecting is
+    still pinned: a new assertion checks the Architect's own class tie-in is
+    genuinely absent, not quietly half-built.
+11. **`run4` and `run5` learned a recording insert stub, scoped by table name
+    to `base_pieces` alone.** The shared stub returns the whole table for
+    every call, so an insert never lands anywhere — which makes the
+    round-trip gate ("insert, then re-select, same data comes back")
+    untestable and, in `run5`, leaves every base render branch unreachable.
+    Deliberately allow-listed to one table so no existing assertion's
+    behaviour can shift underneath it.
+12. **`run4`'s Door test flips the stored owner in the stub table and reloads**
+    rather than adding an owner setter to the game. That proves both halves of
+    the door rule — the owner passes, someone else is stopped — through the
+    real persistence path instead of a debug-only shortcut.
+
 ### 2026-08-18 (v32 — Abyssal Hollow, reusing v29's interior system)
 
 Second interior-bearing biome. Generalized v29's system rather than

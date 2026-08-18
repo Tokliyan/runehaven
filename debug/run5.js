@@ -37,10 +37,18 @@ const tableData = {
   mined_nodes: [],
   players: null,          // null = new-player path
   ground_items: [],
+  base_pieces: [],       // v33
   pets: [],
 };
+/* v33: base pieces are minted by their insert, so a stub that never records
+   one means placeBasePiece() always refunds and the whole render branch for
+   built structures stays unreachable. Scoped to this one table by name. */
+const INSERT_RECORDING = new Set(['base_pieces']);
+let insertSeq = 0;
 function chain(table) {
+  let pending = null;
   const result = () => {
+    if (pending) { const r = pending; pending = null; return { data: r, error: null }; }
     const d = tableData[table];
     return { data: d === undefined ? null : d, error: null };
   };
@@ -49,6 +57,15 @@ function chain(table) {
       if (prop === 'then') {
         const r = result();
         return (res) => res(r);
+      }
+      if (prop === 'insert' && INSERT_RECORDING.has(table)) {
+        return (rows) => {
+          const arr = Array.isArray(rows) ? rows : [rows];
+          const stamped = arr.map(r => Object.assign({ id: table + ':' + (++insertSeq) }, r));
+          tableData[table].push(...stamped);
+          pending = stamped;
+          return c;
+        };
       }
       return (...a) => c;
     },
@@ -393,6 +410,65 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       window.debugSetPlayer({ cls: wasA.cls, equipped: wasA.equipped });
       window.debugSetAbility({ lastAbility: 0, guardBreakUntil: 0,
                                markedShotUntil: 0, rallyCharges: 0, rings: null });
+    }
+    /* v33: the placed base pieces. Six kinds × five material tiers, none of
+       which exists in a fresh world — so the 5-frame boot cannot reach a
+       single one of these branches. Sweep the art directly at every tier,
+       then build a real base out in the world and pump frames so the entity
+       pass that dispatches to it runs too.
+       EXTEND BASE_PIECE_LIST whenever another piece kind ships (v34 adds
+       destruction and the Generator's production tick). */
+    if (window.drawBasePiece && window.debugBaseInfo && window.debugSetPlayer) {
+      const BASE_PIECE_LIST = ['foundation', 'wall', 'door', 'chest', 'forge', 'generator'];
+      const bi5 = window.debugBaseInfo();
+      const beforeB = window.debugWorldInfo().player;
+      for (const k of BASE_PIECE_LIST) {
+        for (const tier of bi5.BASE_TIERS) {
+          window.drawBasePiece({ id: 'cov:' + k + ':' + tier, kind: k, tier,
+                                 x: 61.4, y: 61.4, owner: 'BootTest' }, 900);
+          n += 1;
+        }
+      }
+      // now a real base, built through the real placement path, on camera
+      const { N: N5 } = window.debugWorldInfo();
+      const OFF5 = [[0, 0], [3, 0], [6, 0], [0, 3], [3, 3], [6, 3]];
+      let site5 = null;
+      for (let y = 12; y < N5 - 12 && !site5; y += 2) {
+        for (let x = 12; x < N5 - 12; x += 2) {
+          if (OFF5.every(o => window.basePlaceCheck('foundation', x + o[0] + 0.5, y + o[1] + 0.5).ok)) {
+            site5 = [x, y]; break;
+          }
+        }
+      }
+      if (site5) {
+        const [BX5, BY5] = site5;
+        window.debugSetPlayer({ x: BX5 + 3.5, y: BY5 + 1.5,
+          inv: { wood: 200, stone: 200, iron_bar: 200, runic_stone: 200, dragonsteel: 200 } });
+        const TIER5 = ['wood', 'stone', 'iron', 'runic', 'dragonsteel', 'wood'];
+        for (let i = 0; i < BASE_PIECE_LIST.length; i++) {
+          await window.placeBasePiece(BASE_PIECE_LIST[i], TIER5[i],
+            BX5 + OFF5[i][0] + 0.5, BY5 + OFF5[i][1] + 0.5);
+          n += 1;
+        }
+        const builtKinds = new Set(window.debugBaseInfo().pieces.map(p => p.kind));
+        for (const k of BASE_PIECE_LIST) {
+          if (!builtKinds.has(k)) {
+            console.log(`COVERAGE GAP: no "${k}" base piece was built in the live world`);
+            process.exit(1);
+          }
+        }
+        for (let f = 400; f < 408; f++) {
+          const q = rafQ; rafQ = [];
+          for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+          n += 1;
+        }
+        console.log('base pieces built and rendered this seed:', builtKinds.size);
+        window.debugSetBase({ clear: true });
+      } else {
+        console.log('COVERAGE GAP: no clear build site found for the base sweep');
+        process.exit(1);
+      }
+      if (beforeB) window.debugSetPlayer({ x: beforeB.x, y: beforeB.y, inv: beforeB.inv });
     }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
