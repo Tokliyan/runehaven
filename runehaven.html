@@ -148,6 +148,10 @@
      Inventory and Crafting panels rather than a bolted-on builder. */
   #buildPanel { left: 352px; width: 330px; }
   #chestPanel { right: 640px; }
+  /* v35 PART C: the CHARACTER panel — the same .panel card, centred because a
+     reclass is a deliberate, irreversible confirmation rather than something
+     you keep open while playing. Position only, no new component styles. */
+  #charPanel { left: 50%; transform: translateX(-50%); width: 330px; }
   .inv-row {
     display: flex; justify-content: space-between; align-items: center;
     padding: 6px 8px; font-size: 14px; border-bottom: 1px solid rgba(42,54,68,0.5);
@@ -314,6 +318,30 @@
   body.intro-hide #login { opacity: 0; }
   body.intro-exit #login { transition: opacity 700ms cubic-bezier(.22,.68,.28,1); }
   body.intro-lock #login { pointer-events: none; }
+
+  /* ---------- v35: MINIMAP / COMPASS + TUTORIAL GROUNDS ----------
+     PART A. Bible: "Minimap / Compass — Shows general direction only, does not
+     reveal exact base locations, helps with orientation in the large world."
+     So this is the .hud card reused, carrying three fixed landmarks and
+     NOTHING else — no coordinates, no scale, and no base_pieces marker of any
+     kind. The omission is the feature. The only genuinely new component is the
+     arrow, which is a CSS triangle rotated to the on-screen bearing. */
+  #hudMinimap { bottom: 52px; left: 12px; display: none; min-width: 138px; }
+  #hudMinimap .mm-title { color: var(--gold); font-size: 11px; letter-spacing: 2px; margin-bottom: 3px; }
+  .mm-row { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--text-dim); letter-spacing: 1px; }
+  .mm-arrow {
+    width: 0; height: 0; flex: none;
+    border-left: 9px solid var(--gold); border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+  }
+  /* PART B. The tutorial's one HUD line — the .hud card again, centred at the
+     top where nothing else lives, so it never fights the two corner readouts. */
+  #hudTutorial {
+    top: 12px; left: 50%; transform: translateX(-50%); display: none;
+    max-width: 460px; text-align: center; border-color: rgba(232,182,76,0.4);
+  }
+  #hudTutorial .tut-step { color: var(--gold); font-size: 11px; letter-spacing: 2px; }
+  #hudTutorial .tut-skip { color: var(--text-dim); font-size: 11px; }
 </style>
 </head>
 <body>
@@ -351,7 +379,12 @@
 <div class="hud" id="hudWorld"></div>
 <div class="hud" id="hudZone">SAFE ZONE — YOU ARE PROTECTED</div>
 <div class="hud" id="hudPrompt"></div>
-<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block (shield classes) &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build</div>
+<div class="hud" id="hudTutorial"></div>
+<div class="hud" id="hudMinimap">
+  <div class="mm-title">COMPASS</div>
+  <div id="mmRows"></div>
+</div>
+<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block (shield classes) &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character</div>
 <div id="hpBarWrap"><div id="hpBar"></div></div>
 
 <div class="panel" id="invPanel">
@@ -379,6 +412,13 @@
   <div id="chestList"></div>
   <div class="sub">YOUR PACK — click a row to store one</div>
   <div id="chestMine"></div>
+</div>
+
+<div class="panel" id="charPanel">
+  <h3>CHARACTER</h3>
+  <div class="sub" id="charWho"></div>
+  <div class="sub">RECLASS &mdash; resets all levels, keeps inventory, base and pets.</div>
+  <div id="charList"></div>
 </div>
 
 <div class="panel" id="petPanel">
@@ -644,6 +684,79 @@ const ARMORS = {
   runic_armor: { name: "Runic Armor", tier: "runic", reduce: 0.28 },
 };
 
+/* =========================================================
+   v35 PART D — COSMETICS
+   Bible (PLAYER CUSTOMISATION): "All cosmetics earned through gameplay only,
+   never purchased. Hats — Cap, Hood, Crown, Witch Hat, Knight Helm, Feathered
+   Hat. Cloaks — Colour variants, unlocked through gameplay. Weapon Skins —
+   Cosmetic only, no stat changes. Pet Accessories — Collars, ribbons, small
+   cosmetic items."
+
+   This table is DELIBERATELY separate from WEAPONS / ARMORS / CHARMS and must
+   never gain a stat field of any kind. A cosmetic carries a name, a slot and a
+   colour, and that is the whole of it — no dmg, no reduce, no tier, nothing a
+   combat or crafting path could ever read. The six hats are the bible's six by
+   name; the cloak colours, the two weapon-skin finishes and the two pet
+   accessories are named here because the bible names only the category.
+
+   No new currency, shop or purchase path exists anywhere: the only way one of
+   these enters the world is COSMETIC_DROP below, a rare roll on a strong mob
+   kill through the existing loot → ground_items → pickup route. */
+const COSMETIC_SLOTS = ["hat", "cloak", "skin", "pet"];
+const COSMETICS = {
+  cos_cap:           { name: "Cap",            slot: "hat",   color: "#5f8a46" },
+  cos_hood:          { name: "Hood",           slot: "hat",   color: "#4a5260" },
+  cos_crown:         { name: "Crown",          slot: "hat",   color: "#e8b64c" },
+  cos_witch_hat:     { name: "Witch Hat",      slot: "hat",   color: "#5a3a96" },
+  cos_knight_helm:   { name: "Knight Helm",    slot: "hat",   color: "#aab6c4" },
+  cos_feathered_hat: { name: "Feathered Hat",  slot: "hat",   color: "#b0603c" },
+  cos_cloak_crimson: { name: "Crimson Cloak",  slot: "cloak", color: "#b83c30" },
+  cos_cloak_azure:   { name: "Azure Cloak",    slot: "cloak", color: "#3a6ec0" },
+  cos_cloak_verdant: { name: "Verdant Cloak",  slot: "cloak", color: "#3c9458" },
+  cos_skin_gilded:   { name: "Gilded Finish",  slot: "skin",  color: "#e8c24c" },
+  cos_skin_obsidian: { name: "Obsidian Finish",slot: "skin",  color: "#4a4458" },
+  cos_pet_collar:    { name: "Pet Collar",     slot: "pet",   color: "#b0603c" },
+  cos_pet_ribbon:    { name: "Pet Ribbon",     slot: "pet",   color: "#e07aa8" },
+};
+const COSMETIC_IDS = Object.keys(COSMETICS);
+/* A cosmetic is an ITEM like any other — it lives in the inventory, drops
+   where you fall exactly as the bible says every item does, and is picked up
+   through the same path. Injected rather than hand-copied so the two tables
+   can never drift apart. `cosmetic: true` is the flag every UI branch reads. */
+for (const cid of COSMETIC_IDS) {
+  ITEM_META[cid] = { name: COSMETICS[cid].name, color: COSMETICS[cid].color, cosmetic: true };
+}
+/* Award source: a rare drop on a STRONG mob kill, rolled inside the existing
+   mobKill() loot pass. Goblin, Bandit and Boar are deliberately absent — the
+   bible's "earned through gameplay" should mean something was fought.
+   Every rate is a TUNABLE; the bible sets none. */
+const COSMETIC_DROP = { bear: 0.04, troll: 0.05, dark_wraith: 0.05, griffin: 0.06,
+                        phoenix: 0.06, salamander_king: 0.08, sea_serpent: 0.10,
+                        elder_drake: 0.50 };
+function isCosmetic(type) { return !!COSMETICS[type]; }
+/* The four worn slots. Never persisted into `inventory`; see me.cos. */
+function emptyCosmetics() { return { hat: null, cloak: null, skin: null, pet: null }; }
+function normalizeCosmetics(raw) {
+  const out = emptyCosmetics();
+  if (raw && typeof raw === "object") {
+    for (const s of COSMETIC_SLOTS) {
+      const id = raw[s];
+      if (id && COSMETICS[id] && COSMETICS[id].slot === s) out[s] = id;
+    }
+  }
+  return out;
+}
+function wornCosmetic(host, slot) {
+  const c = host && host.cos;
+  return (c && c[slot] && COSMETICS[c[slot]]) ? c[slot] : null;
+}
+/* Roll one cosmetic for a mob kill, or null. Pure — mobKill() owns the drop. */
+function rollCosmeticDrop(kind) {
+  const chance = COSMETIC_DROP[kind];
+  if (!chance || Math.random() >= chance) return null;
+  return COSMETIC_IDS[Math.floor(Math.random() * COSMETIC_IDS.length)];
+}
+
 /* v9: per-weapon cooldown (cd, ms) — dagger fast, axe/crossbow slow */
 const WEAPONS = {
   fists:            { name: "Fists",             tier: null,          type: "melee",  dmg: 5,  range: MELEE_RANGE, cd: 400 },
@@ -791,6 +904,180 @@ const SPAWN_FORGE = { x: SPAWN.x + 4, y: SPAWN.y + 2 };
    the dev island. MUST be removed or admin-gated before any real/live launch. */
 const DEV_CHEST = { x: SPAWN.x - 3, y: SPAWN.y + 2 };
 const SHRINE = { x: SPAWN.x - 4, y: SPAWN.y - 4 };   // v12: Beastmaster Shrine, safe-zone edge
+/* ============ v35 PART E — THE ORACLE ============================
+   Bible (LANDMARK STRUCTURES): "The Oracle — NPC that hints at rare pet
+   spawn locations, cannot hint at Elder Trio locations."
+
+   A fixed NPC just inside the Spawn Safe Zone, clear of the Shrine, the Dev
+   Chest and the Spawn Forge. Interact for one hint naming a rare or epic
+   species and the GENERAL place it lives — never a coordinate, matching the
+   Minimap's own "general direction only" philosophy.
+
+   THE EXCLUSION IS STRUCTURAL, NOT CONFIGURABLE. Two independent barriers:
+   the hint pool below is a hand-written literal — it is deliberately NOT
+   derived from the species table or any other list that a future version
+   could add an Elder to, and a proof gate greps this section to keep it that
+   way — and every entry is additionally filtered through ORACLE_FORBIDDEN —
+   the three Elder species by name, plus the admin-only Duskfox Elder — both
+   when the pool is built and again on every single lookup. The Oracle also
+   has no code path to world events of ANY kind: it can only ever return a
+   row of ORACLE_HINTS, and every row is a species and its biome. */
+const ORACLE = { x: SPAWN.x + 5, y: SPAWN.y - 4 };
+const ORACLE_R = 1.8;                 // interact reach, matching nearShrine()'s 1.7
+const ORACLE_FORBIDDEN = new Set(["golem_elder", "dragon_elder", "unicorn_elder",
+                                  "duskfox_elder"]);
+/* Every line below is the bible's own pet-table wording for that species'
+   home, so nothing here is invented. Rare and Epic only — Common and
+   Uncommon pets are not what an Oracle is for. */
+const ORACLE_HINTS_ALL = [
+  ["unicorn",         "Unicorn",         "the deep Enchanted Forest — and only under night"],
+  ["crystal_golem",   "Crystal Golem",   "the Ruins that stand high in the mountains, young ones only"],
+  ["phoenix",         "Phoenix",         "the Volcano's flanks — it must be fought before it will follow"],
+  ["fire_dragon",     "Fire Dragon",     "the deep lava caves, where hatchlings are found"],
+  ["water_dragon",    "Water Dragon",    "the deep Underwater Caves, where hatchlings are found"],
+  ["storm_dragon",    "Storm Dragon",    "the mountaintop storms of the Shattered Peaks"],
+  ["shadow_dragon",   "Shadow Dragon",   "the Abyssal Hollow, the deepest point in the world"],
+  ["shadowfox",       "Shadowfox",       "the Dark Forest at night — and it does not always come"],
+  ["lightfox",        "Lightfox",        "the Sacred Meadow at dawn — and it does not always come"],
+  ["krakenling",      "Krakenling",      "the Abyssal Hollow, for one day in every ten"],
+  ["salamander_king", "Salamander King", "the Sunforge Caldera, beyond the volcano"],
+];
+const ORACLE_HINTS = ORACLE_HINTS_ALL.filter(h => !ORACLE_FORBIDDEN.has(h[0]));
+let oracleIdx = 0;
+function nearOracle() { return Math.hypot(me.x - ORACLE.x, me.y - ORACLE.y) < ORACLE_R; }
+/* Rotates rather than picking at random, so asking twice tells you two
+   things. The forbidden check runs AGAIN here on purpose: the filter above
+   already removed them, and this makes it impossible for an Elder to be
+   spoken even if someone edits the pool without reading this comment. */
+function oracleHint() {
+  for (let i = 0; i < ORACLE_HINTS.length; i++) {
+    const h = ORACLE_HINTS[(oracleIdx + i) % ORACLE_HINTS.length];
+    if (ORACLE_FORBIDDEN.has(h[0])) continue;
+    oracleIdx = (oracleIdx + i + 1) % ORACLE_HINTS.length;
+    return h;
+  }
+  return null;
+}
+function askOracle() {
+  const h = oracleHint();
+  if (!h) { toast("The Oracle has nothing to say."); return null; }
+  toast(`The Oracle: "Seek the ${h[1]} in ${h[2]}."`);
+  burst(ORACLE.x, ORACLE.y, "#8fd8f0", 9, 2);
+  return h;
+}
+/* ============ v35 PART B — TUTORIAL GROUNDS ======================
+   Bible (TUTORIAL & NAVIGATION): "Tutorial Grounds — A small guided area
+   within the Spawn Safe Zone teaching movement, basic combat, and pet taming
+   before players enter the open world."
+
+   Three scripted steps, shown ONCE on first login and never again: walk to
+   the marked stone, strike the training dummy, tame the wolf waiting beside
+   it. Skippable at any point with ESCAPE, which ends it exactly as finishing
+   it does. The "once" is a persisted flag on the player row — see
+   tutorialShouldRun() and savePlayerExtras().
+
+   Nothing here is a new mechanic: the wolf is an ordinary WILD_SPECIES.wolf
+   pushed into `wilds`, so the v12 hold-E taming channel does all the work
+   unchanged, and the dummy is scenery that the ordinary attack path notices.
+   Both are removed from the world the moment the tutorial ends. */
+const TUTORIAL_MARK  = { x: SPAWN.x + 2.5, y: SPAWN.y + 6.5 };
+const TUTORIAL_DUMMY = { x: SPAWN.x - 2.5, y: SPAWN.y + 6.5 };
+const TUTORIAL_WOLF  = { x: SPAWN.x + 6.5, y: SPAWN.y + 5.5 };
+const TUTORIAL_WOLF_ID = "tutorial:wolf";
+const TUTORIAL_MARK_R = 1.4;     // TUNABLE: how close counts as "here"
+const TUTORIAL_HIT_R = 2.4;      // TUNABLE: a swing this close counts as landed
+/* Each step's text is GENERATED from KEYBINDS, never hardcoded — the v23
+   lesson, which found a "WASD move • SPACE attack" help line that would have
+   started lying the moment anyone rebound anything. A tutorial that names the
+   wrong key is worse than no tutorial. */
+const TUTORIAL_STEPS = [
+  { key: "move",  text: () => `Hold ${keyLabel(KEYBINDS.up)} ${keyLabel(KEYBINDS.left)} ` +
+                              `${keyLabel(KEYBINDS.down)} ${keyLabel(KEYBINDS.right)} and walk to the marked stone.` },
+  { key: "fight", text: () => `Stand beside the training dummy and press ${keyLabel(KEYBINDS.attack)} to strike it.` },
+  { key: "tame",  text: () => `Hold ${keyLabel(KEYBINDS.interact)} beside the wolf to tame it.` },
+];
+let tutorialActive = false, tutorialStep = 0, tutorialDone = false;
+let tutorialRuns = 0;            // how many times it has actually started
+
+/* Pure, and the whole of the "once per player" rule. A row with the flag set
+   never runs it again. PRE-MIGRATION: a row with no `tutorial_done` column at
+   all reads as not-done and the tutorial replays — the honest degradation,
+   since without the column there is nowhere for the flag to live. It is
+   skippable in one keypress either way. */
+function tutorialShouldRun(row) { return !(row && row.tutorial_done === true); }
+
+function startTutorialIfNeeded() {
+  if (tutorialActive || tutorialDone) return false;
+  tutorialActive = true;
+  tutorialStep = 0;
+  tutorialRuns++;
+  if (!wilds.some(w => w.id === TUTORIAL_WOLF_ID)) {
+    wilds.push({ id: TUTORIAL_WOLF_ID, species: "wolf",
+                 x: TUTORIAL_WOLF.x, y: TUTORIAL_WOLF.y, ph: 0.7, tut: true });
+  }
+  refreshTutorialHud();
+  return true;
+}
+
+function tutorialAdvance(key) {
+  if (!tutorialActive) return false;
+  const step = TUTORIAL_STEPS[tutorialStep];
+  if (!step || step.key !== key) return false;
+  tutorialStep++;
+  if (tutorialStep >= TUTORIAL_STEPS.length) { endTutorial(true); return true; }
+  burst(me.x, me.y, "#e8b64c", 8, 2);
+  refreshTutorialHud();
+  return true;
+}
+
+function endTutorial(completed) {
+  if (!tutorialActive) return false;
+  tutorialActive = false;
+  tutorialDone = true;
+  if (taming && taming.wild && taming.wild.id === TUTORIAL_WOLF_ID) cancelTaming();
+  wilds = wilds.filter(w => w.id !== TUTORIAL_WOLF_ID);
+  savePlayerExtras();
+  refreshTutorialHud();
+  toast(completed ? "Tutorial Grounds complete — the world is open to you."
+                  : "Tutorial skipped — the world is open to you.");
+  return true;
+}
+
+/* Step 1 resolves on position, checked from update() like every other
+   proximity rule in this file. Steps 2 and 3 resolve from the real attack and
+   the real taming path instead, so neither invents a second way to do them. */
+function tutorialTick() {
+  if (!tutorialActive || inInterior()) return;
+  if (TUTORIAL_STEPS[tutorialStep] && TUTORIAL_STEPS[tutorialStep].key === "move" &&
+      Math.hypot(me.x - TUTORIAL_MARK.x, me.y - TUTORIAL_MARK.y) < TUTORIAL_MARK_R) {
+    tutorialAdvance("move");
+  }
+}
+function tutorialNoteAttack() {
+  if (!tutorialActive || inInterior()) return;
+  if (Math.hypot(me.x - TUTORIAL_DUMMY.x, me.y - TUTORIAL_DUMMY.y) <= TUTORIAL_HIT_R) {
+    burst(TUTORIAL_DUMMY.x, TUTORIAL_DUMMY.y, "#c8b090", 6, 1.8);
+    tutorialAdvance("fight");
+  }
+}
+/* Deliberately fires whether the tame SUCCEEDED or not: the lesson is the
+   channel, and a 50% roll must never be able to strand a new player inside
+   step three of a tutorial. */
+function tutorialNoteTame(w) {
+  if (!tutorialActive || !w || w.id !== TUTORIAL_WOLF_ID) return;
+  tutorialAdvance("tame");
+}
+function refreshTutorialHud() {
+  const el = document.getElementById("hudTutorial");
+  if (!el) return;
+  const step = tutorialActive ? TUTORIAL_STEPS[tutorialStep] : null;
+  if (!step) { el.style.display = "none"; return; }
+  el.innerHTML =
+    `<div class="tut-step">TUTORIAL GROUNDS &nbsp;${tutorialStep + 1}/${TUTORIAL_STEPS.length}</div>` +
+    `${step.text()}<br><span class="tut-skip">[ESC] skip</span>`;
+  el.style.display = "block";
+}
+
 /* ============ v37: the three remaining bible landmarks ============
    Grand Bazaar, The Ancient Forge and the Ruined Colosseum were named in
    the bible from the start and were the last structures never built.
@@ -1007,8 +1294,11 @@ function debugSetPlayer(patch) {
      paths cannot be proven without standing the player in the right class
      holding the right weapon — and all three are fields the game already
      writes itself (class select, equip, unequip). */
+  /* v35: + level. Reclassing resets it, and proving that needs it standing
+     somewhere other than 1 first — and it is a field the game already writes
+     itself (a player kill increments it). */
   for (const k of ["x", "y", "hp", "diving", "breath", "maxBreath", "charm", "inv",
-                   "cls", "equipped", "armor"]) {
+                   "cls", "equipped", "armor", "level"]) {
     if (k in patch) me[k] = patch[k];
   }
   /* v22: snapping the position now snaps the camera with it. The camera
@@ -1067,6 +1357,57 @@ function debugSetAbility(patch) {
   return debugAbilityInfo();
 }
 function debugCombatHandles() { return { others, mobs, projectiles }; }
+/* v35: harness hook. Every piece of state this version adds is either a
+   top-level `let` (tutorialActive/tutorialStep/tutorialDone, oracleIdx) or a
+   field on `me`, and neither lands on `window` — so PART F's gates cannot see
+   any of it otherwise. Copies, never the live objects. */
+function debugV35Info() {
+  return {
+    minimap: minimapBearings(),
+    MINIMAP_LABELS: MINIMAP_MARKS.map(m => m[0]),
+    tutorialActive, tutorialStep, tutorialDone, tutorialRuns,
+    TUTORIAL_STEPS: TUTORIAL_STEPS.map(s => s.key),
+    TUTORIAL_MARK: { x: TUTORIAL_MARK.x, y: TUTORIAL_MARK.y },
+    TUTORIAL_DUMMY: { x: TUTORIAL_DUMMY.x, y: TUTORIAL_DUMMY.y },
+    TUTORIAL_WOLF_ID,
+    tutorialWolfInWorld: wilds.some(w => w.id === TUTORIAL_WOLF_ID),
+    ORACLE: { x: ORACLE.x, y: ORACLE.y }, ORACLE_R,
+    oracleForbidden: Array.from(ORACLE_FORBIDDEN),
+    oraclePool: ORACLE_HINTS.map(h => h[0]),
+    oraclePoolAll: ORACLE_HINTS_ALL.map(h => h[0]),
+    COSMETICS: JSON.parse(JSON.stringify(COSMETICS)),
+    COSMETIC_SLOTS: COSMETIC_SLOTS.slice(),
+    COSMETIC_DROP: Object.assign({}, COSMETIC_DROP),
+    /* The three stat tables, exported so PART F can prove directly that not
+       one cosmetic id has an entry in any of them. All lexically scoped
+       consts a harness cannot otherwise see. Copies. */
+    WEAPONS: JSON.parse(JSON.stringify(WEAPONS)),
+    ARMORS: JSON.parse(JSON.stringify(ARMORS)),
+    CHARMS: JSON.parse(JSON.stringify(CHARMS)),
+    weaponDmgNow: me ? equippedWeapon().dmg : null,
+    worn: me && me.cos ? Object.assign({}, me.cos) : null,
+    cls: me ? me.cls : null, level: me ? me.level : null,
+    /* PART F asks for inventory/base/pets byte-identical across a reclass,
+       so hand the harness one stable serialisation of all three. */
+    snapshot: me ? JSON.stringify({
+      inv: me.inv,
+      base: Array.from(basePieces.values())
+              .filter(p => p.owner === me.username)
+              .map(p => [p.id, p.kind, p.tier, p.x, p.y]).sort(),
+      pets: myPets.map(p => [p.id, p.species, !!p.active]).sort(),
+    }) : null,
+  };
+}
+/* Setter twin, same shape and the same reason as debugSetPlayer(). Only
+   fields the game itself already writes. */
+function debugSetV35(patch) {
+  if (!patch) return debugV35Info();
+  if ("tutorialDone" in patch) tutorialDone = !!patch.tutorialDone;
+  if ("tutorialActive" in patch) tutorialActive = !!patch.tutorialActive;
+  if ("wearCos" in patch) me.cos = normalizeCosmetics(patch.wearCos);
+  if ("oracleIdx" in patch) oracleIdx = patch.oracleIdx | 0;
+  return debugV35Info();
+}
 function debugV37Info() {
   return {
     BAZAAR: { ...BAZAAR }, ANCIENT: { ...ANCIENT }, COLOSSEUM: { ...COLOSSEUM },
@@ -2965,6 +3306,10 @@ enterBtn.onclick = async () => {
     await loadPets();
     await joinRealtime();
     loginEl.style.display = "none";
+    /* v35 PART B: first login only. Runs after the world, the roster and
+       realtime are all up, so the wolf it stands in the Grounds is an
+       ordinary wild and the v12 taming channel needs no special case. */
+    startTutorialIfNeeded();
     if (me.deadUntil && me.deadUntil > Date.now()) enterDeath(null, true);
     requestAnimationFrame(loop);
   } catch (e) {
@@ -3002,7 +3347,15 @@ async function loginPlayer(username, cls) {
       lastKillAt: p.last_kill_at ? new Date(p.last_kill_at).getTime() : null,
       shrineCdUntil: p.shrine_cooldown_until ? new Date(p.shrine_cooldown_until).getTime() : null,
       deadUntil: p.dead_until ? new Date(p.dead_until).getTime() : null,
+      /* v35 PART D: the four worn cosmetic slots. The cosmetic ITEMS live in
+         `inventory` like everything else; this column only records which ones
+         are being worn. Absent column -> nothing worn, exactly the v21 charm
+         precedent, and the items themselves are unaffected either way. */
+      cos: normalizeCosmetics(p.cosmetics),
     };
+    /* v35 PART B: shown once, ever. The flag is read here, on the row that
+       came back from the players table, and written by savePlayerExtras(). */
+    tutorialDone = !tutorialShouldRun(p);
     if (me.x < 1 || me.y < 1 || me.x > N - 1 || me.y > N - 1 ||
         BLOCKED.has(biomeAt(Math.floor(me.x), Math.floor(me.y)))) {
       const s = findSpawn();
@@ -3019,7 +3372,8 @@ async function loginPlayer(username, cls) {
       if (String(error.message || "").includes("hp")) throw new Error("Your database is missing the new columns — run the Stage 1-3 SQL.");
       throw error;
     }
-    me = { username, cls, x: s.x, y: s.y, level: 1, hp: 100, maxHp: 100, inv: {}, equipped: null, armor: null, lastKillAt: null, shrineCdUntil: null, deadUntil: null };
+    me = { username, cls, x: s.x, y: s.y, level: 1, hp: 100, maxHp: 100, inv: {}, equipped: null, armor: null, lastKillAt: null, shrineCdUntil: null, deadUntil: null, cos: emptyCosmetics() };
+    tutorialDone = false;    // v35: a brand new row has never seen it
   }
   /* v21: dive/breath state, set once for BOTH the returning and the new-player
      path. Deliberately NOT persisted: savePlayer() writes a fixed column list
@@ -3102,6 +3456,15 @@ async function mobKill(m, iKilled) {
     if (Math.random() < l.chance) {
       drops.push({ type: l.type, qty: l.qty, x: m.x + (Math.random() - 0.5) * 1.6, y: m.y + (Math.random() - 0.5) * 1.6 });
     }
+  }
+  /* v35 PART D: the ONLY way a cosmetic enters the world — a rare roll on a
+     strong mob kill, riding the exact same loot -> ground_items -> pickup path
+     everything else already uses. No shop, no currency, no purchase, exactly
+     as the bible requires ("earned through gameplay only, never purchased"). */
+  const cosDrop = rollCosmeticDrop(m.kind);
+  if (cosDrop) {
+    drops.push({ type: cosDrop, qty: 1, x: m.x + (Math.random() - 0.5) * 1.6, y: m.y + (Math.random() - 0.5) * 1.6 });
+    toast(`${ITEM_META[cosDrop].name} — a rare find!`);
   }
   toast(`${def.name} slain!`);
   if (!drops.length) return;
@@ -3307,6 +3670,10 @@ async function resolveTaming() {
   const w = taming.wild;
   const chance = taming.chance;
   taming = null;
+  /* v35 PART B: the tutorial's third lesson is the CHANNEL, so it completes
+     the moment one resolves on the tutorial wolf — success, flee or resist
+     alike. A 50% roll must never be able to strand a new player mid-tutorial. */
+  tutorialNoteTame(w);
   if (Math.random() < chance) {
     if (w.mob) {
       // v14: taming forfeits the loot — the creature leaves the world as a mob
@@ -3482,6 +3849,10 @@ async function joinRealtime() {
     o.hp = p.h; o.maxHp = p.m || 100; o.tier = p.t || null; o.dead = !!p.d;
     o.wk = p.wk || null; o.at = p.at || null; o.ps = !!p.ps; o.bl = !!p.bl;
     o.pe = p.pe || null; o.mo = !!p.mo;
+    /* v35: a remote player's worn cosmetics. Normalised on arrival, so a
+       malformed or hostile payload can only ever resolve to real cosmetic
+       ids in their own slots — and never to anything with a stat. */
+    o.cs = p.cs ? normalizeCosmetics(p.cs) : null;
     /* v29: the entire shared-space mechanism. Everyone still receives every
        broadcast on the one channel; we simply do not render or collide with
        anyone standing in a different space. */
@@ -3616,6 +3987,7 @@ function sendMove(force) {
       wk: weaponKind(me.equipped) || 0,
       at: (ARMORS[me.armor] || {}).tier || 0,
       pe: (activePet && activePet.species) || 0,
+      cs: me.cos || 0,          // v35: worn cosmetics — visual only, same shape as pe/mo
       mo: me.mounted ? 1 : 0,   // v28: mounted, so others seat us on the pet too
       sp: me.space || "main",   // v29: which space we are in — the whole filter
       ps: myPoison ? 1 : 0, bl: isBlocking() ? 1 : 0,
@@ -3627,6 +3999,11 @@ function sendMove(force) {
 async function savePlayer() {
   lastSave = performance.now();
   await sb.from("players").update({
+    /* v35 PART C: `class` joins the fixed column list. It is an EXISTING
+       players column (the insert has always written it) that nothing ever
+       updated, because until reclassing existed a player's class could not
+       change. No schema change; a reclass simply has to survive a reload. */
+    class: me.cls,
     x: me.x, y: me.y, level: me.level, hp: Math.round(me.hp),
     inventory: me.inv, equipped: me.equipped,
     armor: me.armor || null,
@@ -3635,6 +4012,28 @@ async function savePlayer() {
     dead_until: me.deadUntil ? new Date(me.deadUntil).toISOString() : null,
     last_seen: new Date().toISOString(),
   }).eq("username", me.username);
+}
+/* v35: the two columns this version adds, written SEPARATELY from savePlayer()
+   and error-swallowing on purpose — exactly the v25 `last_fed_at` pattern. If
+   a world has not had the small v35 SQL update applied, this write fails
+   server-side and nothing else is affected: savePlayer()'s own fixed column
+   list never learns about a column that might not be there, so position,
+   level, inventory and everything else keep saving normally.
+
+   ⚠️ A small v35 SQL update is needed for these two to persist:
+     alter table players add column tutorial_done boolean;
+     alter table players add column cosmetics jsonb;
+   Without it the Tutorial Grounds replays on each login (skippable in one
+   keypress) and worn cosmetics reset each session — the cosmetic ITEMS
+   themselves live in `inventory`, which persists either way. */
+async function savePlayerExtras() {
+  if (!me || !sb) return;
+  try {
+    await sb.from("players").update({
+      tutorial_done: !!tutorialDone,
+      cosmetics: me.cos || emptyCosmetics(),
+    }).eq("username", me.username);
+  } catch (e) { /* ignore — see above */ }
 }
 window.addEventListener("beforeunload", () => { if (me && sb) savePlayer(); });
 
@@ -3671,6 +4070,13 @@ async function dropAllItems() {
      dropped with the inventory above, so clearing the slot is all that is
      owed here. Pushing another drop would duplicate the item. */
   me.charm = null;
+  /* v35 PART D: worn cosmetics are slot pointers in exactly the same way —
+     the cosmetic items themselves are ordinary inventory items and were
+     already dropped by the loop above, so the bible's "players drop all items
+     on death" applies to them with no special case. Clearing the four slots
+     is all that is owed; pushing another drop would duplicate them. */
+  me.cos = emptyCosmetics();
+  savePlayerExtras();
   if (!drops.length) return;
   const { data } = await sb.from("ground_items").insert(drops).select();
   if (data) {
@@ -3723,6 +4129,10 @@ function tryAttack(aimX, aimY) {
   if (now - lastAttack < (w.cd || 450)) return;
   lastAttack = now;
   combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;   // v24: combat music signal
+  /* v35 PART B: the training dummy is scenery, not a mob — it has no HP, no
+     AI and no loot. A real swing taken beside it is what teaches the lesson,
+     so the tutorial simply notices the swing the player already made. */
+  tutorialNoteAttack();
 
   let dir;
   if (aimX !== undefined) {
@@ -4194,6 +4604,13 @@ async function doInteract() {
   if (nearShrine()) {
     lastGather = now;
     tryActivateShrine();
+    return;
+  }
+  /* v35 PART E: the Oracle answers on the same interact key everything else
+     uses. Checked beside the Shrine, since both are fixed spawn-zone NPCs. */
+  if (nearOracle()) {
+    lastGather = now;
+    askOracle();
     return;
   }
   if (nearChest()) {
@@ -4809,6 +5226,63 @@ const craftPanel = document.getElementById("craftPanel");
 const petPanel = document.getElementById("petPanel");
 const buildPanel = document.getElementById("buildPanel");     // v33
 const chestPanel = document.getElementById("chestPanel");     // v33
+const charPanel = document.getElementById("charPanel");       // v35
+
+/* =========================================================
+   v35 PART C — RECLASSING
+   Bible (CLASSES): "Reclassing resets all XP and levels but keeps inventory,
+   base and pets."
+
+   Levelling in this file is ONE counter — `me.level`, incremented on a player
+   kill. There is no separate XP field anywhere, so "resets all XP and levels"
+   is exactly `me.level = 1`. Everything else is untouched, by omission rather
+   than by restoring it afterwards: `me.inv`, the player's own `base_pieces`
+   and the pet roster are never named below, so nothing can quietly clear them.
+   `class` is an existing players column and now rides along on savePlayer().
+   ========================================================= */
+let reclassArmed = null;      // the class awaiting its confirmation click
+
+function reclassTo(cls) {
+  if (!me || !CLASSES[cls] || cls === me.cls) return false;
+  me.cls = cls;
+  me.level = 1;
+  reclassArmed = null;
+  savePlayer();
+  sendMove(true);
+  toast(`You begin again as a ${cls} — Level 1. Everything you own is still yours.`);
+  burst(me.x, me.y, "#e8b64c", 12, 2.4);
+  refreshCharPanel();
+  refreshPanels();
+  return true;
+}
+
+/* The .inv-row / .craft-row treatment again — no new component styles. The
+   confirmation is a second click on the same row rather than a browser
+   dialog, because this reset is irreversible and worth a deliberate pause. */
+function refreshCharPanel() {
+  if (!me) return;
+  const who = document.getElementById("charWho");
+  if (who) who.textContent = `${me.username} — ${me.cls}, Level ${me.level}`;
+  const list = document.getElementById("charList");
+  if (!list) return;
+  list.innerHTML = Object.keys(CLASSES).map(cls => {
+    const cur = cls === me.cls;
+    const armed = reclassArmed === cls;
+    return `<div class="craft-row ${cur ? "" : ""}">
+      <div>${cls}${cur ? ' <span class="qty">— current</span>' : ""}</div>
+      <div class="mats">${CLASSES[cls].desc}</div>
+      ${cur ? '<div class="where">You are this class</div>'
+            : armed ? `<div class="where">This resets your level to 1. Click again to confirm.</div>
+                       <button data-rc="${cls}">CONFIRM RECLASS</button>`
+                    : `<button data-rc="${cls}">RECLASS</button>`}
+    </div>`;
+  }).join("");
+  list.querySelectorAll("button").forEach(b => b.onclick = () => {
+    const cls = b.dataset.rc;
+    if (reclassArmed === cls) reclassTo(cls);
+    else { reclassArmed = cls; refreshCharPanel(); }
+  });
+}
 
 /* v11: companion roster — species icon, name, active state */
 function refreshPetPanel() {
@@ -4889,6 +5363,14 @@ function refreshPanels() {
       const ch = CHARMS[type];
       html += `<div class="inv-row weapon ${me.charm === type ? "equipped" : ""} tier-${ch.tier}" data-c="${type}">
         <span class="iconwrap">${ic(meta.color)}<span>${meta.name}</span></span><span class="qty">${ch.maxBreath}s breath${qty > 1 ? " ×" + qty : ""}</span></div>`;
+    } else if (meta.cosmetic) {
+      /* v35 PART D: cosmetics equip exactly like armour and the charm — the
+         same clickable row, the same gold `.equipped` marker, its own slot.
+         The right-hand column names the SLOT, never a stat, because a
+         cosmetic has none and this row must never look as though it does. */
+      const cd = COSMETICS[type];
+      html += `<div class="inv-row weapon ${(me.cos && me.cos[cd.slot]) === type ? "equipped" : ""}" data-k="${type}">
+        <span class="iconwrap">${ic(meta.color)}<span>${meta.name}</span></span><span class="qty">${cd.slot}${qty > 1 ? " ×" + qty : ""}</span></div>`;
     } else {
       html += `<div class="inv-row"><span class="iconwrap">${ic(meta.color)}<span>${meta.name}</span></span><span class="qty">×${qty}</span></div>`;
     }
@@ -4905,6 +5387,13 @@ function refreshPanels() {
         me.charm = me.charm === el.dataset.c ? null : el.dataset.c;
         me.maxBreath = breathMax();
         me.breath = Math.min(me.breath, me.maxBreath);
+      } else if (el.dataset.k) {
+        /* v35: cosmetic slot toggle. One per slot, so putting on a second hat
+           takes the first one off. Nothing but appearance changes here. */
+        const cd = COSMETICS[el.dataset.k];
+        if (!me.cos) me.cos = emptyCosmetics();
+        me.cos[cd.slot] = me.cos[cd.slot] === el.dataset.k ? null : el.dataset.k;
+        savePlayerExtras();
       } else {
         const w = el.dataset.w;
         me.equipped = w === "fists" ? null : w;
@@ -4961,6 +5450,14 @@ addEventListener("keydown", e => {
   if (k === KEYBINDS.craft) { craftPanel.style.display = craftPanel.style.display === "block" ? "none" : "block"; refreshPanels(); }
   if (k === KEYBINDS.pets) { petPanel.style.display = petPanel.style.display === "block" ? "none" : "block"; refreshPetPanel(); }
   if (k === KEYBINDS.build) { buildPanel.style.display = buildPanel.style.display === "block" ? "none" : "block"; refreshBuildPanel(); }   // v33
+  /* v35 PART C: the CHARACTER panel, where reclassing lives. Joins
+     KEYBIND_DEFAULTS rather than being hardcoded, so it is remappable,
+     conflict-checked and persisted by the v23 machinery with no new code. */
+  if (k === KEYBINDS.character) { reclassArmed = null; charPanel.style.display = charPanel.style.display === "block" ? "none" : "block"; refreshCharPanel(); }
+  /* v35 PART B: "Skippable at any point." ESCAPE is deliberately NOT a
+     KEYBINDS action — it is the one key v23 made unbindable, so it can never
+     be remapped out from under a player who wants out of the tutorial. */
+  if (k === "escape" && tutorialActive) endTutorial(false);
   if (k === KEYBINDS.dive && !e.repeat) toggleDive();       // v21: dive toggle
   if (k === KEYBINDS.ability && !e.repeat) tryAbility();    // v27: class ability
   if (k === KEYBINDS.mount && !e.repeat) toggleMount();     // v28: mount/dismount
@@ -5053,6 +5550,7 @@ function update(dt, t) {
       me.hp = Math.min(me.maxHp, me.hp + 2.5 * dt);
     }
     updateBreath(dt);          // v21: dive breath / drowning / charm regen
+    tutorialTick();            // v35: the tutorial's one proximity step
   } else if (me.deadUntil && Date.now() >= me.deadUntil) {
     respawn();
   }
@@ -5985,7 +6483,69 @@ function drawForgeEntity(t) {
 /* Tiny unit (unchanged silhouettes) */
 const HERO_K = 11 / 28;   // sheet-native 28px body into the game's 11-unit local space
 
-function drawUnit(c, sx, sy, cls, s, tier, face, t, withShadow = true, wkind = null, atier = null, blocking = false) {
+/* =========================================================
+   v35 PART D — the cosmetic layer, drawn INSIDE the unit's own local space so
+   a hat flips, scales and bobs with the body it sits on rather than floating
+   beside it. Flat fills on the locked language: hard edges, no gradients, no
+   outlines, no glow. NOTHING here reads or writes a stat — a cosmetic changes
+   which colours and polygons are painted and nothing else, ever.
+
+   The head sits at a different height in each of the five bodies (the Mystic's
+   hood apex is nine units above the Beastmaster's antler band), so a hat
+   anchors off the class it is worn on, not off a single flat number. Same
+   reason mountSeatOffsetY() scales by SPECIES_K in v28.
+   ========================================================= */
+const COS_HAT_Y = { Ranger: -24.4, Knight: -25.6, Mystic: -27.2,
+                    Beastmaster: -24.2, Architect: -24.0 };
+
+/* Behind the body: called before drawHeroBody so the body paints over it. */
+function drawCosCloak(c, id) {
+  const col = (COSMETICS[id] || {}).color;
+  if (!col) return;
+  P(c, [-5.2, -19.4, 5.2, -19.4, 6.6, -3.4, -6.6, -3.4], col);
+  P(c, [0.6, -19.4, 5.2, -19.4, 6.6, -3.4, 0.6, -3.4], shade(col, 0.72));
+  P(c, [-5.2, -19.4, -2.6, -19.4, -4.4, -3.4, -6.6, -3.4], shade(col, 1.18));
+  R(c, [-5.2, -19.2, 5.2, -19.2], shade(col, 1.3), 0.7);          // collar line
+}
+
+/* On top of the body: called after drawHeroBody, at that class's own head. */
+function drawCosHat(c, cls, id, t) {
+  const def = COSMETICS[id];
+  if (!def) return;
+  const col = def.color, y = COS_HAT_Y[cls] !== undefined ? COS_HAT_Y[cls] : -24.4;
+  if (id === "cos_crown") {
+    P(c, [-3.2, y, 3.2, y, 3.2, y - 1.6, -3.2, y - 1.6], col);     // band
+    P(c, [0.4, y, 3.2, y, 3.2, y - 1.6, 0.4, y - 1.6], shade(col, 0.7));
+    for (let i = 0; i < 3; i++) {                                   // three points
+      const px = -2.4 + i * 2.4;
+      P(c, [px - 0.9, y - 1.6, px + 0.9, y - 1.6, px, y - 4], col);
+    }
+  } else if (id === "cos_witch_hat") {
+    P(c, [-4.6, y, 4.6, y, 4.6, y - 0.9, -4.6, y - 0.9], shade(col, 0.72));  // brim
+    P(c, [-2.6, y - 0.9, 2.6, y - 0.9, 1.2, y - 8.4], col);                  // cone
+    P(c, [0.4, y - 0.9, 2.6, y - 0.9, 1.2, y - 8.4], shade(col, 0.68));
+    R(c, [-2.4, y - 2.4, 2.4, y - 2.4], "#e8b64c", 0.7);                     // band
+  } else if (id === "cos_knight_helm") {
+    P(c, [-3, y + 0.6, -2.6, y - 3.4, 2.8, y - 3.4, 3.2, y + 0.6], col);
+    P(c, [0.8, y - 3.4, 2.8, y - 3.4, 3.2, y + 0.6, 1, y + 0.6], shade(col, 0.68));
+    c.fillStyle = "#151a20";
+    c.fillRect(-2, y - 1.6, 4.6, 1);                                          // visor slit
+  } else if (id === "cos_feathered_hat") {
+    P(c, [-4.4, y, 4.4, y, 3.4, y - 1, -3.4, y - 1], shade(col, 0.74));       // brim
+    P(c, [-2.4, y - 1, 2.4, y - 1, 1.8, y - 3.8, -1.8, y - 3.8], col);        // crown
+    P(c, [1.6, y - 3.2, 5.4, y - 6.6, 2.6, y - 2.6], "#e8e2d0");              // feather
+  } else if (id === "cos_hood") {
+    P(c, [-3.4, y + 1.4, -1.2, y - 3.6, 3.2, y - 2.8, 3.6, y + 1.4], col);
+    P(c, [-1.2, y - 3.6, 3.2, y - 2.8, 0.4, y - 1.6], shade(col, 1.2));
+    P(c, [-3.4, y + 1.4, -6.2, y + 4, -2.6, y + 3], shade(col, 0.7));         // hood tail
+  } else {                                                                     // Cap
+    P(c, [-3, y + 0.4, 3, y + 0.4, 2.6, y - 2, -2.6, y - 2], col);
+    P(c, [0.6, y + 0.4, 3, y + 0.4, 2.6, y - 2, 0.6, y - 2], shade(col, 0.7));
+    P(c, [1.4, y + 0.2, 5.2, y + 0.6, 5.2, y + 1.4, 1.4, y + 1.2], shade(col, 0.82));  // peak
+  }
+}
+
+function drawUnit(c, sx, sy, cls, s, tier, face, t, withShadow = true, wkind = null, atier = null, blocking = false, cos = null) {
   const C = CLASSES[cls] || CLASSES.Knight;
   const flip = face.x < -0.15 ? -1 : 1;
   if (withShadow) {
@@ -6003,7 +6563,11 @@ function drawUnit(c, sx, sy, cls, s, tier, face, t, withShadow = true, wkind = n
   // triangle+head. Locked class palettes unchanged.
   c.save();
   c.scale(HERO_K, HERO_K);
+  /* v35: the cosmetic layer, inside the sheet-native space the body uses.
+     Cloak first so the body paints over it, hat last so it sits on the head. */
+  if (cos && cos.cloak) drawCosCloak(c, cos.cloak);
   drawHeroBody(c, cls, t);
+  if (cos && cos.hat) drawCosHat(c, cls, cos.hat, t);
   c.restore();
   // v15 armor: layered plate overlay — tinted facets, two lames, pauldron
   // caps — replacing the flat trapezoid; tier colour language unchanged.
@@ -6018,8 +6582,13 @@ function drawUnit(c, sx, sy, cls, s, tier, face, t, withShadow = true, wkind = n
     P(c, [-2.9, -7.6, -1.5, -7.9, -1.4, -6.3, -2.8, -6.1], shade(ac, 1.12));
     P(c, [1.5, -7.9, 2.9, -7.6, 2.8, -6.1, 1.4, -6.3], shade(ac, 0.78));
   }
-  // v9: equipped weapon rendered in-hand, tier-coloured (v15 geometry)
-  if (wkind) drawHeldWeapon(c, wkind, tierColor(tier) || "#cdd2da");
+  /* v9: equipped weapon rendered in-hand, tier-coloured (v15 geometry).
+     v35 PART D: a weapon SKIN replaces that colour and nothing else — same
+     silhouette, same weapon, same damage. "Cosmetic only, no stat changes." */
+  if (wkind) {
+    const skin = (cos && cos.skin && COSMETICS[cos.skin]) ? COSMETICS[cos.skin].color : null;
+    drawHeldWeapon(c, wkind, skin || tierColor(tier) || "#cdd2da");
+  }
   // v10: block pose — shield raised big on the facing side
   if (blocking) {
     c.fillStyle = "#aab6c4";
@@ -7029,6 +7598,87 @@ function drawColosseumEntity(t) {
   ctx.beginPath(); ctx.ellipse(sx, sy, 46, 26, 0, 0, Math.PI * 2); ctx.fill();
 }
 
+/* v35 PART E: The Oracle. A seated, hooded seer on a low stone dais just
+   inside the Spawn Safe Zone. The dais is the Shrine's own stone, reused —
+   these are the two things in the world you walk up to and ask something of,
+   and they should read as the same civilisation. The FIGURE is deliberately
+   nothing like a player Mystic: no legs, a wide seated base, a deep blue robe
+   instead of the Mystic's violet, and one slow orbiting rune rather than the
+   Mystic's ring of them. Flat fills, hard edges, standard sun shadow and the
+   x+y depth sort, like every other entity. */
+const ORACLE_ROBE = "#274b6e", ORACLE_ROBE_LIT = "#356389", ORACLE_ROBE_DK = "#1c3750";
+function drawOracleEntity(t) {
+  const [sx, sy] = worldToScreen(ORACLE.x, ORACLE.y, groundZ(ORACLE.x, ORACLE.y));
+  drawShadow(sx, sy, 28, 20);
+  drawBox(ORACLE.x, ORACLE.y, 1.05, 0.9, 4, "#9a9084");            // dais
+  drawBox(ORACLE.x, ORACLE.y, 0.8, 0.66, 2, "#b4ac9e", 4);         // step
+  // seated robe — a wide triangle, no legs at all
+  ctx.beginPath();
+  ctx.moveTo(sx - 7, sy - 6); ctx.lineTo(sx + 7, sy - 6);
+  ctx.lineTo(sx + 3.4, sy - 19); ctx.lineTo(sx - 3.4, sy - 19);
+  ctx.closePath(); ctx.fillStyle = ORACLE_ROBE; ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(sx + 0.8, sy - 6); ctx.lineTo(sx + 7, sy - 6);
+  ctx.lineTo(sx + 3.4, sy - 19); ctx.lineTo(sx + 0.8, sy - 19);
+  ctx.closePath(); ctx.fillStyle = ORACLE_ROBE_DK; ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(sx - 7, sy - 6); ctx.lineTo(sx - 4.4, sy - 6);
+  ctx.lineTo(sx - 2.6, sy - 19); ctx.lineTo(sx - 3.4, sy - 19);
+  ctx.closePath(); ctx.fillStyle = ORACLE_ROBE_LIT; ctx.fill();
+  ctx.fillStyle = "#e8b64c";
+  ctx.fillRect(sx - 6.4, sy - 7.4, 12.8, 1.2);                      // gold hem
+  // deep hood with nothing but two lights inside it
+  ctx.beginPath();
+  ctx.moveTo(sx - 3.8, sy - 18); ctx.lineTo(sx, sy - 25.4); ctx.lineTo(sx + 3.8, sy - 18);
+  ctx.closePath(); ctx.fillStyle = ORACLE_ROBE_LIT; ctx.fill();
+  ctx.fillStyle = "#0d1622";
+  ctx.fillRect(sx - 2.4, sy - 20.4, 4.8, 3.2);
+  const gp = 0.45 + Math.sin(t / 420) * 0.35;
+  ctx.fillStyle = `rgba(160,224,244,${gp.toFixed(3)})`;
+  ctx.fillRect(sx - 1.6, sy - 19.6, 1.1, 1.1);
+  ctx.fillRect(sx + 0.5, sy - 19.6, 1.1, 1.1);
+  // one slow orbiting rune — the read that this NPC knows something
+  const oa = t / 1400;
+  ctx.fillStyle = `rgba(232,182,76,${(0.55 + Math.sin(t / 300) * 0.25).toFixed(3)})`;
+  ctx.fillRect(sx + Math.cos(oa) * 9 - 1.2, sy - 22 + Math.sin(oa) * 3 - 1.2, 2.4, 2.4);
+  ctx.font = "10px 'Barlow', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "rgba(232,182,76,0.85)";
+  ctx.fillText("THE ORACLE", sx, sy - 30);
+}
+
+/* v35 PART B: the Tutorial Grounds' two props. Both exist ONLY while the
+   tutorial is running and are gone the instant it ends — they are the lesson,
+   not world furniture. Flat-shaded boxes, standard shadow, standard sort. */
+function drawTutorialMark(t) {
+  const [sx, sy] = worldToScreen(TUTORIAL_MARK.x, TUTORIAL_MARK.y, groundZ(TUTORIAL_MARK.x, TUTORIAL_MARK.y));
+  const pulse = 0.45 + Math.sin(t / 400) * 0.3;
+  ctx.strokeStyle = `rgba(232,182,76,${pulse.toFixed(3)})`;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.ellipse(sx, sy, 18, 10, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  drawBox(TUTORIAL_MARK.x, TUTORIAL_MARK.y, 0.55, 0.45, 3, "#b4ac9e");
+  // a thin beacon, so the first thing a new player is asked to do is findable
+  ctx.fillStyle = `rgba(232,182,76,${(0.22 * pulse).toFixed(3)})`;
+  ctx.fillRect(sx - 2.5, sy - 46, 5, 44);
+}
+function drawTutorialDummy(t) {
+  const [sx, sy] = worldToScreen(TUTORIAL_DUMMY.x, TUTORIAL_DUMMY.y, groundZ(TUTORIAL_DUMMY.x, TUTORIAL_DUMMY.y));
+  drawShadow(sx, sy, 20, 14);
+  drawBox(TUTORIAL_DUMMY.x, TUTORIAL_DUMMY.y, 0.36, 0.3, 15, "#8a6a42");     // post
+  ctx.fillStyle = "#6e5230";
+  ctx.fillRect(sx - 9, sy - 16, 18, 2.2);                                     // cross arms
+  ctx.fillStyle = "#c8a45c";
+  ctx.beginPath(); ctx.arc(sx, sy - 21, 4.2, 0, Math.PI * 2); ctx.fill();     // straw head
+  ctx.fillStyle = "#a8843c";
+  ctx.fillRect(sx - 4.2, sy - 22.4, 8.4, 1.4);                                // binding
+  ctx.fillStyle = "#b8483c";                                                  // painted target
+  ctx.fillRect(sx - 3.4, sy - 13.6, 6.8, 6.8);
+  ctx.fillStyle = "#e8d8c0";
+  ctx.fillRect(sx - 1.6, sy - 11.8, 3.2, 3.2);
+}
+
 function drawShrineEntity(t) {
   const [sx, sy] = worldToScreen(SHRINE.x, SHRINE.y, groundZ(SHRINE.x, SHRINE.y));
   drawShadow(sx, sy, 26, 20);
@@ -7944,6 +8594,10 @@ function drawPet(h, species, t) {
   const flier = sp?.flier;
   const nowMs = performance.now();
   const mine = (h === me);
+  /* v35 PART D: whose accessory this pet wears — the local player's own worn
+     slot, or the `cs` field off a remote player's move broadcast. Resolved
+     once here, so the drawing helper takes a cosmetic id and nothing else. */
+  const petAcc = mine ? wornCosmetic(me, "pet") : ((h.cs && h.cs.pet) || null);
   const downed = !!(mine && pet.downedUntil && nowMs < pet.downedUntil);
   const lg = (mine && pet.swingT && nowMs - pet.swingT < PET_LUNGE_MS)
     ? Math.sin((nowMs - pet.swingT) / PET_LUNGE_MS * Math.PI) * 0.3 : 0;
@@ -7956,15 +8610,48 @@ function drawPet(h, species, t) {
     ctx.beginPath(); ctx.ellipse(gx, gy, 3.2, 1.4, 0, 0, Math.PI * 2); ctx.fill();
     const [sx, sy] = worldToScreen(px, py, groundZ(px, py) + alt);
     drawSpecies(species, sx, sy, t, !downed);
+    drawPetAccessory(petAcc, species, sx, sy);   // v35
     if (mine) petOverlays(pet, sx, sy, nowMs, downed, gx, gy);
   } else {
     const bob = downed ? -1.4                  // sits/cowers — no walk bob
       : pet.moving ? Math.abs(Math.sin(t / 140)) * 1.6 : Math.sin(t / 800) * 0.4;
     const [sx, sy] = worldToScreen(px, py, groundZ(px, py) + bob);
     drawSpecies(species, sx, sy, t, !downed && pet.moving);
+    drawPetAccessory(petAcc, species, sx, sy);   // v35
     if (mine) petOverlays(pet, sx, sy, nowMs, downed, gx, gy);
   }
   ctx.globalAlpha = 1;
+}
+
+/* v35 PART D: the bible's "Pet Accessories — Collars, ribbons, small cosmetic
+   items". Small on purpose: it sits at the neck of whatever body drawSpecies
+   just drew, scaled by that species' own SPECIES_K so it does not swallow a
+   Sprite or vanish on a Golem. No stats, no combat overlay language — this is
+   deliberately NOT the gold pet HP bar, the slate downed arc or the pale-green
+   tame ring, all three of which mean something specific and must keep meaning
+   only that. */
+function drawPetAccessory(id, species, sx, sy) {
+  if (!id || !COSMETICS[id] || COSMETICS[id].slot !== "pet") return;
+  const col = COSMETICS[id].color;
+  const k = Math.max(0.85, SPECIES_K[species] || 1);
+  if (id === "cos_pet_ribbon") {
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - 5 * k); ctx.lineTo(sx - 3 * k, sy - 7 * k); ctx.lineTo(sx - 3 * k, sy - 3.6 * k);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - 5 * k); ctx.lineTo(sx + 3 * k, sy - 7 * k); ctx.lineTo(sx + 3 * k, sy - 3.6 * k);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = shade(col, 1.25);
+    ctx.fillRect(sx - 0.9 * k, sy - 5.8 * k, 1.8 * k, 1.8 * k);
+  } else {
+    ctx.fillStyle = col;
+    ctx.fillRect(sx - 3.2 * k, sy - 5.4 * k, 6.4 * k, 1.6 * k);
+    ctx.fillStyle = shade(col, 0.7);
+    ctx.fillRect(sx + 0.4 * k, sy - 5.4 * k, 2.8 * k, 1.6 * k);
+    ctx.fillStyle = "#e8c24c";
+    ctx.fillRect(sx - 0.7 * k, sy - 3.9 * k, 1.4 * k, 1.4 * k);   // tag
+  }
 }
 
 /* v16: local-pet combat overlays — hit flash, an HP bar in the mob-bar
@@ -8079,8 +8766,12 @@ function drawPlayerEntity(p, name, t, isMe) {
   const mountedNow = isMe ? !!me.mounted : !!p.mo;
   const mountSp = isMe ? ((activePet && activePet.species) || null) : (p.pe || null);
   const seatLift = (mountedNow && mountSp) ? mountSeatOffsetY(mountSp) * S : 0;
+  /* v35 PART D: the local player reads its own worn slots; a remote player's
+     come off the `cs` field on the move broadcast, the same shape `pe` and
+     `mo` already use. Purely visual either way. */
+  const cosNow = isMe ? (me.cos || null) : (p.cs || null);
   drawUnit(ctx, sx + rx, sy - bob + ry + seatLift, p.cls, S, tier, face, t,
-           !mountedNow, wkind, atier, blocking);
+           !mountedNow, wkind, atier, blocking, cosNow);
 
   // v10: poison motes — small green flecks rising while the DoT runs
   if (poisoned) {
@@ -8506,6 +9197,12 @@ function render(t) {
   ents.push({ s: SPAWN_FORGE.x + SPAWN_FORGE.y + 0.8, kind: "forge" });
   ents.push({ s: DEV_CHEST.x + DEV_CHEST.y + 0.3, kind: "chest" });   // ⚠️ DEV-ONLY
   ents.push({ s: SHRINE.x + SHRINE.y + 0.3, kind: "shrine" });
+  ents.push({ s: ORACLE.x + ORACLE.y + 0.3, kind: "oracle" });        // v35 PART E
+  /* v35 PART B: the two tutorial props, which exist only while it runs. */
+  if (tutorialActive && !inInterior()) {
+    ents.push({ s: TUTORIAL_MARK.x + TUTORIAL_MARK.y, kind: "tutmark" });
+    ents.push({ s: TUTORIAL_DUMMY.x + TUTORIAL_DUMMY.y + 0.3, kind: "tutdummy" });
+  }
   if (!inInterior()) {
     ents.push({ s: BAZAAR.x + BAZAAR.y + 0.3, kind: "bazaar" });
     ents.push({ s: ANCIENT.x + ANCIENT.y + 0.3, kind: "ancient" });
@@ -8590,6 +9287,9 @@ function render(t) {
     else if (e.kind === "forge") drawForgeEntity(t);
     else if (e.kind === "chest") drawChestEntity(t);
     else if (e.kind === "shrine") drawShrineEntity(t);
+    else if (e.kind === "oracle") drawOracleEntity(t);        // v35 PART E
+    else if (e.kind === "tutmark") drawTutorialMark(t);       // v35 PART B
+    else if (e.kind === "tutdummy") drawTutorialDummy(t);     // v35 PART B
     else if (e.kind === "bazaar") drawBazaarEntity(t);
     else if (e.kind === "ancient") drawAncientEntity(t);
     else if (e.kind === "colosseum") drawColosseumEntity(t);
@@ -8890,6 +9590,55 @@ const hudZone = document.getElementById("hudZone");
 const hudPrompt = document.getElementById("hudPrompt");
 const hpBar = document.getElementById("hpBar");
 
+/* =========================================================
+   v35 PART A — MINIMAP / COMPASS
+   Bible: "Shows general direction only, does not reveal exact base
+   locations, helps with orientation in the large world."
+
+   THREE FIXED LANDMARKS AND NOTHING ELSE. The Eternal Tower, the Volcano and
+   the Spawn Safe Zone are permanent, world-generated and knowable to everyone
+   — so pointing at them gives orientation without giving anything away. There
+   is no coordinate readout, no scale, no distance, no player marker and,
+   above all, no player-built structure of any kind. The two tables that hold
+   those are deliberately never read anywhere in this section — a proof gate
+   greps for their names here and fails if either ever appears — and a future
+   pass must not start. Hiding bases is the bible's entire base design; the
+   omission here is the feature, not an oversight.
+
+   The bearing is the ON-SCREEN one — the world is isometric, so a compass
+   computed in raw world axes would point somewhere the player is not looking.
+   Same conversion drawTowerArrow() has used since v8. */
+const MINIMAP_MARKS = [
+  ["TOWER",   () => TOWER],
+  ["VOLCANO", () => VOLCANO],
+  ["SPAWN",   () => SPAWN],
+];
+function minimapBearings() {
+  const out = [];
+  if (!me) return out;
+  for (const [label, get] of MINIMAP_MARKS) {
+    const p = get();
+    const dx = p.x - me.x, dy = p.y - me.y;
+    out.push({ label, deg: Math.atan2(isoY(dx, dy), isoX(dx, dy)) * 180 / Math.PI });
+  }
+  return out;
+}
+function updateMinimap() {
+  const el = document.getElementById("hudMinimap");
+  if (!el) return;
+  /* Inside a cave the grid is the interior's own, not the world's, so a
+     world bearing would be meaningless there — the compass simply goes away,
+     the same way the breath readout only appears when it means something. */
+  if (!me || inInterior()) { el.style.display = "none"; return; }
+  const rows = document.getElementById("mmRows");
+  if (rows) {
+    rows.innerHTML = minimapBearings().map(r =>
+      `<div class="mm-row"><span class="mm-arrow" style="transform:rotate(${r.deg.toFixed(1)}deg)"></span>${r.label}</div>`
+    ).join("");
+  }
+  el.style.display = "block";
+}
+
 function updateHUD(dayT) {
   const w = equippedWeapon();
   const hpPct = Math.round(me.hp);
@@ -8920,6 +9669,7 @@ function updateHUD(dayT) {
     `<span class="dim">${others.size + 1} online</span>`;
 
   hudZone.style.display = inSafeZone(me.x, me.y) ? "block" : "none";
+  updateMinimap();                     // v35 PART A
   hpBar.style.width = (me.hp / me.maxHp * 100) + "%";
   hpBar.classList.toggle("low", me.hp / me.maxHp < 0.35);
 
@@ -8939,6 +9689,8 @@ function updateHUD(dayT) {
     hudPrompt.style.display = "block";
   }
   else if (nearShrine()) { hudPrompt.textContent = "[E] Beastmaster Shrine — 3 Runic Stone for a taming blessing"; hudPrompt.style.display = "block"; }
+  /* v35 PART E: the Oracle says what it is, like every other landmark. */
+  else if (nearOracle()) { hudPrompt.textContent = "[E] The Oracle — ask where a rare companion may be found"; hudPrompt.style.display = "block"; }
   /* v37: the three new landmarks announce what they are. The Bazaar and
      Colosseum are informational (their mechanic is the zone you stand in,
      not a keypress); the Ancient Forge tells you what it unlocks. */
@@ -9027,13 +9779,17 @@ const KEYBIND_DEFAULTS = { up: "w", down: "s", left: "a", right: "d", interact: 
   /* v33: the BUILD panel. B was the only sensible letter still unbound after
      v28 took R — it joins the table rather than being hardcoded, so it is
      remappable, conflict-checked and persisted by the v23 machinery. */
-  build: "b" };
+  build: "b",
+  /* v35: the CHARACTER panel (reclassing). K was the natural remaining
+     letter after v33 took B — it joins the table rather than being
+     hardcoded, so it inherits remapping, conflict-checking and persistence. */
+  character: "k" };
 /* display order + labels for the remapping screen */
 const KEYBIND_LABELS = [
   ["up", "Move up"], ["down", "Move down"], ["left", "Move left"], ["right", "Move right"],
   ["interact", "Gather / pick up / tame"], ["attack", "Attack"], ["inventory", "Inventory"],
   ["craft", "Crafting"], ["pets", "Companions"], ["dive", "Dive"], ["block", "Block"],
-  ["ability", "Class ability"], ["build", "Build"],
+  ["ability", "Class ability"], ["build", "Build"], ["character", "Character"],
 ];
 let KEYBINDS = Object.assign({}, KEYBIND_DEFAULTS);
 let kbCapture = null;           // action awaiting a keypress, or null
@@ -9330,7 +10086,8 @@ function refreshHelpLine() {
     K("craft") + " craft" + dot +
     K("pets") + " companions" + dot +
     K("ability") + " class ability" + dot +
-    K("build") + " build";
+    K("build") + " build" + dot +
+    K("character") + " character";        // v35
 }
 
 /* --- PART B/E: the settings panel ----------------------------------------- */

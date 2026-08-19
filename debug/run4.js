@@ -1114,18 +1114,21 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const ACTIONS = ['up', 'down', 'left', 'right', 'interact', 'attack',
                        'inventory', 'craft', 'pets', 'dive', 'block', 'ability',
                        'mount',    // v28
-                       'build'];   // v33: the BUILD panel key
+                       'build',    // v33: the BUILD panel key
+                       'character'];  // v35: the CHARACTER panel (reclassing)
       const info23 = dsi();
 
       // ---- PART A: the config object itself
       // v33: updated, not relaxed — the count, the default table and the
       // remapping-screen row count all move with the new action.
-      results.push(['KEYBINDS carries all 14 bindable actions',
-        Object.keys(info23.KEYBINDS).length === 14 &&
+      /* v35: 14 -> 15, updated rather than relaxed, exactly as v27/v28/v33
+         updated it before — so a future pass cannot lose a binding silently. */
+      results.push(['KEYBINDS carries all 15 bindable actions',
+        Object.keys(info23.KEYBINDS).length === 15 &&
         ACTIONS.every(a => typeof info23.KEYBINDS[a] === 'string')]);
       results.push(['KEYBIND defaults are exactly the locked spec',
         ACTIONS.map(a => info23.KEYBIND_DEFAULTS[a]).join('|') ===
-        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift', 'q', 'r', 'b'].join('|')]);
+        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift', 'q', 'r', 'b', 'k'].join('|')]);
 
       // ---- PART A: every check site reads KEYBINDS, no literals left behind
       const SITES = ['keys[KEYBINDS.up]', 'keys[KEYBINDS.down]', 'keys[KEYBINDS.left]',
@@ -1288,8 +1291,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['the credits tab is the one showing',
         doc.getElementById('secCredits').classList.contains('shown') &&
         !doc.getElementById('secGraphics').classList.contains('shown')]);
-      results.push(['the remapping screen lists all 13 labelled actions',
-        doc.getElementById('keybindList').children.length === 13]);
+      results.push(['the remapping screen lists all 14 labelled actions',
+        doc.getElementById('keybindList').children.length === 14]);
       results.push(['credits render from the CREDITS array',
         doc.getElementById('creditsList').children.length === dsi().CREDITS.length &&
         dsi().CREDITS.length === 2]);
@@ -2777,6 +2780,360 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         gameScript.indexOf('currencyBalance') < 0]);
     } else {
       results.push(['v37 hooks are reachable', false]);
+    }
+
+    /* ===================== v35: minimap, tutorial, reclassing, ============
+       ===================== cosmetics, the Oracle =========================== */
+    if (typeof window.debugV35Info === 'function') {
+      const v35 = () => window.debugV35Info();
+      const set35 = window.debugSetV35, dsp = window.debugSetPlayer;
+      const wi35 = window.debugWorldInfo();
+
+      /* ---- PART A: the Minimap shows THREE FIXED LANDMARKS AND NOTHING ELSE.
+         The bible's rule is "general direction only, does not reveal exact
+         base locations" — so the gate is as much about what is absent. */
+      results.push(['the compass names exactly TOWER, VOLCANO and SPAWN',
+        v35().MINIMAP_LABELS.join(',') === 'TOWER,VOLCANO,SPAWN']);
+      results.push(['it emits one bearing per landmark and nothing more',
+        v35().minimap.length === 3 &&
+        v35().minimap.every(r => typeof r.deg === 'number' && Number.isFinite(r.deg)) &&
+        v35().minimap.every(r => Object.keys(r).sort().join(',') === 'deg,label')]);
+      /* no coordinate leaks through: a bearing is an angle, never an x/y */
+      results.push(['no bearing carries an x, a y or a distance',
+        v35().minimap.every(r => r.x === undefined && r.y === undefined &&
+                                 r.dist === undefined && r.distance === undefined)]);
+      // the bearing is the real on-screen one: standing SE of the Tower by
+      // (10,10) puts it straight "up" the isometric screen axis, -90 degrees.
+      {
+        const before35 = wi35.player;
+        dsp({ x: wi35.TOWER.x + 10, y: wi35.TOWER.y + 10 });
+        const tw = v35().minimap.find(r => r.label === 'TOWER');
+        results.push(['the arrow points where the landmark actually is on screen',
+          !!tw && Math.abs(tw.deg - (-90)) < 0.01]);
+        if (before35) dsp({ x: before35.x, y: before35.y });
+      }
+      /* THE POINT OF THE WHOLE FEATURE: build a real base and prove the
+         compass does not so much as flinch. */
+      {
+        const N35 = wi35.N, before35 = window.debugWorldInfo().player;
+        let site35 = null;
+        for (let y = 14; y < N35 - 14 && !site35; y += 3) {
+          for (let x = 14; x < N35 - 14; x += 3) {
+            if (window.basePlaceCheck('foundation', x + 0.5, y + 0.5).ok) { site35 = [x, y]; break; }
+          }
+        }
+        if (site35) {
+          dsp({ x: site35[0] + 0.5, y: site35[1] + 0.5, inv: { wood: 50 } });
+          const rowsBefore = JSON.stringify(v35().minimap.map(r => r.label));
+          await window.placeBasePiece('foundation', 'wood', site35[0] + 0.5, site35[1] + 0.5);
+          const built = window.debugBaseInfo().pieces.length;
+          const rowsAfter = JSON.stringify(v35().minimap.map(r => r.label));
+          results.push(['a real base piece exists in the world for this test',
+            built > 0]);
+          results.push(['the compass shows no base piece — not one, ever',
+            rowsBefore === rowsAfter && v35().minimap.length === 3]);
+          const mmHtml = doc.getElementById('mmRows').innerHTML;
+          results.push(['nothing in the rendered compass names a base piece',
+            mmHtml.indexOf('base') < 0 && mmHtml.indexOf(String(site35[0])) < 0]);
+          window.debugSetBase({ clear: true });
+        } else {
+          results.push(['a clear build site was found for the compass test', false]);
+        }
+        if (before35) dsp({ x: before35.x, y: before35.y, inv: before35.inv });
+      }
+      /* and structurally: the section cannot read the base tables at all */
+      {
+        const a35 = gameScript.indexOf('v35 PART A — MINIMAP / COMPASS');
+        const b35 = gameScript.indexOf('function updateHUD(');
+        const sec = a35 > 0 && b35 > a35 ? gameScript.slice(a35, b35) : '';
+        results.push(['the minimap code never reads basePieces or baseIndex',
+          sec.length > 200 &&
+          sec.indexOf('basePieces') < 0 && sec.indexOf('baseIndex') < 0 &&
+          sec.indexOf('base_pieces') < 0]);
+      }
+
+      /* ---- PART B: Tutorial Grounds — once per player, never again ------- */
+      const tsr = window.tutorialShouldRun;
+      results.push(['a brand new player row runs the tutorial',
+        typeof tsr === 'function' && tsr(null) === true]);
+      results.push(['a row with the flag set NEVER runs it again',
+        tsr({ tutorial_done: true }) === false]);
+      results.push(['pre-migration (no column at all) degrades to running it',
+        tsr({}) === true && tsr({ tutorial_done: null }) === true]);
+      /* This boot took the new-player path, so it started on its own at login.
+         (It is no longer *running* by the time this block executes: the v24
+         intro-card gate above replays the card mid-session and skips it with
+         Escape, which is also the tutorial's skip key. That collision cannot
+         happen in a real session — the card only ever plays before login —
+         so the walkthrough below simply starts a fresh one.) */
+      results.push(['the tutorial started on its own for this new player',
+        v35().tutorialRuns >= 1]);
+      results.push(['each step names the real bound key, never a hardcoded one',
+        gameScript.indexOf('text: () => `Hold ${keyLabel(KEYBINDS.up)}') > 0 &&
+        gameScript.indexOf('press ${keyLabel(KEYBINDS.attack)}') > 0 &&
+        gameScript.indexOf('Hold ${keyLabel(KEYBINDS.interact)}') > 0]);
+      results.push(['its three steps are movement, combat and taming',
+        v35().TUTORIAL_STEPS.join(',') === 'move,fight,tame']);
+      results.push(['the whole of it sits inside the Spawn Safe Zone',
+        [v35().TUTORIAL_MARK, v35().TUTORIAL_DUMMY].every(p =>
+          Math.hypot(p.x - wi35.SPAWN.x, p.y - wi35.SPAWN.y) < wi35.SAFE_RADIUS) &&
+        window.inSafeZone(v35().TUTORIAL_MARK.x, v35().TUTORIAL_MARK.y) === true]);
+      {
+        // a fresh run of it, driven end to end through the real game paths
+        set35({ tutorialDone: false });
+        const started = window.startTutorialIfNeeded();
+        results.push(['a player who has not seen it gets it, at step one',
+          started === true && v35().tutorialActive === true && v35().tutorialStep === 0]);
+        results.push(['the placeholder Wolf is a real wild, not a special case',
+          v35().tutorialWolfInWorld === true]);
+        // step 1: walk to the marked stone, through the real position check
+        const mk = v35().TUTORIAL_MARK;
+        dsp({ x: mk.x, y: mk.y });
+        window.tutorialTick();
+        results.push(['walking to the stone completes step one',
+          v35().tutorialStep === 1 && v35().tutorialActive === true]);
+        // step 2: a real swing beside the dummy, through the real attack path
+        const dm = v35().TUTORIAL_DUMMY;
+        dsp({ x: dm.x + 1, y: dm.y });
+        window.tryAttack(dm.x, dm.y);
+        results.push(['striking the dummy completes step two',
+          v35().tutorialStep === 2]);
+        // step 3: the real v12 taming channel, forced onto its RESIST branch —
+        // a 50% roll must never be able to strand a player mid-tutorial
+        const wolfId = v35().TUTORIAL_WOLF_ID;
+        const realRandom = window.Math.random;
+        window.Math.random = () => 0.99;
+        window.startTaming({ id: wolfId, species: 'wolf', x: dm.x, y: dm.y });
+        await window.resolveTaming();
+        window.Math.random = realRandom;
+        results.push(['a failed tame still completes the lesson and ends it',
+          v35().tutorialStep === 3 || v35().tutorialActive === false]);
+        results.push(['finishing it clears the flag, the props and the wolf',
+          v35().tutorialActive === false && v35().tutorialDone === true &&
+          v35().tutorialWolfInWorld === false]);
+        const runsBefore = v35().tutorialRuns;
+        results.push(['and it can never start again once it is done',
+          window.startTutorialIfNeeded() === false && v35().tutorialActive === false &&
+          v35().tutorialRuns === runsBefore]);
+      }
+      results.push(['it is skippable at any point, on the one unbindable key',
+        gameScript.indexOf('if (k === "escape" && tutorialActive) endTutorial(false)') > 0]);
+      {
+        // skipping ends it exactly as finishing does
+        set35({ tutorialDone: false });
+        window.startTutorialIfNeeded();
+        const ranAgain = v35().tutorialActive;
+        window.endTutorial(false);
+        results.push(['skipping ends it the same way finishing it does',
+          ranAgain === true && v35().tutorialActive === false &&
+          v35().tutorialDone === true && v35().tutorialWolfInWorld === false]);
+      }
+
+      /* ---- PART C: reclassing — level and class reset, NOTHING else ------ */
+      {
+        window.debugGrantPet('wolf');
+        dsp({ level: 9, cls: 'Knight', inv: { wood: 7, stone: 3, iron_bar: 2 } });
+        const before = v35();
+        const beforeSnap = before.snapshot;
+        results.push(['the player is genuinely levelled and classed before the test',
+          before.level === 9 && before.cls === 'Knight' && before.snapshot.indexOf('wolf') > 0]);
+        const ok = window.reclassTo('Mystic');
+        const after = v35();
+        results.push(['reclassing sets the new class and resets the level to 1',
+          ok === true && after.cls === 'Mystic' && after.level === 1]);
+        results.push(['inventory, base and pets are byte-identical afterwards',
+          after.snapshot === beforeSnap]);
+        results.push(['reclassing to the class you already are does nothing',
+          window.reclassTo('Mystic') === false && v35().level === 1]);
+        results.push(['there is no separate XP field for it to have missed',
+          gameScript.indexOf('me.xp') < 0 && gameScript.indexOf('experience') < 0]);
+        results.push(['the new class is persisted, not just held in memory',
+          gameScript.indexOf('class: me.cls,') > 0]);
+        results.push(['it asks for confirmation before an irreversible reset',
+          gameScript.indexOf('CONFIRM RECLASS') > 0 &&
+          gameScript.indexOf('if (reclassArmed === cls) reclassTo(cls);') > 0]);
+      }
+
+      /* ---- PART D: cosmetics carry NO STATS, EVER ------------------------ */
+      {
+        const c35 = v35();
+        const ids = Object.keys(c35.COSMETICS);
+        results.push(['every cosmetic is absent from the weapon table',
+          ids.every(id => c35.WEAPONS[id] === undefined)]);
+        results.push(['every cosmetic is absent from the armour table',
+          ids.every(id => c35.ARMORS[id] === undefined)]);
+        results.push(['every cosmetic is absent from the charm table',
+          ids.every(id => c35.CHARMS[id] === undefined)]);
+        results.push(['no cosmetic carries a stat field of any kind',
+          ids.every(id => {
+            const k = Object.keys(c35.COSMETICS[id]).sort().join(',');
+            return k === 'color,name,slot';
+          })]);
+        results.push(['the bible\'s six hats are all here, by name',
+          ['Cap', 'Hood', 'Crown', 'Witch Hat', 'Knight Helm', 'Feathered Hat']
+            .every(n => ids.some(id => c35.COSMETICS[id].name === n &&
+                                       c35.COSMETICS[id].slot === 'hat'))]);
+        results.push(['all four bible cosmetic categories exist',
+          c35.COSMETIC_SLOTS.join(',') === 'hat,cloak,skin,pet' &&
+          c35.COSMETIC_SLOTS.every(s => ids.some(id => c35.COSMETICS[id].slot === s))]);
+        // earned through gameplay only — a rare roll on a STRONG mob kill
+        results.push(['cosmetics drop from strong mobs only',
+          Object.keys(c35.COSMETIC_DROP).length > 0 &&
+          !('goblin' in c35.COSMETIC_DROP) && !('bandit' in c35.COSMETIC_DROP) &&
+          !('boar' in c35.COSMETIC_DROP) &&
+          Object.keys(c35.COSMETIC_DROP).every(k => wi35.MOBS[k] !== undefined)]);
+        results.push(['a weak mob can never roll one at all',
+          window.rollCosmeticDrop('goblin') === null]);
+        {
+          const realRandom = window.Math.random;
+          window.Math.random = () => 0.0;
+          const got = window.rollCosmeticDrop('elder_drake');
+          window.Math.random = realRandom;
+          results.push(['a boss kill can roll a real cosmetic through the loot path',
+            !!got && c35.COSMETICS[got] !== undefined]);
+        }
+        results.push(['there is no shop, currency or purchase path anywhere',
+          gameScript.indexOf('buyCosmetic') < 0 && gameScript.indexOf('cosmeticShop') < 0 &&
+          gameScript.indexOf('cosmeticPrice') < 0 && gameScript.indexOf('let playerGold') < 0]);
+        // wearing one changes appearance and NOTHING else
+        {
+          dsp({ equipped: 'iron_sword' });
+          const dmgBare = v35().weaponDmgNow;
+          set35({ wearCos: { hat: 'cos_crown', cloak: 'cos_cloak_azure',
+                             skin: 'cos_skin_gilded', pet: 'cos_pet_collar' } });
+          const worn = v35();
+          results.push(['all four slots can be worn at once',
+            worn.worn.hat === 'cos_crown' && worn.worn.cloak === 'cos_cloak_azure' &&
+            worn.worn.skin === 'cos_skin_gilded' && worn.worn.pet === 'cos_pet_collar']);
+          results.push(['a weapon skin does not change the weapon\'s damage',
+            worn.weaponDmgNow === dmgBare]);
+          set35({ wearCos: { hat: 'cos_pet_collar', cloak: 'iron_sword' } });
+          results.push(['a cosmetic can never land in the wrong slot, or a weapon in any',
+            v35().worn.hat === null && v35().worn.cloak === null]);
+          set35({ wearCos: null });
+        }
+      }
+
+      /* ---- PART E: the Oracle, and the exclusion that must be structural -- */
+      {
+        const o35 = v35();
+        const ELDERS = ['golem_elder', 'dragon_elder', 'unicorn_elder'];
+        results.push(['all three Elder species are named in the exclusion list',
+          ELDERS.every(e => o35.oracleForbidden.indexOf(e) >= 0)]);
+        results.push(['the admin-only Duskfox Elder is excluded too',
+          o35.oracleForbidden.indexOf('duskfox_elder') >= 0]);
+        results.push(['no Elder is in the hint pool',
+          ELDERS.every(e => o35.oraclePool.indexOf(e) < 0)]);
+        results.push(['no Elder is even in the RAW literal the pool is built from',
+          ELDERS.every(e => o35.oraclePoolAll.indexOf(e) < 0)]);
+        results.push(['the exclusion is a hard filter, not a list that happens to omit them',
+          gameScript.indexOf('ORACLE_HINTS_ALL.filter(h => !ORACLE_FORBIDDEN.has(h[0]))') > 0 &&
+          gameScript.indexOf('if (ORACLE_FORBIDDEN.has(h[0])) continue;') > 0]);
+        results.push(['the pool is a hand-written literal, never derived from a species table',
+          (() => {
+            const a = gameScript.indexOf('v35 PART E — THE ORACLE');
+            const b = gameScript.indexOf('v35 PART B — TUTORIAL GROUNDS');
+            const sec = a > 0 && b > a ? gameScript.slice(a, b) : '';
+            return sec.length > 200 && sec.indexOf('WILD_SPECIES') < 0 &&
+                   sec.indexOf('Object.keys') < 0;
+          })()]);
+        results.push(['it only ever hints at rare and epic species',
+          o35.oraclePool.slice().sort().join(',') ===
+          ['crystal_golem', 'fire_dragon', 'krakenling', 'lightfox', 'phoenix',
+           'salamander_king', 'shadow_dragon', 'shadowfox', 'storm_dragon',
+           'unicorn', 'water_dragon'].sort().join(',')]);
+        // sweep the whole rotation twice: nothing forbidden can ever come out
+        {
+          set35({ oracleIdx: 0 });
+          const seen = [];
+          for (let i = 0; i < o35.oraclePool.length * 2; i++) seen.push(window.oracleHint()[0]);
+          results.push(['a full double rotation never speaks a forbidden name',
+            seen.length > 0 && seen.every(s => o35.oracleForbidden.indexOf(s) < 0)]);
+          results.push(['asking twice tells you two different things',
+            seen[0] !== seen[1]]);
+          results.push(['and it covers the whole pool rather than repeating one',
+            new Set(seen).size === o35.oraclePool.length]);
+        }
+        results.push(['no hint mentions an Elder or a world event of any kind',
+          gameScript.slice(gameScript.indexOf('const ORACLE_HINTS_ALL'),
+                           gameScript.indexOf('const ORACLE_HINTS =')).toLowerCase()
+            .indexOf('elder') < 0]);
+        // the NPC itself is real, reachable and inside the safe zone
+        results.push(['the Oracle stands inside the Spawn Safe Zone',
+          Math.hypot(o35.ORACLE.x - wi35.SPAWN.x, o35.ORACLE.y - wi35.SPAWN.y) < wi35.SAFE_RADIUS &&
+          window.inSafeZone(o35.ORACLE.x, o35.ORACLE.y) === true]);
+        {
+          const before35 = window.debugWorldInfo().player;
+          dsp({ x: o35.ORACLE.x, y: o35.ORACLE.y });
+          const near = window.nearOracle();
+          const said = window.askOracle();
+          dsp({ x: o35.ORACLE.x + 12, y: o35.ORACLE.y + 12 });
+          const far = window.nearOracle();
+          results.push(['standing with the Oracle lets you ask, walking away does not',
+            near === true && far === false]);
+          results.push(['it answers with a species and a general place, never a coordinate',
+            !!said && typeof said[1] === 'string' && typeof said[2] === 'string' &&
+            !/\d/.test(said[2])]);
+          if (before35) dsp({ x: before35.x, y: before35.y });
+        }
+        results.push(['the Oracle renders as a real NPC, not an invisible trigger',
+          gameScript.indexOf('function drawOracleEntity') > 0 &&
+          gameScript.indexOf('kind: "oracle"') > 0]);
+      }
+
+      /* ---- the UI these three parts actually put on screen ---------------- */
+      {
+        // the compass renders three rows and no fourth
+        const mmRows = doc.getElementById('mmRows');
+        results.push(['the compass renders exactly three rows on screen',
+          !!mmRows && mmRows.children.length === 3 &&
+          mmRows.textContent.indexOf('TOWER') >= 0 &&
+          mmRows.textContent.indexOf('VOLCANO') >= 0 &&
+          mmRows.textContent.indexOf('SPAWN') >= 0]);
+        // the CHARACTER panel opens on its own bound key and lists all five
+        window.dispatchEvent(new window.KeyboardEvent('keydown',
+          { key: window.debugSettingsInfo().KEYBINDS.character, bubbles: true }));
+        const cp = doc.getElementById('charPanel');
+        results.push(['the CHARACTER panel opens on its bound key with all five classes',
+          cp.style.display === 'block' &&
+          doc.getElementById('charList').children.length === 5]);
+        window.dispatchEvent(new window.KeyboardEvent('keydown',
+          { key: window.debugSettingsInfo().KEYBINDS.character, bubbles: true }));
+        results.push(['and closes again on the same key', cp.style.display === 'none']);
+        // a cosmetic in the pack gets an equippable row naming its SLOT, not a stat
+        dsp({ inv: { cos_crown: 1, wood: 2 } });
+        window.refreshPanels();
+        const crownRow = doc.querySelector('#invList .inv-row[data-k="cos_crown"]');
+        results.push(['a cosmetic in the pack is an equippable row like any other',
+          !!crownRow && crownRow.textContent.indexOf('Crown') >= 0]);
+        results.push(['and that row advertises a slot, never a stat',
+          !!crownRow && crownRow.textContent.indexOf('hat') >= 0 &&
+          crownRow.textContent.indexOf('dmg') < 0 &&
+          crownRow.textContent.indexOf('%') < 0]);
+        crownRow.onclick();
+        results.push(['clicking it wears the cosmetic', v35().worn.hat === 'cos_crown']);
+        crownRow.onclick();
+        results.push(['clicking it again takes it off', v35().worn.hat === null]);
+      }
+
+      /* ---- the two new columns degrade rather than break anything -------- */
+      results.push(['the two v35 columns are written separately from savePlayer',
+        gameScript.indexOf('async function savePlayerExtras()') > 0 &&
+        gameScript.indexOf('tutorial_done: !!tutorialDone,') > 0 &&
+        gameScript.indexOf('cosmetics: me.cos || emptyCosmetics(),') > 0]);
+      results.push(['savePlayer\'s own column list never learns about them',
+        (() => {
+          const a = gameScript.indexOf('async function savePlayer() {');
+          const b = gameScript.indexOf('last_seen: new Date().toISOString(),');
+          const sec = a > 0 && b > a ? gameScript.slice(a, b) : '';
+          return sec.length > 100 && sec.indexOf('tutorial_done') < 0 &&
+                 sec.indexOf('cosmetics') < 0;
+        })()]);
+      results.push(['a row with no cosmetics column reads as nothing worn',
+        JSON.stringify(window.normalizeCosmetics(undefined)) ===
+        JSON.stringify({ hat: null, cloak: null, skin: null, pet: null })]);
+    } else {
+      results.push(['v35 hooks are reachable', false]);
     }
 
     let allOk = true;

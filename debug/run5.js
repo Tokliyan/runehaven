@@ -470,6 +470,90 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       if (beforeB) window.debugSetPlayer({ x: beforeB.x, y: beforeB.y, inv: beforeB.inv });
     }
+    /* v35: the cosmetic layer, the Oracle and the two tutorial props. None of
+       these is reachable from the plain 5-frame boot: the boot's player wears
+       nothing, and the Oracle and the Grounds sit near spawn but their draw
+       calls only run when the camera is actually on them.
+       EXTEND COS_LIST whenever another cosmetic ships. */
+    if (window.drawUnit && window.debugV35Info) {
+      const v35 = window.debugV35Info();
+      const COS_LIST = Object.keys(v35.COSMETICS);
+      const CLS35 = ["Ranger", "Knight", "Mystic", "Beastmaster", "Architect"];
+      const bySlot = s => COS_LIST.filter(id => v35.COSMETICS[id].slot === s);
+      // every hat on every class body — the head anchor is per-class, so a
+      // hat that lands wrong only shows up when all five are swept
+      for (const cls of CLS35) {
+        for (const hat of bySlot('hat')) {
+          window.drawUnit(c, 50, 50, cls, 2.1, "iron", { x: 1, y: 0 }, 700, true,
+                          "sword", null, false, { hat, cloak: null, skin: null, pet: null });
+          n += 1;
+        }
+        for (const cloak of bySlot('cloak')) {
+          window.drawUnit(c, 50, 50, cls, 2.1, "runic", { x: -1, y: 0 }, 700, true,
+                          "axe", "iron", false, { hat: null, cloak, skin: null, pet: null });
+          n += 1;
+        }
+        for (const skin of bySlot('skin')) {
+          for (const wk of ["sword", "dagger", "spear", "axe", "bow", "crossbow", "staff", "pickaxe"]) {
+            window.drawUnit(c, 50, 50, cls, 2.1, "dragonsteel", { x: 1, y: 0 }, 700, true,
+                            wk, null, false, { hat: null, cloak: null, skin, pet: null });
+            n += 1;
+          }
+        }
+      }
+      // all four slots at once, blocking and mounted-style, both facings
+      for (const cls of CLS35) {
+        window.drawUnit(c, 50, 50, cls, 2.1, "dragonsteel", { x: -1, y: 0 }, 700, false,
+                        "sword", "runic", true,
+                        { hat: 'cos_crown', cloak: 'cos_cloak_crimson',
+                          skin: 'cos_skin_obsidian', pet: 'cos_pet_ribbon' });
+        n += 1;
+      }
+      // the pet accessory, on every species, through the real drawPet path
+      if (window.drawPetAccessory && window.debugWorldInfo) {
+        const SP35 = Object.keys(window.debugWorldInfo().WILD_SPECIES);
+        for (const acc of bySlot('pet')) {
+          for (const sp of SP35) { window.drawPetAccessory(acc, sp, 60, 60); n += 1; }
+        }
+        // and through the real drawPet path, both host branches
+        if (window.drawPet) {
+          const pet = { sp: 'wolf', x: 41, y: 51, ang: 0, moving: true, maxHp: 40, hp: 40 };
+          window.debugSetV35({ wearCos: { pet: bySlot('pet')[0] } });
+          window.drawPet({ pet, cs: { pet: bySlot('pet')[1] || bySlot('pet')[0] } }, 'wolf', 900);
+          window.drawPet({ pet, cs: null }, 'griffin', 900);          // flier branch
+          n += 2;
+          window.debugSetV35({ wearCos: null });
+        }
+      }
+      // the Oracle and both tutorial props, drawn directly and then on camera
+      const before35 = window.debugWorldInfo().player;
+      if (window.drawOracleEntity) { window.drawOracleEntity(900); n += 1; }
+      if (window.drawTutorialMark) { window.drawTutorialMark(900); n += 1; }
+      if (window.drawTutorialDummy) { window.drawTutorialDummy(900); n += 1; }
+      window.debugSetV35({ tutorialDone: false });
+      window.startTutorialIfNeeded();
+      window.debugSetPlayer({ x: v35.TUTORIAL_MARK.x - 1, y: v35.TUTORIAL_MARK.y - 1 });
+      let tutSeen = 0;
+      for (let f = 500; f < 508; f++) {
+        const q = rafQ; rafQ = [];
+        for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+        n += 1;
+      }
+      tutSeen = window.debugV35Info().tutorialActive ? 1 : 0;
+      if (!tutSeen) {
+        console.log('COVERAGE GAP: the tutorial props were never alive while frames ran');
+        process.exit(1);
+      }
+      window.endTutorial(false);
+      // and the compass itself, which re-renders every frame from updateHUD
+      const mmRows = window.document.getElementById('mmRows');
+      if (!mmRows || mmRows.children.length !== 3) {
+        console.log('COVERAGE GAP: the compass drew', mmRows ? mmRows.children.length : 'no', 'rows, expected 3');
+        process.exit(1);
+      }
+      console.log('cosmetics swept:', COS_LIST.length, '— compass rows drawn:', mmRows.children.length);
+      if (before35) window.debugSetPlayer({ x: before35.x, y: before35.y });
+    }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {
