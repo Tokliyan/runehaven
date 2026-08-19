@@ -1936,7 +1936,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       try { window.tryAbility(); dsa({ lastAbility: -1e9 }); window.tryAbility(); }
       catch (e) { archOk = false; archErr = e; }
       const archInfo = dai();
-      results.push(['Quick Brace casts without throwing, with bases not built yet' +
+      results.push(['Quick Brace casts without throwing' +
         (archErr ? ' — ' + archErr.message : ''), archOk]);
       results.push(['and it is a true no-op — no window, no charges, nothing invented',
         archInfo.guardBreakUntil === 0 && archInfo.markedShotUntil === 0 &&
@@ -2028,9 +2028,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          still pinned: the Architect's own class tie-in (faster building,
          stronger structures, resource generation) is v34's scope and is
          asserted below to be genuinely absent, not quietly half-built. */
-      results.push(['the Architect class tie-in is still deliberately unbuilt (v34)',
-        gameScript.indexOf('ARCHITECT_BUILD') < 0 &&
-        gameScript.indexOf('architectBuild') < 0]);
+      /* v34 BUILT the Architect tie-in deliberately — retired, replaced by
+         the real gates in the v34 block. */
       /* v31 STARTED THESE DELIBERATELY — the guard is retired, replaced by
          the real proof gates in the v31 block at the end. */
 
@@ -2555,9 +2554,18 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             return back && back.kind === r.piece.kind && back.tier === r.piece.tier &&
                    back.x === r.piece.x && back.y === r.piece.y && back.owner === r.piece.owner;
           })]);
-        results.push(['base_pieces is exactly the spec\'s shape — id, kind, tier, x, y, owner',
-          tableData.base_pieces.every(r =>
-            Object.keys(r).sort().join(',') === 'id,kind,owner,tier,x,y')]);
+        /* v34 ADDED TWO COLUMNS DELIBERATELY: hp and last_collected, per the
+           v34 SQL note. The v33 six-column shape is still the required core —
+           what must hold is that nothing UNEXPECTED crept in, not that the
+           set never grows. */
+        results.push(['base_pieces carries the v33 core columns plus only v34\'s two',
+          tableData.base_pieces.every(r => {
+            const keys = Object.keys(r).sort().join(',');
+            return keys === 'id,kind,owner,tier,x,y' ||
+                   keys === 'hp,id,kind,last_collected,owner,tier,x,y' ||
+                   keys === 'hp,id,kind,owner,tier,x,y' ||
+                   keys === 'id,kind,last_collected,owner,tier,x,y';
+          })]);
         results.push(['the table is loaded once on login, the ground_items way',
           gameScript.indexOf('await loadBasePieces();') > 0 &&
           gameScript.indexOf('await sb.from("base_pieces").select("*")') > 0]);
@@ -2594,6 +2602,118 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                           inv: wasP33.inv });
     } else {
       results.push(['v33 PART D base hooks are reachable', false]);
+    }
+
+    /* ===================== v34: raiding & generation ======================= */
+    if (typeof window.debugV34Info === 'function') {
+      const dv = window.debugV34Info, ds = window.debugSetV34;
+      /* v33's block cleans up after itself, so this block builds its own
+         pieces rather than depending on leftovers from an earlier test. */
+      const OFF34 = [[0,0],[3,0],[6,0],[0,3]];
+      let site34 = null;
+      for (let x = 30; x < 200 && !site34; x += 7) {
+        for (let y = 30; y < 200; y += 7) {
+          if (OFF34.every(o => window.basePlaceCheck('foundation', x+o[0]+0.5, y+o[1]+0.5).ok)) {
+            site34 = [x, y]; break;
+          }
+        }
+      }
+      if (site34) {
+        const [X4, Y4] = site34;
+        window.debugSetPlayer({ x: X4 + 0.5, y: Y4 - 4.5,
+          inv: { wood: 500, stone: 500, iron_bar: 500, runic_stone: 500, dragonsteel: 500 } });
+        await window.placeBasePiece('foundation', 'wood', X4 + 0.5, Y4 + 0.5);
+        await window.placeBasePiece('wall', 'stone', X4 + 3.5, Y4 + 0.5);
+        await window.placeBasePiece('chest', 'wood', X4 + 6.5, Y4 + 0.5);
+        await window.placeBasePiece('generator', 'wood', X4 + 0.5, Y4 + 3.5);
+      }
+      const v34 = dv();
+      results.push(['v34 test pieces were placed to assert against', v34.count >= 3]);
+      results.push(['HP scales across all five tiers, wood weakest, dragonsteel strongest',
+        v34.BASE_TIER_HP.wood < v34.BASE_TIER_HP.stone &&
+        v34.BASE_TIER_HP.stone < v34.BASE_TIER_HP.iron &&
+        v34.BASE_TIER_HP.iron < v34.BASE_TIER_HP.runic &&
+        v34.BASE_TIER_HP.runic < v34.BASE_TIER_HP.dragonsteel]);
+      results.push(['dragonsteel is "near indestructible" — 20x a wood wall',
+        v34.BASE_TIER_HP.dragonsteel / v34.BASE_TIER_HP.wood >= 15]);
+
+      const target = v34.pieces.find(p => p.kind !== 'generator');
+      if (target) {
+        const before = dv().pieces.find(p => p.id === target.id).hp;
+        ds({ hitId: target.id, dmg: 5 });
+        const after = dv().pieces.find(p => p.id === target.id).hp;
+        results.push(['a structure takes real damage through baseHit',
+          after === before - 5]);
+        // destroy it outright
+        ds({ id: target.id, hp: 3 });
+        ds({ hitId: target.id, dmg: 999 });
+        results.push(['a structure at 0 HP is genuinely destroyed and removed',
+          !dv().pieces.find(p => p.id === target.id)]);
+      }
+
+      const gen = dv().pieces.find(p => p.kind === 'generator');
+      if (gen) {
+        ds({ id: gen.id, lastCollected: Date.now() });
+        results.push(['a freshly collected generator yields nothing yet',
+          dv().pieces.find(p => p.id === gen.id).yield === 0]);
+        ds({ id: gen.id, lastCollected: Date.now() - 3 * 3600000 });
+        const y3 = dv().pieces.find(p => p.id === gen.id).yield;
+        ds({ id: gen.id, lastCollected: Date.now() - 6 * 3600000 });
+        const y6 = dv().pieces.find(p => p.id === gen.id).yield;
+        results.push(['generator yield genuinely scales with elapsed time',
+          y3 > 0 && y6 > y3]);
+        ds({ id: gen.id, lastCollected: Date.now() - 500 * 3600000 });
+        const yCap = dv().pieces.find(p => p.id === gen.id).yield;
+        ds({ id: gen.id, lastCollected: Date.now() - v34.GENERATOR_CAP_HOURS * 3600000 });
+        const yAtCap = dv().pieces.find(p => p.id === gen.id).yield;
+        results.push(['offline yield is capped, not unbounded',
+          yCap === yAtCap]);
+
+        /* pre-migration DB: no last_collected at all must read as "just now",
+           never backdated to the epoch and crediting years of production */
+        ds({ id: gen.id, stripCollected: true });
+        results.push(['a generator with no last_collected reads as fresh, not backdated',
+          dv().pieces.find(p => p.id === gen.id).yield === 0]);
+      }
+
+      /* pre-migration DB: a piece with no hp is FULL, never destroyed */
+      const anyPiece = dv().pieces.find(p => p.kind !== 'generator');
+      if (anyPiece) {
+        ds({ id: anyPiece.id, stripHp: true });
+        const back = dv().pieces.find(p => p.id === anyPiece.id);
+        results.push(['a piece with no hp column reads as full HP, not destroyed',
+          back.hp === back.maxHp && back.hp > 0]);
+      }
+
+      /* Architect passives apply only to Architect-placed pieces */
+      const ap = dv().pieces.find(p => p.kind !== 'generator');
+      if (ap) {
+        ds({ id: ap.id, arch: false });
+        const plain = dv().pieces.find(p => p.id === ap.id).maxHp;
+        ds({ id: ap.id, arch: true });
+        const arch = dv().pieces.find(p => p.id === ap.id).maxHp;
+        results.push(['the Architect\'s structures are genuinely tougher',
+          arch > plain && Math.abs(arch / plain - v34.ARCHITECT_HP_BONUS) < 0.02]);
+        ds({ id: ap.id, arch: false });
+      }
+
+      results.push(['Quick Brace repairs instead of being a no-op now bases exist',
+        gameScript.indexOf('nearestBasePiece(QUICK_BRACE_R)') > 0 &&
+        gameScript.indexOf('REPAIRED') > 0]);
+      results.push(['Quick Brace cannot throw when nothing is nearby',
+        gameScript.indexOf('if (near && baseHpOf(near.piece) < baseMaxHp(near.piece))') > 0]);
+      results.push(['a destroyed chest spills its contents rather than deleting them',
+        gameScript.indexOf('ground_items").insert(drops)') > 0 &&
+        gameScript.indexOf('chestContents.delete(p.id)') > 0]);
+      results.push(['structures never steal a swing meant for a player or mob',
+        gameScript.indexOf('if (!bestM && !best) {') > 0]);
+      results.push(['damage and destruction are broadcast, not local-only',
+        gameScript.indexOf('event: "base_hit"') > 0 &&
+        gameScript.indexOf('event: "base_destroy"') > 0]);
+      results.push(['the local-only arch flag is never written to the table',
+        gameScript.indexOf('Object.assign({}, p, { arch: isArch34 })') > 0]);
+    } else {
+      results.push(['v34 hooks are reachable', false]);
     }
 
     let allOk = true;
