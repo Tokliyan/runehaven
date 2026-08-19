@@ -102,75 +102,102 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v33 — Bases part 1: placement & construction)
+## Confirmed, locked spec for the next build (v34 — Bases part 2: raiding & generation)
 
-v32 shipped successfully. This is the first of two base-building versions
-— placement and construction only. Raiding, destruction, and passive
-generation are v34, deliberately separate, matching how every other large
-system this project has built got split by concern rather than attempted
-whole.
+v33 shipped successfully — 628/628, base_pieces confirmed live. This is
+everything v33 deliberately left out. Confirmed directly before writing
+this: `base_pieces` currently has no `hp` column at all — `{kind, tier, x,
+y, owner}` only, exactly as v33's own notes say. Quick Brace's current
+code is a genuine no-op with a comment explicitly marking it as waiting
+for this version. `dealHit()`/`mobHit()` are the real functions to model
+piece-damage on, not something new.
 
-**Confirmed directly before writing this spec:** exactly one Forge exists
-right now, `SPAWN_FORGE`, fixed next to spawn — `nearForge()` gates all
-`where: "forge"` recipes on proximity to that single point. `ground_items`
-is the existing Supabase persistence pattern (`sb.from("ground_items")
-.select()/.insert()`) — base pieces reuse this exact shape, not a new one.
-Material items (`iron_bar`, `runic_stone`, `dragonsteel`, etc.) already
-exist and already have real colors — reuse them for piece tinting, don't
-invent new palette entries.
+**One design call made on your behalf, stated plainly rather than left
+implicit:** attacking a base piece works through the same attack key as
+everything else, no separate confirmation step — matches the bible's own
+"anyone who finds your base can walk straight in" framing, which is about
+low friction, not high friction.
 
-**PART A — five placeable pieces, using the bible's existing five material
-tiers for cost and eventual (v34) durability:**
-- **Foundation** — required first, anchors everything else nearby
-- **Wall** — the actual barrier; HP-per-tier is v34's job, not this one
-- **Door** — passable by the owner, blocks others (basic collision only
-  this version — real access-control logic is v34, once raiding exists)
-- **Storage Chest** — a simple inventory container, reuse the existing
-  inventory panel UI pattern rather than building a new one
-- **Forge** — extends `nearForge()` to also check distance to any player-
-  placed forge, not just `SPAWN_FORGE`. This alone makes crafting possible
-  away from spawn for the first time.
+**PART A — real HP per tier, matching the bible's own words:**
+```js
+const BASE_TIER_HP = { wood: 40, stone: 90, iron: 180, runic: 350, dragonsteel: 800 };
+```
+Wood "low durability" through Dragonsteel "near indestructible" — read
+directly off the bible's own tier descriptions, not invented numbers.
 
-Generator (the piece that will passively produce resources) is placeable
-this version too, but produces nothing yet — the actual generation tick is
-explicitly v34's scope, matching the "build the access point before the
-system" pattern already used for cave entrances and dungeon-flavor decor.
+**PART B — destruction, reusing the existing hit pattern, not a new one.**
 
-**PART B — placement.**
+New `baseHit(piece, dmg, opts)`, modeled directly on `dealHit()`/`mobHit()`
+— same broadcast shape (`channel.send({ type: "broadcast", event:
+"base_hit", ... })`), same sync discipline. Wire it into wherever the
+player's attack currently resolves against `others`/`mobs`, adding
+`base_pieces` as a third checkable target type. At 0 HP: destroy the
+piece (remove from `base_pieces`, broadcast `base_destroy`), and if it was
+a Storage Chest with contents, drop them via the existing `ground_items`
+mechanic — reuse, not reinvent.
 
-Outside safe zones only (reuse `inSafeZone()`, already exists). Reasonable
-spacing between structures (propose 3 tiles minimum between any two player
-pieces) so bases can't be crammed edge-to-edge — pure placement-time check,
-not worldgen, so this runs live as the player builds, not once at world
-creation.
+**PART C — the Generator finally produces something.**
 
-**PART C — persistence.**
+New `last_collected` column (see Part E). Yield computed on demand, same
+shape as `salamanderHappiness()` — never ticked every frame, only
+evaluated when the owner interacts with it:
+```js
+function generatorYield(piece) {
+  const hours = (Date.now() - generatorLastCollected(piece)) / 3600000;
+  const rate = GENERATOR_RATE[piece.tier] * (piece.ownerIsArchitect ? 1.25 : 1);
+  return Math.floor(Math.min(hours, GENERATOR_CAP_HOURS) * rate);
+}
+```
+`GENERATOR_CAP_HOURS` (propose 24) stops a generator neglected for a week
+from dumping a week's worth at once — caps the offline benefit without
+requiring a server-side process, matching how `salamanderHappiness` also
+never needed one.
 
-New Supabase table, `base_pieces` — same shape as `ground_items`: id, kind,
-tier, x, y, owner. Loaded once on login (same pattern as `ground_items`'
-initial select), inserted on placement, broadcast to other clients over
-the existing channel so a base appears for everyone the moment it's built,
-not just its owner.
+**PART D — Quick Brace, redesigned to actually fit now that HP exists.**
 
-**PART D — proof gates, standard gauntlet plus:**
-- Confirm all five piece types can be placed and reject placement inside
-  a safe zone.
-- Confirm the minimum-spacing check actually rejects an overlapping
-  placement attempt.
-- Confirm a player-placed Forge genuinely extends `nearForge()` — craft
-  succeeds near a placed Forge far from spawn, still succeeds near
-  `SPAWN_FORGE` too (regression check), still fails with neither nearby.
-- Confirm Storage Chest opens the existing inventory-style panel and
-  correctly stores/retrieves an item.
-- Confirm placed pieces persist through a simulated reload (insert, then
-  re-select, same data comes back).
-- Confirm the Generator piece places cleanly and does nothing yet — no
-  resource tick, no error either.
+The original "completes a placement instantly" never made sense — v33
+placement was already instant, nothing to speed up. Replaced: **instantly
+restores a nearby damaged base piece to full HP** — genuinely matches
+"faster building" as emergency repair, and gives the ability real purpose
+the moment someone is being raided. Two passive Architect bonuses, always
+on, no ability needed: pieces they place get +20% max HP, generators they
+place produce at 1.25x (the `ownerIsArchitect` multiplier shown above).
+Finally gives "stronger structures" and "resource generation" real
+mechanical meaning, not just the one active ability.
 
-**Explicitly not touched this version:** destruction, raiding, HP on any
-piece, actual passive generation, the Architect class tie-in (needs
-destruction/generation to exist first) — all v34.
+**PART E — the SQL this version needs. Flag this as clearly as v33's own
+requirement, same shape of note:**
+```sql
+alter table base_pieces add column hp integer;
+alter table base_pieces add column last_collected timestamptz;
+```
+Code must degrade gracefully if this has not been run yet — same pattern
+`petLastFedAt()` already uses for `last_fed_at`: a piece with no `hp`
+value falls back to its tier's full `BASE_TIER_HP` rather than treating
+it as 0/destroyed, and a Generator with no `last_collected` falls back to
+"now" rather than crediting years of imaginary production. Never allowed
+to throw either way.
 
-**After v33 ships successfully, do not start any further version
+**PART F — proof gates, standard gauntlet plus:**
+- Confirm a piece takes real damage through the standard attack path and
+  is destroyed at 0 HP.
+- Confirm a destroyed Storage Chest with contents drops them as real
+  ground items, not silently deleted.
+- Confirm generator yield is genuinely time-based (simulate an elapsed
+  gap, confirm it scales) and respects the 24h cap.
+- Confirm Quick Brace restores a damaged piece and does nothing if none
+  is nearby — never throws either way.
+- Confirm both Architect passive bonuses apply only to Architect-placed
+  pieces, not universally.
+- Confirm a piece with no `hp` column value behaves as full-HP, not
+  destroyed, and a Generator with no `last_collected` value behaves as
+  freshly collected, not backdated — both simulating the pre-migration
+  database state.
+
+**Explicitly not touched this version:** any UI marking whose base a
+piece belongs to from outside it — still deliberately absent, matching
+v33's own note that this is correct for now. Wall rotation.
+
+**After v34 ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated with the next
 target.
