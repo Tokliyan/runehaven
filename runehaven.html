@@ -1038,6 +1038,32 @@ function debugSetAbility(patch) {
   return debugAbilityInfo();
 }
 function debugCombatHandles() { return { others, mobs, projectiles }; }
+function debugV34Info() {
+  const list = Array.from(basePieces.values()).map(p => ({
+    id: p.id, kind: p.kind, tier: p.tier, owner: p.owner, arch: !!p.arch,
+    hp: baseHpOf(p), maxHp: baseMaxHp(p), x: p.x, y: p.y,
+    yield: p.kind === "generator" ? generatorYield(p) : null,
+  }));
+  return {
+    BASE_TIER_HP, ARCHITECT_HP_BONUS, ARCHITECT_GEN_BONUS,
+    GENERATOR_CAP_HOURS, GENERATOR_RATE, QUICK_BRACE_R,
+    pieces: list, count: list.length,
+  };
+}
+function debugSetV34(patch) {
+  if (!patch) return debugV34Info();
+  const p = patch.id ? basePieces.get(patch.id) : null;
+  if (p && "hp" in patch) p.hp = patch.hp;
+  if (p && "lastCollected" in patch) p.lastCollected = patch.lastCollected;
+  if (p && "arch" in patch) p.arch = !!patch.arch;
+  if (patch.hitId) {
+    const t = basePieces.get(patch.hitId);
+    if (t) baseHit(t, patch.dmg || 10, { quiet: true });
+  }
+  if (patch.stripHp && p) delete p.hp;                 // simulate pre-migration DB
+  if (patch.stripCollected && p) { delete p.lastCollected; delete p.last_collected; }
+  return debugV34Info();
+}
 function debugV30Info() {
   const ed = mobs.find(m => m.kind === "elder_drake") || null;
   return {
@@ -3437,6 +3463,24 @@ async function joinRealtime() {
       (m.kind === "elder_drake" ? ELDER_DRAKE_RESPAWN_MS : MOB_RESPAWN_MS));
   });
 
+  channel.on("broadcast", { event: "base_hit" }, ({ payload: p }) => {
+    const bp = basePieces.get(p.id);
+    if (!bp) return;
+    bp.hp = p.hp;
+    bp.flash = performance.now();
+  });
+
+  channel.on("broadcast", { event: "base_destroy" }, ({ payload: p }) => {
+    const bp = basePieces.get(p.id);
+    if (!bp) return;
+    bp.destroyed = true;
+    basePieces.delete(p.id);
+    baseIndex.delete(baseKey(bp.x, bp.y));
+    chestContents.delete(p.id);
+    burst(bp.x, bp.y, baseTierColor(bp.tier), 10, 3);
+    refreshPanels();
+  });
+
   channel.on("broadcast", { event: "mob_sync" }, ({ payload: p }) => {
     const m = mobs.find(x => x.id === p.id);
     if (!m || m.dead) return;
@@ -3616,6 +3660,17 @@ function tryAttack(aimX, aimY) {
       if (m.dead) continue;
       const d = Math.hypot(m.x - me.x, m.y - me.y);
       if (d <= bestMD) { bestM = m; bestMD = d; }
+    }
+    /* v34: structures are a third melee target, same key, no confirmation
+       step — the bible's raiding pitch is low friction ("walk straight in"),
+       and a separate confirm would be friction. Players and mobs win ties:
+       a wall must never steal a swing meant for the person behind it. */
+    if (!bestM && !best) {
+      const bp34 = nearestBasePiece(bestD);
+      if (bp34) {
+        baseHit(bp34.piece, Math.max(1, Math.round(w.dmg)));
+        return;
+      }
     }
     if (bestM && bestMD <= bestD) {
       const adx = (bestM.x - me.x), ady = (bestM.y - me.y);
@@ -3817,11 +3872,24 @@ function tryAbility() {
       addFloat(me.x, me.y, "RALLY", "#ba854e");
       break;
     case "Architect":
-      /* Quick Brace completes a structure placement instantly — and bases do
-         not exist yet, so there is deliberately nothing to complete. Per the
-         locked spec this is an inert no-op until they ship, NOT a bug and NOT
-         a slot to fill with a substitute effect. It must never throw. */
+      /* v34: bases exist now, so this finally does something. The original
+         "completes a placement instantly" made no sense once v33 shipped —
+         placement was already instant, there was nothing to speed up. This
+         is the same idea aimed at the thing that DOES take time: emergency
+         repair, mid-raid. Must still never throw when nothing is nearby. */
       addFloat(me.x, me.y, "QUICK BRACE", "#6c8aa6");
+      {
+        const near = nearestBasePiece(QUICK_BRACE_R);
+        if (near && baseHpOf(near.piece) < baseMaxHp(near.piece)) {
+          const p = near.piece;
+          p.hp = baseMaxHp(p);
+          burst(p.x, p.y, "#6c8aa6", 10, 2);
+          addFloat(p.x, p.y, "REPAIRED", "#8fd08a");
+          channel.send({ type: "broadcast", event: "base_hit",
+                         payload: { id: p.id, hp: p.hp } });
+          try { sb.from("base_pieces").update({ hp: p.hp }).eq("id", p.id); } catch (e) {}
+        }
+      }
       break;
   }
   return true;
@@ -4044,6 +4112,38 @@ async function doInteract() {
      is still openable. */
   const bchest = nearBaseChest();
   if (bchest) { lastGather = now; openBaseChest(bchest); return; }
+  /* v34: a Generator hands over what it made while you were away. Computed
+     from elapsed time on the spot — nothing ticks, and nothing server-side
+     runs while you are offline. Owner only: it is your generator. */
+  {
+    let gen = null, gd = 2.2;
+    for (const [, p] of basePieces) {
+      if (p.kind !== "generator" || p.destroyed) continue;
+      if (p.owner !== me.username) continue;
+      const d = Math.hypot(p.x - me.x, p.y - me.y);
+      if (d <= gd) { gen = p; gd = d; }
+    }
+    if (gen) {
+      lastGather = now;
+      const got = generatorYield(gen);
+      const mat = GENERATOR_GIVES[gen.tier] || "wood";
+      if (got > 0) {
+        invAdd(mat, got);
+        gen.lastCollected = Date.now();
+        burst(gen.x, gen.y, ITEM_META[mat].color, 8, 2);
+        toast(`+${got} ${ITEM_META[mat].name}`);
+        try {
+          sb.from("base_pieces")
+            .update({ last_collected: new Date(gen.lastCollected).toISOString() })
+            .eq("id", gen.id);
+        } catch (e) {}
+        savePlayer();
+      } else {
+        toast("Nothing has accumulated yet");
+      }
+      return;
+    }
+  }
   if (item) { lastGather = now; tryPickup(item); return; }
   const g = nearestGatherable();
   if (g && g._node) {
@@ -4144,6 +4244,53 @@ function craft(recipe) {
    material item that ALREADY exists in ITEM_META. No new palette entry is
    introduced anywhere below: a piece is tinted with its own material's
    existing colour. */
+/* ============ v34: RAIDING & GENERATION ==========================
+   HP read straight off the bible's own tier descriptions — "low
+   durability" through "near indestructible" — not invented numbers. */
+const BASE_TIER_HP = { wood: 40, stone: 90, iron: 180, runic: 350, dragonsteel: 800 };
+const ARCHITECT_HP_BONUS = 1.20;      // TUNABLE: "stronger structures"
+const ARCHITECT_GEN_BONUS = 1.25;     // TUNABLE: "resource generation"
+const GENERATOR_CAP_HOURS = 24;       // TUNABLE: offline yield ceiling
+const QUICK_BRACE_R = 4;              // TUNABLE: repair reach, tiles
+/* Units per hour, per tier. Flat-ish and deliberately modest — a generator
+   is a trickle you come back to, not a replacement for going out. */
+const GENERATOR_RATE = { wood: 1, stone: 1.5, iron: 2, runic: 3, dragonsteel: 4 };
+const GENERATOR_GIVES = { wood: "wood", stone: "stone", iron: "iron_bar",
+                          runic: "runic_stone", dragonsteel: "dragonsteel" };
+
+/* Max HP for a piece, including the Architect's passive. Owner is compared
+   by the class recorded at placement when present — a piece does not lose
+   its bonus because its owner later reclassed. */
+function baseMaxHp(p) {
+  const base = BASE_TIER_HP[p.tier] || BASE_TIER_HP.wood;
+  return Math.round(base * (p.arch ? ARCHITECT_HP_BONUS : 1));
+}
+/* Graceful fallback, exactly the shape petLastFedAt() already uses for the
+   v25 column: a piece with no hp value is FULL, never destroyed. A world
+   whose DB has not had the v34 SQL applied still behaves correctly. */
+function baseHpOf(p) {
+  if (typeof p.hp === "number" && Number.isFinite(p.hp)) return p.hp;
+  p.hp = baseMaxHp(p);
+  return p.hp;
+}
+/* Same discipline: no last_collected means "just now", never backdated —
+   a missing column must not credit years of imaginary production. */
+function generatorLastCollected(p) {
+  if (typeof p.lastCollected === "number") return p.lastCollected;
+  const src = p.last_collected;
+  const ms = src ? new Date(src).getTime() : NaN;
+  p.lastCollected = Number.isFinite(ms) ? ms : Date.now();
+  return p.lastCollected;
+}
+/* Computed ON DEMAND — never ticked. This is what makes offline generation
+   work with no server-side process: the elapsed time already knows. */
+function generatorYield(p) {
+  if (!p || p.kind !== "generator") return 0;
+  const hours = (Date.now() - generatorLastCollected(p)) / 3600000;
+  const rate = (GENERATOR_RATE[p.tier] || 1) * (p.arch ? ARCHITECT_GEN_BONUS : 1);
+  return Math.floor(Math.min(hours, GENERATOR_CAP_HOURS) * rate);
+}
+
 const BASE_TIERS = ["wood", "stone", "iron", "runic", "dragonsteel"];
 const BASE_TIER_MAT = {
   wood: "wood", stone: "stone", iron: "iron_bar",
@@ -4194,6 +4341,68 @@ let lastBuildTile = "";       // throttles the BUILD panel's live re-render
 
 function baseKey(x, y) { return Math.floor(x) + "," + Math.floor(y); }
 function baseAdd(p) { basePieces.set(p.id, p); baseIndex.set(baseKey(p.x, p.y), p); }
+
+/* v34: damage to a structure. Modeled directly on dealHit()/mobHit() — same
+   broadcast discipline, same "the attacker is authoritative" shape. */
+function baseHit(p, dmg, opts = {}) {
+  if (!p || p.destroyed) return;
+  const before = baseHpOf(p);
+  const after = Math.max(0, before - dmg);
+  p.hp = after;
+  p.flash = performance.now();
+  channel.send({ type: "broadcast", event: "base_hit",
+                 payload: { id: p.id, hp: after } });
+  /* Best effort, un-awaited, and it must never throw: if the v34 hp column
+     is not there yet the write fails server-side and the in-memory value
+     still holds for this session. */
+  try { sb.from("base_pieces").update({ hp: after }).eq("id", p.id); } catch (e) {}
+  if (after <= 0) baseDestroy(p);
+  else if (!opts.quiet) addFloat(p.x, p.y, String(dmg), "#d0604c");
+}
+
+async function baseDestroy(p) {
+  if (!p || p.destroyed) return;
+  p.destroyed = true;
+  const def = BASE_PIECES[p.kind] || {};
+  /* A chest spills rather than silently deleting what was inside — reusing
+     the same ground_items path a slain mob's loot already takes. */
+  const contents = chestContents.get(p.id);
+  if (def.store && contents) {
+    const drops = [];
+    for (const [type, qty] of Object.entries(contents)) {
+      if (qty > 0) drops.push({ type, qty,
+        x: p.x + (Math.random() - 0.5) * 1.2, y: p.y + (Math.random() - 0.5) * 1.2 });
+    }
+    chestContents.delete(p.id);
+    if (drops.length) {
+      try {
+        const { data } = await sb.from("ground_items").insert(drops).select();
+        if (data) {
+          data.forEach(it => groundItems.set(it.id, it));
+          channel.send({ type: "broadcast", event: "item_add", payload: { items: data } });
+        }
+      } catch (e) {}
+    }
+  }
+  basePieces.delete(p.id);
+  baseIndex.delete(baseKey(p.x, p.y));
+  burst(p.x, p.y, baseTierColor(p.tier), 12, 3);
+  toast(`${BASE_TIER_NAME[p.tier] || ""} ${def.name || "structure"} destroyed`);
+  channel.send({ type: "broadcast", event: "base_destroy", payload: { id: p.id } });
+  try { await sb.from("base_pieces").delete().eq("id", p.id); } catch (e) {}
+  refreshPanels();
+}
+
+/* Nearest damageable structure within reach of an attack. */
+function nearestBasePiece(range) {
+  let best = null, bestD = range;
+  for (const [, p] of basePieces) {
+    if (p.destroyed) continue;
+    const d = Math.hypot(p.x - me.x, p.y - me.y);
+    if (d <= bestD) { best = p; bestD = d; }
+  }
+  return best ? { piece: best, d: bestD } : null;
+}
 
 /* PART C — persistence, the same shape as ground_items: one select on login,
    one insert on placement, one broadcast so the piece appears for everyone
@@ -4271,7 +4480,15 @@ async function placeBasePiece(kind, tier, x, y) {
     return { ok: false, why };
   }
   invSpend({ [mat]: def.cost });
-  const row = { kind, tier, x: chk.x, y: chk.y, owner: me.username };
+  /* v34: `arch` is LOCAL-ONLY — there is no column for it and there must not
+     be one in the insert, or the write fails against the real schema. It is
+     applied to the in-memory row after the insert comes back. Likewise the
+     column is `last_collected` (snake_case, ISO string), not `lastCollected`
+     — that camelCase field is the in-memory cache the accessor fills. */
+  const isArch34 = (me.cls === "Architect");
+  const row = { kind, tier, x: chk.x, y: chk.y, owner: me.username,
+    hp: Math.round((BASE_TIER_HP[tier] || BASE_TIER_HP.wood) * (isArch34 ? ARCHITECT_HP_BONUS : 1)) };
+  if (kind === "generator") row.last_collected = new Date().toISOString();
   const { data } = await sb.from("base_pieces").insert(row).select();
   /* The insert is what mints the id, exactly as ground_items does. A write
      that comes back with nothing is refunded rather than kept locally — an
@@ -4282,7 +4499,10 @@ async function placeBasePiece(kind, tier, x, y) {
     toast("The ground refuses it — nothing was saved");
     return { ok: false, why: "insert failed" };
   }
-  data.forEach(baseAdd);
+  /* Copy rather than mutate what the insert handed back: the returned rows
+     are the stored rows, and `arch` is a local-only field that must never
+     look like a column — not in the DB, and not in anything inspecting it. */
+  data.forEach(p => baseAdd(Object.assign({}, p, { arch: isArch34 })));
   channel.send({ type: "broadcast", event: "base_add", payload: { pieces: data } });
   toast(`${BASE_TIER_NAME[tier]} ${def.name} raised`);
   burst(chk.x, chk.y, baseTierColor(tier), 8, 2);
