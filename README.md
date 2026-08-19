@@ -102,65 +102,96 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v35 — Systems: minimap, tutorial, reclassing, cosmetics, Oracle)
+## Confirmed, locked spec for the next build (v39 — the Elder trio + the secret event)
 
-v34 shipped successfully. Five smaller, mostly independent systems — the
-lowest individual risk of anything left on the roadmap, confirmed none of
-this exists yet. Grand Bazaar, The Ancient Forge, and Ruined Colosseum
-remain genuinely unscheduled — explicitly not this version, need their
-own slot, not silently folded in here.
+v38 shipped successfully (built under that label — content was the
+originally-queued v35 spec, built after v37 landed ahead of it; see that
+changelog entry for why). This is the real next version. Confirmed
+directly before writing this: none of the three Elders exist, no Golden
+Orb, no world-reset mechanism, `fightToTame: true` is the real existing
+tame pattern (Griffin/Boar/Bear), and `combatMusicUntil` already tracks
+"actively fighting right now" — reuse it, do not build a second detector.
 
-**PART A — Minimap.** Bible: "Shows general direction only, does not
-reveal exact base locations." A small fixed corner panel — direction
-indicators toward TOWER, VOLCANO, and SPAWN only (fixed landmarks, always
-knowable), not a coordinate map and not showing any `base_pieces` position
-at all — the omission is the whole point, not an oversight.
+**This spec must never be summarized, quoted, or referenced by anything
+player-facing — not the Oracle, not a tooltip, not a loading tip. The
+bible is explicit: discovery must be purely emergent.**
 
-**PART B — Tutorial Grounds.** Bible: "A small guided area within the
-Spawn Safe Zone teaching movement, basic combat, and pet taming." A short
-scripted sequence shown once on first login only (persisted flag on the
-player row, same shape as any other one-time state) — move here, hit this
-target dummy, tame this placeholder Wolf. Skippable at any point.
+**PART A — Golem Elder.** Fight-to-tame (`fightToTame: true`, same as
+Griffin), spawns in the deepest tile of any Ruin cluster — reuse the
+existing Ruin structure, gate to the single furthest-from-center tile
+within `RUINB`, not a new location system. "Ultimate base defender, stays
+at base while offline": when assigned to guard a specific `base_pieces`
+owner, it is simulated by whichever nearby player's client is currently
+closest — the exact same authority pattern `mob_sync` already uses for
+regular mobs, applied to a companion instead of a wild spawn. No new
+sync mechanism.
 
-**PART C — Reclassing.** Bible: "resets all XP and levels but keeps
-inventory, base and pets." Confirmed directly: leveling is a single
-counter (`me.level += 1` on a kill), no separate XP field to reset.
-Reclassing sets `me.level = 1` and `me.cls` to the new class, and touches
-NOTHING else — `me.inv`, `basePieces` owned by the player, and the pet
-roster all stay exactly as they are. A confirmation prompt first, since
-this is a real, irreversible reset.
+**PART B — Dragon Elder.** New item, `golden_orb`, a single guaranteed
+drop from the Eternal Tower itself — reuse the existing gather-node
+pattern, placed at the Tower's own coordinates, very low respawn
+frequency (propose once per 48 real hours across the whole server, a
+genuine expedition item, not a farmable one). New fixed point,
+`DRAGON_ALTAR`, placed near TOWER the same deterministic way every other
+landmark is. Carrying the orb to the altar and interacting consumes it
+and tames a Dragon Elder on the spot — no combat required, matching the
+bible's "bring it to awaken" framing exactly.
 
-**PART D — Cosmetics.** Bible: hats, cloaks, weapon skins, pet
-accessories, "earned through gameplay only, never purchased." Confirmed
-no stubs exist yet. Purely visual layer on top of existing render
-functions — no new stats anywhere, ever, on any cosmetic item. Award
-sources reuse what already exists (a rare drop chance on strong mob kills,
-matching how loot already works) rather than inventing a new currency or
-shop system.
+**PART C — Unicorn Elder.** One single tile, chosen uniformly at random
+across the ENTIRE map at worldgen time from `hash2(worldSeed, 0, 99991)`
+— no biome bias, no distance-from-spawn bias, nothing that could function
+as a hint. Confirmed this must never appear in any hint system, including
+the Oracle's — already true, since Oracle's exclusion list already names
+`unicorn_elder`. Grants: fast travel (teleport to any of the game's fixed
+landmark points — TOWER, VOLCANO, BAZAAR, ANCIENT, COLOSSEUM, SHRINE — a
+menu, not a click-anywhere system) and a passive multiplier on the
+player's own rare-species presence rolls, same shape as the existing
+`bloodMoonActive()` presence boost, just always-on for this one owner
+rather than event-gated.
 
-**PART E — The Oracle.** Bible: "NPC that hints at rare pet spawn
-locations, cannot hint at Elder Trio locations." A fixed NPC near spawn,
-interact to get a hint pointing at one rare/epic species' general biome
-(not exact coordinates — matches the Minimap's own "general direction
-only" philosophy). Hard-coded exclusion list covering all three Elder
-species and the secret event — this must never be data-driven from a
-list that could accidentally include them later, the exclusion is
-structural, not configurable.
+**PART D — the secret event. Build every safeguard explicitly, do not
+treat "hard to trigger" as automatic.**
 
-**PART F — proof gates, standard gauntlet plus:**
-- Confirm the Minimap only ever displays TOWER/VOLCANO/SPAWN directions —
-  never a base_pieces coordinate, tested explicitly.
-- Confirm Tutorial Grounds shows once per player, never again after.
-- Confirm reclassing resets level and class, and confirm inventory/base/
-  pets are byte-identical before and after.
-- Confirm no cosmetic item ever appears in any weapon/armor stat table.
-- Confirm the Oracle's hint pool structurally excludes all three Elder
-  species by name, not by a list that merely doesn't currently include them.
+Trigger condition, ALL of the following, checked every frame, not once:
+1. A live, tamed Golem Elder and a live, tamed Dragon Elder (same owner
+   or different owners, the bible does not require it be the same player)
+2. Both currently show `combatMusicUntil > now` — genuinely, actively
+   fighting, not just standing near a fight
+3. Within 3 tiles of each other
+4. **All three conditions hold continuously for 4 real seconds** — a
+   single frame of overlap must not fire this. Track an accumulator that
+   resets to zero the instant any condition breaks, not a counter that
+   merely needs to reach 4 seconds' worth of true frames non-consecutively.
 
-**Explicitly not touched this version:** Grand Bazaar, The Ancient Forge,
-Ruined Colosseum — all three still need their own version. The Elder
-trio itself and the secret event (v36).
+On confirmed trigger: broadcast a `world_reset_pending` event ONCE (guard
+against every client independently trying to fire it), a 10-second
+visible countdown naming no cause a player could reverse-engineer into a
+trigger condition, then: generate a new `worldSeed`, clear `base_pieces`
+server-side for every owner, and clear all three Elder ownership flags
+server-side. This is the single most consequential action in the entire
+game — the actual reset call must be gated behind an explicit admin-role
+check in addition to the trigger firing, so a bug in the trigger logic
+alone cannot wipe a live server; the trigger arms it, an admin-tier
+server rule executes it. Flag this explicitly as a deliberate two-key
+safeguard, not indecision about the design.
 
-**After v35 ships successfully, do not start any further version
+**PART E — proof gates, standard gauntlet plus:**
+- Confirm the Golem Elder spawns only in the single deepest Ruin tile per
+  cluster, not scattered generally through `RUINB`.
+- Confirm the Golden Orb has a real respawn floor and cannot be farmed
+  repeatedly in a short window.
+- Confirm the Unicorn Elder's spawn tile is genuinely uniform-random
+  across the whole map in a seed sweep, not clustered near any landmark.
+- Confirm the Oracle's hint pool still structurally excludes all three
+  by name (already true, must not regress).
+- Confirm the trigger accumulator resets to zero the instant ANY one of
+  the four conditions breaks, tested by breaking each condition
+  individually mid-count.
+- Confirm the actual reset call is unreachable without the admin-role
+  gate, even with the trigger condition fully satisfied — this is the
+  single most important gate in this entire proof section.
+- Confirm nothing added this version appears in any player-facing text,
+  tooltip, or the Oracle's hint pool.
+
+**After v39 ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated with the next
 target.
