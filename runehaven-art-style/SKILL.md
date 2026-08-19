@@ -116,6 +116,63 @@ JUDGMENT CALLS
 - **Cone angles 50 and 90 degrees** — unstated; wide enough that phase 3
   is genuinely hard to sidestep.
 
+### 2026-08-19 (v34 — Bases part 2: raiding & generation)
+
+Everything v33 deliberately left out. Structures can now be destroyed,
+generators actually produce, and the Architect finally does something.
+
+- **⚠️ A small v34 SQL update is needed.** Two columns:
+  `alter table base_pieces add column hp integer;` and
+  `alter table base_pieces add column last_collected timestamptz;`
+  Everything degrades gracefully without it — a piece with no `hp` reads
+  as FULL (never destroyed), a generator with no `last_collected` reads
+  as just-collected (never backdated into crediting years of imaginary
+  production). Both directions are asserted by real proof gates simulating
+  the pre-migration state. Same shape of note as v25 and v33.
+- **HP straight off the bible's own words** — 40/90/180/350/800 for wood
+  through dragonsteel. "Near indestructible" is 20x a wood wall.
+- **`baseHit()` is modeled on `dealHit()`/`mobHit()`**, same broadcast
+  discipline. Structures are a third melee target through the SAME attack
+  key — no confirmation step, because the bible's raiding pitch is low
+  friction. Players and mobs win ties: a wall must never steal a swing
+  meant for the person standing behind it.
+- **A destroyed chest spills** through the existing `ground_items` path
+  rather than silently deleting what was inside.
+- **Generator yield is computed on demand**, exactly like
+  `salamanderHappiness()` — nothing ticks, nothing runs server-side while
+  you are offline, the elapsed time already knows. Capped at 24h so a
+  generator neglected for a week does not dump a week at once.
+- **Quick Brace redesigned.** "Completes a placement instantly" made no
+  sense once v33 shipped — placement was already instant. It now restores
+  a damaged piece to full HP within 4 tiles: the same idea aimed at the
+  thing that actually takes time, and real defensive value mid-raid.
+  Still never throws when nothing is nearby.
+- **Two Architect passives**, always on: +20% structure HP and 1.25x
+  generation. Stamped at placement, so a piece keeps what it was built
+  with even if its owner later reclasses.
+
+A real bug caught by the harness before shipping: the insert was sending
+`arch` (a local-only field with no column) and `lastCollected` (wrong case
+— the column is `last_collected`), which would have failed against the
+real schema. Fixed by building the row explicitly and copying rather than
+mutating what the insert hands back.
+
+Two prior assertions were updated rather than forced: v33's exact-six-column
+schema check now allows v34's two documented additions, and v27's "the
+Architect tie-in is deliberately unbuilt" guard was retired, exactly as
+v31 retired its event guards.
+
+JUDGMENT CALLS
+- **GENERATOR_RATE 1/1.5/2/3/4 per hour by tier, 24h cap** — the bible
+  sets no rate. A trickle you come back to, not a replacement for going out.
+- **QUICK_BRACE_R = 4 tiles** — unstated. Close enough to require standing
+  with your base, not a map-wide repair.
+- **Architect bonuses 1.20 HP / 1.25 generation** — unstated; meaningful
+  without making the other four classes feel wrong to build with.
+- **Generators are owner-only to collect.** Unstated, but the alternative
+  is anyone walking up and emptying yours, which the bible's raiding rules
+  already cover through destruction instead.
+
 ### 2026-08-18 (v33 — Bases part 1: placement & construction)
 
 The first thing in this world a player builds. Six placeable pieces —
