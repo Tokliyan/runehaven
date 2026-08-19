@@ -53,6 +53,179 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-19 (v38 — the locked v35 spec: minimap, tutorial, reclassing, cosmetics, the Oracle)
+
+Five smaller systems in one version. **The version number is v38, not v35.**
+`NEXT_BUILD.md` still pointed at the README's locked "v35" spec, which was
+never built — v37 shipped ahead of it — so this is that spec, built late and
+numbered where it actually lands. Every claim it makes about the current file
+was re-verified before a line was written: none of the five systems existed
+(zero occurrences of minimap/tutorial/reclass/cosmetic/oracle in the file),
+levelling really is the single `me.level` counter with no XP field anywhere,
+and the three landmarks the spec calls "unscheduled" have since shipped in
+v37 and were left alone exactly as it asks. Same shape of call v27 made when
+its own spec opened "v26 shipped successfully" and v26 had not.
+
+- **The compass is the `.hud` card, reused, and its whole design is an
+  omission.** Three rows — TOWER, VOLCANO, SPAWN — and nothing else: no
+  coordinates, no scale, no distance, no player dot, and **no base piece,
+  ever**. The bible's base pitch is that the world is vast and obscurity is
+  your defence, so a minimap that could betray a base would undo an entire
+  system. `basePieces` and `baseIndex` are not read anywhere in that section
+  and a proof gate greps for both names there, plus a live test that builds a
+  real Foundation and proves the compass does not flinch.
+- **The only new component in the whole version is the arrow**, a CSS
+  triangle rotated to the bearing. It inherits `--ui-scale` and the panel
+  language for free, exactly as v33's two base panels did.
+- **The bearing is the ON-SCREEN one, not a world-axis compass.** The ground
+  plane is isometric, so `atan2(isoY(dx,dy), isoX(dx,dy))` is what makes the
+  arrow point where the player is actually looking — the same conversion
+  `drawTowerArrow()` has used since v8. Pinned by a gate: standing (10,10)
+  south-east of the Tower puts it at exactly −90°.
+- **The compass hides inside a cave**, where the grid is the interior's own
+  and a world bearing would be a lie. Same rule as v21's breath readout: on
+  screen only while it means something.
+- **The Tutorial Grounds are two props and one HUD line — no new systems.**
+  A marked stone with a pulsing ring and a thin gold beacon (so the very
+  first thing a new player is asked to do is findable from across the safe
+  zone), and a straw-headed training dummy on a wooden post with a painted
+  red-and-cream target. Both are `drawBox` on the locked 0.72/0.55 split,
+  both take the standard sun shadow and the `x + y` sort, and both are gone
+  from the entity list the instant the tutorial ends. They are the lesson,
+  not world furniture.
+- **The dummy has no HP, no AI and no loot** — it is scenery that the real
+  attack path notices, which is why nothing in the combat code had to learn
+  about it. The wolf is an ordinary `WILD_SPECIES.wolf` pushed into `wilds`,
+  so the v12 hold-E channel does all the work with no special case.
+- **Every step names the real bound key**, generated from `KEYBINDS` like the
+  v23 help line. A tutorial that says "WASD" to someone who rebound their
+  keys is worse than no tutorial.
+- **Cosmetics are drawn INSIDE the unit's own local space**, so a hat flips,
+  scales and bobs with the body under it rather than floating beside it. The
+  cloak goes down before `drawHeroBody` so the body paints over it; the hat
+  goes on after. Flat fills, hard edges, no gradients, no glow, no outline.
+- **A hat anchors off the class it is worn on, never a flat offset.** The
+  Mystic's hood apex sits nine sheet-units above the Beastmaster's antler
+  band, so `COS_HAT_Y` carries a value per class — the same reasoning v28's
+  `mountSeatOffsetY()` used when it scaled the rider's lift by `SPECIES_K`.
+  All six hats are swept across all five bodies in `run5` for exactly this
+  reason.
+- **A weapon skin recolours the held silhouette and does nothing else.** Same
+  geometry, same weapon, same damage — it replaces one colour argument to
+  `drawHeldWeapon` and there is a gate asserting the equipped weapon's `dmg`
+  is unchanged while one is worn.
+- **The pet accessory is deliberately NOT any of the three existing pet
+  overlays.** The gold HP bar means friendly-and-hurt (v16), the slate arc
+  means downed, the pale-green pulsing ring means tameable-right-now (v14).
+  A collar or ribbon is a fourth thing and wears none of those shapes — it is
+  a small flat band at the neck, scaled by that species' own `SPECIES_K` so
+  it neither swallows a Sprite nor vanishes on a Golem.
+- **The Oracle is a seated hooded seer on the Shrine's own stone.** The dais
+  is reused verbatim (`#9a9084` / `#b4ac9e`) because these are the two things
+  in the world you walk up to and ask something of, and they should read as
+  one civilisation. The figure is deliberately nothing like a player Mystic:
+  no legs, a wide seated base, a deep blue robe (`#274b6e`) instead of the
+  Mystic's violet, gold hem, and ONE slow orbiting rune rather than the
+  Mystic's ring of them.
+- **⚠️ The compass sits bottom-left, above the help line.** The Crafting and
+  BUILD panels open on that side; at a short viewport with "large" text they
+  scroll rather than overlap, but it is the one placement worth a screenshot.
+- **⚠️ Nothing in the world marks where the Oracle is.** It is inside the
+  safe zone and the compass points at SPAWN, so it is findable — but a new
+  player who skips the tutorial has no reason to know it exists. The same
+  standing note v22 made about its two unmarked biome pockets.
+- **⚠️ Cosmetics have no preview anywhere.** You equip one from the pack and
+  find out what it looks like on the tiny in-world sprite. The class-select
+  cards already render a full-size animated `drawUnit`, so a preview is a
+  call site rather than a rebuild — the most likely thing to want next.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus two things about the repo it
+could not have known. All shipped through the full gate (parse clean, `run2`
+and `run3` `CAUGHT ERROR: none`, `run4` **729/729 with zero FAIL**, `run5` 990
+coverage draws clean, 52/52 grep checks) — refinements to consider, not
+unfinished work.
+
+1. **⚠️ The spec is labelled v35 and this ships as v38.** `NEXT_BUILD.md`
+   pointed at it, but v37 had already shipped, so numbering this v35 would put
+   an out-of-order version in the changelog. Its two stale framing lines — "v34
+   shipped successfully" and "Grand Bazaar / Ancient Forge / Ruined Colosseum
+   remain unscheduled" — describe other versions, not this one's work, and its
+   "explicitly not touched" list is honoured either way: none of those three
+   was touched. Everything the spec asserts about `runehaven.html` itself was
+   re-verified and still true.
+2. **⚠️ A small v38 SQL update is needed** for two of the five to persist:
+   `alter table players add column tutorial_done boolean;` and
+   `alter table players add column cosmetics jsonb;`. Both degrade cleanly and
+   both directions are asserted: with no `tutorial_done` the Grounds replay on
+   each login (one keypress to skip), and with no `cosmetics` the worn slots
+   reset each session while the cosmetic ITEMS keep persisting in `inventory`
+   like every other item. The writes live in their own `savePlayerExtras()`,
+   un-awaited and error-swallowing — the v25 `last_fed_at` pattern — so
+   `savePlayer()`'s fixed column list never learns about a column that might
+   not be there and normal saving cannot break. Same shape of note as v25,
+   v33 and v34.
+3. **`class` joined `savePlayer()`'s column list.** It is an existing column
+   the insert has always written and nothing ever updated, because until
+   reclassing existed a class could not change. No schema change.
+4. **The compass shows direction and NOTHING else — not even distance.** The
+   bible says "general direction only". A distance to a fixed landmark would
+   arguably be harmless, but the rule reads as a deliberate limit and the
+   cheapest way to honour it is to have nothing else to leak.
+5. **Reclassing lives in a new CHARACTER panel on `K`,** the 15th
+   `KEYBIND_DEFAULTS` entry and the natural remaining letter after v33 took B.
+   The spec says nothing about where a player reclasses; the settings panel is
+   login-only, and class is not inventory. The two count assertions were
+   **updated, not relaxed** — 14 → 15 bindable actions and 13 → 14 labelled
+   rows — so a future pass cannot lose the binding without failing.
+6. **Confirmation is a second click on the same row, not a browser dialog.**
+   The spec asks for "a confirmation prompt first"; the row arms, states the
+   consequence in the panel's own `.craft-row` language, and only then commits.
+7. **Cosmetic names beyond the bible's six hats.** The bible names the hats
+   exactly and gives only categories for the rest, so Crimson / Azure /
+   Verdant Cloak, Gilded / Obsidian Finish and Pet Collar / Pet Ribbon are
+   named here. Thirteen items in four slots; adding more is a data change.
+8. **Drop rates 4–10%, and 50% from the Elder Drake.** The bible sets none.
+   Goblin, Bandit and Boar are deliberately excluded: "earned through
+   gameplay" should mean something was actually fought. Every rate is a
+   one-line tunable.
+9. **Worn cosmetics drop on death, like everything else.** The bible's
+   "players drop all items on death" is absolute and a cosmetic is an item —
+   so the four slots clear and the items go with the inventory. Following the
+   v21 charm precedent exactly, the slots are only pointers, so nothing is
+   duplicated.
+10. **Cosmetics sync to other players** through one new `cs` field on the move
+    broadcast, the same shape `pe` (v28) and `sp` (v29) already use, and
+    normalised on arrival so a malformed payload can only ever resolve to real
+    cosmetics in their own slots. Showing off is the entire point of a
+    cosmetic; a purely local one would be half the feature.
+11. **The tutorial's taming step completes whether the tame succeeds or not.**
+    The lesson is the channel, and a 50% roll must never be able to strand a
+    new player inside step three. Pinned by a gate that forces the resist
+    branch.
+12. **ESCAPE skips the tutorial and is deliberately not a `KEYBINDS` action.**
+    It is the one key v23 made unbindable, so it can never be remapped out
+    from under someone who wants out.
+13. **`run4`'s tutorial walkthrough restarts a fresh one rather than using the
+    boot's.** The v24 gate above it replays the intro card mid-session and
+    skips it with Escape, which is also the tutorial's skip key — a collision
+    that cannot happen in a real session, since the card only ever plays
+    before login. That the tutorial DID start on its own at login is asserted
+    separately, through a `tutorialRuns` counter.
+14. **`run5` gained a v38 sweep** — every hat on all five class bodies, every
+    cloak, every skin across all eight weapon silhouettes, both pet
+    accessories on every species and through the real `drawPet` path, the
+    Oracle, both tutorial props, and a live tutorial with frames pumped. It
+    hard-fails if the props were never alive or the compass drew any number of
+    rows other than three. 803 → **990** coverage draws.
+15. **Noted, no action taken (pre-existing, outside this spec's scope):**
+    `dragonsteel_shield` carries `armor: true` in `ITEM_META` but has no
+    `ARMORS` entry, so opening the Inventory while holding one would throw on
+    `ARMORS[type].tier`. It predates this version, giving it a `reduce` value
+    would be inventing a stat, and v38 touches nothing in that path — flagged
+    here rather than fixed silently.
+
 ### 2026-08-18 (Elder Drake palette hotfix)
 
 Flagged by the user directly: the drake "looks like a normal goon" despite
