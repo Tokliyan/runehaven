@@ -102,102 +102,65 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v34 — Bases part 2: raiding & generation)
+## Confirmed, locked spec for the next build (v35 — Systems: minimap, tutorial, reclassing, cosmetics, Oracle)
 
-v33 shipped successfully — 628/628, base_pieces confirmed live. This is
-everything v33 deliberately left out. Confirmed directly before writing
-this: `base_pieces` currently has no `hp` column at all — `{kind, tier, x,
-y, owner}` only, exactly as v33's own notes say. Quick Brace's current
-code is a genuine no-op with a comment explicitly marking it as waiting
-for this version. `dealHit()`/`mobHit()` are the real functions to model
-piece-damage on, not something new.
+v34 shipped successfully. Five smaller, mostly independent systems — the
+lowest individual risk of anything left on the roadmap, confirmed none of
+this exists yet. Grand Bazaar, The Ancient Forge, and Ruined Colosseum
+remain genuinely unscheduled — explicitly not this version, need their
+own slot, not silently folded in here.
 
-**One design call made on your behalf, stated plainly rather than left
-implicit:** attacking a base piece works through the same attack key as
-everything else, no separate confirmation step — matches the bible's own
-"anyone who finds your base can walk straight in" framing, which is about
-low friction, not high friction.
+**PART A — Minimap.** Bible: "Shows general direction only, does not
+reveal exact base locations." A small fixed corner panel — direction
+indicators toward TOWER, VOLCANO, and SPAWN only (fixed landmarks, always
+knowable), not a coordinate map and not showing any `base_pieces` position
+at all — the omission is the whole point, not an oversight.
 
-**PART A — real HP per tier, matching the bible's own words:**
-```js
-const BASE_TIER_HP = { wood: 40, stone: 90, iron: 180, runic: 350, dragonsteel: 800 };
-```
-Wood "low durability" through Dragonsteel "near indestructible" — read
-directly off the bible's own tier descriptions, not invented numbers.
+**PART B — Tutorial Grounds.** Bible: "A small guided area within the
+Spawn Safe Zone teaching movement, basic combat, and pet taming." A short
+scripted sequence shown once on first login only (persisted flag on the
+player row, same shape as any other one-time state) — move here, hit this
+target dummy, tame this placeholder Wolf. Skippable at any point.
 
-**PART B — destruction, reusing the existing hit pattern, not a new one.**
+**PART C — Reclassing.** Bible: "resets all XP and levels but keeps
+inventory, base and pets." Confirmed directly: leveling is a single
+counter (`me.level += 1` on a kill), no separate XP field to reset.
+Reclassing sets `me.level = 1` and `me.cls` to the new class, and touches
+NOTHING else — `me.inv`, `basePieces` owned by the player, and the pet
+roster all stay exactly as they are. A confirmation prompt first, since
+this is a real, irreversible reset.
 
-New `baseHit(piece, dmg, opts)`, modeled directly on `dealHit()`/`mobHit()`
-— same broadcast shape (`channel.send({ type: "broadcast", event:
-"base_hit", ... })`), same sync discipline. Wire it into wherever the
-player's attack currently resolves against `others`/`mobs`, adding
-`base_pieces` as a third checkable target type. At 0 HP: destroy the
-piece (remove from `base_pieces`, broadcast `base_destroy`), and if it was
-a Storage Chest with contents, drop them via the existing `ground_items`
-mechanic — reuse, not reinvent.
+**PART D — Cosmetics.** Bible: hats, cloaks, weapon skins, pet
+accessories, "earned through gameplay only, never purchased." Confirmed
+no stubs exist yet. Purely visual layer on top of existing render
+functions — no new stats anywhere, ever, on any cosmetic item. Award
+sources reuse what already exists (a rare drop chance on strong mob kills,
+matching how loot already works) rather than inventing a new currency or
+shop system.
 
-**PART C — the Generator finally produces something.**
-
-New `last_collected` column (see Part E). Yield computed on demand, same
-shape as `salamanderHappiness()` — never ticked every frame, only
-evaluated when the owner interacts with it:
-```js
-function generatorYield(piece) {
-  const hours = (Date.now() - generatorLastCollected(piece)) / 3600000;
-  const rate = GENERATOR_RATE[piece.tier] * (piece.ownerIsArchitect ? 1.25 : 1);
-  return Math.floor(Math.min(hours, GENERATOR_CAP_HOURS) * rate);
-}
-```
-`GENERATOR_CAP_HOURS` (propose 24) stops a generator neglected for a week
-from dumping a week's worth at once — caps the offline benefit without
-requiring a server-side process, matching how `salamanderHappiness` also
-never needed one.
-
-**PART D — Quick Brace, redesigned to actually fit now that HP exists.**
-
-The original "completes a placement instantly" never made sense — v33
-placement was already instant, nothing to speed up. Replaced: **instantly
-restores a nearby damaged base piece to full HP** — genuinely matches
-"faster building" as emergency repair, and gives the ability real purpose
-the moment someone is being raided. Two passive Architect bonuses, always
-on, no ability needed: pieces they place get +20% max HP, generators they
-place produce at 1.25x (the `ownerIsArchitect` multiplier shown above).
-Finally gives "stronger structures" and "resource generation" real
-mechanical meaning, not just the one active ability.
-
-**PART E — the SQL this version needs. Flag this as clearly as v33's own
-requirement, same shape of note:**
-```sql
-alter table base_pieces add column hp integer;
-alter table base_pieces add column last_collected timestamptz;
-```
-Code must degrade gracefully if this has not been run yet — same pattern
-`petLastFedAt()` already uses for `last_fed_at`: a piece with no `hp`
-value falls back to its tier's full `BASE_TIER_HP` rather than treating
-it as 0/destroyed, and a Generator with no `last_collected` falls back to
-"now" rather than crediting years of imaginary production. Never allowed
-to throw either way.
+**PART E — The Oracle.** Bible: "NPC that hints at rare pet spawn
+locations, cannot hint at Elder Trio locations." A fixed NPC near spawn,
+interact to get a hint pointing at one rare/epic species' general biome
+(not exact coordinates — matches the Minimap's own "general direction
+only" philosophy). Hard-coded exclusion list covering all three Elder
+species and the secret event — this must never be data-driven from a
+list that could accidentally include them later, the exclusion is
+structural, not configurable.
 
 **PART F — proof gates, standard gauntlet plus:**
-- Confirm a piece takes real damage through the standard attack path and
-  is destroyed at 0 HP.
-- Confirm a destroyed Storage Chest with contents drops them as real
-  ground items, not silently deleted.
-- Confirm generator yield is genuinely time-based (simulate an elapsed
-  gap, confirm it scales) and respects the 24h cap.
-- Confirm Quick Brace restores a damaged piece and does nothing if none
-  is nearby — never throws either way.
-- Confirm both Architect passive bonuses apply only to Architect-placed
-  pieces, not universally.
-- Confirm a piece with no `hp` column value behaves as full-HP, not
-  destroyed, and a Generator with no `last_collected` value behaves as
-  freshly collected, not backdated — both simulating the pre-migration
-  database state.
+- Confirm the Minimap only ever displays TOWER/VOLCANO/SPAWN directions —
+  never a base_pieces coordinate, tested explicitly.
+- Confirm Tutorial Grounds shows once per player, never again after.
+- Confirm reclassing resets level and class, and confirm inventory/base/
+  pets are byte-identical before and after.
+- Confirm no cosmetic item ever appears in any weapon/armor stat table.
+- Confirm the Oracle's hint pool structurally excludes all three Elder
+  species by name, not by a list that merely doesn't currently include them.
 
-**Explicitly not touched this version:** any UI marking whose base a
-piece belongs to from outside it — still deliberately absent, matching
-v33's own note that this is correct for now. Wall rotation.
+**Explicitly not touched this version:** Grand Bazaar, The Ancient Forge,
+Ruined Colosseum — all three still need their own version. The Elder
+trio itself and the secret event (v36).
 
-**After v34 ships successfully, do not start any further version
+**After v35 ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated with the next
 target.
