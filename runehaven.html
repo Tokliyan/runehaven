@@ -601,6 +601,15 @@ const ITEM_META = {
   runic_crossbow:{ name: "Runic Crossbow", color: "#5ac8e0", weapon: true },
   mystic_staff: { name: "Mystic Staff",  color: "#5ac8e0", weapon: true },
   dragonsteel_sword: { name: "Dragonsteel Sword", color: "#b06ce0", weapon: true },
+  /* v37: the bible lists SEVEN dragonsteel items; only the sword existed,
+     because until the Ancient Forge was built there was nowhere to smelt
+     any of them. Adding the other six now that the landmark is real. */
+  dragonsteel_bow:   { name: "Dragonsteel Bow",   color: "#b06ce0", weapon: true },
+  dragonsteel_axe:   { name: "Dragonsteel Axe",   color: "#b06ce0", weapon: true },
+  elder_runestaff:   { name: "Elder Runestaff",   color: "#b06ce0", weapon: true },
+  shadow_dagger:     { name: "Shadow Dagger",     color: "#b06ce0", weapon: true },
+  dragonsteel_lance: { name: "Dragonsteel Lance", color: "#b06ce0", weapon: true },
+  dragonsteel_shield:{ name: "Dragonsteel Shield",color: "#b06ce0", armor: true },
   trail_bait:   { name: "Trail Bait",    color: "#b08a52" },
   iron_armor:   { name: "Iron Armor",    color: "#c8ccd4", armor: true },
   runic_armor:  { name: "Runic Armor",   color: "#5ac8e0", armor: true },
@@ -656,6 +665,11 @@ const WEAPONS = {
   runic_crossbow:   { name: "Runic Crossbow",    tier: "runic",       type: "ranged", dmg: 22, range: 9.5, cd: 700 },
   mystic_staff:     { name: "Mystic Staff",      tier: "runic",       type: "ranged", dmg: 19, range: 8.5, cd: 600 },
   dragonsteel_sword:{ name: "Dragonsteel Sword", tier: "dragonsteel", type: "melee",  dmg: 40, range: 2.1, cd: 450 },
+  dragonsteel_bow:  { name: "Dragonsteel Bow",   tier: "dragonsteel", type: "ranged", dmg: 34, range: 9.5, cd: 620, pk: "arrow" },
+  dragonsteel_axe:  { name: "Dragonsteel Axe",   tier: "dragonsteel", type: "melee",  dmg: 44, range: 2.0, cd: 620 },
+  elder_runestaff:  { name: "Elder Runestaff",   tier: "dragonsteel", type: "ranged", dmg: 36, range: 8.5, cd: 560, pk: "orb" },
+  shadow_dagger:    { name: "Shadow Dagger",     tier: "dragonsteel", type: "melee",  dmg: 30, range: 1.5, cd: 300 },
+  dragonsteel_lance:{ name: "Dragonsteel Lance", tier: "dragonsteel", type: "melee",  dmg: 38, range: 2.9, cd: 560 },
 };
 
 /* v9: silhouette family for a weapon id ("crossbow" checked before "bow") */
@@ -705,6 +719,12 @@ const RECIPES = [
      before you have ever been down there. No bootstrapping problem. */
   { out: "divers_charm",      mats: { iron_bar: 2, wood: 3 },                 where: "forge",   label: "Craft Diver's Charm" },
   { out: "dragonsteel_sword", mats: { dragonsteel: 3, runic_stone: 2 },       where: "ancient", label: "Forge Dragonsteel Sword" },
+  { out: "dragonsteel_bow",   mats: { dragonsteel: 2, runic_stone: 2, wood: 3 }, where: "ancient", label: "Forge Dragonsteel Bow" },
+  { out: "dragonsteel_axe",   mats: { dragonsteel: 3, runic_stone: 2, wood: 1 }, where: "ancient", label: "Forge Dragonsteel Axe" },
+  { out: "elder_runestaff",   mats: { dragonsteel: 2, runic_stone: 4 },          where: "ancient", label: "Forge Elder Runestaff" },
+  { out: "shadow_dagger",     mats: { dragonsteel: 2, runic_stone: 1 },          where: "ancient", label: "Forge Shadow Dagger" },
+  { out: "dragonsteel_lance", mats: { dragonsteel: 3, runic_stone: 1, wood: 2 }, where: "ancient", label: "Forge Dragonsteel Lance" },
+  { out: "dragonsteel_shield",mats: { dragonsteel: 3, iron_bar: 2 },             where: "ancient", label: "Forge Dragonsteel Shield" },
 ];
 
 /* ---------------- STATE ---------------- */
@@ -771,6 +791,15 @@ const SPAWN_FORGE = { x: SPAWN.x + 4, y: SPAWN.y + 2 };
    the dev island. MUST be removed or admin-gated before any real/live launch. */
 const DEV_CHEST = { x: SPAWN.x - 3, y: SPAWN.y + 2 };
 const SHRINE = { x: SPAWN.x - 4, y: SPAWN.y - 4 };   // v12: Beastmaster Shrine, safe-zone edge
+/* ============ v37: the three remaining bible landmarks ============
+   Grand Bazaar, The Ancient Forge and the Ruined Colosseum were named in
+   the bible from the start and were the last structures never built.
+   Placed deterministically from worldSeed at worldgen like every other
+   landmark, so every player finds them in the same place. */
+let BAZAAR = { x: 0, y: 0 }, ANCIENT = { x: 0, y: 0 }, COLOSSEUM = { x: 0, y: 0 };
+const BAZAAR_R = 7;      // its own safe radius — the bible puts it INSIDE a safe zone
+const ANCIENT_R = 4;     // crafting proximity, matching SPAWN_FORGE's own 4
+const COLOSSEUM_R = 9;   // the arena floor
 let floatTexts = [];                 // v9: rising damage numbers
 let pulseT = 0;                      // v9: staff cast pulse timer
 let swingKind = null;                // v9: which weapon silhouette the swing sweeps
@@ -1038,6 +1067,30 @@ function debugSetAbility(patch) {
   return debugAbilityInfo();
 }
 function debugCombatHandles() { return { others, mobs, projectiles }; }
+function debugV37Info() {
+  return {
+    BAZAAR: { ...BAZAAR }, ANCIENT: { ...ANCIENT }, COLOSSEUM: { ...COLOSSEUM },
+    BAZAAR_R, ANCIENT_R, COLOSSEUM_R,
+    TOWER: { ...TOWER }, SPAWN: { x: SPAWN.x, y: SPAWN.y }, VOLCANO: { ...VOLCANO },
+    bazaarIsSafe: inSafeZone(BAZAAR.x, BAZAAR.y),
+    colosseumIsSafe: inSafeZone(COLOSSEUM.x, COLOSSEUM.y),
+    inColosseumAtCentre: inColosseum(COLOSSEUM.x, COLOSSEUM.y),
+    ancientRecipes: RECIPES.filter(r => r.where === "ancient").map(r => r.out),
+  };
+}
+function debugV37Probe(patch) {
+  const out = {};
+  if (patch && patch.at) {
+    const [x, y] = patch.at;
+    const sx = me.x, sy = me.y;
+    me.x = x; me.y = y;
+    out.nearAncient = nearAncient();
+    out.inSafe = inSafeZone(x, y);
+    out.inColosseum = inColosseum(x, y);
+    me.x = sx; me.y = sy;
+  }
+  return out;
+}
 function debugV34Info() {
   const list = Array.from(basePieces.values()).map(p => ({
     id: p.id, kind: p.kind, tier: p.tier, owner: p.owner, arch: !!p.arch,
@@ -1541,8 +1594,34 @@ function placeLandmarks() {
     if (Math.hypot(MOUNT.x - SPAWN.x, MOUNT.y - SPAWN.y) > SAFE_RADIUS + 36 &&
         Math.hypot(MOUNT.x - VOLCANO.x, MOUNT.y - VOLCANO.y) > 78) break;
   }
+  /* v37: the three remaining landmarks, same hashed-angle technique, each
+     kept clear of spawn and of one another so they never overlap. */
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const a4 = (hash2(4 + attempt, 4, worldSeed)) * Math.PI * 2;
+    BAZAAR = { x: Math.round(TOWER.x + Math.cos(a4) * 48), y: Math.round(TOWER.y + Math.sin(a4) * 48) };
+    if (Math.hypot(BAZAAR.x - SPAWN.x, BAZAAR.y - SPAWN.y) > SAFE_RADIUS + 20 &&
+        Math.hypot(BAZAAR.x - VOLCANO.x, BAZAAR.y - VOLCANO.y) > 40 &&
+        Math.hypot(BAZAAR.x - MOUNT.x, BAZAAR.y - MOUNT.y) > 40) break;
+  }
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const a5 = (hash2(5 + attempt, 5, worldSeed)) * Math.PI * 2;
+    /* The Ancient Forge belongs near the volcano — it is the only place
+       dragonsteel can be smelted, and dragonsteel comes from there. */
+    ANCIENT = { x: Math.round(VOLCANO.x + Math.cos(a5) * 22), y: Math.round(VOLCANO.y + Math.sin(a5) * 22) };
+    if (Math.hypot(ANCIENT.x - SPAWN.x, ANCIENT.y - SPAWN.y) > SAFE_RADIUS + 30 &&
+        Math.hypot(ANCIENT.x - BAZAAR.x, ANCIENT.y - BAZAAR.y) > 30) break;
+  }
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const a6 = (hash2(6 + attempt, 6, worldSeed)) * Math.PI * 2;
+    COLOSSEUM = { x: Math.round(TOWER.x + Math.cos(a6) * 60), y: Math.round(TOWER.y + Math.sin(a6) * 60) };
+    if (Math.hypot(COLOSSEUM.x - SPAWN.x, COLOSSEUM.y - SPAWN.y) > SAFE_RADIUS + 26 &&
+        Math.hypot(COLOSSEUM.x - BAZAAR.x, COLOSSEUM.y - BAZAAR.y) > 34 &&
+        Math.hypot(COLOSSEUM.x - ANCIENT.x, COLOSSEUM.y - ANCIENT.y) > 34 &&
+        Math.hypot(COLOSSEUM.x - VOLCANO.x, COLOSSEUM.y - VOLCANO.y) > 34) break;
+  }
+
   const clamp = p => { p.x = Math.max(36, Math.min(N - 36, p.x)); p.y = Math.max(36, Math.min(N - 36, p.y)); };
-  clamp(VOLCANO); clamp(MOUNT);
+  clamp(VOLCANO); clamp(MOUNT); clamp(BAZAAR); clamp(ANCIENT); clamp(COLOSSEUM);
   placeRuinsAndZones();
 }
 
@@ -3620,7 +3699,21 @@ function inSafeZone(x, y) {
   /* v20: the bible's scattered Other Safe Zones protect exactly their grass
      clearing — one radius for both, so the visible green circle IS the safe
      area with no invisible margin either way. */
+  /* v37: the bible puts the Grand Bazaar INSIDE a safe zone — "Player
+     trading hub inside a safe zone". Protection is the mechanic; the
+     trading itself is item-for-item at players' own risk, exactly as the
+     bible describes, which needs no system beyond dropping and picking up
+     that already exists. */
+  if (Math.hypot(x - BAZAAR.x, y - BAZAAR.y) < BAZAAR_R) return true;
   return OTHER_SAFE_ZONES.some(z => Math.hypot(x - z.x, y - z.y) < ZONE_R);
+}
+
+/* v37: the Ruined Colosseum is the deliberate INVERSE of a safe zone —
+   the bible's open duelling arena. Nothing else in the game turns PvP ON;
+   this is the one place that does, overriding even a Safe Zone if one ever
+   generated overlapping it. */
+function inColosseum(x, y) {
+  return Math.hypot(x - COLOSSEUM.x, y - COLOSSEUM.y) < COLOSSEUM_R;
 }
 
 function tryAttack(aimX, aimY) {
@@ -3712,7 +3805,14 @@ function tryAttack(aimX, aimY) {
 function dealHit(targetName, dmg, opts = {}) {
   const o = others.get(targetName);
   if (!o) return;
-  if (inSafeZone(me.x, me.y) || inSafeZone(o.x, o.y)) { toast("The safe zone protects them"); return; }
+  /* v37: the Colosseum overrides safe-zone protection for BOTH parties —
+     the bible calls it an open duelling arena, and an arena where nobody
+     can be hit is not an arena. Both must be inside it, so nobody can
+     stand in the ring and swing at someone safely outside it. */
+  const arena37 = inColosseum(me.x, me.y) && inColosseum(o.x, o.y);
+  if (!arena37 && (inSafeZone(me.x, me.y) || inSafeZone(o.x, o.y))) {
+    toast("The safe zone protects them"); return;
+  }
   channel.send({ type: "broadcast", event: "hit", payload: {
     to: targetName, from: me.username, dmg,
     cr: opts.crit ? 1 : 0, po: opts.pois ? 1 : 0,
@@ -4213,7 +4313,13 @@ function nearForge()   {
   if (Math.hypot(me.x - SPAWN_FORGE.x, me.y - SPAWN_FORGE.y) < 4) return true;
   return !!nearPlacedForge();
 }
-function nearAncient() { return false; }
+/* v37: was a stub returning false since dragonsteel recipes were written —
+   the ONLY place dragonsteel can be smelted, exactly as the bible states.
+   Every dragonsteel recipe was already gated on this; it simply had nowhere
+   to be true until the landmark existed. */
+function nearAncient() {
+  return Math.hypot(me.x - ANCIENT.x, me.y - ANCIENT.y) < ANCIENT_R;
+}
 
 function craft(recipe) {
   if (!invHas(recipe.mats)) return;
@@ -6854,6 +6960,75 @@ function drawMobOverlays(m, sx, sy, t, def) {
 /* v12: Beastmaster Shrine — stepped stone altar, antler motif + paw dots.
    Glows while ANY player's shrine blessing is running (world detail; never
    indicates who — the buff itself is private). */
+/* ============ v37: the three remaining landmarks ============ */
+function drawBazaarEntity(t) {
+  const [sx, sy] = worldToScreen(BAZAAR.x, BAZAAR.y, groundZ(BAZAAR.x, BAZAAR.y));
+  drawShadow(sx, sy, 56, 40);
+  /* A ring of market stalls around an open trading floor — bright canvas
+     against the world's greens, so it reads as "somewhere people gather"
+     from a distance. */
+  const STALL = ["#c85a3c", "#3c7ac8", "#d4a03c", "#4aa85a", "#a04ac8", "#c8843c"];
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.4;
+    const bx = BAZAAR.x + Math.cos(a) * 3.4, by = BAZAAR.y + Math.sin(a) * 3.4;
+    drawBox(bx, by, 0.75, 0.6, 4, "#6b5540");                     // stall counter
+    drawBox(bx, by, 0.85, 0.7, 2, STALL[i], 9);                   // awning
+    const [px, py] = worldToScreen(bx, by, groundZ(bx, by));
+    ctx.fillStyle = "rgba(40,30,20,0.5)";
+    ctx.fillRect(px - 5, py - 9, 1.2, 9);                          // posts
+    ctx.fillRect(px + 4, py - 9, 1.2, 9);
+  }
+  drawBox(BAZAAR.x, BAZAAR.y, 1.5, 1.2, 2, "#8a7a5e");            // central floor
+  const gl = 0.5 + 0.3 * Math.sin(t / 900);
+  ctx.fillStyle = `rgba(244,207,107,${gl * 0.4})`;
+  ctx.beginPath(); ctx.ellipse(sx, sy - 2, 22, 12, 0, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawAncientEntity(t) {
+  const [sx, sy] = worldToScreen(ANCIENT.x, ANCIENT.y, groundZ(ANCIENT.x, ANCIENT.y));
+  drawShadow(sx, sy, 40, 30);
+  /* Black volcanic stone, molten core — the only forge that can work
+     dragonsteel should look like it could. */
+  drawBox(ANCIENT.x, ANCIENT.y, 1.5, 1.25, 6, "#241a16");         // basalt base
+  drawBox(ANCIENT.x, ANCIENT.y, 1.15, 0.95, 12, "#1a1210", 6);    // body
+  drawBox(ANCIENT.x, ANCIENT.y, 1.35, 1.1, 3, "#2e2220", 18);     // cap
+  const heat = 0.55 + 0.45 * Math.sin(t / 240);
+  ctx.fillStyle = `rgba(255,120,40,${heat})`;                      // molten mouth
+  ctx.fillRect(sx - 6, sy - 12, 12, 5);
+  ctx.fillStyle = `rgba(255,200,120,${heat * 0.8})`;
+  ctx.fillRect(sx - 3.5, sy - 11, 7, 3);
+  ctx.fillStyle = `rgba(255,140,60,${heat * 0.25})`;               // heat bloom
+  ctx.beginPath(); ctx.ellipse(sx, sy - 8, 20, 11, 0, 0, Math.PI * 2); ctx.fill();
+  for (let i = 0; i < 4; i++) {                                    // rising embers
+    const ph = (t / 700 + i * 0.27) % 1;
+    ctx.fillStyle = `rgba(255,170,80,${(1 - ph) * 0.7})`;
+    ctx.beginPath();
+    ctx.arc(sx - 5 + i * 3.4, sy - 16 - ph * 16, 1.1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawColosseumEntity(t) {
+  const [sx, sy] = worldToScreen(COLOSSEUM.x, COLOSSEUM.y, groundZ(COLOSSEUM.x, COLOSSEUM.y));
+  drawShadow(sx, sy, 74, 52);
+  /* A broken ring of tiered stone — deliberately RUINED, with gaps, so it
+     reads as the bible's "Ruined Colosseum" and not a clean stadium. */
+  for (let i = 0; i < 16; i++) {
+    if (i === 3 || i === 4 || i === 11) continue;                  // collapsed sections
+    const a = (i / 16) * Math.PI * 2;
+    const bx = COLOSSEUM.x + Math.cos(a) * 7.2, by = COLOSSEUM.y + Math.sin(a) * 7.2;
+    const h = 9 + (i % 3) * 3;
+    drawBox(bx, by, 0.7, 0.6, h, i % 2 ? "#a89880" : "#96866e");
+  }
+  for (let i = 0; i < 3; i++) {                                    // fallen rubble in the gaps
+    const a = ((3.5 + i * 3.7) / 16) * Math.PI * 2;
+    const bx = COLOSSEUM.x + Math.cos(a) * 6.4, by = COLOSSEUM.y + Math.sin(a) * 6.4;
+    drawBox(bx, by, 0.5, 0.4, 2, "#7e7060");
+  }
+  ctx.fillStyle = "rgba(160,60,40,0.18)";                          // stained arena floor
+  ctx.beginPath(); ctx.ellipse(sx, sy, 46, 26, 0, 0, Math.PI * 2); ctx.fill();
+}
+
 function drawShrineEntity(t) {
   const [sx, sy] = worldToScreen(SHRINE.x, SHRINE.y, groundZ(SHRINE.x, SHRINE.y));
   drawShadow(sx, sy, 26, 20);
@@ -8331,6 +8506,11 @@ function render(t) {
   ents.push({ s: SPAWN_FORGE.x + SPAWN_FORGE.y + 0.8, kind: "forge" });
   ents.push({ s: DEV_CHEST.x + DEV_CHEST.y + 0.3, kind: "chest" });   // ⚠️ DEV-ONLY
   ents.push({ s: SHRINE.x + SHRINE.y + 0.3, kind: "shrine" });
+  if (!inInterior()) {
+    ents.push({ s: BAZAAR.x + BAZAAR.y + 0.3, kind: "bazaar" });
+    ents.push({ s: ANCIENT.x + ANCIENT.y + 0.3, kind: "ancient" });
+    ents.push({ s: COLOSSEUM.x + COLOSSEUM.y + 0.3, kind: "colosseum" });
+  }
   /* v33: placed base pieces, sorted by x+y like every other entity. Surface
      only — a piece is stored in world coordinates and an interior is a
      different space entirely. */
@@ -8410,6 +8590,9 @@ function render(t) {
     else if (e.kind === "forge") drawForgeEntity(t);
     else if (e.kind === "chest") drawChestEntity(t);
     else if (e.kind === "shrine") drawShrineEntity(t);
+    else if (e.kind === "bazaar") drawBazaarEntity(t);
+    else if (e.kind === "ancient") drawAncientEntity(t);
+    else if (e.kind === "colosseum") drawColosseumEntity(t);
     else if (e.kind === "basepiece") drawBasePiece(e.bp, t);   // v33
     else if (e.kind === "item") drawItemEntity(e.it, t);
     else if (e.kind === "player") drawPlayerEntity(e.p, e.name, t, e.isMe);
@@ -8756,6 +8939,12 @@ function updateHUD(dayT) {
     hudPrompt.style.display = "block";
   }
   else if (nearShrine()) { hudPrompt.textContent = "[E] Beastmaster Shrine — 3 Runic Stone for a taming blessing"; hudPrompt.style.display = "block"; }
+  /* v37: the three new landmarks announce what they are. The Bazaar and
+     Colosseum are informational (their mechanic is the zone you stand in,
+     not a keypress); the Ancient Forge tells you what it unlocks. */
+  else if (nearAncient()) { hudPrompt.textContent = "The Ancient Forge — dragonsteel can be smelted here, and nowhere else"; hudPrompt.style.display = "block"; }
+  else if (Math.hypot(me.x - BAZAAR.x, me.y - BAZAAR.y) < BAZAAR_R) { hudPrompt.textContent = "The Grand Bazaar — protected ground. Trade item-for-item, at your own risk"; hudPrompt.style.display = "block"; }
+  else if (inColosseum(me.x, me.y)) { hudPrompt.textContent = "The Ruined Colosseum — PvP is live inside the ring"; hudPrompt.style.display = "block"; }
   else if (nearChest()) { hudPrompt.textContent = "[E] Dev Supply Chest — stock all materials"; hudPrompt.style.display = "block"; }
   else if (nearBaseChest()) { hudPrompt.textContent = "[E] Storage Chest — open"; hudPrompt.style.display = "block"; }
   else if (item) { hudPrompt.textContent = `[E] Pick up ${ITEM_META[item.type]?.name || item.type}`; hudPrompt.style.display = "block"; }
