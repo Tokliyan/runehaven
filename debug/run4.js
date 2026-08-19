@@ -2716,6 +2716,69 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['v34 hooks are reachable', false]);
     }
 
+    /* ===================== v37: the three remaining landmarks ============== */
+    if (typeof window.debugV37Info === 'function') {
+      const v37 = window.debugV37Info(), probe = window.debugV37Probe;
+      const far = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+      results.push(['all three landmarks were placed somewhere real',
+        v37.BAZAAR.x > 0 && v37.ANCIENT.x > 0 && v37.COLOSSEUM.x > 0]);
+      results.push(['none of the three landed on top of another',
+        far(v37.BAZAAR, v37.ANCIENT) > 25 &&
+        far(v37.BAZAAR, v37.COLOSSEUM) > 25 &&
+        far(v37.ANCIENT, v37.COLOSSEUM) > 25]);
+      results.push(['none of the three sits inside the spawn safe zone',
+        far(v37.BAZAAR, v37.SPAWN) > 27 &&
+        far(v37.ANCIENT, v37.SPAWN) > 27 &&
+        far(v37.COLOSSEUM, v37.SPAWN) > 27]);
+      results.push(['the Ancient Forge is near the Volcano, where dragonsteel comes from',
+        far(v37.ANCIENT, v37.VOLCANO) < 30]);
+
+      // Ancient Forge actually unlocks what it is supposed to
+      results.push(['dragonsteel recipes exist and were already gated on the Ancient Forge',
+        v37.ancientRecipes.length >= 3]);
+      results.push(['nearAncient() is no longer the stub that always returned false',
+        gameScript.indexOf('function nearAncient() { return false; }') < 0]);
+      const atForge = probe({ at: [v37.ANCIENT.x, v37.ANCIENT.y] });
+      const awayForge = probe({ at: [v37.ANCIENT.x + 40, v37.ANCIENT.y + 40] });
+      results.push(['standing at the Ancient Forge unlocks dragonsteel smelting',
+        atForge.nearAncient === true && awayForge.nearAncient === false]);
+
+      // Grand Bazaar is genuinely protected ground
+      results.push(['the Grand Bazaar is a real safe zone, as the bible states',
+        v37.bazaarIsSafe === true]);
+      const outsideBazaar = probe({ at: [v37.BAZAAR.x + v37.BAZAAR_R + 3, v37.BAZAAR.y] });
+      results.push(['that protection ends at its edge, not across the map',
+        outsideBazaar.inSafe === false || outsideBazaar.inColosseum === true]);
+
+      // Colosseum turns PvP ON — the inverse of everywhere else
+      results.push(['the Colosseum is NOT a safe zone — it is the opposite',
+        v37.colosseumIsSafe === false && v37.inColosseumAtCentre === true]);
+      results.push(['PvP inside the ring overrides safe-zone protection',
+        gameScript.indexOf('const arena37 = inColosseum(me.x, me.y) && inColosseum(o.x, o.y)') > 0]);
+      results.push(['both duellists must be inside — no swinging from the ring at someone outside',
+        gameScript.indexOf('inColosseum(me.x, me.y) && inColosseum(o.x, o.y)') > 0]);
+      const outsideArena = probe({ at: [v37.COLOSSEUM.x + v37.COLOSSEUM_R + 5, v37.COLOSSEUM.y] });
+      results.push(['the arena has a real edge you can stand outside of',
+        outsideArena.inColosseum === false]);
+
+      results.push(['all three render as real structures, not invisible zones',
+        gameScript.indexOf('function drawBazaarEntity') > 0 &&
+        gameScript.indexOf('function drawAncientEntity') > 0 &&
+        gameScript.indexOf('function drawColosseumEntity') > 0]);
+      results.push(['each announces itself so a player knows what they found',
+        gameScript.indexOf('The Grand Bazaar — protected ground') > 0 &&
+        gameScript.indexOf('dragonsteel can be smelted here') > 0 &&
+        gameScript.indexOf('PvP is live inside the ring') > 0]);
+      /* The only 'currency' in the file is a comment saying there ISN'T one. */
+      results.push(['no trading or currency system was invented — item-for-item, as written',
+        gameScript.indexOf('function tradeWindow') < 0 &&
+        gameScript.indexOf('let playerGold') < 0 &&
+        gameScript.indexOf('currencyBalance') < 0]);
+    } else {
+      results.push(['v37 hooks are reachable', false]);
+    }
+
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
     process.exit(allOk && !caught ? 0 : 1);
