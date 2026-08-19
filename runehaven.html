@@ -8033,13 +8033,19 @@ function renderInteriorGround(t) {
       const ph = hash2(tx, ty, 55);
       /* v32: Abyssal Hollow is the deepest point in the world — it reads
          colder and near-black against the cave's blue-grey rock. */
+      /* hotfix: wall/floor/exit were three shades of the same dark blue-grey —
+         real geometric variety (confirmed: ~46% walls in a live test seed) but
+         no visual contrast to sell it, reading as flat. Floors now genuinely
+         light rock, walls genuinely dark stone — the actual "flat colour
+         contrast reads the shape" rule this project's own style already
+         requires everywhere else, just missed here originally. */
       const abyss32 = spaceKindOf(me.space) === "abyssal";
       let col;
-      if (v === IN_WALL)      col = abyss32 ? (ph > 0.7 ? "#0d1420" : "#080d16")
-                                            : (ph > 0.7 ? "#1d2a33" : "#16212a");
-      else if (v === IN_EXIT) col = abyss32 ? "#2a4a6a" : "#3f6f7a";
-      else                    col = abyss32 ? (ph > 0.72 ? "#131f30" : "#0f1927")
-                                            : (ph > 0.72 ? "#263a44" : "#20323c");
+      if (v === IN_WALL)      col = abyss32 ? (ph > 0.7 ? "#120a1e" : "#0a0614")
+                                            : (ph > 0.7 ? "#221812" : "#170f0a");
+      else if (v === IN_EXIT) col = abyss32 ? "#4a3a7a" : "#5a9aa8";
+      else                    col = abyss32 ? (ph > 0.72 ? "#4a3868" : "#3e2e58")
+                                            : (ph > 0.72 ? "#8a7458" : "#78624a");
       const [ax, ay] = worldToScreen(tx, ty, 0);
       const [bx, by] = worldToScreen(tx + 1, ty, 0);
       const [cx2, cy2] = worldToScreen(tx + 1, ty + 1, 0);
@@ -8156,7 +8162,15 @@ function render(t) {
   const maxY = Math.min(N - 1, Math.ceil(Math.max(...ys)) + 6);
 
   // v29: inside a cave, the interior's own floor/walls replace the world pass
-  if (inInterior()) renderInteriorGround(t);
+  /* hotfix: the game reportedly locks up on cave entry for at least one
+     player, and it could not be reproduced in the test environment (a
+     stubbed canvas cannot replicate every real-browser Canvas failure
+     mode). Wrapped defensively so if something in here DOES throw in a
+     real browser, the game skips that frame's cave rendering and keeps
+     running rather than freezing entirely — a real fix should still
+     replace this once the actual cause is identified, this is a safety
+     net, not a diagnosis. */
+  if (inInterior()) { try { renderInteriorGround(t); } catch (e) { } }
 
   // Water ripples + lava flicker
   if (!inInterior()) for (let ty = minY; ty <= maxY; ty++) {
