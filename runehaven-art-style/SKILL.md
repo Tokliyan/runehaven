@@ -116,6 +116,51 @@ JUDGMENT CALLS
 - **Cone angles 50 and 90 degrees** — unstated; wide enough that phase 3
   is genuinely hard to sidestep.
 
+### 2026-08-19 (v37 — the three remaining bible landmarks)
+
+Grand Bazaar, The Ancient Forge and the Ruined Colosseum: named in the
+bible from the beginning, the last structures never built, and not
+scheduled anywhere on the roadmap until they were spotted missing. Placed
+deterministically from worldSeed at worldgen like every other landmark.
+
+- **The Ancient Forge** was the biggest find here. `nearAncient()` had
+  existed as a stub returning `false` since dragonsteel recipes were
+  written — every one of them was already gated on it, with nowhere for
+  it to be true. Making the landmark real turns that gate on. Placed near
+  the Volcano, where dragonsteel actually comes from.
+- **A real gap caught by the proof gates:** the bible lists SEVEN
+  dragonsteel items and only the sword existed — because until this
+  version there was no forge that could make any of them. The other six
+  (Bow, Axe, Elder Runestaff, Shadow Dagger, Lance, Shield) were added,
+  all gated to the Ancient Forge.
+- **The Grand Bazaar** is a real safe zone, per the bible's "trading hub
+  inside a safe zone". No trading system was invented: the bible says
+  item-for-item at players' own risk, which the existing drop/pickup
+  already does. Protection IS the mechanic.
+- **The Ruined Colosseum** is the deliberate inverse — the one place in
+  the game that turns PvP ON, overriding safe-zone protection. Both
+  duellists must be inside the ring, so nobody can stand in the arena and
+  swing at someone safely outside it.
+
+Art: the Bazaar is a ring of bright canvas stalls (reads as "people
+gather here" from a distance against the world's greens), the Ancient
+Forge is black basalt with a molten mouth and rising embers, and the
+Colosseum is a deliberately BROKEN ring with three collapsed sections and
+fallen rubble — ruined, not a clean stadium.
+
+JUDGMENT CALLS
+- **Radii 7 / 4 / 9** — unstated. The Ancient Forge's 4 matches
+  SPAWN_FORGE's existing crafting proximity exactly.
+- **Placement distances (Bazaar 48 from Tower, Ancient 22 from Volcano,
+  Colosseum 60 from Tower)** — unstated; chosen so all three are findable
+  without being clustered, with separation checks against each other.
+- **Dragonsteel stats (30-44 dmg)** — the sword's existing 40 was the only
+  reference point; the other six scale around it by weapon type, above
+  runic tier throughout.
+- **The Colosseum overriding safe zones rather than merely not being one**
+  — the bible calls it an open duelling arena, and it would be neither
+  open nor an arena if a Safe Zone could ever generate over it.
+
 ### 2026-08-19 (v34 — Bases part 2: raiding & generation)
 
 Everything v33 deliberately left out. Structures can now be destroyed,
