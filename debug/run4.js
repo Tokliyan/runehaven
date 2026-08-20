@@ -1120,8 +1120,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // ---- PART A: the config object itself
       // v33: updated, not relaxed — the count, the default table and the
       // remapping-screen row count all move with the new action.
-      results.push(['KEYBINDS carries all 14 bindable actions',
-        Object.keys(info23.KEYBINDS).length === 14 &&
+      results.push(['KEYBINDS carries all 15 bindable actions',
+        Object.keys(info23.KEYBINDS).length === 15 &&
         ACTIONS.every(a => typeof info23.KEYBINDS[a] === 'string')]);
       results.push(['KEYBIND defaults are exactly the locked spec',
         ACTIONS.map(a => info23.KEYBIND_DEFAULTS[a]).join('|') ===
@@ -1288,8 +1288,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['the credits tab is the one showing',
         doc.getElementById('secCredits').classList.contains('shown') &&
         !doc.getElementById('secGraphics').classList.contains('shown')]);
-      results.push(['the remapping screen lists all 13 labelled actions',
-        doc.getElementById('keybindList').children.length === 13]);
+      results.push(['the remapping screen lists all 15 labelled actions, mount included',
+        doc.getElementById('keybindList').children.length === 15]);
       results.push(['credits render from the CREDITS array',
         doc.getElementById('creditsList').children.length === dsi().CREDITS.length &&
         dsi().CREDITS.length === 2]);
@@ -2320,8 +2320,14 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           String(s32.space).indexOf('cave:abyssal:') === 0]);
         results.push(['Shadow Dragon spawns inside the Hollow interior',
           (s32.wilds || []).some(w => w.species === 'shadow_dragon')]);
-        results.push(['no Sea Serpent inside the Hollow — that is a UWCAVE creature',
-          (s32.mobs || []).length === 0]);
+        /* CHANGED DELIBERATELY: the Hollow was previously empty of mobs
+           because the bible names none for it. That made it a dead space —
+           real feedback was that caves feel lifeless. It now gets Dark
+           Wraiths (bible-supported: "Dark forest, dungeons"), while Sea
+           Serpent stays a UWCAVE creature only. */
+        results.push(['the Hollow has hostile mobs, but never a Sea Serpent',
+          (s32.mobs || []).length > 0 &&
+          (s32.mobs || []).every(m => m.kind !== 'sea_serpent')]);
         results.push(['void_shard nodes exist inside (3-5, same as v29 scope)',
           (s32.nodes || []).length >= 3 && (s32.nodes || []).length <= 5]);
         /* The gather PLUMBING is already proven by v29's identical interior
