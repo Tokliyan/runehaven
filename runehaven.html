@@ -2127,12 +2127,29 @@ function buildInterior(spaceId, anchor) {
   if (interiorCache.has(spaceId)) return interiorCache.get(spaceId);
   const seed = worldSeed + anchor[0] * 7919 + anchor[1] * 104729;
   const grid = new Uint8Array(INTERIOR_N * INTERIOR_N);
+  /* Two noise fields at different scales instead of one: the coarse field
+     carves the big chambers, the fine one roughens their edges so walls
+     read as broken rock rather than a smooth blob. A single field is what
+     made these feel flat. */
   for (let y = 0; y < INTERIOR_N; y++) {
     for (let x = 0; x < INTERIOR_N; x++) {
       const edge = (x < 2 || y < 2 || x >= INTERIOR_N - 2 || y >= INTERIOR_N - 2);
-      const n = valueNoise(x / 5, y / 5, seed);
-      grid[y * INTERIOR_N + x] = (edge || n < 0.42) ? IN_WALL : IN_FLOOR;
+      const coarse = valueNoise(x / 7, y / 7, seed);
+      const fine = valueNoise(x / 2.5, y / 2.5, seed + 811);
+      const n = coarse * 0.72 + fine * 0.28;
+      grid[y * INTERIOR_N + x] = (edge || n < 0.44) ? IN_WALL : IN_FLOOR;
     }
+  }
+  /* Free-standing pillars: isolated rock columns inside open chambers, so
+     a big room has something in it instead of being an empty field. */
+  for (let i = 0; i < 14; i++) {
+    const px = 3 + Math.floor(hash2(i, 21, seed) * (INTERIOR_N - 6));
+    const py = 3 + Math.floor(hash2(i, 22, seed) * (INTERIOR_N - 6));
+    let open = 0;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      if (grid[(py + dy) * INTERIOR_N + (px + dx)] === IN_FLOOR) open++;
+    }
+    if (open >= 22) grid[py * INTERIOR_N + px] = IN_WALL;   // only in genuinely open space
   }
   // guarantee a walkable pocket around the arrival point
   const sx0 = 4, sy0 = 4;
@@ -2177,15 +2194,48 @@ function populateInterior(spaceId, rec) {
   rec.wilds.push({ id: spaceId + ":" + dragonSp, species: dragonSp,
                    x: wx + 0.5, y: wy + 0.5, ph: hash2(2, 2, seed) * 6 });
   rec.mobs = [];
-  /* Sea Serpent is an Underwater Caves creature specifically — the Hollow
-     is Shadow Dragon territory and the bible names no mob for it, so it
-     gets no hostile mob rather than an invented one. */
+  /* FIX: interior mobs were built with a partial field set — no maxHp, no
+     atkAt/winding/dead/respawnAt — and were never added to the `mobs` array
+     that updateMob() and mobHit() operate on. They were decorative statues:
+     they never moved, never attacked, could not be damaged, and their HP bar
+     never drew (m.hp < m.maxHp is NaN, which is always false). They are now
+     built with the exact same shape as a surface mob and pushed into `mobs`
+     so every existing system treats them identically. */
+  const mkInteriorMob = (kind, mx, my, phSeed) => {
+    const def = MOBS[kind];
+    return {
+      id: spaceId + ":" + kind, kind,
+      x: mx, y: my, hx: mx, hy: my,
+      hp: Math.round(def.hp * bloodMoonMobMult()),
+      maxHp: Math.round(def.hp * bloodMoonMobMult()),
+      state: "idle", target: null, atkAt: 0, windupStart: 0, winding: false,
+      flash: 0, boltT: 0, ph: phSeed, dead: false, respawnAt: 0, lastSync: 0,
+      fx: 0, fy: 1, space: spaceId,
+    };
+  };
   if (!isAbyss) {
     const [sx2, sy2] = pick(73);
-    rec.mobs.push({ id: spaceId + ":sea_serpent", kind: "sea_serpent",
-                    x: sx2 + 0.5, y: sy2 + 0.5, hx: sx2 + 0.5, hy: sy2 + 0.5,
-                    hp: MOBS.sea_serpent.hp, state: "idle", ph: hash2(3, 3, seed) * 6,
-                    fx: 1, fy: 0 });
+    rec.mobs.push(mkInteriorMob("sea_serpent", sx2 + 0.5, sy2 + 0.5, hash2(3, 3, seed) * 6));
+  }
+  /* Caves should have something to fight beyond one boss-ish creature —
+     Glow Moths already belong in caves per the bible, and a couple of
+     Golems give the deeper chambers real teeth. */
+  for (let i = 0; i < 2; i++) {
+    const [gx, gy] = pick(91 + i * 7);
+    rec.mobs.push(mkInteriorMob(isAbyss ? "dark_wraith" : "troll",
+      gx + 0.5, gy + 0.5, hash2(4 + i, 4, seed) * 6));
+  }
+  rec.mobs.forEach(m => mobs.push(m));   // join the real mob array
+
+  /* Ore veins — the bible's caves are where iron and runic stone come from,
+     and until now an interior had exactly one resource type and nothing to
+     mine. These use the same gatherable node shape as the essence nodes. */
+  rec.ore = [];
+  const oreCount = 4 + Math.floor(hash2(9, 9, seed) * 4);   // 4-7
+  for (let i = 0; i < oreCount; i++) {
+    const [ox, oy] = pick(131 + i * 5);
+    const kind = hash2(i, 17, seed) > 0.55 ? "runic" : "iron";
+    rec.ore.push({ x: ox + 0.5, y: oy + 0.5, type: kind, taken: false });
   }
 }
 
@@ -3483,8 +3533,24 @@ async function mobKill(m, iKilled) {
 }
 
 /* one AI tick for one mob — runs on every client every frame */
+/* An interior mob must collide with its own cave's walls, not the world
+   grid it is nominally standing on — and must not be simulated at all by a
+   player who is somewhere else entirely. */
+function mobBlocked(m, tx, ty) {
+  if (m.space) {
+    const rec = interiorCache.get(m.space);
+    if (!rec) return true;
+    if (tx < 0 || ty < 0 || tx >= INTERIOR_N || ty >= INTERIOR_N) return true;
+    return rec.grid[ty * INTERIOR_N + tx] === IN_WALL;
+  }
+  return BLOCKED.has(biomeAt(tx, ty));
+}
+
 function updateMob(m, dt, t, now) {
   const def = MOBS[m.kind];
+  /* Only simulate a mob that shares your space. Without this an interior
+     Sea Serpent would be ticked by every player standing on the surface. */
+  if ((m.space || "main") !== (me.space || "main")) return;
   /* hotfix: smooth, continuous correction toward the last mob_sync target,
      replacing the old instant on-packet snap. Converges within a few
      hundred ms, spread across many frames instead of one visible pop. */
@@ -3524,7 +3590,7 @@ function updateMob(m, dt, t, now) {
       if (Math.hypot(m.x + ux - m.hx, m.y + uy - m.hy) < def.leashRadius) {
         const step = def.moveSpeed * 0.5 * dt;
         const cx2 = m.x + ux * step, cy2 = m.y + uy * step;
-        if (!BLOCKED.has(biomeAt(Math.floor(cx2), Math.floor(m.y)))) m.x = cx2;
+        if (!mobBlocked(m, Math.floor(cx2), Math.floor(m.y))) m.x = cx2;
         if (!BLOCKED.has(biomeAt(Math.floor(m.x), Math.floor(cy2)))) m.y = cy2;
         m.fx = ux; m.fy = uy;
       }
@@ -3583,8 +3649,8 @@ function updateMob(m, dt, t, now) {
     const step = def.moveSpeed * dt;
     const nx = m.x + (gx - m.x) / d * step;
     const ny = m.y + (gy - m.y) / d * step;
-    if (!BLOCKED.has(biomeAt(Math.floor(nx), Math.floor(m.y)))) m.x = nx;
-    if (!BLOCKED.has(biomeAt(Math.floor(m.x), Math.floor(ny)))) m.y = ny;
+    if (!mobBlocked(m, Math.floor(nx), Math.floor(m.y))) m.x = nx;
+    if (!mobBlocked(m, Math.floor(m.x), Math.floor(ny))) m.y = ny;
     m.fx = (gx - m.x) / d; m.fy = (gy - m.y) / d;
     m.winding = false;
   } else if (m.state === "attack") {
@@ -4541,11 +4607,20 @@ function nearestGatherable() {
      the world feature index. Same range, same interaction, same E key. */
   if (inInterior()) {
     const rec = interiorCache.get(me.space);
-    if (!rec || !rec.nodes) return null;
-    for (const nd of rec.nodes) {
+    if (!rec) return null;
+    for (const nd of (rec.nodes || [])) {
       if (nd.taken) continue;
       const d = Math.hypot(nd.x - me.x, nd.y - me.y);
       if (d < bestD) { best = { x: nd.x, y: nd.y, type: nd.type || "aquatic_essence", _node: nd }; bestD = d; }
+    }
+    /* Ore veins are mined, not picked — they route through the normal
+       durability path by carrying a real feature `type`, so a better
+       pickaxe genuinely digs them faster, same as on the surface. */
+    for (const o of (rec.ore || [])) {
+      if (o.taken) continue;
+      const d = Math.hypot(o.x - me.x, o.y - me.y);
+      if (d < bestD) { best = { x: o.x, y: o.y, type: o.type, _ore: o,
+        key: "iore:" + me.space + ":" + o.x + "," + o.y }; bestD = d; }
     }
     return best;
   }
@@ -4708,6 +4783,7 @@ async function doInteract() {
       return;                                   // still chipping away at it
     }
     nodeHP.delete(nkey30);
+    if (g._ore) g._ore.taken = true;   // interior vein exhausted
     const got = FEATURE_GIVES[g.type];
     burst(g.x, g.y, ITEM_META[got].color, 7, 2);
     if (FINITE.has(g.type)) {
@@ -8919,10 +8995,27 @@ function renderInteriorGround(t) {
       else if (v === IN_EXIT) col = abyss32 ? "#4a3a7a" : "#5a9aa8";
       else                    col = abyss32 ? (ph > 0.72 ? "#4a3868" : "#3e2e58")
                                             : (ph > 0.72 ? "#8a7458" : "#78624a");
-      const [ax, ay] = worldToScreen(tx, ty, 0);
-      const [bx, by] = worldToScreen(tx + 1, ty, 0);
-      const [cx2, cy2] = worldToScreen(tx + 1, ty + 1, 0);
-      const [dx2, dy2] = worldToScreen(tx, ty + 1, 0);
+      /* Walls are drawn as real raised blocks with lit/shadow faces, not
+         flat tiles — this is the single biggest reason the interiors read
+         as "flat land" before: everything sat at z=0 with no silhouette. */
+      const wallH = (v === IN_WALL) ? (9 + Math.floor(ph * 3) * 2) : 0;
+      const [ax, ay] = worldToScreen(tx, ty, wallH);
+      const [bx, by] = worldToScreen(tx + 1, ty, wallH);
+      const [cx2, cy2] = worldToScreen(tx + 1, ty + 1, wallH);
+      const [dx2, dy2] = worldToScreen(tx, ty + 1, wallH);
+      if (wallH > 0) {
+        const [a0x, a0y] = worldToScreen(tx, ty + 1, 0);
+        const [b0x, b0y] = worldToScreen(tx + 1, ty + 1, 0);
+        const [c0x, c0y] = worldToScreen(tx + 1, ty, 0);
+        ctx.fillStyle = abyss32 ? "#060410" : "#100a06";        // shadowed south face
+        ctx.beginPath();
+        ctx.moveTo(dx2, dy2); ctx.lineTo(cx2, cy2); ctx.lineTo(b0x, b0y); ctx.lineTo(a0x, a0y);
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = abyss32 ? "#0a0718" : "#1a110b";        // lit east face
+        ctx.beginPath();
+        ctx.moveTo(cx2, cy2); ctx.lineTo(bx, by); ctx.lineTo(c0x, c0y); ctx.lineTo(b0x, b0y);
+        ctx.closePath(); ctx.fill();
+      }
       ctx.fillStyle = col;
       ctx.beginPath();
       ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(cx2, cy2); ctx.lineTo(dx2, dy2);
@@ -9242,10 +9335,14 @@ function render(t) {
     ents.push({ s: o.pet.x + o.pet.y, kind: "pet", h: o, sp: o.pe });
   }
   const rec29 = inInterior() ? interiorCache.get(me.space) : null;
-  /* v29: surface mobs/wilds belong to the surface. Inside, the interior's
-     own populated creatures stand in for them. */
-  for (const m of (rec29 ? (rec29.mobs || []) : mobs)) {
+  /* Interior mobs now live in the SAME `mobs` array as everything else so
+     updateMob/mobHit treat them identically — which means the render pass
+     has to filter by space instead of swapping arrays. A mob with no
+     `space` is a surface mob. */
+  const mySpace = me.space || "main";
+  for (const m of mobs) {
     if (m.dead) continue;
+    if ((m.space || "main") !== mySpace) continue;
     if (m.x < minX - 3 || m.x > maxX + 3 || m.y < minY - 3 || m.y > maxY + 3) continue;
     ents.push({ s: m.x + m.y, kind: "mob", m });
   }
@@ -9256,6 +9353,10 @@ function render(t) {
     for (const nd of (rec29.nodes || [])) {
       if (nd.taken) continue;
       ents.push({ s: nd.x + nd.y, kind: "inode", nd });
+    }
+    for (const o of (rec29.ore || [])) {          // ore veins
+      if (o.taken) continue;
+      ents.push({ s: o.x + o.y, kind: "iore", o });
     }
   }
   if (!rec29) for (const w of wilds) {   // v29: surface wilds only on the surface
@@ -9283,6 +9384,10 @@ function render(t) {
     else if (e.kind === "herb") drawHerbNode(e.f, t);
     else if (e.kind === "essence") drawEssenceNode(e.f, t);
     else if (e.kind === "inode") drawEssenceNode({ x: e.nd.x - 0.5, y: e.nd.y - 0.5 }, t);   // v29
+    else if (e.kind === "iore") {
+      const f = { x: e.o.x - 0.5, y: e.o.y - 0.5, tx: Math.floor(e.o.x), ty: Math.floor(e.o.y) };
+      if (e.o.type === "runic") drawRunicNode(f, t); else drawIronNode(f, t);
+    }
     else if (e.kind === "ruinpiece") drawRuinPiece(e.rp);
     else if (e.kind === "decor") drawDecor(e.d, t);
     else if (e.kind === "critter") drawCritter(e.cr, t);
@@ -9796,7 +9901,8 @@ const KEYBIND_LABELS = [
   ["up", "Move up"], ["down", "Move down"], ["left", "Move left"], ["right", "Move right"],
   ["interact", "Gather / pick up / tame"], ["attack", "Attack"], ["inventory", "Inventory"],
   ["craft", "Crafting"], ["pets", "Companions"], ["dive", "Dive"], ["block", "Block"],
-  ["ability", "Class ability"], ["build", "Build"], ["character", "Character"],
+  ["ability", "Class ability"], ["mount", "Mount / dismount"],
+  ["build", "Build"], ["character", "Character"],
 ];
 let KEYBINDS = Object.assign({}, KEYBIND_DEFAULTS);
 let kbCapture = null;           // action awaiting a keypress, or null
