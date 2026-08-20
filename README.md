@@ -104,93 +104,89 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
 
 ## Confirmed, locked spec for the next build (v39 — the Elder trio + the secret event)
 
-v38 shipped successfully (built under that label — content was the
-originally-queued v35 spec, built after v37 landed ahead of it; see that
-changelog entry for why). This is the real next version. Confirmed
-directly before writing this: none of the three Elders exist, no Golden
-Orb, no world-reset mechanism, `fightToTame: true` is the real existing
-tame pattern (Griffin/Boar/Bear), and `combatMusicUntil` already tracks
-"actively fighting right now" — reuse it, do not build a second detector.
+v38 shipped successfully. **This replaces the previous v39 attempt, which
+correctly failed overnight** — its offline base-guardian subsystem for
+Golem Elder expanded into a whole new discovery/authority layer with no
+existing pattern to reuse, exactly the kind of thing the standard process
+treats as RED rather than guess at. Read that failure report in full
+before touching this again if it's ever revisited.
+
+**The explicit call made here, not a silent judgment:** Golem Elder ships
+as a normal fight-to-tame companion this version — same shape as Griffin,
+`tameable: true`. The "ultimate base defender, stays at base while
+offline" behavior from the bible is deferred to its own future version,
+once the five real design questions the failure report raised (where it
+stands at a base, what counts as a threat, guardian discovery across
+clients, what happens if the base is destroyed while offline, idle-
+guardian sync authority) are actually answered rather than assumed.
+
+**Confirmed directly before writing this:** none of the three Elders
+exist, no Golden Orb, no world-reset mechanism, `fightToTame: true` is
+the real tame pattern, `combatMusicUntil` tracks active combat already.
 
 **This spec must never be summarized, quoted, or referenced by anything
 player-facing — not the Oracle, not a tooltip, not a loading tip. The
 bible is explicit: discovery must be purely emergent.**
 
-**PART A — Golem Elder.** Fight-to-tame (`fightToTame: true`, same as
-Griffin), spawns in the deepest tile of any Ruin cluster — reuse the
-existing Ruin structure, gate to the single furthest-from-center tile
-within `RUINB`, not a new location system. "Ultimate base defender, stays
-at base while offline": when assigned to guard a specific `base_pieces`
-owner, it is simulated by whichever nearby player's client is currently
-closest — the exact same authority pattern `mob_sync` already uses for
-regular mobs, applied to a companion instead of a wild spawn. No new
-sync mechanism.
+**PART A — Golem Elder, a normal companion this version.** Fight-to-tame
+(`fightToTame: true`, same as Griffin), spawns at the single deepest tile
+of any Ruin cluster — reuse the existing Ruin structure, gate to the
+furthest-from-center tile within `RUINB`, not a new location system. No
+offline-guardian behavior this version — it behaves exactly like any
+other tamed companion once caught.
 
 **PART B — Dragon Elder.** New item, `golden_orb`, a single guaranteed
-drop from the Eternal Tower itself — reuse the existing gather-node
-pattern, placed at the Tower's own coordinates, very low respawn
-frequency (propose once per 48 real hours across the whole server, a
-genuine expedition item, not a farmable one). New fixed point,
-`DRAGON_ALTAR`, placed near TOWER the same deterministic way every other
-landmark is. Carrying the orb to the altar and interacting consumes it
-and tames a Dragon Elder on the spot — no combat required, matching the
-bible's "bring it to awaken" framing exactly.
+drop from the Eternal Tower itself, reusing the existing gather-node
+pattern, placed at the Tower's own coordinates, once per 48 real hours
+across the whole server — a genuine expedition item, not farmable. New
+fixed point, `DRAGON_ALTAR`, placed near TOWER the same deterministic way
+every other landmark is. Carrying the orb to the altar and interacting
+consumes it and tames a Dragon Elder on the spot.
 
 **PART C — Unicorn Elder.** One single tile, chosen uniformly at random
-across the ENTIRE map at worldgen time from `hash2(worldSeed, 0, 99991)`
-— no biome bias, no distance-from-spawn bias, nothing that could function
-as a hint. Confirmed this must never appear in any hint system, including
-the Oracle's — already true, since Oracle's exclusion list already names
-`unicorn_elder`. Grants: fast travel (teleport to any of the game's fixed
-landmark points — TOWER, VOLCANO, BAZAAR, ANCIENT, COLOSSEUM, SHRINE — a
-menu, not a click-anywhere system) and a passive multiplier on the
-player's own rare-species presence rolls, same shape as the existing
-`bloodMoonActive()` presence boost, just always-on for this one owner
-rather than event-gated.
+across the ENTIRE map at worldgen from `hash2(worldSeed, 0, 99991)` — no
+biome bias, no distance-from-spawn bias. Already confirmed the Oracle's
+exclusion list names `unicorn_elder`, so this must never surface there.
+Grants fast travel (a menu to the game's fixed landmark points — TOWER,
+VOLCANO, BAZAAR, ANCIENT, COLOSSEUM, SHRINE) and a passive multiplier on
+the owner's own rare-species presence rolls, same shape as
+`bloodMoonActive()`'s boost, always-on for this one owner.
 
-**PART D — the secret event. Build every safeguard explicitly, do not
-treat "hard to trigger" as automatic.**
+**PART D — the secret event. Every safeguard from the original spec,
+unchanged.**
 
-Trigger condition, ALL of the following, checked every frame, not once:
-1. A live, tamed Golem Elder and a live, tamed Dragon Elder (same owner
-   or different owners, the bible does not require it be the same player)
-2. Both currently show `combatMusicUntil > now` — genuinely, actively
-   fighting, not just standing near a fight
+Trigger condition, ALL of the following, checked every frame:
+1. A live, tamed Golem Elder and a live, tamed Dragon Elder exist
+2. Both currently show `combatMusicUntil > now`
 3. Within 3 tiles of each other
-4. **All three conditions hold continuously for 4 real seconds** — a
-   single frame of overlap must not fire this. Track an accumulator that
-   resets to zero the instant any condition breaks, not a counter that
-   merely needs to reach 4 seconds' worth of true frames non-consecutively.
+4. **All three hold continuously for 4 real seconds** — an accumulator
+   that resets to zero the instant any condition breaks, never a counter
+   that merely needs 4 seconds' worth of non-consecutive true frames.
 
-On confirmed trigger: broadcast a `world_reset_pending` event ONCE (guard
-against every client independently trying to fire it), a 10-second
-visible countdown naming no cause a player could reverse-engineer into a
-trigger condition, then: generate a new `worldSeed`, clear `base_pieces`
-server-side for every owner, and clear all three Elder ownership flags
-server-side. This is the single most consequential action in the entire
-game — the actual reset call must be gated behind an explicit admin-role
-check in addition to the trigger firing, so a bug in the trigger logic
-alone cannot wipe a live server; the trigger arms it, an admin-tier
-server rule executes it. Flag this explicitly as a deliberate two-key
-safeguard, not indecision about the design.
+On confirmed trigger: broadcast `world_reset_pending` once, a 10-second
+countdown naming no cause a player could reverse-engineer, then generate
+a new `worldSeed`, clear `base_pieces` server-side, clear all three Elder
+ownership flags server-side. **The actual reset call is gated behind an
+explicit admin-role check in addition to the trigger firing** — the
+trigger arms it, an admin-tier rule executes it. Two keys, not one.
 
 **PART E — proof gates, standard gauntlet plus:**
-- Confirm the Golem Elder spawns only in the single deepest Ruin tile per
-  cluster, not scattered generally through `RUINB`.
-- Confirm the Golden Orb has a real respawn floor and cannot be farmed
-  repeatedly in a short window.
-- Confirm the Unicorn Elder's spawn tile is genuinely uniform-random
-  across the whole map in a seed sweep, not clustered near any landmark.
-- Confirm the Oracle's hint pool still structurally excludes all three
-  by name (already true, must not regress).
+- Confirm Golem Elder tames and behaves exactly like any other companion
+  — no guardian/offline logic anywhere in its code path.
+- Confirm the Golden Orb has a real respawn floor.
+- Confirm the Unicorn Elder's spawn tile is genuinely uniform-random in a
+  seed sweep, not clustered near any landmark.
+- Confirm the Oracle's hint pool still excludes all three by name.
 - Confirm the trigger accumulator resets to zero the instant ANY one of
-  the four conditions breaks, tested by breaking each condition
-  individually mid-count.
+  the four conditions breaks, tested by breaking each individually.
 - Confirm the actual reset call is unreachable without the admin-role
-  gate, even with the trigger condition fully satisfied — this is the
-  single most important gate in this entire proof section.
-- Confirm nothing added this version appears in any player-facing text,
-  tooltip, or the Oracle's hint pool.
+  gate, even with the trigger condition fully satisfied.
+- Confirm nothing added this version appears in any player-facing text
+  or the Oracle's hint pool.
+
+**Explicitly not touched this version:** the offline base-guardian
+behavior for Golem Elder — its own future version, once actually designed
+rather than assumed.
 
 **After v39 ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated with the next
