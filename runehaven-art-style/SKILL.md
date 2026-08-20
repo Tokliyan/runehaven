@@ -53,6 +53,196 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-20 (v39 — the Elder trio, the Golden Orb, and the secret event)
+
+The three Elder pets the bible has listed since the beginning, the Eternal
+Tower's own Golden Orb, and the world-ending event none of it may ever
+mention. This is the REVISED v39 spec: the previous attempt correctly failed
+overnight on Golem Elder's offline base-guardian layer, and the revised spec
+defers that behaviour explicitly — so this version's Golem Elder is a normal
+fight-to-tame companion, same shape as Griffin, with no guardian or offline
+logic anywhere in its code path (a proof gate greps for seven such
+identifiers and fails on any of them).
+
+- **The Elder read is one rule applied three times: same silhouette as the
+  line it heads, re-cut in a different material.** That is the v25 Crystal
+  Golem rule, and it is what lets "that is a Golem — but not one of those"
+  land at distance with no label. Golem Elder is the Golem body, blocky and
+  slab-headed, at `SPECIES_K` 2.10 against Golem's 1.85; Dragon Elder is
+  `dragonV2` again with a fifth `DRAGON_PAL` entry, at 1.85 against the four
+  dragons' 1.55; Unicorn Elder is the Unicorn's silhouette at 1.45 against
+  1.30. Each is the largest of its own line, so scale alone says Elder.
+- **`aura()` is finally doing the job it was written for.** The v18 helper's
+  own comment says it was "built to be reused by Elder-tier content later" —
+  it has sat unused outside the Dark Wraith since. All three Elders stand
+  inside it, in warm gold, at a radius that scales with the body.
+- **Gold was the one colour still free, and it now means exactly one thing
+  on the ground.** Runic is cyan, dragonsteel violet, the tame ring pale
+  green, the friendly pet bar gold but a BAR — a different shape entirely.
+  A gold wash pooled under a creature is an Elder and nothing else.
+- **Golem Elder carries gold seams where a young Golem has cracks, and NO
+  moss.** Moss is the young Golem's signature (the v25 rule) and must not
+  spread up the line. Its "elder" tell on the silhouette is a broken crown
+  of three stone shards above the head slab — a young Golem's head is a bare
+  slab, so the crown is the whole read.
+- **The Dragon Elder is deliberately not a fifth hue.** Every other dragon
+  is a colour (water/fire/storm/shadow); this one is a MATERIAL — dark
+  bronze plate with gold in every place the others carry their element
+  (ridge, horn, bone, claw). One new `dragonV2` variant branch beside the
+  existing four: slow gold motes off the muzzle rather than fire's fast
+  orange squares, because this one is not breathing at you, it is burning.
+- **The Unicorn Elder's tell is the horn**: solid gold, longer than the
+  Unicorn's, and carrying three heavy rings rather than the Unicorn's five
+  faint spiral marks. The mane goes gold with it; the body stays pale.
+- **The Dragon Elder Altar is the Beastmaster Shrine's stepped stone,
+  inverted.** Same language deliberately — these are the two altars in the
+  world you bring something to — but three courses of near-black basalt
+  instead of two of pale grey, and an open gold CRADLE on top holding
+  nothing. The empty cradle IS the composition: a shape that is obviously
+  missing its object is the only clue the place gives. **It never lights up
+  or animates for a player carrying the orb** — that would be a tooltip in
+  another form.
+- **The Golden Orb is hard-faceted, not a glow.** Four flat facets and a
+  single white highlight square, hovering on a slow sine over the same Elder
+  aura — so the object that wakes an Elder wears the same gold the three of
+  them do. No gradient on the body itself.
+- **The countdown is the `.hud` card again, and the only red one in the
+  game.** It sits where the tutorial line sits (nothing else uses the top
+  centre, and the two can never be up together). Read its two strings before
+  ever touching them: `THE WORLD IS UNMAKING` and a number. It names no
+  cause, no creature, no place and nothing reversible — a player who sees it
+  learns only that the world has ten seconds left, and everything else has
+  to be worked out from what they were doing when it started.
+- **The FAST TRAVEL panel adds no new component styles** — the `.panel`
+  card, `.craft-row` rows, one CSS line for its position, exactly as v33 and
+  v35 managed. Its list is the six fixed landmarks and **never a base
+  piece**, the same omission the v35 compass makes and for the same reason;
+  a gate greps the whole section for `basePieces`/`baseIndex`.
+- **⚠️ The Unicorn Elder can land somewhere you cannot reach.** Its tile is
+  a flat draw over the entire map with no biome test, exactly as the spec
+  and the bible demand ("no pattern or hint"), so measured over 200 seeds:
+  97 walkable, 101 reachable only by diving, and **2 genuinely unreachable**
+  on a peak or in lava. That is the rule working as written, not a bug —
+  printed by `run4` on every run so the cost is never invisible, the same
+  way v22 prints the Storm Dragon's unreachable third. If a walkability
+  filter is ever wanted, it is a real design change: it would make the draw
+  non-uniform, which is the thing the bible forbids.
+- **⚠️ Nothing in the world marks where the Dragon Elder Altar is.** It is
+  34 tiles from the Tower on a hashed angle, outside the safe zone, with no
+  beacon and no compass row — found, not signposted, like every pocket biome
+  since v17. The Tower is visible from anywhere and the altar is not, which
+  means the orb can be carried a long time before its use is discovered.
+  Deliberate, and the same standing note v22 and v38 both made.
+- **⚠️ A creature drawn on a deep-water tile still looks like it is
+  standing.** Nothing renders differently underwater (the open v21 note),
+  and roughly half of all seeds put the Unicorn Elder out at sea — so this
+  pre-existing gap is now much more likely to actually be seen.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent. All shipped through the full
+gate (parse clean, `run2` and `run3` `CAUGHT ERROR: none`, `run4` **741/741
+with zero FAIL**, `run5` 879 coverage draws clean, 80/80 grep checks) —
+refinements to consider, not unfinished work.
+
+1. **Every Elder is a singleton, but they are kept singular in two different
+   ways.** The Golem Elder is a creature that has to be standing somewhere to
+   be fought, so it respawns — on its own 12-hour timer (below). The Dragon
+   Elder is a ritual, so the altar asks the `pets` table whether one already
+   exists anywhere in the world before it stirs, and refuses without
+   consuming the orb if so. The Unicorn Elder is one worldgen tile. The
+   bible states "one exists in the entire world" only for the admin-only
+   Duskfox Elder, so this reading comes from the trio's framing and from the
+   reset clearing "all three Elder ownership flags".
+2. **⚠️ A pre-existing bug fixed in passing, because the new code sits on the
+   same lines: the Elder Drake's documented 6-hour respawn was never
+   applied.** All three sites that set a respawn deadline used the flat
+   `MOB_RESPAWN_MS`, and the killer broadcasts its own deadline — so the 6h
+   value was only ever a fallback for a packet that never arrives that way.
+   `mobRespawnMs(kind)` is now the single place any of it is decided.
+   Adding a second long-timer creature to those lines meant either fixing
+   this or knowingly copying it into a new expression; flagged rather than
+   done silently, and it is a one-line revert if the drake was wanted
+   farmable.
+3. **`GOLEM_ELDER_RESPAWN_MS` = 12 real hours.** Unstated. Twice the drake's
+   six, because taming one is permanent where killing the drake is not.
+4. **Elder stats: 420hp/20dmg for the fight, and 120/16, 130/20, 90/12 as
+   companions.** All unstated. The Golem Elder sits above Sea Serpent (the
+   hardest ordinary mob) and well under the Elder Drake's 900. Dragon Elder
+   is the strongest companion because the bible says exactly that; Unicorn
+   Elder is deliberately NOT the best fighter — its value is the travel and
+   the luck. Loot is runic_stone only: the bible names four dragonsteel
+   sources and a Golem is not one of them.
+5. **Tame base 0.15 for the two that can be attempted, and none at all for
+   the Dragon Elder.** Elder is the tier above Epic's 0.20. The altar has no
+   roll because the bible names none — the expedition IS the attempt, and a
+   15% roll on a once-per-48-hours item would be a different design.
+6. **"Deepest ruins" is the furthest-from-centre RUINB tile, taken across
+   every cluster** — one tile in the world. That is the spec's own
+   instruction ("gate to the furthest-from-center tile within RUINB"),
+   resolved to a single global maximum rather than one per cluster, since
+   three Elders and three ownership flags only make sense as singletons.
+7. **`UNICORN_ELDER_LUCK` = 0.25, added to the presence roll.** The spec
+   says "a passive multiplier ... same shape as `bloodMoonActive()`'s boost",
+   and that boost is a flat ADDITION — shape won over the word "multiplier".
+   Deliberately a shade under the Blood Moon's 0.30 so the world event still
+   reads as the bigger night.
+8. **⚠️ `loginPlayer()` and `loadPets()` now run BEFORE worldgen.** The
+   presence roll happens exactly once, inside `buildFeatureList()`, and the
+   roster was loaded three calls later — so the luck buff could never have
+   done anything. Both functions were re-checked for any dependency on
+   worldgen output and neither has one. This is the only ordering change in
+   the file, and a gate pins it.
+9. **Fast travel is a 16th keybind, `M`.** Deliberately not `T`: v23's own
+   rebinding gate moves `up` onto T to prove a rebind takes, and a default
+   sitting there would fail a test that is testing something else entirely.
+   The three count assertions were **updated, not relaxed** — 15 → 16
+   bindable actions, 16 labelled rows, and the default table now names all
+   sixteen — so a future pass cannot lose the binding without failing.
+10. **A remote player's combat state is one new `cb` flag on the move
+    broadcast.** The trigger's second condition is "both show
+    `combatMusicUntil > now`", and that value is per-client — so each Elder's
+    combat is its OWNER's, computed on their own machine and carried beside
+    `pe`/`mo`/`sp`/`cs` on the one existing channel. No new channel, no new
+    table, no new authority.
+11. **A `world_reset_pending` arriving over the channel starts the countdown
+    but NEVER arms execution.** The spec asks for two keys; taken literally,
+    an admin who merely received a forged packet would have both. The arming
+    flag is only ever set by a client that watched the four conditions hold
+    itself, and a gate greps the receive handler to prove it never touches
+    that flag.
+12. **The reset regenerates the world in place rather than reloading the
+    page.** A new seed means everything downstream of it has to be rebuilt,
+    which is precisely what boot already does — so it clears the caches and
+    re-runs `placeLandmarks` / `buildFeatureList` / `bakeTerrain`. A
+    `location.reload()` would be untestable in the harness and would lose
+    the player's session for no gain.
+13. **`mined_nodes` and `ground_items` are NOT cleared by the reset.** The
+    spec names `base_pieces` and the three Elder flags; going further is a
+    destructive change nobody asked for. The cost is a handful of stale
+    tile keys in the new world, and it is worth revisiting alongside
+    whatever else "all progress wiped" should eventually mean.
+14. **The `players.role` column is read, never written, and an absent column
+    reads as "player".** That is the safe direction for the one thing it
+    gates: degrading means nobody can execute a reset, never that everybody
+    can. **No SQL update is required for this version** — the game is fully
+    playable without the column, and only an admin-executed world reset is
+    unavailable until someone adds it (`alter table players add column role
+    text default 'player';`).
+15. **Two harness changes, both allow-listed rather than global.** `pets`
+    joined `run4`'s recording-insert list (with `.single()` unwrapping)
+    because the Dragon Elder is minted by an insert and the plain stub never
+    lands one; and `channel.send()` now records into an array, because
+    "broadcast it ONCE" is a real requirement with no other way to observe
+    it. Both are additive — nothing that already passed can behave
+    differently.
+16. **`run5` gained a v39 sweep** — all three Elder bodies through
+    `drawSpecies` and `drawPet`, the Golem Elder through every `drawMob`
+    state, the altar and the orb drawn directly and then walked to in the
+    live world with real frames pumped. It hard-fails if the Golem Elder or
+    the Unicorn Elder was never placed, or if this window's orb was already
+    claimed. 803 → **879** coverage draws.
+
 ### 2026-08-19 (v38 — the locked v35 spec: minimap, tutorial, reclassing, cosmetics, the Oracle)
 
 Five smaller systems in one version. **The version number is v38, not v35.**

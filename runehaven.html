@@ -152,6 +152,10 @@
      reclass is a deliberate, irreversible confirmation rather than something
      you keep open while playing. Position only, no new component styles. */
   #charPanel { left: 50%; transform: translateX(-50%); width: 330px; }
+  /* v39 PART C: the FAST TRAVEL panel — the same .panel card and the same
+     .craft-row rows the BUILD and CHARACTER panels use. Position only; not
+     one new component style, exactly as v33 and v35 managed. */
+  #travelPanel { right: 326px; width: 300px; }
   .inv-row {
     display: flex; justify-content: space-between; align-items: center;
     padding: 6px 8px; font-size: 14px; border-bottom: 1px solid rgba(42,54,68,0.5);
@@ -342,6 +346,19 @@
   }
   #hudTutorial .tut-step { color: var(--gold); font-size: 11px; letter-spacing: 2px; }
   #hudTutorial .tut-skip { color: var(--text-dim); font-size: 11px; }
+  /* v39: the countdown card. The .hud card AGAIN — same border, same blur,
+     same radius — sat where the tutorial line sits, because nothing else
+     ever occupies the top centre and the two can never be up together.
+     It is deliberately the only red card in the game. */
+  #hudUnmaking {
+    top: 12px; left: 50%; transform: translateX(-50%); display: none;
+    max-width: 460px; text-align: center; border-color: rgba(200,72,56,0.55);
+  }
+  #hudUnmaking .un-head {
+    color: var(--danger); font-size: 13px; letter-spacing: 3px;
+    font-family: 'Almendra Display', serif;
+  }
+  #hudUnmaking .un-count { color: var(--text-dim); font-size: 12px; letter-spacing: 2px; }
 </style>
 </head>
 <body>
@@ -380,11 +397,12 @@
 <div class="hud" id="hudZone">SAFE ZONE — YOU ARE PROTECTED</div>
 <div class="hud" id="hudPrompt"></div>
 <div class="hud" id="hudTutorial"></div>
+<div class="hud" id="hudUnmaking"></div>
 <div class="hud" id="hudMinimap">
   <div class="mm-title">COMPASS</div>
   <div id="mmRows"></div>
 </div>
-<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block (shield classes) &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character</div>
+<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block (shield classes) &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character &nbsp;•&nbsp; M fast travel</div>
 <div id="hpBarWrap"><div id="hpBar"></div></div>
 
 <div class="panel" id="invPanel">
@@ -419,6 +437,12 @@
   <div class="sub" id="charWho"></div>
   <div class="sub">RECLASS &mdash; resets all levels, keeps inventory, base and pets.</div>
   <div id="charList"></div>
+</div>
+
+<div class="panel" id="travelPanel">
+  <h3>FAST TRAVEL</h3>
+  <div class="sub" id="travelWho"></div>
+  <div id="travelList"></div>
 </div>
 
 <div class="panel" id="petPanel">
@@ -625,6 +649,10 @@ const ITEM_META = {
      a deliberate new addition rather than something being implemented. */
   void_shard: { name: "Void Shard", color: "#8a6ade" },
   magic_essence:{ name: "Magic Essence", color: "#a88ce8" },
+  /* v39 PART B: the bible's own item — "The Eternal Tower ... Golden Orb sits
+     at the top". It has no recipe and no consumable effect: its ONLY use is
+     being carried to the Dragon Elder Altar, which consumes it. */
+  golden_orb:   { name: "Golden Orb",    color: "#f2cf6b" },
   iron_sword:   { name: "Iron Sword",    color: "#c8ccd4", weapon: true },
   iron_spear:   { name: "Iron Spear",    color: "#c8ccd4", weapon: true },
   iron_shortbow:{ name: "Iron Shortbow", color: "#c8ccd4", weapon: true },
@@ -1094,6 +1122,19 @@ let BAZAAR = { x: 0, y: 0 }, ANCIENT = { x: 0, y: 0 }, COLOSSEUM = { x: 0, y: 0 
 const BAZAAR_R = 7;      // its own safe radius — the bible puts it INSIDE a safe zone
 const ANCIENT_R = 4;     // crafting proximity, matching SPAWN_FORGE's own 4
 const COLOSSEUM_R = 9;   // the arena floor
+/* ============ v39 PART B — THE DRAGON ELDER ALTAR ================
+   Bible (PETS, Elder): "Dragon Elder — Retrieve the Golden Orb from top of
+   the Eternal Tower, bring to the Dragon Elder Altar to awaken."
+
+   A seventh fixed point, placed from worldSeed by the same hashed-angle
+   technique every other landmark uses. It sits NEAR the Tower — the orb's
+   own source — but deliberately OUTSIDE the spawn safe zone, like every
+   landmark since v37: awakening the most powerful companion in the world
+   under permanent PvP protection would make the walk from the Tower
+   meaningless, and the walk is the whole mechanic. Distance is a tunable. */
+let DRAGON_ALTAR = { x: 0, y: 0 };
+const DRAGON_ALTAR_R = 2.2;      // interact reach, the Shrine/Oracle language
+const DRAGON_ALTAR_DIST = 34;    // TUNABLE: how far from the Tower it stands
 let floatTexts = [];                 // v9: rising damage numbers
 let pulseT = 0;                      // v9: staff cast pulse timer
 let swingKind = null;                // v9: which weapon silhouette the swing sweeps
@@ -1439,6 +1480,78 @@ function debugV37Probe(patch) {
   }
   return out;
 }
+/* v39: harness hooks, the same shape and the same reason as every pair
+   above — everything this version adds is either a top-level `let`/`const`
+   or a field on `me`, and none of that ever lands on `window`. Copies, never
+   the live objects, except where a gate has to stand a second player in the
+   world (`others` is already a live handle via debugCombatHandles). */
+function debugV39Info() {
+  const ge = mobs.find(m => m.kind === "golem_elder") || null;
+  const orb = goldenOrbSite();
+  const uw = wilds.find(w => w.species === "unicorn_elder") || null;
+  return {
+    /* PART A */
+    GOLEM_ELDER: ge ? { x: ge.x, y: ge.y, hp: ge.hp, maxHp: ge.maxHp, dead: !!ge.dead } : null,
+    golemElderCount: mobs.filter(m => m.kind === "golem_elder").length,
+    golemElderSpot: golemElderSpot(),
+    golemElderDef: Object.assign({}, MOBS.golem_elder),
+    golemElderSpecies: Object.assign({}, WILD_SPECIES.golem_elder),
+    RUINS: RUINS.map(r => ({ x: r.x, y: r.y })),
+    RUIN_FOOT,
+    /* PART B */
+    DRAGON_ALTAR: { x: DRAGON_ALTAR.x, y: DRAGON_ALTAR.y }, DRAGON_ALTAR_R,
+    TOWER: { x: TOWER.x, y: TOWER.y }, SPAWN: { x: SPAWN.x, y: SPAWN.y },
+    ORB_WINDOW_MS, orbSlice: orbSliceNow(), orbKey: orbKeyFor(orbSliceNow()),
+    orbSite: orb ? { x: orb.x, y: orb.y, key: orb.key, type: orb.type } : null,
+    orbGives: FEATURE_GIVES.orb, orbFinite: FINITE.has("orb"), orbHp: NODE_HP.orb,
+    orbHeld: (me && me.inv && me.inv.golden_orb) || 0,
+    /* PART C */
+    unicornElderTile: unicornElderTile(worldSeed),
+    unicornElderWild: uw ? { x: uw.x, y: uw.y, id: uw.id } : null,
+    UNICORN_ELDER_LUCK, ownsUnicornElder: ownsUnicornElder(), luckNow: unicornElderLuck(),
+    travelPoints: fastTravelPoints().map(p => ({ label: p[0], x: p[1].x, y: p[1].y })),
+    travelKey: KEYBINDS.travel,
+    /* PART D */
+    ELDER_SPECIES: ELDER_SPECIES.slice(), ELDER_PROX_TILES, ELDER_HOLD_MS,
+    WORLD_RESET_COUNTDOWN_MS,
+    elderHoldMs, worldResetArmed, worldResetAt, worldResetDone,
+    role: (me && me.role) || null, isAdmin: isAdmin(),
+    execAllowed: worldResetExecAllowed(),
+    elders: elderCompanionsNow(),
+    myPetSpecies: myPets.map(p => p.species),
+    worldSeed,
+  };
+}
+function debugSetV39(patch) {
+  if (!patch) return debugV39Info();
+  if ("role" in patch && me) me.role = patch.role === "admin" ? "admin" : "player";
+  if ("combat" in patch) combatMusicUntil = patch.combat ? performance.now() + 5000 : 0;
+  /* Stand a second player in the world with a companion out. `others` is
+     what the real move broadcast fills; this writes exactly the fields that
+     handler writes and nothing else. */
+  if (patch.remote) {
+    const r = patch.remote;
+    const o = others.get(r.u) || {};
+    o.x = o.tx = r.x; o.y = o.ty = r.y;
+    o.pe = r.pe || null; o.cb = !!r.cb; o.dead = !!r.dead;
+    o.space = r.sp || "main"; o.hp = 100; o.maxHp = 100; o.cls = "Knight";
+    o.lastHeard = performance.now(); o.fx = 0; o.fy = 1;
+    if (r.petAt) o.pet = { sp: r.pe, x: r.petAt[0], y: r.petAt[1], ang: 0 };
+    others.set(r.u, o);
+  }
+  if (patch.dropRemote) others.delete(patch.dropRemote);
+  if ("tick" in patch) elderEventTick(+patch.tick || 0);
+  if (patch.clearEvent) {
+    elderHoldMs = 0; worldResetArmed = false; worldResetAt = 0; worldResetDone = false;
+  }
+  if ("armed" in patch) worldResetArmed = !!patch.armed;
+  return debugV39Info();
+}
+/* Deliberately its own hook rather than a field on the setter above: the
+   world reset is the one call in this file that rewrites the world, and a
+   harness should have to ask for it by name. */
+function debugRunWorldReset() { return performWorldReset(); }
+
 function debugV34Info() {
   const list = Array.from(basePieces.values()).map(p => ({
     id: p.id, kind: p.kind, tier: p.tier, owner: p.owner, arch: !!p.arch,
@@ -1670,9 +1783,47 @@ const MOBS = {
      designed tunables, matched to Phoenix as the nearest Volcano-tier beast. */
   salamander_king: { name: "Salamander King", biomes: [B.CALDERA], hp: 75, dmg: 13, atkRange: 1.5, atkCooldownMs: 1800, windupMs: 600, aggroRadius: 6.5, leashRadius: 12, moveSpeed: 1.8, count: 0, tameable: true,
     loot: [{ type: "runic_stone", qty: 1, chance: 0.5 }, { type: "iron_bar", qty: 1, chance: 0.7 }] },
+  /* v39 PART A: the Golem Elder's hostile form. Bible — "Golem Elder —
+     Deepest ruins, must defeat in combat to tame" — so this is the v14
+     fight-to-tame shape a sixth time (tameable:true, exactly Griffin's
+     pattern), which is also what routes drawMob through drawSpecies to its
+     own art rather than the humanoid chain.
+
+     biomes:[] and count:1 for the same reason the Elder Drake carries them:
+     it is a named singleton hand-placed by golemElderSpot() after the mob
+     loop, not a population the hashed loop scatters. It is deliberately NOT
+     boss:true — a boss is something you kill, and this is something you
+     wear down and tame.
+
+     Loot is runic_stone only, straight off the bible's own Adult Golem line
+     ("Ruins — Hard — Runic stone"). Dragonsteel is deliberately absent: the
+     bible names exactly four sources for it and a Golem is not one of them.
+     hp/dmg and every timing below are designed TUNABLES, sized above Sea
+     Serpent (the hardest non-boss) and well under the Elder Drake. */
+  golem_elder: { name: "Golem Elder", biomes: [], hp: 420, dmg: 20, atkRange: 1.9,
+    atkCooldownMs: 2100, windupMs: 850, aggroRadius: 8, leashRadius: 16,
+    moveSpeed: 1.15, count: 1, tameable: true,
+    loot: [{ type: "runic_stone", qty: 4, chance: 1.0 }, { type: "stone", qty: 3, chance: 0.8 }] },
 };
 const WEARDOWN_THRESHOLD = 0.25;   // generic fight-to-tame gate (inert in v13)
 const MOB_RESPAWN_MS = 60000;      // dev-island convenience: fights are repeatable
+/* v39: a singleton that came back in a minute would not be a singleton — two
+   players could each walk away with a Golem Elder inside an afternoon. Its
+   own long timer, the same shape (and the same reasoning) as the Elder
+   Drake's. TUNABLE.
+   The helper below is the one place any of this is decided. It exists
+   because the three sites that set a respawn deadline used the flat
+   MOB_RESPAWN_MS directly — including for the Elder Drake, whose documented
+   6-hour timer was therefore only ever applied on the RECEIVING side, and
+   was overwritten by the killer's own 60-second broadcast. Adding a second
+   long-timer creature to those same lines meant either fixing that or
+   copying it; noted in the changelog rather than done silently. */
+const GOLEM_ELDER_RESPAWN_MS = 12 * 60 * 60 * 1000;   // v39: 12 real hours
+function mobRespawnMs(kind) {
+  if (kind === "elder_drake") return ELDER_DRAKE_RESPAWN_MS;
+  if (kind === "golem_elder") return GOLEM_ELDER_RESPAWN_MS;
+  return MOB_RESPAWN_MS;
+}
 const DW_BOLT_MS = 240;            // v18: Dark Wraith ranged-strike bolt lifetime
 let mobs = [];
 
@@ -1783,6 +1934,36 @@ const WILD_SPECIES = {
   crystal_golem:   { name: "Crystal Golem",   base: 0.25, flier: false, count: 2, biomes: [B.RUINB],   mountainRuinOnly: true, bloodFavored: false, shunnedByBlood: false },
   krakenling:      { name: "Krakenling",      base: 0.20, flier: false, count: 4, biomes: [B.ABYSSAL], dayCycle: 10, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
   salamander_king: { name: "Salamander King", base: 0.20, flier: false, count: 3, biomes: [B.CALDERA], bloodFavored: false, shunnedByBlood: false },
+  /* ============ v39 — THE ELDER TRIO =============================
+     All three are bible pets ("Elder" tier), and all three are SINGLETONS:
+     one of each in the entire world. None of them uses the hashed spawn
+     loop — biomes:[] means the loop skips them exactly as it skips the
+     fight-to-tame beasts and the Elder Drake — because each has its own
+     bible-stated way of being found:
+
+     Golem Elder  — "Deepest ruins, must defeat in combat to tame". A
+       fight-to-tame mob (fightToTame:true, the Griffin pattern) hand-placed
+       on the single furthest-from-centre RUINB tile of any Ruin cluster.
+       ⚠️ Its bible line also says "Ultimate base defender, stays at base
+       while offline". That behaviour is DELIBERATELY NOT BUILT here — it is
+       its own future version. This version's Golem Elder is an ordinary
+       companion once tamed, with no guardian or offline logic anywhere in
+       its code path.
+     Dragon Elder — "Retrieve the Golden Orb from top of the Eternal Tower,
+       bring to the Dragon Elder Altar to awaken". Never spawns anywhere: it
+       is created by the altar, so it has no home biome at all.
+     Unicorn Elder — "Spawns randomly anywhere in the world, no pattern or
+       hint". One tile, chosen uniformly across the whole map at worldgen —
+       see unicornElderTile(). A passive hold-E tame like every other wild
+       the bible names no fight for.
+
+     Tame bases are TUNABLES: 0.15 for the two that can be attempted
+     directly, deliberately below the Epic tier's 0.20, since Elder is the
+     rarity above it. The Dragon Elder has no roll at all — the orb IS the
+     attempt. */
+  golem_elder:     { name: "Golem Elder",     base: 0.15, flier: false, biomes: [], fightToTame: true, elder: true, bloodFavored: false, shunnedByBlood: false },
+  dragon_elder:    { name: "Dragon Elder",    base: 0.15, flier: false, biomes: [], elder: true, altarOnly: true, bloodFavored: false, shunnedByBlood: false },
+  unicorn_elder:   { name: "Unicorn Elder",   base: 0.15, flier: false, biomes: [], elder: true, bloodFavored: false, shunnedByBlood: false },
 };
 /* v16: PET COMBAT — the locked spec table (see README "v16"). The bible gives
    pet rarity, taming method and flavour but ZERO combat numbers, so every
@@ -1827,6 +2008,16 @@ const PET_COMBAT = {
   crystal_golem:   { hp: 70, dmg: 9,  cdMs: 2200, pvp: true },
   krakenling:      { hp: 60, dmg: 12, cdMs: 1800, pvp: true },
   salamander_king: { hp: 75, dmg: 13, cdMs: 1800, pvp: true },
+  /* v39 — the Elder trio. The bible gives them no numbers either, so these
+     are TUNABLES like every row above, sized so Elder reads as the tier
+     above Epic without making the other companions pointless. The Dragon
+     Elder is the strongest of the three because the bible says exactly that
+     ("Most powerful combat companion"); the Golem Elder is the wall; the
+     Unicorn Elder is the utility one and is deliberately NOT the best
+     fighter — its value is fast travel and the luck buff. */
+  golem_elder:     { hp: 120, dmg: 16, cdMs: 2400, pvp: true },
+  dragon_elder:    { hp: 130, dmg: 20, cdMs: 1500, pvp: true },
+  unicorn_elder:   { hp: 90,  dmg: 12, cdMs: 1600, pvp: true },
 };
 const PET_ATK_RADIUS = 2.6;    // tunable: the spec's "short radius"
 const PET_DOWNED_MS = 75000;   // spec: ~75s recovery — pets are never lost
@@ -1968,8 +2159,24 @@ function placeLandmarks() {
         Math.hypot(COLOSSEUM.x - VOLCANO.x, COLOSSEUM.y - VOLCANO.y) > 34) break;
   }
 
+  /* v39 PART B: the Dragon Elder Altar, the same technique a seventh time.
+     Kept clear of the spawn safe zone and of all five landmarks placed
+     above, so it can never be raised on top of one of them. */
+  for (let attempt = 0; attempt < 24; attempt++) {
+    const a7 = (hash2(7 + attempt, 7, worldSeed)) * Math.PI * 2;
+    DRAGON_ALTAR = { x: Math.round(TOWER.x + Math.cos(a7) * DRAGON_ALTAR_DIST),
+                     y: Math.round(TOWER.y + Math.sin(a7) * DRAGON_ALTAR_DIST) };
+    if (Math.hypot(DRAGON_ALTAR.x - SPAWN.x, DRAGON_ALTAR.y - SPAWN.y) > SAFE_RADIUS + 4 &&
+        Math.hypot(DRAGON_ALTAR.x - BAZAAR.x, DRAGON_ALTAR.y - BAZAAR.y) > 24 &&
+        Math.hypot(DRAGON_ALTAR.x - ANCIENT.x, DRAGON_ALTAR.y - ANCIENT.y) > 24 &&
+        Math.hypot(DRAGON_ALTAR.x - COLOSSEUM.x, DRAGON_ALTAR.y - COLOSSEUM.y) > 24 &&
+        Math.hypot(DRAGON_ALTAR.x - VOLCANO.x, DRAGON_ALTAR.y - VOLCANO.y) > 24 &&
+        Math.hypot(DRAGON_ALTAR.x - MOUNT.x, DRAGON_ALTAR.y - MOUNT.y) > 24) break;
+  }
+
   const clamp = p => { p.x = Math.max(36, Math.min(N - 36, p.x)); p.y = Math.max(36, Math.min(N - 36, p.y)); };
   clamp(VOLCANO); clamp(MOUNT); clamp(BAZAAR); clamp(ANCIENT); clamp(COLOSSEUM);
+  clamp(DRAGON_ALTAR);
   placeRuinsAndZones();
 }
 
@@ -2579,15 +2786,103 @@ function featureTypeAt(tx, ty) {
 }
 const FEATURE_GIVES = { tree: "wood", rock: "stone", iron: "iron_ore", runic: "runic_stone",
                         herb: "rare_herb", essence: "magic_essence",
-                        meteor: "runic_stone" };   // v31: the bible's "rare ore drops"
-const FINITE = new Set(["rock", "iron", "runic", "herb", "essence", "meteor"]);
+                        meteor: "runic_stone",     // v31: the bible's "rare ore drops"
+                        orb: "golden_orb" };       // v39: the Eternal Tower's own
+const FINITE = new Set(["rock", "iron", "runic", "herb", "essence", "meteor", "orb"]);
 /* v30: node durability. Ore is tougher than wood; herb/essence stay a
-   one-press pick since they are gathered, not mined. */
-const NODE_HP = { tree: 30, rock: 40, iron: 50, runic: 55, meteor: 50, herb: 1, essence: 1 };
+   one-press pick since they are gathered, not mined.
+   v39: the orb is taken, not mined — the expedition IS the cost. */
+const NODE_HP = { tree: 30, rock: 40, iron: 50, runic: 55, meteor: 50, herb: 1, essence: 1, orb: 1 };
 const ELDER_DRAKE_RESPAWN_MS = 6 * 60 * 60 * 1000;   // v30: 6 real hours
 const nodeHP = new Map();   // key -> remaining hp, cleared when the node dies   // FIX: ore mined once
 /* v17: finite, but picked rather than mined — verb + toast wording only */
-const PICKED = new Set(["herb", "essence"]);
+const PICKED = new Set(["herb", "essence", "orb"]);
+/* ============ v39 PART B — THE GOLDEN ORB ========================
+   Bible (LANDMARK STRUCTURES): "The Eternal Tower — Centrepiece of the
+   world ... Golden Orb sits at the top".
+
+   ONE orb exists per 48 real hours, for the whole server, and it is a
+   derived node exactly like a meteor site: nothing is stored anywhere, every
+   client computes the same slice from worldEpoch, and the key it claims
+   carries that slice — so the single `mined_nodes` row the taker inserts
+   removes it for everyone until the next window opens. That is what makes
+   the floor real rather than advisory: a second orb inside the same 48 hours
+   would need a second slice to exist, and it cannot.
+
+   Placed at the Tower's own coordinates, per spec. */
+const ORB_WINDOW_MS = 48 * 60 * 60 * 1000;   // one orb per 48 REAL hours, server-wide
+function orbSliceNow() {
+  if (!worldEpoch) return 0;
+  return Math.floor((Date.now() - worldEpoch * 1000) / ORB_WINDOW_MS);
+}
+function orbKeyFor(slice) { return "orb:" + slice; }
+/* The node itself, or null when this window's orb has already been claimed.
+   Deliberately the same shape featureIndex entries carry, so it drops into
+   nearestGatherable() and the render list with no special casing. */
+function goldenOrbSite() {
+  if (!worldEpoch) return null;
+  const key = orbKeyFor(orbSliceNow());
+  if (minedNodes.has(key)) return null;
+  return { type: "orb", x: TOWER.x + 0.5, y: TOWER.y + 0.5,
+           tx: TOWER.x, ty: TOWER.y, key, h: 0.5 };
+}
+
+/* ============ v39 PART A — WHERE THE GOLEM ELDER STANDS ==========
+   Bible: "Deepest ruins". This file has no depth axis and no separate
+   deep-ruin structure, so "deepest" is expressed in the Ruins' own terms:
+   the RUINB tile that sits furthest from its cluster's centre, taken across
+   every cluster — one tile in the whole world, the far edge of the deepest
+   part of the deepest ruin. It reuses the existing Ruin structure exactly:
+   no new location system, no new biome, no new placement pass.
+   Deterministic (fixed iteration order, strict >), so every client puts it
+   on the same tile. */
+function golemElderSpot() {
+  let best = null, bestD = -1;
+  const r = Math.ceil(RUIN_FOOT);
+  for (const R of RUINS) {
+    for (let ty = R.y - r; ty <= R.y + r; ty++) {
+      for (let tx = R.x - r; tx <= R.x + r; tx++) {
+        if (tx < 2 || ty < 2 || tx >= N - 2 || ty >= N - 2) continue;
+        const b = biomeAt(tx, ty);
+        if (b !== B.RUINB || BLOCKED.has(b)) continue;
+        const d = Math.hypot(tx - R.x, ty - R.y);
+        if (d > bestD) { bestD = d; best = [tx, ty]; }
+      }
+    }
+  }
+  return best;
+}
+
+/* ============ v39 PART C — WHERE THE UNICORN ELDER SPAWNS ========
+   Bible: "Spawns randomly anywhere in the world, no pattern or hint."
+
+   Taken literally, and that is the entire point of this function: ONE draw
+   from hash2(seed, 0, 99991), spread flat across all N*N tiles. There is
+   deliberately no biome test, no walkability test, no distance-from-spawn
+   test and no landmark bias in here — any one of those would be a pattern,
+   and a pattern is exactly what the bible forbids. Pure and seed-injectable
+   so a harness can sweep hundreds of seeds and prove the spread.
+   (hash2 can return exactly 1.0, which would index one past the end — the
+   same clamp v30's ruin-template pick needed.) */
+function unicornElderTile(seed) {
+  const r = hash2(seed, 0, 99991);
+  const idx = Math.min(N * N - 1, Math.floor(r * N * N));
+  return [idx % N, Math.floor(idx / N)];
+}
+
+/* The Unicorn Elder's passive half — bible: "plus a passive luck buff for
+   rare pet spawns". It is deliberately the SAME SHAPE as the Blood Moon's
+   own boost (a flat addition to the presence roll, the roll that decides
+   whether a gated rare exists in your session at all), just always on and
+   only for the one player who owns it. TUNABLE, and deliberately a shade
+   under BLOOD_MOON_RARE_BOOST's 0.30 so the world event still reads as the
+   bigger night. Owning the pet is the whole condition — it does not have to
+   be the active companion. */
+const UNICORN_ELDER_LUCK = 0.25;
+function ownsUnicornElder() {
+  return myPets.some(p => p && p.species === "unicorn_elder");
+}
+function unicornElderLuck() { return ownsUnicornElder() ? UNICORN_ELDER_LUCK : 0; }
 
 function buildFeatureList() {
   features = [];
@@ -2697,8 +2992,12 @@ function buildFeatureList() {
        a Blood Moon. Applied to the presence roll rather than the count, so a
        species that normally may not exist at all this session is far more
        likely to actually be out there. */
+    /* v39 PART C: the Unicorn Elder's luck buff rides the SAME roll, added
+       the same way — which is why the roster has to be loaded before this
+       runs (see the enter-the-world sequence). */
     const presence = def.presenceRoll
-      ? Math.min(0.98, def.presenceRoll + (bloodMoonActive() ? BLOOD_MOON_RARE_BOOST : 0))
+      ? Math.min(0.98, def.presenceRoll + (bloodMoonActive() ? BLOOD_MOON_RARE_BOOST : 0)
+                     + unicornElderLuck())
       : null;
     if (presence && Math.random() > presence) continue;
     let placed = 0;
@@ -2771,6 +3070,31 @@ function buildFeatureList() {
       });
       placed++;
     }
+  }
+  /* v39 PART A: the Golem Elder, placed by hand after the loop for the same
+     reason the Elder Drake is — biomes:[] means the loop never sees it. One
+     in the world, on the single deepest ruin tile there is. */
+  {
+    const spot = golemElderSpot();
+    if (spot) {
+      const ge = MOBS.golem_elder;
+      mobs.push({
+        id: "golem_elder:" + spot[0] + "," + spot[1], kind: "golem_elder",
+        x: spot[0] + 0.5, y: spot[1] + 0.5, hx: spot[0] + 0.5, hy: spot[1] + 0.5,
+        hp: Math.round(ge.hp * bloodMoonMobMult()),
+        maxHp: Math.round(ge.hp * bloodMoonMobMult()), state: "idle", target: null,
+        atkAt: 0, windupStart: 0, winding: false, flash: 0, boltT: 0,
+        ph: 2.4, dead: false, respawnAt: 0, lastSync: 0, fx: 0, fy: 1,
+      });
+    }
+  }
+  /* v39 PART C: the Unicorn Elder. One tile, uniform across the WHOLE map,
+     pushed straight into `wilds` — biomes:[] keeps the spawn loop above from
+     ever touching it, exactly as it does for the fight-to-tame beasts. */
+  {
+    const [ux, uy] = unicornElderTile(worldSeed);
+    wilds.push({ id: "unicorn_elder:" + ux + "," + uy, species: "unicorn_elder",
+                 x: ux + 0.5, y: uy + 0.5, ph: 3.1 });
   }
   /* v20: one shared ruinPieces array, one cluster appended per Ruin centre. */
   ruinPieces = [];
@@ -3420,12 +3744,21 @@ enterBtn.onclick = async () => {
     elevCache.clear();
     rawHCache.clear();
     await loadMinedNodes();
+    /* v39 PART C: loginPlayer() and loadPets() moved AHEAD of worldgen. The
+       Unicorn Elder's luck buff is added to the rare-species presence roll,
+       and that roll happens exactly once, inside buildFeatureList() — with
+       the roster still empty at that moment the buff could never have done
+       anything, which is the kind of silently-dead feature the gates exist
+       to catch. Neither function reads a single thing worldgen produces
+       (both were re-checked for it): loginPlayer needs only the terrain grid
+       placeLandmarks() and the cache clears above have already settled, and
+       loadPets is one select. Nothing else moved. */
+    await loginPlayer(username, chosenClass);
+    await loadPets();
     buildFeatureList();
     bakeTerrain();
-    await loginPlayer(username, chosenClass);
     await loadGroundItems();
     await loadBasePieces();          // v33: one select on login, like ground_items
-    await loadPets();
     await joinRealtime();
     loginEl.style.display = "none";
     /* v35 PART B: first login only. Runs after the world, the roster and
@@ -3474,6 +3807,13 @@ async function loginPlayer(username, cls) {
          are being worn. Absent column -> nothing worn, exactly the v21 charm
          precedent, and the items themselves are unaffected either way. */
       cos: normalizeCosmetics(p.cosmetics),
+      /* v39 PART D: the bible's own admin field — "Ability to promote other
+         players to admin via Supabase (role column: player → admin)". Read
+         only, never written by the game. An absent column reads as "player",
+         which is the SAFE direction: the world-reset execution gate is the
+         thing this feeds, so degrading means nobody can execute it, never
+         that everybody can. */
+      role: p.role === "admin" ? "admin" : "player",
     };
     /* v35 PART B: shown once, ever. The flag is read here, on the row that
        came back from the players table, and written by savePlayerExtras(). */
@@ -3494,7 +3834,7 @@ async function loginPlayer(username, cls) {
       if (String(error.message || "").includes("hp")) throw new Error("Your database is missing the new columns — run the Stage 1-3 SQL.");
       throw error;
     }
-    me = { username, cls, x: s.x, y: s.y, level: 1, hp: 100, maxHp: 100, inv: {}, equipped: null, armor: null, lastKillAt: null, shrineCdUntil: null, deadUntil: null, cos: emptyCosmetics() };
+    me = { username, cls, x: s.x, y: s.y, level: 1, hp: 100, maxHp: 100, inv: {}, equipped: null, armor: null, lastKillAt: null, shrineCdUntil: null, deadUntil: null, cos: emptyCosmetics(), role: "player" };
     tutorialDone = false;    // v35: a brand new row has never seen it
   }
   /* v21: dive/breath state, set once for BOTH the returning and the new-player
@@ -3566,7 +3906,7 @@ async function mobKill(m, iKilled) {
   if (m.dead) return;
   m.dead = true;
   m.hp = 0;
-  m.respawnAt = Date.now() + MOB_RESPAWN_MS;
+  m.respawnAt = Date.now() + mobRespawnMs(m.kind);   // v39: per-kind, see mobRespawnMs
   m.state = "idle"; m.winding = false; m.target = null;
   burst(m.x, m.y, "#c8b090", 14, 2.6);
   if (!iKilled) return;
@@ -3816,7 +4156,7 @@ async function resolveTaming() {
     if (w.mob) {
       // v14: taming forfeits the loot — the creature leaves the world as a mob
       w.mob.dead = true; w.mob.hp = 0;
-      w.mob.respawnAt = Date.now() + MOB_RESPAWN_MS;
+      w.mob.respawnAt = Date.now() + mobRespawnMs(w.mob.kind);   // v39
       channel.send({ type: "broadcast", event: "mob_dead", payload: { id: w.mob.id, until: w.mob.respawnAt } });
     } else {
       wilds = wilds.filter(x => x.id !== w.id);
@@ -3837,7 +4177,7 @@ async function resolveTaming() {
     // on the mob respawn timer instead, still with no loot)
     if (w.mob) {
       w.mob.dead = true; w.mob.hp = 0;
-      w.mob.respawnAt = Date.now() + MOB_RESPAWN_MS;
+      w.mob.respawnAt = Date.now() + mobRespawnMs(w.mob.kind);   // v39
       channel.send({ type: "broadcast", event: "mob_dead", payload: { id: w.mob.id, until: w.mob.respawnAt } });
     } else {
       wilds = wilds.filter(x => x.id !== w.id);
@@ -3953,6 +4293,141 @@ function dayWindowOpen(def, day) {
 }
 function krakenlingWindowOpen(day) { return dayWindowOpen(WILD_SPECIES.krakenling, day); }
 
+/* ============ v39 PART D =========================================
+   The third world event, and the only one that is not derived from the
+   clock: it is caused, by two specific creatures being in one place.
+
+   DISCOVERY RULE, and it binds everything below: nothing here may ever be
+   summarised, quoted or referenced by anything the PLAYER can read — not
+   the Oracle (whose pool is a hand-written literal that excludes all three
+   Elders by name, twice), not a tooltip, not a HUD hint, not a toast. Read
+   every string in this section and check it names no cause. The countdown
+   deliberately says nothing a player could work backwards from.
+
+   FOUR CONDITIONS, checked every frame, ALL of them:
+     1. a live tamed Golem Elder and a live tamed Dragon Elder both exist
+     2. both are in active combat — the file's existing combat signal
+     3. they are within ELDER_PROX_TILES of each other
+     4. 1-3 hold CONTINUOUSLY for ELDER_HOLD_MS
+
+   Condition 4 is an accumulator that is SET TO ZERO the instant anything
+   breaks, never one that decays or that counts up non-consecutive frames.
+   Four seconds of a fight happening beside each other is the bar; four
+   seconds' worth of coincidences spread across a minute is not.
+
+   TWO KEYS, NOT ONE. Confirming the trigger only ARMS the reset and starts
+   a countdown everyone can see. The reset call itself additionally demands
+   an admin-tier role, so no combination of ordinary players can execute it
+   and no forged packet can either — a `world_reset_pending` arriving over
+   the channel starts the DISPLAY and never sets the arming flag, which is
+   deliberately only ever set by this client watching it happen itself. */
+const ELDER_SPECIES = ["golem_elder", "dragon_elder", "unicorn_elder"];
+const ELDER_PROX_TILES = 3;                 // spec: within 3 tiles
+const ELDER_HOLD_MS = 4000;                 // spec: 4 real seconds, continuous
+const WORLD_RESET_COUNTDOWN_MS = 10000;     // spec: a 10-second countdown
+let elderHoldMs = 0;         // the accumulator. Zero or climbing, never decaying.
+let worldResetArmed = false; // key 1: THIS client watched the trigger happen
+let worldResetAt = 0;        // countdown deadline, ms epoch (0 = nothing running)
+let worldResetDone = false;  // once per session, whatever else arrives
+
+/* key 2: the bible's own admin role. Absent column reads as "player". */
+function isAdmin() { return !!me && me.role === "admin"; }
+function worldResetExecAllowed() { return worldResetArmed && isAdmin(); }
+
+/* Every Elder companion this client can actually see, with the two facts
+   the trigger needs about each: is it live, and is its owner in combat.
+   The local player's own combat is `combatMusicUntil`, the signal this file
+   has used since v24; a remote player's is the same value, computed on their
+   own client and carried on the `cb` field of the move broadcast beside
+   `pe`/`mo`/`sp`/`cs`. Same one channel, no new sync. */
+function elderCompanionsNow() {
+  const out = [];
+  const now = performance.now();
+  if (me && !dead && activePet && me.pet && me.pet.sp) {
+    out.push({ owner: me.username, species: me.pet.sp, x: me.pet.x, y: me.pet.y,
+               live: !(me.pet.downedUntil && now < me.pet.downedUntil),
+               combat: now < combatMusicUntil });
+  }
+  for (const [name, o] of others) {
+    if (o.dead || !o.pet || !o.pe) continue;
+    if ((o.space || "main") !== ((me && me.space) || "main")) continue;
+    /* A remote pet's HP is not synced (the v16 rule), so "live" for someone
+       else's companion is that it is out and its owner is not dead. */
+    out.push({ owner: name, species: o.pe, x: o.pet.x, y: o.pet.y,
+               live: true, combat: !!o.cb });
+  }
+  return out;
+}
+
+/* Returns the accumulator's value after this frame, so a harness can watch
+   it climb and — far more importantly — watch it drop to zero. */
+function elderEventTick(dtMs) {
+  if (worldResetAt || worldResetDone) return elderHoldMs;
+  const list = elderCompanionsNow();
+  const golems  = list.filter(e => e.species === "golem_elder"  && e.live && e.combat);
+  const dragons = list.filter(e => e.species === "dragon_elder" && e.live && e.combat);
+  let holds = false;
+  for (const g of golems) {
+    for (const d of dragons) {
+      if (Math.hypot(g.x - d.x, g.y - d.y) <= ELDER_PROX_TILES) { holds = true; break; }
+    }
+    if (holds) break;
+  }
+  if (!holds) { elderHoldMs = 0; return 0; }
+  elderHoldMs += Math.max(0, dtMs);
+  if (elderHoldMs >= ELDER_HOLD_MS) { elderHoldMs = 0; confirmElderTrigger(); }
+  return elderHoldMs;
+}
+
+function confirmElderTrigger() {
+  if (worldResetArmed || worldResetDone) return false;
+  worldResetArmed = true;
+  worldResetAt = Date.now() + WORLD_RESET_COUNTDOWN_MS;
+  try {
+    if (channel) channel.send({ type: "broadcast", event: "world_reset_pending",
+                                payload: { at: worldResetAt } });
+  } catch (e) { /* the countdown runs locally either way */ }
+  return true;
+}
+
+/* The reset itself. Both keys or nothing: an unarmed client and a non-admin
+   client are refused identically, and the refusal is the FIRST thing here,
+   before a single write. */
+async function performWorldReset() {
+  if (!worldResetExecAllowed()) return "denied";
+  worldResetDone = true;
+  worldResetArmed = false;
+  worldResetAt = 0;
+  const seed = 1 + Math.floor(Math.random() * 2147483646);
+  try {
+    await sb.from("world").update({ seed }).eq("id", 1);
+    await sb.from("base_pieces").delete().neq("id", 0);
+    await sb.from("pets").delete().in("species", ELDER_SPECIES);
+  } catch (e) { /* best effort — the local rebuild below still happens */ }
+  /* Local side of the same three writes, so this client is looking at the
+     new world rather than at a world the table no longer describes. */
+  worldSeed = seed % 2147483647;
+  basePieces.clear(); baseIndex.clear(); chestContents.clear();
+  myPets = myPets.filter(p => ELDER_SPECIES.indexOf(p.species) < 0);
+  if (activePet && ELDER_SPECIES.indexOf(activePet.species) >= 0) {
+    activePet = null;
+    if (me) { me.pet = null; me.mounted = false; }
+  }
+  tileCache.clear(); elevCache.clear(); rawHCache.clear();
+  placeLandmarks();
+  buildFeatureList();
+  bakeTerrain();
+  if (me) {
+    const s = findSpawn();
+    me.x = s.x; me.y = s.y; me.diving = false;
+    cam.x = me.x; cam.y = me.y;
+    savePlayer();
+  }
+  refreshPanels();
+  refreshPetPanel();
+  return "reset";
+}
+
 /* v12: night-only species are hidden and untameable by day
    v17: + dawn-only species, hidden and untameable outside the dawn window */
 function isWildVisible(w) {
@@ -3987,6 +4462,7 @@ async function joinRealtime() {
     o.hp = p.h; o.maxHp = p.m || 100; o.tier = p.t || null; o.dead = !!p.d;
     o.wk = p.wk || null; o.at = p.at || null; o.ps = !!p.ps; o.bl = !!p.bl;
     o.pe = p.pe || null; o.mo = !!p.mo;
+    o.cb = !!p.cb;              // v39: is this player in combat right now
     /* v35: a remote player's worn cosmetics. Normalised on arrival, so a
        malformed or hostile payload can only ever resolve to real cosmetic
        ids in their own slots — and never to anything with a stat. */
@@ -4048,7 +4524,7 @@ async function joinRealtime() {
     m.dead = true; m.hp = 0;
     /* v30: a world boss that respawns like a goblin is not a world boss. */
     m.respawnAt = p.until || (Date.now() +
-      (m.kind === "elder_drake" ? ELDER_DRAKE_RESPAWN_MS : MOB_RESPAWN_MS));
+      mobRespawnMs(m.kind));
   });
 
   channel.on("broadcast", { event: "base_hit" }, ({ payload: p }) => {
@@ -4096,6 +4572,17 @@ async function joinRealtime() {
     removeFeature(p.k);
   });
 
+  /* v39 PART D: DISPLAY ONLY. This deliberately does not touch
+     worldResetArmed — the arming key is only ever set by this client
+     watching the trigger happen itself, so a forged packet can start a
+     countdown on your screen and still cannot make an admin's client
+     execute anything. */
+  channel.on("broadcast", { event: "world_reset_pending" }, ({ payload: p }) => {
+    if (worldResetDone) return;
+    const at = +(p && p.at) || (Date.now() + WORLD_RESET_COUNTDOWN_MS);
+    worldResetAt = worldResetAt ? Math.min(worldResetAt, at) : at;
+  });
+
   channel.on("presence", { event: "leave" }, ({ key }) => others.delete(key));
 
   await new Promise((resolve, reject) => {
@@ -4127,6 +4614,11 @@ function sendMove(force) {
       pe: (activePet && activePet.species) || 0,
       cs: me.cos || 0,          // v35: worn cosmetics — visual only, same shape as pe/mo
       mo: me.mounted ? 1 : 0,   // v28: mounted, so others seat us on the pet too
+      /* v39: whether this player is in active combat right now — the same
+         `combatMusicUntil` the local client already keeps, flattened to a
+         flag. One more field on the one broadcast, exactly the shape pe/mo/
+         sp/cs already use; nothing else reads or writes it. */
+      cb: performance.now() < combatMusicUntil ? 1 : 0,
       sp: me.space || "main",   // v29: which space we are in — the whole filter
       ps: myPoison ? 1 : 0, bl: isBlocking() ? 1 : 0,
       fx: +facing.x.toFixed(2), fy: +facing.y.toFixed(2),
@@ -4696,6 +5188,15 @@ function nearestGatherable() {
     const d = Math.hypot(f.x - me.x, f.y - me.y);
     if (d < bestD) { best = f; bestD = d; }
   }
+  /* v39 PART B: the Golden Orb is derived the same way, for the same reason
+     — it belongs to a 48-hour window, not to worldgen. Same range, same E. */
+  {
+    const orb = goldenOrbSite();
+    if (orb) {
+      const d = Math.hypot(orb.x - me.x, orb.y - me.y);
+      if (d < bestD) { best = orb; bestD = d; }
+    }
+  }
   for (let ty = cy - 2; ty <= cy + 2; ty++) {
     for (let tx = cx - 2; tx <= cx + 2; tx++) {
       const feat = featureIndex.get(tx + "," + ty);
@@ -4758,6 +5259,14 @@ async function doInteract() {
   if (nearOracle()) {
     lastGather = now;
     askOracle();
+    return;
+  }
+  /* v39 PART B: the Dragon Elder Altar answers on the same interact key,
+     checked beside the Shrine and the Oracle because all three are fixed
+     world points you walk up to and use. */
+  if (nearDragonAltar()) {
+    lastGather = now;
+    await awakenDragonElder();
     return;
   }
   if (nearChest()) {
@@ -4859,7 +5368,8 @@ async function doInteract() {
       removeFeature(g.key);
       channel.send({ type: "broadcast", event: "node_mined", payload: { k: g.key } });
       // ore yields more per node since each node is gone once mined
-      const qty = g.type === "rock" ? 3 : 2;
+      // v39: the orb is a SINGLE guaranteed drop — never a stack of two.
+      const qty = g.type === "rock" ? 3 : g.type === "orb" ? 1 : 2;
       invAdd(got, qty);
       toast(`+${qty} ${ITEM_META[got].name}` + (PICKED.has(g.type) ? "" : " — the vein is spent"));
     } else {
@@ -4884,6 +5394,58 @@ function nearForge()   {
    to be true until the landmark existed. */
 function nearAncient() {
   return Math.hypot(me.x - ANCIENT.x, me.y - ANCIENT.y) < ANCIENT_R;
+}
+
+/* ============ v39 PART B — AWAKENING THE DRAGON ELDER ============
+   Bible: "Retrieve the Golden Orb from top of the Eternal Tower, bring to
+   the Dragon Elder Altar to awaken."
+
+   Carrying the orb here and pressing interact consumes it and hands over the
+   companion — no tame roll, because the bible names none: the expedition IS
+   the attempt, and a 15% roll on a once-per-48-hours item would be a
+   different design entirely.
+
+   ONE Dragon Elder exists in the world, so the altar asks the pets table
+   directly before it stirs. Losing the check would let every 48-hour orb
+   mint another Elder, and the whole trio is singletons. If one already
+   exists the orb is NOT consumed — nothing is taken for nothing. */
+function nearDragonAltar() {
+  return Math.hypot(me.x - DRAGON_ALTAR.x, me.y - DRAGON_ALTAR.y) < DRAGON_ALTAR_R;
+}
+async function awakenDragonElder() {
+  if ((me.inv.golden_orb || 0) <= 0) {
+    toast("The altar is cold. Something is missing from its cradle.");
+    return false;
+  }
+  let taken = false;
+  try {
+    /* Filtered on the server AND checked here. The second half is not
+       redundant caution for its own sake: it means the answer depends on
+       what the rows actually ARE, never on the query having been applied,
+       so this can only ever refuse for a real Dragon Elder. */
+    const { data } = await sb.from("pets").select("id, species").eq("species", "dragon_elder");
+    taken = !!(data && data.some(r => r && r.species === "dragon_elder"));
+  } catch (e) { /* a read that cannot be made must not eat the orb */ }
+  if (taken) {
+    toast("The altar does not stir. Whatever slept here is already awake.");
+    return false;
+  }
+  invAdd("golden_orb", -1);
+  const petName = "Dragon Elder";
+  const { data, error } = await sb.from("pets")
+    .insert({ owner: me.username, species: "dragon_elder", pet_name: petName, active: false })
+    .select().single();
+  if (error || !data) {
+    invAdd("golden_orb", 1);              // the write failed — give it back
+    toast("The altar takes nothing today.");
+    return false;
+  }
+  myPets.push(data);
+  await setActivePet(data);
+  toast("The orb burns away — the Dragon Elder wakes and follows you.");
+  burst(DRAGON_ALTAR.x, DRAGON_ALTAR.y, "#f2cf6b", 18, 3.2);
+  savePlayer();
+  return true;
 }
 
 function craft(recipe) {
@@ -5375,6 +5937,7 @@ const petPanel = document.getElementById("petPanel");
 const buildPanel = document.getElementById("buildPanel");     // v33
 const chestPanel = document.getElementById("chestPanel");     // v33
 const charPanel = document.getElementById("charPanel");       // v35
+const travelPanel = document.getElementById("travelPanel");   // v39
 
 /* =========================================================
    v35 PART C — RECLASSING
@@ -5432,6 +5995,90 @@ function refreshCharPanel() {
   });
 }
 
+/* ============ v39 PART C — THE UNICORN ELDER'S FAST TRAVEL =======
+   Bible: "Grants fast travel across the entire world plus a passive luck
+   buff for rare pet spawns."
+
+   The destinations are the world's own FIXED landmark points and nothing
+   else — the six the game already places from worldSeed. Deliberately NOT
+   arbitrary coordinates, NOT a saved waypoint and, above all, NEVER a base:
+   the bible's whole base pitch is that obscurity is your defence, and the
+   v35 compass already refuses to draw a base piece for exactly that reason.
+   Somewhere every player can already walk to is not a secret to leak. */
+function fastTravelPoints() {
+  return [
+    ["The Eternal Tower",      TOWER],
+    ["The Volcano",            VOLCANO],
+    ["The Grand Bazaar",       BAZAAR],
+    ["The Ancient Forge",      ANCIENT],
+    ["The Ruined Colosseum",   COLOSSEUM],
+    ["The Beastmaster Shrine", SHRINE],
+  ];
+}
+/* A landmark's own tile can be blocked (the Volcano's cone is LAVA/PEAK), so
+   arriving means the nearest standable tile to it, never the point itself.
+   Rings outward, so the answer is as close as the terrain allows. */
+function travelLandingSpot(cx, cy) {
+  for (let r = 0; r < 14; r++) {
+    for (let a = 0; a < Math.max(1, r * 8); a++) {
+      const ang = (a / Math.max(1, r * 8)) * Math.PI * 2;
+      const tx = Math.round(cx + Math.cos(ang) * r);
+      const ty = Math.round(cy + Math.sin(ang) * r);
+      if (tx < 2 || ty < 2 || tx >= N - 2 || ty >= N - 2) continue;
+      if (BLOCKED.has(biomeAt(tx, ty))) continue;
+      if (basePieceBlocks(tx + 0.5, ty + 0.5)) continue;
+      return [tx + 0.5, ty + 0.5];
+    }
+  }
+  return null;
+}
+function fastTravelTo(idx) {
+  if (!me || dead) return false;
+  if (!ownsUnicornElder()) {
+    toast("Nothing carries you. This is not a road you can walk onto.");
+    return false;
+  }
+  /* Inside a cave the coordinates are the interior's own, not the world's —
+     the same reason the v35 compass hides in there. Walk out first. */
+  if (inInterior()) { toast("Not from down here — find the way out first."); return false; }
+  const p = fastTravelPoints()[idx];
+  if (!p) return false;
+  const spot = travelLandingSpot(p[1].x, p[1].y);
+  if (!spot) { toast("Nowhere to set you down there."); return false; }
+  me.x = spot[0]; me.y = spot[1];
+  cam.x = me.x; cam.y = me.y;
+  /* v21's respawn rule: never arrive flagged as diving on dry land. */
+  me.diving = false;
+  me.breath = breathMax();
+  burst(me.x, me.y, "#f4ecfa", 14, 2.6);
+  toast(`The world folds — ${p[0]}.`);
+  sendMove(true);
+  savePlayer();
+  return true;
+}
+function refreshTravelPanel() {
+  const who = document.getElementById("travelWho");
+  const list = document.getElementById("travelList");
+  if (!list || !me) return;
+  const owned = ownsUnicornElder();
+  if (who) {
+    who.textContent = owned
+      ? "The Unicorn Elder walks with you. Choose a place."
+      : "You have no way of travelling like this.";
+  }
+  list.innerHTML = fastTravelPoints().map((p, i) =>
+    `<div class="craft-row">
+      <div>${p[0]}</div>
+      <button data-ft="${i}" ${owned ? "" : "disabled"}>TRAVEL</button>
+    </div>`).join("");
+  list.querySelectorAll("button").forEach(b => b.onclick = () => {
+    if (fastTravelTo(+b.dataset.ft)) {
+      travelPanel.style.display = "none";
+      refreshPanels();
+    }
+  });
+}
+
 /* v11: companion roster — species icon, name, active state */
 function refreshPetPanel() {
   const list = document.getElementById("petList");
@@ -5445,6 +6092,10 @@ function refreshPetPanel() {
     boar: "#7a5f48", bear: "#8a6240", griffin: "#c8a35c", phoenix: "#e8641c",
     stag: "#c49a68", unicorn: "#f4f0e8", lightfox: "#f6e4ac",
     crystal_golem: "#9fc4e8", krakenling: "#5a3a6e", salamander_king: "#d84a28",   // v25
+    /* v39: the trio's roster dots, all three the same Elder gold their art
+       already stands in — the roster should say "these three are one tier"
+       at a glance, the way the tier colours do everywhere else. */
+    golem_elder: "#e8b64c", dragon_elder: "#f2cf6b", unicorn_elder: "#f6e4b0",
   };
   list.innerHTML = myPets.map(pt => {
     const spName = WILD_SPECIES[pt.species]?.name || pt.species + " (retired)";
@@ -5602,6 +6253,12 @@ addEventListener("keydown", e => {
      KEYBIND_DEFAULTS rather than being hardcoded, so it is remappable,
      conflict-checked and persisted by the v23 machinery with no new code. */
   if (k === KEYBINDS.character) { reclassArmed = null; charPanel.style.display = charPanel.style.display === "block" ? "none" : "block"; refreshCharPanel(); }
+  /* v39 PART C: the FAST TRAVEL panel. Joins KEYBIND_DEFAULTS the same way,
+     so it is remappable, conflict-checked and persisted with no new code.
+     The panel OPENS for anyone — it is the travel itself that is gated on
+     owning the Unicorn Elder, and a panel that says why is better than a
+     key that silently does nothing. */
+  if (k === KEYBINDS.travel) { travelPanel.style.display = travelPanel.style.display === "block" ? "none" : "block"; refreshTravelPanel(); }
   /* v35 PART B: "Skippable at any point." ESCAPE is deliberately NOT a
      KEYBINDS action — it is the one key v23 made unbindable, so it can never
      be remapped out from under a player who wants out of the tutorial. */
@@ -5846,6 +6503,16 @@ function update(dt, t) {
       inCombatMusic = false;
       playNextBgTrack();   // resumes the rotation from wherever bgIndex is
     }
+  }
+
+  /* v39 PART D: the trigger is checked every single frame, and the deadline
+     it can set is checked right beside it. Both are cheap — the check walks
+     the handful of companions on screen and stops the moment a condition
+     fails. */
+  elderEventTick(dt * 1000);
+  if (worldResetAt && Date.now() >= worldResetAt) {
+    worldResetAt = 0;
+    performWorldReset();
   }
 
   if (now - lastSave > SAVE_EVERY) savePlayer();
@@ -6995,6 +7662,12 @@ const DRAGON_PAL = {
   fire:   { lit:"#c2482c", mid:"#8f2c1a", belly:"#f0b48a", bandLine:"#d08a5c", scale:"#a83a22", ridge:"#ffb14c", head:"#c2482c", horn:"#5e1e10", hornLit:"#e8804a", wing:"#e0663a", wingMid:"#b0402a", wingDark:"#8a2c1c", bone:"#f4b48a", boneDark:"#7a2612", claw:"#ffe0b4", eye:"#ffe08a", pupil:"#3a1004" },
   storm:  { lit:"#5f61a2", mid:"#3f4074", belly:"#c6cbee", bandLine:"#9498cc", scale:"#4e5090", ridge:"#a8c4f0", head:"#5f61a2", horn:"#2e2f5c", hornLit:"#8a8cd0", wing:"#8286c8", wingMid:"#5a5c9a", wingDark:"#454778", bone:"#cdd2f4", boneDark:"#4a4c86", claw:"#e8ecff", eye:"#e8f0ff", pupil:"#1c1e3c" },
   shadow: { lit:"#3a3450", mid:"#241f36", belly:"#6a5f86", bandLine:"#4c4368", scale:"#2e2842", ridge:"#7a5ca8", head:"#3a3450", horn:"#191426", hornLit:"#5e4c86", wing:"#4e4470", wingMid:"#332c4c", wingDark:"#241f36", bone:"#7e6ea8", boneDark:"#2a2440", claw:"#c8b4e8", eye:"#c08cf0", pupil:"#1a1026" },
+  /* v39: a FIFTH palette on the same body — the Dragon Elder. Deliberately
+     the only dragon in the world that is not a hue: dark bronze plating with
+     gold everywhere the other four carry their element (ridge, horn, bone,
+     claw), so it reads as the same animal cast in a different metal rather
+     than as a fifth colour of dragon. */
+  elder:  { lit:"#6a5230", mid:"#43331c", belly:"#e2c886", bandLine:"#b08a3c", scale:"#54401f", ridge:"#f2cf6b", head:"#6a5230", horn:"#33260f", hornLit:"#e8b64c", wing:"#7c5f36", wingMid:"#4e3b1e", wingDark:"#332612", bone:"#f0dca8", boneDark:"#6a5230", claw:"#fff0c0", eye:"#fff0b0", pupil:"#2a1c06" },
 };
 
 /* v18: shared dragon body, reused by every dragon variant. The palette
@@ -7085,6 +7758,15 @@ function dragonV2(sx, sy, PAL, t, variant, S) {
       const off = i * 5 * S;
       P(ctx, [X(-6) - off, Y(-2), X(-3) - off, Y(-9), X(-1) - off, Y(-1)], `rgba(56,44,80,${0.26 / i})`);
     }
+  } else if (variant === "elder") {
+    /* A fifth branch beside the other four, same shape of thing: slow gold
+       motes off the muzzle rather than fire's fast orange squares — this one
+       is not breathing at you, it is simply burning. */
+    for (let i = 0; i < 3; i++) {
+      const ph = (t / 900 + i * 0.34) % 1;
+      ctx.fillStyle = `rgba(244,207,107,${0.8 * (1 - ph)})`;
+      ctx.fillRect(X(14.6 + ph * 7), Y(-21 + Math.sin(t / 480 + i * 2) * 1.6), 1.6 * S, 1.6 * S);
+    }
   }
 }
 /* per-species / per-mob render scale: reference-sheet approved size ratios
@@ -7156,6 +7838,12 @@ const SPECIES_K = {
      one-line change if the smaller silhouette was genuinely intended. */
   crystal_golem: 1.70,                                // hotfix: matches golem's new size ratio
   krakenling: 1.10, salamander_king: 1.20,
+  /* v39: the Elder trio. Each is deliberately the LARGEST of its own line —
+     Golem Elder above Golem's 1.85 and Crystal Golem's 1.70, Dragon Elder
+     above the four 1.55 dragons, Unicorn Elder above Unicorn's 1.30 — so
+     "this is the Elder one" reads from silhouette alone at a distance,
+     before any of its colour does. Pure render scale, all tunable. */
+  golem_elder: 2.10, dragon_elder: 1.85, unicorn_elder: 1.45,
 };
 const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94, dark_wraith: 1.30, sea_serpent: 2.85,
   elder_drake: 3.40 };   // v30: the largest thing in the world, by design
@@ -7169,7 +7857,10 @@ const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94, dark_wraith: 1.30, sea_
 /* v25: salamander_king joins the list for its hostile rampage form only. Its
    art is long and low — the body tops out ~7px above the baseline, well under
    Bear's — so its overlays sit lower than any other beast's. Tunable. */
-const MOB_TALL = { troll: 22, bandit: 4, bear: 5, griffin: 8, phoenix: 6, dark_wraith: 4, sea_serpent: 15, salamander_king: 4 };
+/* v39: the Golem Elder's hostile form is the tallest tameable body in the
+   file (SPECIES_K 2.10 over a ~15px art), so its "!" tell and HP bar have to
+   clear the head slab rather than sit inside it. Tunable, same as the rest. */
+const MOB_TALL = { troll: 22, bandit: 4, bear: 5, griffin: 8, phoenix: 6, dark_wraith: 4, sea_serpent: 15, salamander_king: 4, golem_elder: 18 };
 
 const KIT = {
   Ranger:      { trim: "#2e4a22", accent: "#c8b078", cloth: "#5a4a30" },
@@ -7760,6 +8451,51 @@ function drawColosseumEntity(t) {
   }
   ctx.fillStyle = "rgba(160,60,40,0.18)";                          // stained arena floor
   ctx.beginPath(); ctx.ellipse(sx, sy, 46, 26, 0, 0, Math.PI * 2); ctx.fill();
+}
+
+/* ============ v39 PART B — the Dragon Elder Altar ============
+   The Beastmaster Shrine's own stepped-stone language, deliberately: these
+   are the two altars in the world you bring something to. Everything else
+   about it is the inverse — three courses instead of two, near-black basalt
+   instead of pale grey stone, and an open gold CRADLE on top holding
+   nothing at all. The empty cradle is the whole composition: it is a shape
+   that is obviously missing its object, which is the only clue this place
+   gives about what it wants. It never animates or brightens for a player
+   carrying the orb — that would be a tooltip in another form. */
+function drawDragonAltarEntity(t) {
+  const [sx, sy] = worldToScreen(DRAGON_ALTAR.x, DRAGON_ALTAR.y, groundZ(DRAGON_ALTAR.x, DRAGON_ALTAR.y));
+  drawShadow(sx, sy, 34, 24);
+  drawBox(DRAGON_ALTAR.x, DRAGON_ALTAR.y, 1.5, 1.25, 4, "#2c2620");     // base course
+  drawBox(DRAGON_ALTAR.x, DRAGON_ALTAR.y, 1.15, 0.95, 5, "#3a332a", 4); // middle course
+  drawBox(DRAGON_ALTAR.x, DRAGON_ALTAR.y, 0.85, 0.7, 4, "#463d31", 9);  // top course
+  // the cradle: four short gold claws around an empty middle
+  ctx.fillStyle = "#a8822c";
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + 0.6;
+    ctx.beginPath();
+    ctx.moveTo(sx + Math.cos(a) * 5.2, sy - 13.4 + Math.sin(a) * 2.4);
+    ctx.lineTo(sx + Math.cos(a) * 3.6, sy - 18 + Math.sin(a) * 1.6);
+    ctx.lineTo(sx + Math.cos(a) * 6.6, sy - 12.6 + Math.sin(a) * 2.8);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = "#141019";                                             // the empty seat
+  ctx.beginPath(); ctx.ellipse(sx, sy - 13.4, 4.2, 2.1, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "rgba(232,182,76,0.5)";                                // one carved band
+  ctx.fillRect(sx - 6.4, sy - 10.6, 12.8, 1);
+}
+
+/* v39 PART B: the Golden Orb where it sits. A hard-faceted gold sphere —
+   four flat facets, no gradient on the body itself — over the shared Elder
+   aura, so the one object in the world that awakens an Elder wears the same
+   gold wash the three of them do. */
+function drawOrbNode(f, t) {
+  const [sx, sy] = worldToScreen(f.x, f.y, groundZ(f.x, f.y) + 9 + Math.sin(t / 700) * 1.4);
+  aura(sx, sy + 6, "244,207,107", 9, t, { motes: 3, riseMs: 1200, lw: 1 });
+  P(ctx, [sx, sy - 4.6, sx - 4.2, sy - 0.6, sx, sy + 3.8, sx + 4.2, sy - 0.6], "#f2cf6b");
+  P(ctx, [sx, sy - 4.6, sx + 4.2, sy - 0.6, sx, sy + 3.8], "#c39a33");
+  P(ctx, [sx - 1.6, sy - 2.8, sx - 2.8, sy - 0.8, sx - 1, sy + 0.6], "#fff0c0");
+  ctx.fillStyle = "rgba(255,246,214,0.9)";
+  ctx.fillRect(sx - 0.6, sy - 3.4, 1.2, 1.2);
 }
 
 /* v35 PART E: The Oracle. A seated, hooded seer on a low stone dais just
@@ -8743,6 +9479,97 @@ function drawSpecies(species, sx, sy, t, moving) {
     ctx.moveTo(sx + 0.8, sy - 18.2); ctx.quadraticCurveTo(sx + 4, sy - 22, sx + 6.4, sy - 21);
     ctx.stroke(); ctx.lineCap = "butt";
 
+  /* ============ v39 — THE ELDER TRIO ==============================
+     One rule holds across all three, and it is the Crystal Golem rule from
+     v25: an Elder is the SAME SILHOUETTE as the line it heads, re-cut in a
+     different material. A player must read "that is a Golem — but not one
+     of those" from shape and colour alone, at distance, with no label.
+
+     What separates them is deliberately consistent and deliberately NOT any
+     existing overlay: each one stands inside v18's `aura()` — the helper
+     written for exactly this and never used outside the Dark Wraith until
+     now — in the same warm gold, at a size that scales with the body. Gold
+     is not spoken for: the runic tier is cyan, dragonsteel violet, the tame
+     ring pale green, the pet HP bar gold-on-a-BAR (a different shape
+     entirely). A gold wash on the ground under a creature means one thing in
+     this world, and this is it. Flat fills, hard edges, no gradients beyond
+     the shared aura, no outlines. */
+  } else if (species === "golem_elder") {
+
+    aura(sx, sy, "232,182,76", 11, t, { motes: 3, riseMs: 1300, lw: 1.1 });
+    P(ctx, [sx - 5.6, sy, sx - 5.6, sy - 10.6, sx + 5.6, sy - 10.6, sx + 5.6, sy], "#6e6a5e");   // body
+    P(ctx, [sx + 1.8, sy - 10.6, sx + 5.6, sy - 10.6, sx + 5.6, sy, sx + 1.8, sy], "#3f3c34");   // shadow face
+    P(ctx, [sx - 5.6, sy - 10.6, sx - 2, sy - 12.4, sx + 5.6, sy - 10.6], "#87826f");            // top light
+    P(ctx, [sx - 3.2, sy - 10.8, sx - 3.2, sy - 15.8, sx + 3.2, sy - 15.8, sx + 3.2, sy - 10.8], "#7a7566"); // head slab
+    P(ctx, [sx + 0.8, sy - 15.8, sx + 3.2, sy - 15.8, sx + 3.2, sy - 10.8, sx + 0.8, sy - 10.8], "#48453c");
+    /* A broken crown of stone shards. This is the whole "elder" read on the
+       silhouette — a young Golem's head is a bare slab. */
+    P(ctx, [sx - 3.2, sy - 15.8, sx - 2.4, sy - 19.4, sx - 1.4, sy - 15.8], "#8e8974");
+    P(ctx, [sx - 0.6, sy - 16, sx + 0.2, sy - 20.6, sx + 1.2, sy - 16], "#9a9480");
+    P(ctx, [sx + 1.8, sy - 15.8, sx + 2.8, sy - 18.4, sx + 3.2, sy - 15.8], "#8e8974");
+    /* Gold seams where a young Golem carries cracks — and deliberately NO
+       moss. Moss is the young Golem's own signature (the v25 rule) and must
+       not spread to the rest of the line. */
+    ctx.strokeStyle = "#e8b64c"; ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(sx - 3.6, sy - 8.4); ctx.lineTo(sx - 1.6, sy - 5.6); ctx.lineTo(sx - 3, sy - 2.4);
+    ctx.moveTo(sx + 1.2, sy - 9); ctx.lineTo(sx + 2.6, sy - 6);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(232,182,76,0.22)"; ctx.fillRect(sx - 3, sy - 14.8, 4, 3.4);   // eye halo
+    ctx.fillStyle = "#ffd873"; ctx.fillRect(sx - 2.2, sy - 14, 2.6, 1.4);               // eye slot
+    P(ctx, [sx - 8.4, sy - 9.2, sx - 5.6, sy - 9.2, sx - 5.6, sy - 3, sx - 8.4, sy - 3], "#645f53"); // arms
+    P(ctx, [sx + 5.6, sy - 9.2, sx + 8.4, sy - 9.2, sx + 8.4, sy - 3, sx + 5.6, sy - 3], "#48453c");
+    ctx.fillStyle = "#f6d488";
+    ctx.fillRect(sx - 7.6, sy - 7, 1.2, 1.2); ctx.fillRect(sx + 6.6, sy - 6, 1.2, 1.2); // seam glints
+
+  } else if (species === "dragon_elder") {
+
+    /* One line of art, exactly as v21 and v22 were: the shared dragonV2 body
+       and a fifth DRAGON_PAL entry. Nothing about the geometry is new —
+       what makes it the Elder is the gold-and-black material, the aura, and
+       its scale (1.85 against the four dragons' 1.55). */
+    aura(sx, sy, "244,207,107", 14, t, { motes: 4, riseMs: 1100, lw: 1.2 });
+    dragonV2(sx, sy, DRAGON_PAL.elder, t, "elder");
+
+  } else if (species === "unicorn_elder") {
+
+    aura(sx, sy, "244,236,206", 10, t, { motes: 3, riseMs: 1500, lw: 1 });
+    ctx.strokeStyle = "#e8dcc0"; ctx.lineWidth = 1.5;                                   // legs
+    ctx.beginPath();
+    ctx.moveTo(sx - 4, sy); ctx.lineTo(sx - 4, sy - 6.4);
+    ctx.moveTo(sx + 3.4, sy); ctx.lineTo(sx + 3.4, sy - 6.4); ctx.stroke();
+    ctx.fillStyle = "#c8a862";                                                          // gold hooves
+    ctx.fillRect(sx - 4.7, sy - 1.2, 1.6, 1.2); ctx.fillRect(sx + 2.7, sy - 1.2, 1.6, 1.2);
+    P(ctx, [sx - 5.4, sy - 6, sx - 4.2, sy - 13.4, sx + 4.2, sy - 14, sx + 5.2, sy - 6], "#fbf6e8");  // body
+    P(ctx, [sx + 4.2, sy - 14, sx + 5.2, sy - 6, sx - 5.4, sy - 6, sx - 0.4, sy - 8.2], "#cfc4a4");
+    P(ctx, [sx - 4.2, sy - 13.4, sx - 1, sy - 14.4, sx + 0.4, sy - 10, sx - 4.6, sy - 9], "#ffffff");
+    P(ctx, [sx + 2.8, sy - 13.4, sx + 4.2, sy - 19.8, sx + 7, sy - 19.6, sx + 5.4, sy - 12.6], "#fbf6e8"); // neck
+    P(ctx, [sx + 4.2, sy - 20, sx + 9.6, sy - 21, sx + 9.8, sy - 16.8, sx + 4.4, sy - 16.2], "#ffffff");   // head
+    P(ctx, [sx + 9.6, sy - 21, sx + 9.8, sy - 16.8, sx + 6.4, sy - 16.6], "#d8ceb0");
+    P(ctx, [sx + 9.7, sy - 20, sx + 12.4, sy - 18.6, sx + 9.8, sy - 17.2], "#ded4b6");                     // muzzle
+    ctx.fillStyle = "#8a8270"; ctx.fillRect(sx + 11.4, sy - 18.8, 0.9, 0.9);
+    EY(ctx, sx + 7.6, sy - 19.4, 1.1, "#fff4d0", "#4a3a1a");
+    P(ctx, [sx + 4.4, sy - 21, sx + 4, sy - 23.8, sx + 5.8, sy - 21], "#d8ceb0");                          // ears
+    P(ctx, [sx + 7, sy - 21, sx + 8.4, sy - 23.6, sx + 8.8, sy - 20.8], "#d8ceb0");
+    /* The horn is the tell: solid gold, longer than the Unicorn's, and it
+       carries three rings rather than the Unicorn's five faint spiral marks. */
+    ctx.strokeStyle = "#f2cf6b"; ctx.lineWidth = 2.1; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(sx + 8.4, sy - 21.6); ctx.lineTo(sx + 12.6, sy - 32.4); ctx.stroke();
+    ctx.strokeStyle = "#a8822c"; ctx.lineWidth = 0.8;
+    for (let i = 0; i < 3; i++) {
+      const f = i / 3;
+      ctx.beginPath();
+      ctx.moveTo(sx + 8.6 + f * 4, sy - 23 - f * 9.4);
+      ctx.lineTo(sx + 10.2 + f * 3.6, sy - 23.6 - f * 9.4);
+      ctx.stroke();
+    }
+    ctx.lineCap = "butt";
+    for (let i = 0; i < 4; i++) {                                                      // gold mane
+      P(ctx, [sx + 3.4 - i * 0.7, sy - 20 + i * 1.7, sx + 0.4 - i * 0.5, sy - 16.4 + i * 1.6,
+              sx + 4.6 - i * 0.6, sy - 15.4 + i * 1.6], i % 2 ? "#e8c878" : "#f6e4b0");
+    }
+    P(ctx, [sx - 5.2, sy - 11.4, sx - 9.8, sy - 15.4 + Math.sin(t / 420) * 1.2, sx - 4, sy - 13], "#f6e4b0"); // tail
+
   }
   ctx.restore();
 }
@@ -9388,6 +10215,11 @@ function render(t) {
     ents.push({ s: BAZAAR.x + BAZAAR.y + 0.3, kind: "bazaar" });
     ents.push({ s: ANCIENT.x + ANCIENT.y + 0.3, kind: "ancient" });
     ents.push({ s: COLOSSEUM.x + COLOSSEUM.y + 0.3, kind: "colosseum" });
+    ents.push({ s: DRAGON_ALTAR.x + DRAGON_ALTAR.y + 0.3, kind: "altar" });   // v39
+    /* v39 PART B: the orb is derived per 48-hour window, not baked into the
+       feature list — same reason the meteor sites are pushed separately. */
+    const orb39 = goldenOrbSite();
+    if (orb39) ents.push({ s: orb39.x + orb39.y + 0.4, kind: "orb", f: orb39 });
   }
   /* v33: placed base pieces, sorted by x+y like every other entity. Surface
      only — a piece is stored in world coordinates and an interior is a
@@ -9486,6 +10318,8 @@ function render(t) {
     else if (e.kind === "bazaar") drawBazaarEntity(t);
     else if (e.kind === "ancient") drawAncientEntity(t);
     else if (e.kind === "colosseum") drawColosseumEntity(t);
+    else if (e.kind === "altar") drawDragonAltarEntity(t);    // v39 PART B
+    else if (e.kind === "orb") drawOrbNode(e.f, t);           // v39 PART B
     else if (e.kind === "basepiece") drawBasePiece(e.bp, t);   // v33
     else if (e.kind === "item") drawItemEntity(e.it, t);
     else if (e.kind === "player") drawPlayerEntity(e.p, e.name, t, e.isMe);
@@ -9832,6 +10666,22 @@ function updateMinimap() {
   el.style.display = "block";
 }
 
+/* v39 PART D: the countdown card. Read this string twice before changing
+   it — it must name NO cause. It does not say what started this, what could
+   stop it, who is holding what or where anything is standing; a player who
+   sees it learns only that the world has ten seconds left. Everything else
+   about it has to be worked out from what they were doing when it began,
+   which is the entire point. */
+function updateUnmakingHud() {
+  const el = document.getElementById("hudUnmaking");
+  if (!el) return;
+  if (!worldResetAt) { el.style.display = "none"; return; }
+  const left = Math.max(0, Math.ceil((worldResetAt - Date.now()) / 1000));
+  el.innerHTML = `<div class="un-head">THE WORLD IS UNMAKING</div>` +
+                 `<div class="un-count">${left}</div>`;
+  el.style.display = "block";
+}
+
 function updateHUD(dayT) {
   const w = equippedWeapon();
   const hpPct = Math.round(me.hp);
@@ -9863,6 +10713,7 @@ function updateHUD(dayT) {
 
   hudZone.style.display = inSafeZone(me.x, me.y) ? "block" : "none";
   updateMinimap();                     // v35 PART A
+  updateUnmakingHud();                 // v39 PART D
   hpBar.style.width = (me.hp / me.maxHp * 100) + "%";
   hpBar.classList.toggle("low", me.hp / me.maxHp < 0.35);
 
@@ -9976,14 +10827,20 @@ const KEYBIND_DEFAULTS = { up: "w", down: "s", left: "a", right: "d", interact: 
   /* v35: the CHARACTER panel (reclassing). K was the natural remaining
      letter after v33 took B — it joins the table rather than being
      hardcoded, so it inherits remapping, conflict-checking and persistence. */
-  character: "k" };
+  character: "k",
+  /* v39: the FAST TRAVEL panel — a menu of the world's fixed landmarks, so
+     M ("map") is the letter. Deliberately NOT T: v23's own rebinding gate
+     moves `up` onto T to prove a rebind takes, and a default sitting there
+     would make that rebind a duplicate and fail a test that is testing
+     something else entirely. Same machinery as every binding above. */
+  travel: "m" };
 /* display order + labels for the remapping screen */
 const KEYBIND_LABELS = [
   ["up", "Move up"], ["down", "Move down"], ["left", "Move left"], ["right", "Move right"],
   ["interact", "Gather / pick up / tame"], ["attack", "Attack"], ["inventory", "Inventory"],
   ["craft", "Crafting"], ["pets", "Companions"], ["dive", "Dive"], ["block", "Block"],
   ["ability", "Class ability"], ["mount", "Mount / dismount"],
-  ["build", "Build"], ["character", "Character"],
+  ["build", "Build"], ["character", "Character"], ["travel", "Fast travel"],
 ];
 let KEYBINDS = Object.assign({}, KEYBIND_DEFAULTS);
 let kbCapture = null;           // action awaiting a keypress, or null
@@ -10281,7 +11138,8 @@ function refreshHelpLine() {
     K("pets") + " companions" + dot +
     K("ability") + " class ability" + dot +
     K("build") + " build" + dot +
-    K("character") + " character";        // v35
+    K("character") + " character" + dot +   // v35
+    K("travel") + " fast travel";           // v39
 }
 
 /* --- PART B/E: the settings panel ----------------------------------------- */

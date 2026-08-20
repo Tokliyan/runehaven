@@ -151,14 +151,22 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                       "fire_dragon", "glow_moth",                         // v18
                       "water_dragon",                                     // v21
                       "storm_dragon", "shadow_dragon",                    // v22
-                      "crystal_golem", "krakenling", "salamander_king"];  // v25
+                      "crystal_golem", "krakenling", "salamander_king",   // v25
+                      // v39: the Elder trio. All three are drawn through the
+                      // same chain — the Golem Elder as a wild mob AND as a
+                      // companion, the other two as companions.
+                      "golem_elder", "dragon_elder", "unicorn_elder"];
     const MOBK = ["goblin", "bandit", "troll", "boar", "bear", "griffin", "phoenix",
                   "dark_wraith",                                          // v18
                   "sea_serpent",                                          // v21
                   // v25: the Salamander King's hostile rampage form. It is
                   // tameable:true, so it renders through drawSpecies like the
                   // v14 beasts — sweep every mob state over that path too.
-                  "salamander_king"];
+                  "salamander_king",
+                  // v39: the Golem Elder's hostile form is tameable:true, so
+                  // it renders through drawSpecies exactly as the v14 beasts
+                  // do — sweep every mob state over that path too.
+                  "golem_elder"];
     let n = 0;
     if (window.drawUnit) {
       for (const cls of CLS) {
@@ -469,6 +477,64 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         process.exit(1);
       }
       if (beforeB) window.debugSetPlayer({ x: beforeB.x, y: beforeB.y, inv: beforeB.inv });
+    }
+    /* v39: the two set pieces this version adds to the world, plus the one
+       object in it that only exists inside a 48-hour window. None of them is
+       guaranteed to be on camera during the 5-frame boot — the altar is 34
+       tiles from the Tower and the orb may already be claimed — so both art
+       paths are swept directly, and then the real world is walked to so the
+       entity pass that dispatches to them runs for real. */
+    if (window.drawDragonAltarEntity && window.drawOrbNode && window.debugV39Info) {
+      const v39 = window.debugV39Info();
+      for (let i = 0; i < 4; i++) {
+        window.drawDragonAltarEntity(600 + i * 400);
+        window.drawOrbNode({ x: v39.TOWER.x + 0.5, y: v39.TOWER.y + 0.5, h: 0.5 }, 600 + i * 400);
+        n += 2;
+      }
+      if (window.debugSetPlayer) {
+        const beforeV = window.debugWorldInfo().player;
+        // stand at the altar, then at the Tower, pumping real frames at each
+        for (const at of [[v39.DRAGON_ALTAR.x, v39.DRAGON_ALTAR.y + 2],
+                          [v39.TOWER.x, v39.TOWER.y + 2]]) {
+          window.debugSetPlayer({ x: at[0], y: at[1] });
+          for (let f = 500; f < 506; f++) {
+            const q = rafQ; rafQ = [];
+            for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+            n += 1;
+          }
+        }
+        // the Golem Elder actually standing in the world, on camera
+        if (v39.GOLEM_ELDER) {
+          window.debugSetPlayer({ x: v39.GOLEM_ELDER.x + 1.5, y: v39.GOLEM_ELDER.y + 1.5 });
+          for (let f = 520; f < 528; f++) {
+            const q = rafQ; rafQ = [];
+            for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+            n += 1;
+          }
+        } else {
+          console.log('COVERAGE GAP: no Golem Elder in the world to render');
+          process.exit(1);
+        }
+        // ...and the Unicorn Elder, wherever this seed put it
+        const uw = v39.unicornElderWild;
+        if (uw) {
+          window.debugSetPlayer({ x: uw.x, y: uw.y });
+          for (let f = 540; f < 548; f++) {
+            const q = rafQ; rafQ = [];
+            for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+            n += 1;
+          }
+        } else {
+          console.log('COVERAGE GAP: no Unicorn Elder in the world to render');
+          process.exit(1);
+        }
+        if (v39.orbSite === null) {
+          console.log('COVERAGE GAP: this window\'s Golden Orb was already claimed');
+          process.exit(1);
+        }
+        console.log('v39 set pieces rendered — altar, orb, Golem Elder, Unicorn Elder');
+        if (beforeV) window.debugSetPlayer({ x: beforeV.x, y: beforeV.y });
+      }
     }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);

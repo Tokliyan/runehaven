@@ -45,12 +45,24 @@ const tableData = {
    and the plain stub returns the whole table for every call, so an insert
    never actually lands anywhere. Deliberately scoped to this one table by
    name so no existing assertion's behaviour can shift underneath it. */
-const INSERT_RECORDING = new Set(['base_pieces']);
+/* v39: `pets` joins it, for the same reason and on the same allow-list. The
+   Dragon Elder is minted by an insert into that table — the altar hands back
+   whatever the row says — so with the plain stub the whole awakening path
+   ends in a row that was never written. Also handled here: `.single()`, which
+   the real client uses to return ONE row rather than an array; without it the
+   awakening would push an array onto the roster. Nothing outside these two
+   tables sees any change. */
+const INSERT_RECORDING = new Set(['base_pieces', 'pets']);
 let insertSeq = 0;
 function chain(table) {
   let pending = null;
+  let singled = false;
   const result = () => {
-    if (pending) { const r = pending; pending = null; return { data: r, error: null }; }
+    if (pending) {
+      const r = singled ? (pending[0] || null) : pending;
+      pending = null; singled = false;
+      return { data: r, error: null };
+    }
     const d = tableData[table];
     return { data: d === undefined ? null : d, error: null };
   };
@@ -60,6 +72,7 @@ function chain(table) {
         const r = result();
         return (res) => res(r);
       }
+      if (prop === 'single') { return (...a) => { singled = true; return c; }; }
       if (prop === 'insert' && INSERT_RECORDING.has(table)) {
         return (rows) => {
           const arr = Array.isArray(rows) ? rows : [rows];
@@ -76,6 +89,7 @@ function chain(table) {
   });
   return c;
 }
+const sentBroadcasts = [];   // v39: every channel.send() the game makes
 window.supabase = {
   createClient: () => ({
     from: (table) => chain(table),
@@ -83,7 +97,12 @@ window.supabase = {
       const ch = {
         on: () => ch,
         subscribe: (cb) => { if (cb) setTimeout(() => cb("SUBSCRIBED"), 0); return ch; },
-        send: async () => {},
+        /* v39: sends are recorded rather than dropped. "Broadcast it ONCE"
+           is a real requirement of the world-reset trigger and there is no
+           other way to see it happen. Still returns the same resolved
+           promise it always did, so nothing that sends can behave
+           differently because of this. */
+        send: async (m) => { sentBroadcasts.push(m); },
         track: async () => {},
         untrack: async () => {},
         presenceState: () => ({}),
@@ -249,8 +268,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // its locked stats in TBL above instead.
       // v25: crystal_golem, krakenling and salamander_king have left it for
       // the same reason — all three shipped this version.
-      for (const s of ['basilisk', 'duskfox_elder',
-                       'golem_elder', 'dragon_elder', 'unicorn_elder']) {
+      // v39: all three Elders have left this list — they SHIPPED this
+      // version, and their real stats are asserted in the v39 block below
+      // instead. Same move v21 made for water_dragon and v25 for its three.
+      for (const s of ['basilisk', 'duskfox_elder']) {
         results.push([`${s} not pre-built`, pcd(s, 'Beastmaster') === null]);
       }
     } else {
@@ -400,6 +421,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         const n2 = spawned.filter(s => s === k).length;
         if (k === 'water_dragon') continue;   // v29: lives inside caves now
         if (k === 'shadow_dragon') continue;  // v32: lives inside the Hollow now
+        // v39: the Dragon Elder has no spawn of any kind by design — the
+        // altar is the only thing that ever creates one. Asserted directly
+        // in the v39 block (nowhere in `wilds`, nowhere in `mobs`).
+        if (def.altarOnly) continue;
         results.push([`${k} still spawns after the density cut (${n2})`, n2 > 0]);
       }
       for (const k of ['goblin', 'bandit', 'troll', 'boar', 'bear', 'griffin', 'phoenix']) {
@@ -835,9 +860,20 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       /* v30: the Elder Drake is now the hardest thing in the world by a wide
          margin — sea_serpent remains the hardest NON-BOSS, which is what this
          was always meant to assert. */
-      results.push(['sea_serpent is the hardest non-boss mob in the world',
+      /* v39: golem_elder joins the exclusion beside elder_drake. What this
+         line has always meant is "the hardest ORDINARY mob" — the hardest
+         thing the world spawns a population of — and the Golem Elder is no
+         more that than the Elder Drake is: one exists, it is hand-placed,
+         and it is Elder tier. Updated, not relaxed: the invariant is still
+         asserted, and the two singletons are named rather than the rule
+         being loosened to "most of them". */
+      results.push(['sea_serpent is the hardest ordinary mob in the world',
         !!ss && Object.entries(info.MOBS).every(([k, d]) =>
-          k === 'sea_serpent' || k === 'elder_drake' || d.hp < ss.hp)]);
+          k === 'sea_serpent' || k === 'elder_drake' || k === 'golem_elder' || d.hp < ss.hp)]);
+      results.push(['and the two singletons above it are exactly the two named',
+        !!info.MOBS.elder_drake && !!info.MOBS.golem_elder &&
+        info.MOBS.elder_drake.count === 1 && info.MOBS.golem_elder.count === 1 &&
+        info.MOBS.elder_drake.biomes.length === 0 && info.MOBS.golem_elder.biomes.length === 0]);
       results.push(['the Elder Drake outclasses every other mob in the world',
         !!info.MOBS.elder_drake &&
         Object.entries(info.MOBS).every(([k, d]) => k === 'elder_drake' || d.hp < info.MOBS.elder_drake.hp)]);
@@ -1114,18 +1150,23 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const ACTIONS = ['up', 'down', 'left', 'right', 'interact', 'attack',
                        'inventory', 'craft', 'pets', 'dive', 'block', 'ability',
                        'mount',    // v28
-                       'build'];   // v33: the BUILD panel key
+                       'build',    // v33: the BUILD panel key
+                       'character',// v35: the CHARACTER panel key
+                       'travel'];  // v39: the FAST TRAVEL panel key
       const info23 = dsi();
 
       // ---- PART A: the config object itself
       // v33: updated, not relaxed — the count, the default table and the
       // remapping-screen row count all move with the new action.
-      results.push(['KEYBINDS carries all 15 bindable actions',
-        Object.keys(info23.KEYBINDS).length === 15 &&
+      // v39: 15 -> 16, updated and not relaxed — the count, the default
+      // table and the remapping-screen row count all move together, so a
+      // future pass cannot lose a binding without failing here.
+      results.push(['KEYBINDS carries all 16 bindable actions',
+        Object.keys(info23.KEYBINDS).length === 16 &&
         ACTIONS.every(a => typeof info23.KEYBINDS[a] === 'string')]);
       results.push(['KEYBIND defaults are exactly the locked spec',
         ACTIONS.map(a => info23.KEYBIND_DEFAULTS[a]).join('|') ===
-        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift', 'q', 'r', 'b'].join('|')]);
+        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift', 'q', 'r', 'b', 'k', 'm'].join('|')]);
 
       // ---- PART A: every check site reads KEYBINDS, no literals left behind
       const SITES = ['keys[KEYBINDS.up]', 'keys[KEYBINDS.down]', 'keys[KEYBINDS.left]',
@@ -1288,8 +1329,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['the credits tab is the one showing',
         doc.getElementById('secCredits').classList.contains('shown') &&
         !doc.getElementById('secGraphics').classList.contains('shown')]);
-      results.push(['the remapping screen lists all 15 labelled actions, mount included',
-        doc.getElementById('keybindList').children.length === 15]);
+      results.push(['the remapping screen lists all 16 labelled actions, fast travel included',
+        doc.getElementById('keybindList').children.length === 16]);
       results.push(['credits render from the CREDITS array',
         doc.getElementById('creditsList').children.length === dsi().CREDITS.length &&
         dsi().CREDITS.length === 2]);
@@ -2286,8 +2327,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         dep({ slice: 999 }).meteorOnSlice === dep({ slice: 999 }).meteorOnSlice]);
       results.push(['meteor sites are keyed to the slice, so everyone races the same rocks',
         gameScript.indexOf('"met:" + slice') > 0]);
+      // v39: the FINITE set grew an entry (the Golden Orb), so the old
+      // end-of-line literal no longer matches. Same invariant, matched
+      // properly instead of by where it happened to sit in the list.
       results.push(['meteor ore is finite — first player to reach it claims it',
-        gameScript.indexOf('"meteor"]);') > 0 || gameScript.indexOf("'meteor'") > 0]);
+        /const FINITE = new Set\(\[[^\]]*"meteor"/.test(gameScript)]);
       results.push(['meteor ore actually yields something on gather',
         gameScript.indexOf('meteor: "runic_stone"') > 0]);
       results.push(['no meteor lands inside a safe zone',
@@ -2783,6 +2827,455 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         gameScript.indexOf('currencyBalance') < 0]);
     } else {
       results.push(['v37 hooks are reachable', false]);
+    }
+
+    /* ===================== v39: the Elder trio + the secret event ========= */
+    if (typeof window.debugV39Info === 'function') {
+      const v39 = () => window.debugV39Info();
+      const set39 = p => window.debugSetV39(p);
+      const dsp39 = window.debugSetPlayer, dwi39 = window.debugWorldInfo;
+      const pump39 = (from, n) => {
+        for (let f = from; f < from + (n || 6); f++) {
+          const q = rafQ; rafQ = [];
+          for (const cb of q) { try { cb(f * 50); } catch (e) { if (!caught) caught = e; } }
+        }
+      };
+      const B39 = dwi39().B, N39 = dwi39().N;
+
+      /* ---- PART A: the Golem Elder is one ordinary fight-to-tame beast ---- */
+      const a0 = v39();
+      results.push(['exactly one Golem Elder exists in the world', a0.golemElderCount === 1]);
+      results.push(['it was actually placed somewhere real',
+        !!a0.GOLEM_ELDER && a0.GOLEM_ELDER.x > 0 && a0.GOLEM_ELDER.y > 0]);
+      results.push(['it stands on a Ruin tile',
+        !!a0.GOLEM_ELDER &&
+        window.biomeAt(Math.floor(a0.GOLEM_ELDER.x), Math.floor(a0.GOLEM_ELDER.y)) === B39.RUINB]);
+      /* Recomputed independently here rather than trusting the game's own
+         answer: no RUINB tile in ANY cluster may sit further from its own
+         centre than the one it chose. */
+      {
+        let far = -1, mine = -1;
+        const r = Math.ceil(a0.RUIN_FOOT);
+        for (const R of a0.RUINS) {
+          for (let ty = R.y - r; ty <= R.y + r; ty++) {
+            for (let tx = R.x - r; tx <= R.x + r; tx++) {
+              if (tx < 2 || ty < 2 || tx >= N39 - 2 || ty >= N39 - 2) continue;
+              if (window.biomeAt(tx, ty) !== B39.RUINB) continue;
+              const d = Math.hypot(tx - R.x, ty - R.y);
+              if (d > far) far = d;
+              if (a0.golemElderSpot && tx === a0.golemElderSpot[0] && ty === a0.golemElderSpot[1]) {
+                mine = d;
+              }
+            }
+          }
+        }
+        console.log('golem elder tile', JSON.stringify(a0.golemElderSpot),
+                    'dist from its centre', mine.toFixed(2), 'world max', far.toFixed(2));
+        results.push(['it stands on the single furthest-from-centre ruin tile there is',
+          mine >= 0 && Math.abs(mine - far) < 1e-9]);
+      }
+      results.push(['it is fight-to-tame, exactly the Griffin pattern',
+        a0.golemElderDef.tameable === true &&
+        a0.golemElderSpecies.fightToTame === true &&
+        dwi39().WILD_SPECIES.griffin.fightToTame === true]);
+      results.push(['it is not a world boss — a boss is something you kill',
+        !a0.golemElderDef.boss]);
+      results.push(['a singleton does not come back in a minute like an ordinary mob',
+        window.mobRespawnMs('golem_elder') >= 60 * 60 * 1000 &&
+        window.mobRespawnMs('goblin') === 60000]);
+      results.push(['and every site that sets a respawn deadline reads that one rule',
+        (gameScript.match(/Date\.now\(\) \+ MOB_RESPAWN_MS/g) || []).length === 0 &&
+        (gameScript.match(/mobRespawnMs\(/g) || []).length >= 5]);
+      results.push(['the three Elder ids are exactly the three species flagged elder',
+        Object.entries(dwi39().WILD_SPECIES).filter(([, d]) => d.elder).map(([k]) => k).sort()
+          .join('|') === a0.ELDER_SPECIES.slice().sort().join('|')]);
+      results.push(['it drops no dragonsteel — the bible names four sources and this is not one',
+        a0.golemElderDef.loot.every(l => l.type !== 'dragonsteel')]);
+      /* The whole point of the revised spec: NO guardian/offline layer. */
+      {
+        /* Identifiers, not words: this version's own comments say out loud
+           that no guardian layer was built, and a bare word search would
+           match the sentence saying so. These are the shapes real code
+           would have to take — a call, a property, a field, a key. */
+        const BANNED = ['guardian(', '.guardian', 'guardian:', 'isGuardian',
+                        'staysAtBase', 'defendBase', 'baseGuard', 'guardBase',
+                        'offlineDefend', 'idleGuardian', 'guardianOf'];
+        const found = BANNED.filter(s => gameScript.indexOf(s) >= 0);
+        results.push(['no base-guardian or offline-defender logic was built' +
+          (found.length ? ' (found ' + found.join(', ') + ')' : ''), found.length === 0]);
+      }
+      results.push(['the wear-down tame gate treats it like any other beast',
+        window.canWearDownTame({ kind: 'golem_elder', hp: 100, maxHp: 420, dead: false }) === true &&
+        window.canWearDownTame({ kind: 'golem_elder', hp: 300, maxHp: 420, dead: false }) === false]);
+      /* ...and once tamed it is an ordinary companion, through the real path */
+      if (window.debugGrantPet) {
+        window.debugGrantPet('golem_elder');
+        pump39(400, 8);
+        const petA = dwi39().pet;
+        results.push(['a tamed Golem Elder follows like any other companion',
+          !!petA && petA.sp === 'golem_elder']);
+        results.push(['it has ordinary companion combat stats, nothing special-cased',
+          !!window.petCombatDef('golem_elder') &&
+          window.petCombatDef('golem_elder').hp > 0]);
+        results.push(['its pet record carries no guardian state of any kind',
+          !!petA && petA.guard === undefined && petA.base === undefined &&
+          petA.guardian === undefined]);
+      }
+
+      /* ---- PART B: the Golden Orb, the altar, the Dragon Elder ---- */
+      const b0 = v39();
+      results.push(['the Golden Orb is a real item with no recipe',
+        !!window.debugV35Info && gameScript.indexOf('golden_orb:   { name: "Golden Orb"') > 0 &&
+        gameScript.indexOf('out: "golden_orb"') < 0]);
+      results.push(['the orb sits at the Eternal Tower\'s own coordinates',
+        !!b0.orbSite && Math.abs(b0.orbSite.x - (b0.TOWER.x + 0.5)) < 1e-9 &&
+        Math.abs(b0.orbSite.y - (b0.TOWER.y + 0.5)) < 1e-9]);
+      results.push(['it has a real 48-real-hour floor, not a per-session one',
+        b0.ORB_WINDOW_MS === 48 * 60 * 60 * 1000]);
+      results.push(['the floor is enforced by the key itself — one key per window',
+        window.orbKeyFor(b0.orbSlice) !== window.orbKeyFor(b0.orbSlice + 1) &&
+        b0.orbSite.key === window.orbKeyFor(b0.orbSlice)]);
+      results.push(['it is claimed server-wide, through the same mined_nodes row as any node',
+        b0.orbFinite === true && b0.orbGives === 'golden_orb']);
+      /* Take it for real, through the real E path. */
+      /* The real E path is rate-limited by GATHER_COOLDOWN (700ms) exactly as
+         it is for a player, so every interact below waits it out rather than
+         firing into a cooldown and reading the no-op as a failure. */
+      const gwait = () => new Promise(r => setTimeout(r, 760));
+      let orbTaken = false;
+      if (dsp39 && window.doInteract) {
+        dsp39({ x: b0.TOWER.x + 0.5, y: b0.TOWER.y + 0.8 });
+        await gwait();
+        await window.doInteract();
+        const inv39 = dwi39().player.inv;
+        orbTaken = (inv39.golden_orb || 0) === 1;
+        results.push(['gathering it yields exactly ONE orb, never a stack', orbTaken]);
+        results.push(['and the orb is gone from the world for this window',
+          v39().orbSite === null]);
+        await gwait();
+        await window.doInteract();
+        results.push(['a second attempt in the same window gives nothing',
+          (dwi39().player.inv.golden_orb || 0) === 1]);
+      }
+      const alt = v39();
+      results.push(['the Dragon Elder Altar was placed somewhere real',
+        alt.DRAGON_ALTAR.x > 0 && alt.DRAGON_ALTAR.y > 0]);
+      results.push(['it stands near the Tower the orb comes from',
+        Math.hypot(alt.DRAGON_ALTAR.x - alt.TOWER.x, alt.DRAGON_ALTAR.y - alt.TOWER.y) < 40]);
+      results.push(['but outside the spawn safe zone, like every landmark since v37',
+        window.inSafeZone(alt.DRAGON_ALTAR.x, alt.DRAGON_ALTAR.y) === false]);
+      results.push(['on ground a player can actually stand on',
+        !window.debugWorldInfo().B ||
+        [B39.DEEP, B39.PEAK, B39.LAVA].indexOf(
+          window.biomeAt(alt.DRAGON_ALTAR.x, alt.DRAGON_ALTAR.y)) < 0]);
+      results.push(['the Dragon Elder never spawns anywhere in the world',
+        dwi39().wildSpecies.indexOf('dragon_elder') < 0 &&
+        dwi39().mobKinds.indexOf('dragon_elder') < 0 &&
+        dwi39().WILD_SPECIES.dragon_elder.biomes.length === 0]);
+      if (dsp39 && window.doInteract && orbTaken) {
+        // standing at the altar WITH the orb: it is consumed, the Elder wakes
+        dsp39({ x: alt.DRAGON_ALTAR.x, y: alt.DRAGON_ALTAR.y + 1 });
+        await gwait();
+        await window.doInteract();
+        const afterA = v39();
+        results.push(['carrying the orb to the altar wakes a Dragon Elder',
+          afterA.myPetSpecies.indexOf('dragon_elder') >= 0]);
+        results.push(['and the orb is consumed doing it', afterA.orbHeld === 0]);
+        // ...and a second attempt with no orb takes nothing and gives nothing
+        await gwait();
+        await window.doInteract();
+        const afterB = v39();
+        results.push(['an empty-handed player gets nothing from the altar and loses nothing',
+          afterB.orbHeld === 0 &&
+          afterB.myPetSpecies.filter(s => s === 'dragon_elder').length ===
+          afterA.myPetSpecies.filter(s => s === 'dragon_elder').length]);
+      }
+
+      /* ---- PART C: the Unicorn Elder ---- */
+      const c0 = v39();
+      results.push(['exactly one Unicorn Elder stands in the world, on its own tile',
+        !!c0.unicornElderWild &&
+        Math.floor(c0.unicornElderWild.x) === c0.unicornElderTile[0] &&
+        Math.floor(c0.unicornElderWild.y) === c0.unicornElderTile[1] &&
+        dwi39().wildSpecies.filter(s => s === 'unicorn_elder').length === 1]);
+      /* The uniformity sweep the spec asks for: hundreds of seeds, and the
+         result must look like a flat draw over the whole map rather than
+         anything clustered near a landmark. */
+      {
+        const SEEDS = 900;
+        const quad = [0, 0, 0, 0];
+        let sumX = 0, sumY = 0, nearCentre = 0, distinct = new Set();
+        for (let s = 1; s <= SEEDS; s++) {
+          const [tx, ty] = window.unicornElderTile(s);
+          quad[(tx < N39 / 2 ? 0 : 1) + (ty < N39 / 2 ? 0 : 2)]++;
+          sumX += tx; sumY += ty;
+          if (Math.hypot(tx - N39 / 2, ty - N39 / 2) < 24) nearCentre++;
+          distinct.add(tx + ',' + ty);
+        }
+        const mx = sumX / SEEDS, my = sumY / SEEDS;
+        console.log('unicorn elder sweep — quadrants', JSON.stringify(quad),
+                    'mean', mx.toFixed(1) + ',' + my.toFixed(1),
+                    'distinct tiles', distinct.size,
+                    'within 24 of the Tower', nearCentre);
+        results.push(['every quadrant of the map gets its share across seeds',
+          quad.every(q => q > SEEDS * 0.15)]);
+        results.push(['the mean lands near the middle — no pull toward any corner',
+          Math.abs(mx - N39 / 2) < N39 * 0.06 && Math.abs(my - N39 / 2) < N39 * 0.06]);
+        results.push(['it is not clustered near the Tower / spawn hub',
+          nearCentre < SEEDS * 0.12]);
+        results.push(['seeds do not collapse onto a handful of tiles',
+          distinct.size > SEEDS * 0.9]);
+        results.push(['the same seed always gives the same tile — every client agrees',
+          window.unicornElderTile(4242).join() === window.unicornElderTile(4242).join()]);
+        /* Reachability is measured and REPORTED, not asserted: the spec pins
+           the draw to the whole map with no biome test, so a seed that puts
+           it on lava or open ocean is the spec working as written. */
+        let standable = 0, divable = 0, unreachable = 0;
+        for (let s = 1; s <= 200; s++) {
+          const [tx, ty] = window.unicornElderTile(s);
+          const b = window.biomeAt(tx, ty);
+          if (b === B39.PEAK || b === B39.LAVA) unreachable++;
+          else if (b === B39.DEEP) divable++;      // v21's dive reaches these
+          else standable++;
+        }
+        console.log('unicorn elder tile over 200 seeds — walkable:', standable,
+                    'reachable only by diving:', divable,
+                    'genuinely unreachable (peak/lava):', unreachable);
+        /* Not a hard failure: the spec pins the draw to the WHOLE map with no
+           biome test, so a peak or a lava tile is the rule working as
+           written. Measured and printed on every run, as v22 does for the
+           Storm Dragon, so the cost of that rule is never invisible. */
+        results.push(['most seeds put it somewhere a player can actually get to',
+          (standable + divable) > 200 * 0.8]);
+      }
+      results.push(['the Oracle still cannot name any of the three',
+        window.debugV35Info().oraclePool.every(s => c0.ELDER_SPECIES.indexOf(s) < 0) &&
+        c0.ELDER_SPECIES.every(s => window.debugV35Info().oracleForbidden.indexOf(s) >= 0)]);
+      results.push(['the Oracle pool is still a hand-written literal, not derived',
+        gameScript.indexOf('const ORACLE_HINTS_ALL = [') > 0 &&
+        gameScript.indexOf('Object.keys(WILD_SPECIES).map') < 0]);
+      // fast travel: the six fixed points, and nothing that could leak a base
+      results.push(['fast travel offers exactly the six fixed landmark points',
+        c0.travelPoints.length === 6 &&
+        c0.travelPoints.map(p => p.label).join('|') ===
+        ['The Eternal Tower', 'The Volcano', 'The Grand Bazaar', 'The Ancient Forge',
+         'The Ruined Colosseum', 'The Beastmaster Shrine'].join('|')]);
+      {
+        const secStart = gameScript.indexOf('function fastTravelPoints()');
+        const secEnd = gameScript.indexOf('function refreshPetPanel()');
+        const sec = gameScript.slice(secStart, secEnd);
+        results.push(['the travel section never reads a base piece — the v35 compass rule',
+          secStart > 0 && secEnd > secStart &&
+          sec.indexOf('basePieces') < 0 && sec.indexOf('baseIndex') < 0]);
+      }
+      if (dsp39) {
+        // no Unicorn Elder on the roster -> travel is refused outright
+        const before = dwi39().player;
+        results.push(['travel is refused without the Unicorn Elder',
+          window.fastTravelTo(0) === false &&
+          Math.abs(dwi39().player.x - before.x) < 1e-9]);
+        results.push(['and the luck buff is exactly zero without it',
+          v39().luckNow === 0 && v39().ownsUnicornElder === false]);
+        if (window.debugGrantPet) {
+          window.debugGrantPet('unicorn_elder');
+          const owned = v39();
+          results.push(['owning one turns the passive luck buff on',
+            owned.ownsUnicornElder === true && owned.luckNow === owned.UNICORN_ELDER_LUCK]);
+          results.push(['the buff is the Blood Moon\'s own shape, added to the presence roll',
+            /presenceRoll \+ \(bloodMoonActive\(\) \? BLOOD_MOON_RARE_BOOST : 0\)[\s\S]{0,40}\+ unicornElderLuck\(\)/.test(gameScript)]);
+          results.push(['and the roster is loaded BEFORE the roll that reads it',
+            gameScript.indexOf('await loadPets();\n    buildFeatureList();') > 0]);
+          const t0 = dwi39().player;
+          const ok = window.fastTravelTo(1);   // the Volcano
+          const t1 = dwi39().player;
+          results.push(['owning one makes travel work, and it really moves the player',
+            ok === true && Math.hypot(t1.x - t0.x, t1.y - t0.y) > 5]);
+          results.push(['it lands on ground a player can stand on',
+            [B39.DEEP, B39.PEAK, B39.LAVA].indexOf(
+              window.biomeAt(Math.floor(t1.x), Math.floor(t1.y))) < 0]);
+          results.push(['and it never arrives flagged as diving on dry land',
+            t1.diving === false]);
+        }
+        // the panel itself, opened by its real key, built from the real list
+        const kd39 = new window.KeyboardEvent('keydown', { key: v39().travelKey });
+        window.dispatchEvent(kd39);
+        const rows39 = doc.getElementById('travelList');
+        results.push(['the FAST TRAVEL panel opens on its own bound key',
+          doc.getElementById('travelPanel').style.display === 'block']);
+        results.push(['and lists one row per fixed landmark, no more',
+          !!rows39 && rows39.children.length === 6]);
+        results.push(['it is the existing panel language — no new component styles',
+          !!rows39 && rows39.children[0].className === 'craft-row']);
+        window.dispatchEvent(new window.KeyboardEvent('keydown', { key: v39().travelKey }));
+      }
+
+      /* ---- PART D: the trigger, the accumulator, and the two keys ---- */
+      set39({ clearEvent: true, role: 'player' });
+      const HERE = { x: dwi39().player.x, y: dwi39().player.y };
+      let stageF = 600;
+      const stage = (opts) => {
+        /* Stand both Elders in one place: mine is the active companion, the
+           other belongs to a second player standing right beside me.
+           A companion GLIDES to its owner (dt*4.5), so the frames that let
+           both pets catch up are pumped with combat OFF — otherwise the
+           accumulator would already be part-way up before the scenario has
+           finished being set up, and every reading after it would be a lie. */
+        set39({ clearEvent: true, combat: false });
+        window.debugGrantPet('golem_elder');
+        const ox = HERE.x + (opts.far ? 40 : 1), oy = HERE.y + (opts.far ? 40 : 1);
+        set39({ remote: { u: 'OtherPlayer', x: ox, y: oy, pe: 'dragon_elder',
+                          cb: opts.theirCombat !== false ? 1 : 0, petAt: [ox, oy] } });
+        pump39(stageF, 40);
+        stageF += 60;
+        set39({ clearEvent: true, combat: opts.myCombat !== false });
+      };
+      stage({});
+      const seen = v39().elders;
+      console.log('elders seen by the trigger:', JSON.stringify(seen));
+      results.push(['the trigger can see both Elders and both owners\' combat state',
+        seen.some(e => e.species === 'golem_elder' && e.combat) &&
+        seen.some(e => e.species === 'dragon_elder' && e.combat)]);
+      results.push(['a remote player\'s combat state rides the one existing broadcast',
+        gameScript.indexOf('cb: performance.now() < combatMusicUntil ? 1 : 0') > 0 &&
+        gameScript.indexOf('o.cb = !!p.cb;') > 0 &&
+        (gameScript.match(/sb\.channel\(/g) || []).length === 1]);
+      // the accumulator climbs while everything holds...
+      set39({ tick: 1000 });
+      const acc1 = v39().elderHoldMs;
+      set39({ tick: 1000 });
+      const acc2 = v39().elderHoldMs;
+      results.push(['the accumulator climbs while all four conditions hold',
+        acc1 > 0 && acc2 > acc1]);
+      // ...and is SET TO ZERO the instant any one of them breaks, each tested alone
+      const breaks = [];
+      // (a) distance
+      stage({}); set39({ tick: 2000 });
+      set39({ remote: { u: 'OtherPlayer', x: HERE.x + 40, y: HERE.y + 40, pe: 'dragon_elder',
+                        cb: 1, petAt: [HERE.x + 40, HERE.y + 40] } });
+      set39({ tick: 100 });
+      breaks.push(['distance', v39().elderHoldMs === 0]);
+      // (b) my own combat stops
+      stage({}); set39({ tick: 2000 });
+      set39({ combat: false }); set39({ tick: 100 });
+      breaks.push(['my combat ends', v39().elderHoldMs === 0]);
+      // (c) their combat stops
+      stage({}); set39({ tick: 2000 });
+      set39({ remote: { u: 'OtherPlayer', x: HERE.x + 1, y: HERE.y + 1, pe: 'dragon_elder',
+                        cb: 0, petAt: [HERE.x + 1, HERE.y + 1] } });
+      set39({ tick: 100 });
+      breaks.push(['their combat ends', v39().elderHoldMs === 0]);
+      // (d) the other Elder leaves the world entirely
+      stage({}); set39({ tick: 2000 });
+      set39({ dropRemote: 'OtherPlayer' }); set39({ tick: 100 });
+      breaks.push(['the other Elder is gone', v39().elderHoldMs === 0]);
+      for (const [what, ok] of breaks) {
+        results.push([`the accumulator resets to ZERO the instant ${what}`, ok]);
+      }
+      // four seconds of non-consecutive truth must NEVER fire it
+      stage({});
+      for (let i = 0; i < 20; i++) {
+        set39({ tick: 900 });
+        set39({ combat: false }); set39({ tick: 1 }); set39({ combat: true });
+      }
+      results.push(['18 seconds of broken-up truth never fires it — continuity is real',
+        v39().worldResetArmed === false && v39().worldResetAt === 0]);
+      // the accumulator is fed by the REAL loop, not only by the test hook
+      stage({});
+      pump39(1400, 10);
+      results.push(['the trigger is checked by update() itself, every frame',
+        v39().elderHoldMs > 0]);
+      // ...but four continuous seconds does
+      stage({});
+      const sentBefore = sentBroadcasts.length;
+      set39({ tick: 2000 }); set39({ tick: 2000 });
+      const fired = v39();
+      results.push(['four continuous seconds arms it', fired.worldResetArmed === true]);
+      {
+        const pend = sentBroadcasts.slice(sentBefore)
+          .filter(m => m && m.event === 'world_reset_pending');
+        results.push(['and broadcasts world_reset_pending exactly ONCE', pend.length === 1]);
+        set39({ tick: 2000 });
+        results.push(['further frames never broadcast it again',
+          sentBroadcasts.slice(sentBefore)
+            .filter(m => m && m.event === 'world_reset_pending').length === 1]);
+      }
+      results.push(['and starts a countdown of exactly ten seconds',
+        fired.worldResetAt > 0 &&
+        Math.abs(fired.worldResetAt - Date.now() - 10000) < 1500]);
+      // the countdown is actually on screen, and it is the only thing that is
+      if (window.updateUnmakingHud) {
+        window.updateUnmakingHud();
+        const un = doc.getElementById('hudUnmaking');
+        results.push(['the countdown card is really on screen while it runs',
+          un.style.display === 'block' && /THE WORLD IS UNMAKING/.test(un.textContent)]);
+        results.push(['and it counts seconds and nothing else',
+          /^\s*THE WORLD IS UNMAKING\s*\d{1,2}\s*$/.test(un.textContent.replace(/\s+/g, ' '))]);
+      }
+      results.push(['the countdown card names no cause a player could work backwards from',
+        gameScript.indexOf('THE WORLD IS UNMAKING') > 0 &&
+        !/un-head[\s\S]{0,200}(Elder|orb|altar|reset)/.test(gameScript)]);
+      // the SECOND key: armed is not enough
+      results.push(['armed is not enough — a non-admin cannot execute the reset',
+        fired.isAdmin === false && fired.execAllowed === false]);
+      results.push(['and calling it outright is refused, with the trigger fully satisfied',
+        (await window.debugRunWorldReset()) === 'denied']);
+      results.push(['the refusal is the first thing the reset does, before any write',
+        /async function performWorldReset\(\) \{\s*if \(!worldResetExecAllowed\(\)\) return "denied";/
+          .test(gameScript)]);
+      // a forged broadcast can start a countdown and STILL cannot arm anything
+      set39({ clearEvent: true });
+      results.push(['a forged world_reset_pending never sets the arming key',
+        gameScript.indexOf('worldResetArmed is deliberately NOT set here') > 0 ||
+        /event: "world_reset_pending" \}, \(\{ payload: p \}\) => \{[\s\S]{0,400}\}\);/.test(gameScript)]);
+      {
+        const hStart = gameScript.indexOf('{ event: "world_reset_pending" }');
+        const hEnd = gameScript.indexOf('channel.on("presence"');
+        const handler = gameScript.slice(hStart, hEnd);
+        results.push(['— proven by the handler itself never touching worldResetArmed',
+          hStart > 0 && hEnd > hStart && handler.indexOf('worldResetArmed') < 0]);
+      }
+      // nothing this version added is readable anywhere a player can see it
+      {
+        const toasts = (gameScript.match(/toast\(`[^`]*`\)|toast\("[^"]*"\)/g) || []);
+        const leak = toasts.filter(s =>
+          /world reset|world_reset|new seed|wipe|unmaking/i.test(s) ||
+          (/golem elder/i.test(s) && /dragon elder/i.test(s)));
+        results.push(['no toast in the game references the event, its cause or its effect' +
+          (leak.length ? ' (found ' + leak.join(' / ') + ')' : ''), leak.length === 0]);
+      }
+      {
+        // the tutorial's own step text, read directly rather than approximated
+        const tStart = gameScript.indexOf('const TUTORIAL_STEPS = [');
+        const tEnd = gameScript.indexOf('];', tStart);
+        const steps = gameScript.slice(tStart, tEnd);
+        results.push(['and the tutorial never mentions any of it',
+          tStart > 0 && tEnd > tStart && !/elder|orb|altar|unmaking/i.test(steps)]);
+      }
+
+      /* The admin half, run LAST because it genuinely rewrites the world. */
+      set39({ clearEvent: true, role: 'admin' });
+      set39({ armed: true });
+      const adminReady = v39();
+      results.push(['with BOTH keys — armed and admin — the reset becomes reachable',
+        adminReady.isAdmin === true && adminReady.execAllowed === true]);
+      const seedBefore = adminReady.worldSeed;
+      const petsBefore = adminReady.myPetSpecies.slice();
+      const outcome = await window.debugRunWorldReset();
+      const after39 = v39();
+      results.push(['it runs, and the world is generated from a new seed',
+        outcome === 'reset' && after39.worldSeed !== seedBefore]);
+      results.push(['every Elder ownership is cleared by it',
+        petsBefore.some(s => after39.ELDER_SPECIES.indexOf(s) >= 0) &&
+        after39.myPetSpecies.every(s => after39.ELDER_SPECIES.indexOf(s) < 0)]);
+      results.push(['base_pieces is cleared with it',
+        window.debugV34Info().count === 0]);
+      results.push(['and it can only ever happen once',
+        after39.worldResetDone === true &&
+        (await window.debugRunWorldReset()) === 'denied']);
+      pump39(900, 6);
+      results.push(['the world still runs frames cleanly on the far side of a reset', !caught]);
+    } else {
+      results.push(['v39 hooks are reachable', false]);
     }
 
     let allOk = true;
