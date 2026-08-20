@@ -2140,6 +2140,67 @@ function buildInterior(spaceId, anchor) {
       grid[y * INTERIOR_N + x] = (edge || n < 0.44) ? IN_WALL : IN_FLOOR;
     }
   }
+  /* CONNECTIVITY. Confirmed by a real reachability sweep that EVERY cave
+     had floor tiles the player could never reach — noise alone happily
+     produces sealed-off chambers, which is exactly the "I cannot enter
+     that second cavern" report. Flood-fill from the arrival point, then
+     carve a corridor to the centre of any orphaned region rather than
+     deleting it: the extra chambers are worth keeping, they just have to
+     be connectable. */
+  const connectFrom = (startX, startY) => {
+    const seen = new Uint8Array(INTERIOR_N * INTERIOR_N);
+    const stack = [[startX, startY]];
+    let guard = 0;
+    while (stack.length && guard++ < 20000) {
+      const [cx, cy] = stack.pop();
+      if (cx < 0 || cy < 0 || cx >= INTERIOR_N || cy >= INTERIOR_N) continue;
+      const k = cy * INTERIOR_N + cx;
+      if (seen[k] || grid[k] === IN_WALL) continue;
+      seen[k] = 1;
+      stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+    }
+    return seen;
+  };
+  /* Carve a straight L-shaped tunnel between two points — simple, always
+     succeeds, and reads as a deliberate passage rather than noise. */
+  const carve = (x0, y0, x1, y1) => {
+    let x = x0, y = y0, guard = 0;
+    while ((x !== x1 || y !== y1) && guard++ < 200) {
+      if (x !== x1) x += Math.sign(x1 - x);
+      else if (y !== y1) y += Math.sign(y1 - y);
+      if (x > 1 && y > 1 && x < INTERIOR_N - 2 && y < INTERIOR_N - 2) {
+        grid[y * INTERIOR_N + x] = IN_FLOOR;
+      }
+    }
+  };
+  for (let pass = 0; pass < 6; pass++) {
+    const reach = connectFrom(4, 5);
+    let orphan = null, best = -1;
+    /* Find the LARGEST unreachable region and connect that one first, so a
+       big sealed chamber is joined before a one-tile pocket. */
+    const visited = new Uint8Array(INTERIOR_N * INTERIOR_N);
+    for (let y = 1; y < INTERIOR_N - 1; y++) {
+      for (let x = 1; x < INTERIOR_N - 1; x++) {
+        const k = y * INTERIOR_N + x;
+        if (grid[k] === IN_WALL || reach[k] || visited[k]) continue;
+        const region = [], st2 = [[x, y]];
+        let g2 = 0;
+        while (st2.length && g2++ < 20000) {
+          const [cx, cy] = st2.pop();
+          if (cx < 0 || cy < 0 || cx >= INTERIOR_N || cy >= INTERIOR_N) continue;
+          const kk = cy * INTERIOR_N + cx;
+          if (visited[kk] || grid[kk] === IN_WALL) continue;
+          visited[kk] = 1; region.push([cx, cy]);
+          st2.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+        }
+        if (region.length > best) { best = region.length; orphan = region; }
+      }
+    }
+    if (!orphan) break;                       // everything reachable
+    const mid = orphan[Math.floor(orphan.length / 2)];
+    carve(mid[0], mid[1], 4, 5);
+  }
+
   /* Free-standing pillars: isolated rock columns inside open chambers, so
      a big room has something in it instead of being an empty field. */
   for (let i = 0; i < 14; i++) {
@@ -2174,7 +2235,11 @@ function populateInterior(spaceId, rec) {
     for (let x = 0; x < INTERIOR_N; x++)
       if (rec.grid[y * INTERIOR_N + x] === IN_FLOOR) floors.push([x, y]);
   if (!floors.length) return;
-  const pick = (i) => floors[Math.floor(hash2(i, 7, seed) * floors.length)];
+  /* hash2 can return exactly 1.0, which indexes one past the end and yields
+     undefined — the destructure that follows would then throw, and before
+     the loop fix above that meant a permanently frozen game. Clamped. */
+  const pick = (i) => floors[Math.min(floors.length - 1,
+    Math.floor(hash2(i, 7, seed) * floors.length))];
 
   /* v32: what lives inside depends on which biome the interior belongs to.
      Same structure, same counts — only the contents differ. */
@@ -5574,11 +5639,27 @@ function resize() {
 addEventListener("resize", resize); resize();
 
 let lastT = 0;
+let loopErrCount = 0;
 function loop(t) {
   const dt = Math.min((t - lastT) / 1000, 0.05);
   lastT = t;
-  update(dt, t);
-  render(t);
+  /* THE FREEZE FIX. Previously a single exception anywhere in update() or
+     render() meant requestAnimationFrame() below was never reached — the
+     animation chain died and the game froze permanently, with no error
+     dialog and no recovery. That is exactly the reported symptom, and it
+     is why it never reproduced in the harness: the harness pumps frames
+     itself and catches throws, so nothing there ever stops.
+     One bad frame must never be fatal. */
+  try {
+    update(dt, t);
+  } catch (e) {
+    if (loopErrCount++ < 5) console.error("update() threw — frame skipped:", e);
+  }
+  try {
+    render(t);
+  } catch (e) {
+    if (loopErrCount++ < 5) console.error("render() threw — frame skipped:", e);
+  }
   requestAnimationFrame(loop);
 }
 
