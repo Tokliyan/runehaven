@@ -102,83 +102,66 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (Tuning/Polish)
+## Confirmed, locked spec for the next build (Rare Pet Population + Real Music)
 
-Expansion 2b shipped successfully (N=1000, caves=50). This is the
-deferred polish pass — bigger Elders, a grander Bazaar, player-to-player
-teleport, cave and sand fixes, mob sizing, longbow range, and the actual
-death-drop investigation.
+Tuning/Polish shipped successfully. Confirmed live before writing this:
+credits currently read "Harsh D", `BG_PLAYLIST` is `[Pop.mp3,
+Slower_Jamz.mp3, Long_Way_Home.mp3, song.mp3]`, Skeptik's credit entry
+already exists with role "Dev Team".
 
-**PART A — bigger Elders.** Confirmed live: `golem_elder: 2.10,
-dragon_elder: 1.85, unicorn_elder: 1.45`. Increase each meaningfully —
-propose `golem_elder: 2.70, dragon_elder: 2.40, unicorn_elder: 1.85` —
-they should read as unmistakably larger than any of their base-tier
-counterparts on sight, matching "Elder" as a real size tier, not just a
-stat tier.
+**PART A — real population cap + daily restock, not a % chance tweak.**
+The ask is explicit: rare/epic species must not be encounterable "every
+other step" — there should be a genuine world-wide LIMIT on how many of a
+given rare species exist at once, replenished daily rather than always
+freely spawnable. Add a `DAILY_RESTOCK` tier flag to Rare and Epic
+species (Water/Fire/Storm/Shadow Dragon, Crystal Golem, Unicorn,
+Shadowfox, Lightfox, Krakenling, Salamander King) — reuse `worldDayNum()`
+(already exists, drives Blood Moon and Krakenling's own cycle) as the
+restock clock. A tagged species' total live count across the whole world
+is capped at its existing `count` value per the wild-spawn system already
+in place; the restock is that this cap is evaluated fresh once per game
+day rather than being a permanently-topped-up pool, so a fully-hunted
+rare species is genuinely gone until the next day, not silently
+respawning the moment a slot opens.
 
-**PART B — a grander Bazaar.** Confirmed `drawBazaarEntity()`'s current
-ring radius is 3.4 tiles with 6 stalls. Widen the ring (propose 5.5) and
-the stall count (propose 8-10), and increase `BAZAAR_R` from 7 to ~10 to
-match — this is a genuine footprint increase, not just more detail packed
-into the same space. Re-verify the render-preview scale math the same
-careful way art reference v4 did (measure the true unscaled footprint,
-don't guess a scale factor) if this affects any existing reference
-canvas.
+**PART B — mob size, broad pass, deliberately uneven.** Every pet and
+mob's `SPECIES_K`/`MOB_K` increases — genuinely large/dangerous things
+(Elder Drake, Sea Serpent, Troll, all four Dragons, both Golems) get 2x;
+common/small things (Sprites, Wolf, Boar, Goblin) get 1.5x. Your explicit
+discretion call on the split — use the existing established size
+hierarchy (already-larger things get the larger multiplier) rather than
+inventing a new ranking.
 
-**PART C — player-to-player teleport.** New mechanic, needs real design,
-not just "add a button": propose a Fast Travel-style menu (`M`, already
-bound) gets a second tab listing currently-online players by name;
-selecting one teleports you to a point near them (propose 3-5 tiles away,
-never on top of them), with a genuine cooldown (propose 60s) so it can't
-be spammed for combat positioning. Confirm this cannot be used to bypass
-Safe Zone or Colosseum boundaries in an exploitable way — landing near a
-player who is inside one of those zones should not teleport you inside it
-without meeting its own normal entry conditions.
+**PART C — real music, four tracks, real attribution.**
+```
+audio/boss_tension.mp3   - combat/boss track (Skeptik)
+audio/roaming_song.mp3   - background rotation (Skeptik)
+audio/roaming_pop.mp3    - background rotation (Skeptik)
+audio/roaming_siren.mp3  - background rotation (Advay)
+```
+All four already pushed to the repo's `audio/` folder. Wire
+`boss_tension.mp3` into the existing combat-music trigger (the same
+`combatMusicUntil` system `nu_metal.mp3` already used) and the three
+roaming tracks into `BG_PLAYLIST`, replacing its current contents —
+reuse the existing rotation/crossfade system exactly as built, this is a
+track-list swap, not a new audio system.
 
-**PART D — cave polish.** Bounded, not open-ended: reuse the exact
-connectivity guarantee and 3D-wall techniques from the original cave
-overhaul, now applied at the new `INTERIOR_N=50` scale — confirm ore vein
-count and mob count scale with the larger area (already partly handled by
-Expansion 2b's Part C, verify it reads as genuinely richer, not just
-bigger-and-emptier).
+**PART D — credits.** `"Harsh D"` -> `"Harsh Devarajan"`. Add Advay's
+attribution for `roaming_siren.mp3` alongside his existing "Dev Team"
+credit entry (or a new line if a role split reads more clearly — your
+call on exact wording, the attribution itself is not optional). Skeptik's
+existing entry already covers his three tracks; no new entry needed for
+him, this is additive to what exists.
 
-**PART E — sand art.** Confirmed the two SAND palette shades are already
-close (`#e6d5a0`/`#e4d39e}`), so the reported "line" most likely reads
-from the coastline glow/cliff-face boundary where sand meets water or
-higher terrain, not the checkerboard itself. Soften that specific
-boundary treatment and add a subtle grain/speckle texture within sand
-tiles themselves (matching the existing wear-detail technique already
-used on cliffs). **This needs visual confirmation once built** — flag
-clearly if the actual line turns out to be somewhere else.
+**Explicitly not touched this version:** Basilisk (still genuinely
+absent, tied to Dungeons — separate decision, not part of this build).
 
-**PART F — the death-drop investigation. Confirmed directly:
-`dropAllItems()` genuinely clears `me.inv`/`equipped`/`armor` and creates
-real ground-item drops — the underlying data is correct.** The real gap:
-`enterDeath()` never calls `refreshPanels()`. If the Inventory panel
-happens to be open at the moment of death, it keeps showing stale
-pre-death contents until manually reopened — a real UI bug, not the data
-bug it was reported as. Fix: call `refreshPanels()` inside `enterDeath()`.
-
-**PART G — mob sizing, differentiated.** A broader pass across `MOB_K`/
-`SPECIES_K`, genuinely uneven rather than a flat multiplier — propose
-larger, more dangerous things (Troll, Sea Serpent, Elder Drake) get a
-bigger relative bump than common ones (Goblin, Wolf), so size increases
-reinforce the existing threat hierarchy rather than flattening it.
-
-**PART H — longbow range.** Confirmed `runic_longbow` range is 11.
-Increase to 14. Also confirmed `dragonsteel_bow` sits at 9.5 — LOWER than
-the runic longbow's current 11, a real tier inconsistency. Raise it to at
-least 15 so Dragonsteel stays strictly ahead of Runic on this stat too.
-
-**Explicitly not part of this build:** art reference v4's full item/mob/
-biome list — that's a documentation deliverable, handled separately from
-game code, not a build spec item.
-
-**Proof gates:** standard gauntlet, plus confirm each Elder's visual
-scale increased, Bazaar footprint genuinely grew (not just visual detail
-added), teleport respects Safe Zone/Colosseum entry rules, cave ore/mob
-density scales with the new interior size, `refreshPanels()` is called in
-`enterDeath()`, and both bow range changes are live.
+**Proof gates:** standard gauntlet, plus confirm the restock cap
+genuinely blocks a rare species from spawning again mid-day once its cap
+is hit in a simulated sweep, confirm size multipliers landed at the
+correct 1.5x/2x split, confirm all four tracks are reachable and wired to
+the correct trigger, confirm credits show the full name and both
+composers.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
