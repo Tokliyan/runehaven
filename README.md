@@ -102,92 +102,88 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v39 — the Elder trio + the secret event)
+## Confirmed, locked spec for the next build (v41 — World Expansion)
 
-v38 shipped successfully. **This replaces the previous v39 attempt, which
-correctly failed overnight** — its offline base-guardian subsystem for
-Golem Elder expanded into a whole new discovery/authority layer with no
-existing pattern to reuse, exactly the kind of thing the standard process
-treats as RED rather than guess at. Read that failure report in full
-before touching this again if it's ever revisited.
+v39 shipped successfully. This is the highest-risk version on the
+remaining roadmap — comparable to v19's original scale-up, now touching
+more systems than v19 ever had to. Full constant audit done before
+writing a line of this spec, not assumed.
 
-**The explicit call made here, not a silent judgment:** Golem Elder ships
-as a normal fight-to-tame companion this version — same shape as Griffin,
-`tameable: true`. The "ultimate base defender, stays at base while
-offline" behavior from the bible is deferred to its own future version,
-once the five real design questions the failure report raised (where it
-stands at a base, what counts as a threat, guardian discovery across
-clients, what happens if the base is destroyed while offline, idle-
-guardian sync authority) are actually answered rather than assumed.
+**The single most important finding, confirmed directly against the real
+file: every biome-pocket and terrain-shaping noise call uses a fixed
+wavelength divisor (`/20` for all six pockets, `/13`/`/9`/`/3.5` for
+elevation/clusters/height) — none reference `N`.** Left untouched, a
+bigger map gets proportionally more of everything at the same per-pocket
+size and the same relative coverage automatically. **Do not touch
+`ENCH_RARITY`, `SACRED_RARITY`, `UNDERCAVE_RARITY`, `UWCAVE_RARITY`,
+`ABYSSAL_RARITY`, `CALDERA_RARITY`, or any `valueNoise(tx/N, ty/N, ...)`
+wavelength divisor anywhere.** Confirmed these need zero changes — this
+is the majority of what made v19 hard, and it's already solved by how the
+noise system was built.
 
-**Confirmed directly before writing this:** none of the three Elders
-exist, no Golden Orb, no world-reset mechanism, `fightToTame: true` is
-the real tame pattern, `combatMusicUntil` tracks active combat already.
+**PART A — the new scale.** `N: 240 -> 480`. Doubling, not repeating
+v19's full 3x — this version already touches more surface area than v19
+did, and a more conservative multiplier is the right tradeoff against a
+first-attempt failure on the riskiest version left.
 
-**This spec must never be summarized, quoted, or referenced by anything
-player-facing — not the Oracle, not a tooltip, not a loading tip. The
-bible is explicit: discovery must be purely emergent.**
+**PART B — every constant that genuinely IS relative to a fixed point,
+scaled by the same 2x factor, confirmed as the complete real list:**
+```
+SAFE_RADIUS:      27  -> 54
+RUIN_SEP:         40  -> 80
+RUIN_ZONE_SEP:    24  -> 48
+VOLCANO from TOWER: 75  -> 150
+MOUNT from TOWER:   72  -> 144
+BAZAAR from TOWER:  48  -> 96
+ANCIENT from VOLCANO: 22 -> 44
+COLOSSEUM from TOWER: 60 -> 120
+DRAGON_ALTAR from TOWER: 34 -> 68
+```
 
-**PART A — Golem Elder, a normal companion this version.** Fight-to-tame
-(`fightToTame: true`, same as Griffin), spawns at the single deepest tile
-of any Ruin cluster — reuse the existing Ruin structure, gate to the
-furthest-from-center tile within `RUINB`, not a new location system. No
-offline-guardian behavior this version — it behaves exactly like any
-other tamed companion once caught.
+**PART C — explicitly, confirmed, must NOT scale — these are
+player-interaction distances, not world geography, and touching them
+would be a real regression:**
+```
+BAZAAR_R = 7          ANCIENT_R = 4
+COLOSSEUM_R = 9        DRAGON_ALTAR_R = 2.2
+BASE_MIN_SEP = 3
+```
+These represent "how close does a player need to stand" — identical
+regardless of map size. Confirmed by name in the real file before writing
+this list, not inferred.
 
-**PART B — Dragon Elder.** New item, `golden_orb`, a single guaranteed
-drop from the Eternal Tower itself, reusing the existing gather-node
-pattern, placed at the Tower's own coordinates, once per 48 real hours
-across the whole server — a genuine expedition item, not farmable. New
-fixed point, `DRAGON_ALTAR`, placed near TOWER the same deterministic way
-every other landmark is. Carrying the orb to the altar and interacting
-consumes it and tames a Dragon Elder on the spot.
-
-**PART C — Unicorn Elder.** One single tile, chosen uniformly at random
-across the ENTIRE map at worldgen from `hash2(worldSeed, 0, 99991)` — no
-biome bias, no distance-from-spawn bias. Already confirmed the Oracle's
-exclusion list names `unicorn_elder`, so this must never surface there.
-Grants fast travel (a menu to the game's fixed landmark points — TOWER,
-VOLCANO, BAZAAR, ANCIENT, COLOSSEUM, SHRINE) and a passive multiplier on
-the owner's own rare-species presence rolls, same shape as
-`bloodMoonActive()`'s boost, always-on for this one owner.
-
-**PART D — the secret event. Every safeguard from the original spec,
-unchanged.**
-
-Trigger condition, ALL of the following, checked every frame:
-1. A live, tamed Golem Elder and a live, tamed Dragon Elder exist
-2. Both currently show `combatMusicUntil > now`
-3. Within 3 tiles of each other
-4. **All three hold continuously for 4 real seconds** — an accumulator
-   that resets to zero the instant any condition breaks, never a counter
-   that merely needs 4 seconds' worth of non-consecutive true frames.
-
-On confirmed trigger: broadcast `world_reset_pending` once, a 10-second
-countdown naming no cause a player could reverse-engineer, then generate
-a new `worldSeed`, clear `base_pieces` server-side, clear all three Elder
-ownership flags server-side. **The actual reset call is gated behind an
-explicit admin-role check in addition to the trigger firing** — the
-trigger arms it, an admin-tier rule executes it. Two keys, not one.
+**PART D — Elder Drake's local search.** `for (let r = 3; r < 26; r++)`
+searches near VOLCANO for valid terrain — VOLCANO's own position already
+scales correctly via Part B, so this local radius likely needs no change,
+but confirm directly: run the search against the new N=480 world and
+verify it still finds a valid VOLROCK/ROCK/CALDERA tile. If it doesn't,
+widen the bound — do not assume without checking.
 
 **PART E — proof gates, standard gauntlet plus:**
-- Confirm Golem Elder tames and behaves exactly like any other companion
-  — no guardian/offline logic anywhere in its code path.
-- Confirm the Golden Orb has a real respawn floor.
-- Confirm the Unicorn Elder's spawn tile is genuinely uniform-random in a
-  seed sweep, not clustered near any landmark.
-- Confirm the Oracle's hint pool still excludes all three by name.
-- Confirm the trigger accumulator resets to zero the instant ANY one of
-  the four conditions breaks, tested by breaking each individually.
-- Confirm the actual reset call is unreachable without the admin-role
-  gate, even with the trigger condition fully satisfied.
-- Confirm nothing added this version appears in any player-facing text
-  or the Oracle's hint pool.
+- Confirm `N === 480` and no leftover reference to the old value anywhere.
+- Confirm all six Ruins and four Safe Zones can still be placed at the
+  new scale with the new separation — reuse the exact exhaustive
+  placement-scan technique v20 originally used to prove this, don't
+  assume proportional scaling preserves feasibility without checking.
+- Confirm every landmark (Tower, Volcano, Mount, Bazaar, Ancient Forge,
+  Colosseum, Dragon Altar, Shrine) places without overlapping any other,
+  at the new distances.
+- Confirm biome-pocket proportions are genuinely unchanged — bake a test
+  seed at the new N, measure each pocket's percentage of its parent
+  terrain, and confirm it matches the pre-expansion percentage within a
+  small tolerance. This is the proof that leaving the wavelengths alone
+  actually worked as intended, not just an assumption.
+- Confirm the Elder Drake still spawns successfully in a swept test.
+- Confirm the Unicorn Elder's uniform-random tile selection still covers
+  the full new map with no bias — it already scales automatically via
+  `hash2(...) * N`, confirm this rather than assume.
+- Confirm Meteor Shower site placement (`hash2(...) * N`) still lands
+  correctly across the full new map.
 
-**Explicitly not touched this version:** the offline base-guardian
-behavior for Golem Elder — its own future version, once actually designed
-rather than assumed.
+**Explicitly not touched this version:** any biome rarity threshold, any
+noise wavelength, any player-interaction-scale radius, cave interiors
+(their own separate 26x26 grids, entirely unaffected by N).
 
-**After v39 ships successfully, do not start any further version
-automatically** — wait for `NEXT_BUILD.md` to be updated with the next
-target.
+**After this version ships successfully, do not start any further
+version automatically** — wait for `NEXT_BUILD.md` to be updated with the
+next target.
