@@ -53,6 +53,155 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-21 (Expansion 2a — viewport-based ground rendering)
+
+The single pre-baked full-map terrain canvas is gone. Ground tiles are drawn
+per frame, visible ones only. **Nothing about the world changed** — no biome,
+no colour, no constant, no `N`, no landmark, not one drawing decision. This is
+a rendering-technique swap and the whole point of it is that you cannot tell.
+It is the prerequisite that makes the real ~1000 scale-up (2b) safe, not the
+scale-up itself.
+
+- **What actually left the file: a 14124x7174px offscreen canvas — 101 Mpx,
+  387 MB — and a 102,400-tile paint at every login.** That is the thing the
+  World Expansion entry above flagged when it scaled to 320 instead of 480:
+  "canvas memory scales with N^2". It no longer does. A frame now draws
+  **1,985 tiles at 1024x768**, and the count follows the viewport, not the
+  world. At N=1000 the bake would have been ~3.8 GB; the per-frame count would
+  be exactly what it is today.
+- **`drawGroundTile()` is `bakeTerrain()`'s own loop body, moved — not
+  rewritten.** 441 lines carried across with only their indentation changed,
+  verified by diffing the moved body back against the pre-change file: **the
+  only content difference in the whole move is the two lines that turned a
+  tile into bake-canvas coordinates.** Cliff faces reading `heightAt(tx,ty+1)`
+  / `heightAt(tx+1,ty)`, jittered PEAK tops, the N-relative world-edge DEEP
+  darkening, the three per-biome cliff-face colourings (VOLROCK/LAVA, CALDERA,
+  UNDERCAVE), and every ground treatment from v8's sand and snow spikes to
+  v22's caldera crust are all still exactly the code that drew them.
+- **The two coordinate lines are a cancellation, not a re-derivation.** The
+  bake wrote at `isoX(wx,wy) + bakeOX` and the sheet was then blitted at
+  `w/2 - isoX(cam) - bakeOX`. Compose the two and the bake origin cancels
+  identically, leaving `worldToScreen(tx + 0.5, ty + 0.5, zTop)`. That is why
+  this is a move rather than a port: the pixel was always this pixel.
+- **Draw ORDER is the load-bearing part, and it is unchanged.** The bake swept
+  diagonally, back-to-front by `tx + ty`, because a tile's cliff faces hang
+  DOWN over its southern and eastern neighbours — the frame loop sweeps the
+  same diagonals over its own rectangle. Row-major would have put those faces
+  under tiles that used to paint over them, which would have read as broken
+  elevation, not as a subtle ordering bug. It is pinned by a gate.
+- **The viewport bounds are the entity pass's own four-corner
+  `screenToWorld()` block, moved up the function so both passes share it** —
+  the spec was explicit that there must not be a second bounds system, and
+  there isn't. The ground reads those bounds plus `GROUND_MARGIN`.
+- **⚠️ The one real difference you could see, and it is an improvement.** The
+  old frame blitted a bitmap at a fractional offset, so the entire ground was
+  bilinearly resampled every frame and swam very slightly as the camera moved.
+  Drawn directly, the same geometry lands crisp. Identical shapes, identical
+  colours, sharper edges. If the ground looks *different* rather than
+  *cleaner*, that is worth a screenshot — it is the only channel by which this
+  version could have changed the look at all.
+- **⚠️ Real-browser frame cost is the thing this build could not measure.**
+  The harnesses stub the canvas, so they count calls and never rasterise. What
+  is measured: the pass issues **5,900–9,100 fill/stroke ops per frame** at
+  1024x768 depending on biome (mountains and caldera are the expensive end,
+  open water the cheap end), roughly 1.1–1.7 painted shapes per tile. That is
+  a real number to hold a real frame-time reading against, and getting one is
+  the single most useful thing to do before 2b.
+- **⚠️ The tile count follows the viewport, so the ~2000 ceiling is a
+  1024x768 ceiling.** About 4,300 tiles fit a 1920x1080 screen and the pass
+  draws ~20% more than fit, so a full-screen desktop is nearer **5,200 tiles
+  and ~24,000 paint ops per frame**. Nothing is wrong with that, but it is
+  where the per-frame cost actually lives, and it is why the assertion has a
+  viewport-independent half beside the flat number.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent or where following it literally
+would have shipped something weaker. All shipped through the full gate (parse
+clean, `run2` and `run3` `CAUGHT ERROR: none`, `run4` **761/761 with zero
+FAIL**, `run5` 949 coverage draws clean, 46/46 grep checks) plus the
+old-versus-new comparison below — refinements to consider, not unfinished
+work.
+
+1. **A per-tile screen cull was added, which the spec did not ask for, because
+   without it PART B's own number is unreachable.** The corner bounds are the
+   bounding box of a diamond, so a little over half of that rectangle is off
+   screen at any size: at 1024x768 the rectangle holds **5,250 tiles and only
+   1,985 are on screen**. Drawing the rectangle would have meant 2.6x the
+   per-tile cost for nothing and blown straight past the spec's own ~2000
+   ceiling. The cull is the same `worldToScreen` arithmetic the tile was about
+   to do anyway, tested before any drawing — not a second bounds system.
+2. **`GROUND_UP` = `3*HZ + 9 + 15 + 8` and `GROUND_DOWN` = `IH2 + HZ + 8`,
+   written as their derivation rather than as numbers.** UP is the tallest
+   terrain plus the PEAK jitter plus the tallest snow spike; DOWN is half a
+   tile plus one full height step, which is the deepest a cliff face can hang.
+   The `+ 8` on each is slack. Both are proved rather than trusted: a `run4`
+   gate walks a wide window of real tiles, computes each one's true painted
+   extent from its own height and its south/east neighbours', and fails if any
+   tile the cull skipped would have painted inside the canvas.
+3. **`GROUND_MARGIN` = 3, the spec's own proposal, kept — and it is
+   comfortable rather than lucky.** Worked through: a tile can paint about 72px
+   above its own baseline, which is 6.5 tile-units, and 3 on top of the entity
+   pass's existing corner margins buys ten. Measured across seven camera
+   positions and a twelve-step pan, zero tiles dropped.
+4. **The peak-jitter cache the spec offered as an option was declined, with a
+   measurement.** `hash2` is six integer ops: **20.8 ns/call**. The same value
+   through a `Map` keyed by `"tx,ty"` is **401.6 ns/call** — string
+   concatenation and a hash lookup to avoid six integer ops. Caching it would
+   have been **19x slower** than recomputing. It also turns out barely to
+   matter either way: across a real frame the ground code averages well under
+   one `hash2` per tile, because most tiles are flat water or grass and never
+   enter a branch that calls it. `biomeAt`/`heightAt` were already cached on
+   integer keys and needed nothing.
+5. **The ground is still drawn inside a cave interior, where it cannot be
+   seen.** The pre-change frame blitted the world ground unconditionally and
+   then painted the interior over it, so skipping it would have been a visible
+   change — the thing PART C forbids — rather than a saving. Left exactly as it
+   was, and flagged here as the one obvious optimisation this version
+   deliberately did not take.
+6. **The visual-equivalence proof is a build-time comparison, not a shipped
+   harness, because it needs the pre-change file.** It booted both builds on
+   the same stub world, confirmed they generate the identical world (zero
+   biome and zero height mismatches), then at **nine fixed camera positions**
+   — spawn, coast, mountain, volcano, forest, dark forest, ruins, and the
+   volcano and mountain centres — recorded every ground draw call from both
+   and compared them argument for argument, transforming the old stream by the
+   blit offset that frame would have used. **17,853 tiles, 203,433 draw ops,
+   zero mismatches, zero visible tiles lost.** What is pinned permanently in
+   `run4` is everything still checkable from the shipped file alone.
+7. **`run4`'s "the bake is gone" gate greps the script with its COMMENTS
+   STRIPPED.** The new code explains itself by naming what it replaced, so a
+   blunt grep for `bakeTerrain` would fail on its own documentation. What
+   matters is that no executable reference survives, and there are four of
+   those gates — one per removed identifier — plus a sanity check on the
+   stripper itself so it cannot pass by accident.
+8. **`run5`'s biome-ground coverage had to be rebuilt, and this is the change
+   most worth knowing about.** Since v18 it counted tiles of a biome and took
+   a non-zero count as proof that biome's ground branch had drawn — sound only
+   because the bake painted every tile of the map at boot. With the bake gone,
+   a boot at spawn touches no cave, no hollow and no caldera anywhere, so
+   counting alone would have **quietly become a weaker test that still
+   passed** — the exact failure mode v22 caught in the underwater BFS. The
+   counts stay (they are still the reachability check they always were) and
+   all **19 ground biomes are now drawn for real through `drawGroundTile`**,
+   each with its two uphill neighbours so the south and east cliff-face
+   branches get a run at a real height step. `GROUND_BIOMES` is the list to
+   extend when a biome gains its own ground treatment. 892 -> **949** draws.
+9. **The spec says `terrainBake`/`bakeOX`/`bakeOY` are "used in exactly 13
+   places"; the real count is 17 occurrences on 16 lines.** The surface area
+   it describes is right — five regions: the declarations, the definition, two
+   call sites (login and the v39 world reset) and the one blit — so this is a
+   counting difference, not a missed call site, and every one of the 17 is
+   accounted for. Noted rather than silently corrected, since the spec offered
+   the number as evidence it had checked.
+10. **The ground stats hang off `debugWorldInfo()` as one `ground` field
+    rather than becoming a new `debugGroundInfo()` hook.** `groundStats` and
+    the three constants are top-level, so a harness has no other way to see
+    them; but this is world-shaped information and `debugWorldInfo` is where
+    the biome ids, the landmark positions and the placement constants already
+    live. The pass also records the camera and viewport it ran at, so a gate
+    recomputes the same screen positions instead of assuming them.
+
 ### World Expansion — N 240 -> 320, built after a genuine RED
 
 The overnight attempt correctly stopped: its "complete list" of constants

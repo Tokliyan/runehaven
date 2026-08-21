@@ -904,8 +904,28 @@ let cam = { x: 0, y: 0 };
 let tileCache = new Map();
 let elevCache = new Map();
 let rawHCache = new Map();     // v11: pre-erosion heights
-let terrainBake = null;
-let bakeOX = 0, bakeOY = 0;
+/* Expansion 2a: the single pre-baked full-map canvas is gone. Ground tiles
+   are drawn per frame, visible ones only, so canvas memory no longer scales
+   with N^2 — the prerequisite for the real scale-up. These three values are
+   what replaced `terrainBake`/`bakeOX`/`bakeOY`.
+
+   GROUND_MARGIN — extra tiles drawn past the viewport bounds. A tile's cliff
+   faces read its SOUTH and EAST neighbours' heights and hang DOWN from its
+   own top, so a tile just off the top/left edge still paints into view. With
+   the entity pass's own -2/-3/+2/+6 corner margins underneath it, 3 buys ten
+   tile-units of slack against a worst case of ~7.5 (see GROUND_UP below).
+
+   GROUND_UP / GROUND_DOWN — how far a tile's paint can reach above and below
+   its own z=0 baseline, in pixels. UP is the tallest terrain (h=3) plus the
+   PEAK jitter plus the tallest snow spike; DOWN is half a tile plus one full
+   height step, which is the deepest a cliff face can hang. Both are proved,
+   not assumed: a run4 gate walks a wide window of real tiles and fails if any
+   tile the cull skipped would have painted inside the canvas. */
+const GROUND_MARGIN = 3;
+const GROUND_UP = 3 * HZ + 9 + 15 + 8;
+const GROUND_DOWN = IH2 + HZ + 8;
+let groundStats = { tiles: 0, scanned: 0, minX: 0, maxX: 0, minY: 0, maxY: 0,
+                    camX: 0, camY: 0, w: 0, h: 0 };
 let lastSave = 0, lastBroadcast = 0, lastGather = 0, lastAttack = 0;
 /* v27: the whole ability state, deliberately the same shape as lastAttack —
    one timestamp for the shared cooldown, plus one live value per ability that
@@ -1317,6 +1337,14 @@ function debugWorldInfo() {
            /* v22: both new pocket thresholds, same reason as UWCAVE_RARITY —
               lexically scoped consts a harness cannot otherwise assert. */
            ABYSSAL_RARITY, CALDERA_RARITY,
+           /* Expansion 2a: last frame's ground pass — how many tiles the
+              rectangle held, how many actually drew, and the rectangle
+              itself. `groundStats` and the three constants are top-level,
+              so the harness has no other way to prove the per-frame tile
+              count stays bounded or that the cull never drops a tile that
+              would have painted on screen. Copies. */
+           GROUND_MARGIN, GROUND_UP, GROUND_DOWN,
+           ground: Object.assign({}, groundStats),
            player: me ? { x: me.x, y: me.y, hp: me.hp, maxHp: me.maxHp,
                           diving: !!me.diving, breath: me.breath,
                           maxBreath: me.maxBreath, charm: me.charm || null,
@@ -3214,7 +3242,8 @@ function groundZ(wx, wy) {
 }
 
 /* =========================================================
-   TERRAIN BAKE — cream cliff faces under every biome top
+   TERRAIN GROUND PASS — cream cliff faces under every biome top,
+   drawn per frame for visible tiles only (Expansion 2a)
    ========================================================= */
 function distToSeg(px, py, ax, ay, bx2, by2) {
   const dx = bx2 - ax, dy = by2 - ay;
@@ -3224,166 +3253,183 @@ function distToSeg(px, py, ax, ay, bx2, by2) {
   return Math.hypot(px - (ax + dx * t), py - (ay + dy * t));
 }
 
-function bakeTerrain() {
-  const wpx = 2 * N * IW2 + IW2 * 2;
-  const hpx = 2 * N * IH2 + HZ * 7 + IH2 * 2;
-  terrainBake = document.createElement("canvas");
-  terrainBake.width = wpx;
-  terrainBake.height = hpx;
-  const c = terrainBake.getContext("2d");
-  bakeOX = N * IW2 + IW2;
-  bakeOY = HZ * 6;
+/* Peaks get per-tile jittered tops so mountain outlines are jagged, not boxy.
+   Hoisted out of the old bakeTerrain() unchanged — the per-frame pass and the
+   cull both need it, and it is pure arithmetic over two cached lookups. */
+function variedZ(tx2, ty2) {
+  const h2 = heightAt(tx2, ty2);
+  const z2 = Math.max(0, h2) * HZ;
+  if (h2 >= 0 && biomeAt(tx2, ty2) === B.PEAK) return z2 + hash2(tx2, ty2, 73) * 9;
+  return z2;
+}
 
-  const bx = (wx, wy) => isoX(wx, wy) + bakeOX;
-  const by = (wx, wy) => isoY(wx, wy) + bakeOY;
+/* Expansion 2a: ONE ground tile, drawn straight to the live context. This is
+   bakeTerrain()'s own loop body, moved verbatim — elevation-based cliff faces
+   reading heightAt(tx,ty+1)/heightAt(tx+1,ty), jittered PEAK tops, the
+   N-relative world-edge DEEP darkening, per-biome cliff-face colouring for
+   VOLROCK/LAVA, CALDERA and UNDERCAVE, and every per-biome ground treatment
+   from v8 through v22. Nothing here was rewritten or simplified; only the two
+   lines that turned a tile into bake-canvas coordinates became screen ones.
 
-  // Peaks get per-tile jittered tops so mountain outlines are jagged, not boxy
-  const variedZ = (tx2, ty2) => {
-    const h2 = heightAt(tx2, ty2);
-    const z2 = Math.max(0, h2) * HZ;
-    if (h2 >= 0 && biomeAt(tx2, ty2) === B.PEAK) return z2 + hash2(tx2, ty2, 73) * 9;
-    return z2;
-  };
+   The caller draws tiles back-to-front by tx + ty, exactly as the bake's own
+   diagonal sweep did, because tiles overlap: a cliff face hangs down over its
+   southern and eastern neighbours. */
+function drawGroundTile(c, tx, ty) {
+  const b = biomeAt(tx, ty);
+  const h = heightAt(tx, ty);
+  const zTop = variedZ(tx, ty);
+  const alt = ((tx + ty) % 2 === 0) ? 0 : 1;
+  let top = PAL[b][alt];
 
-  for (let s = 0; s <= 2 * (N - 1); s++) {
-    for (let tx = Math.max(0, s - (N - 1)); tx <= Math.min(N - 1, s); tx++) {
-      const ty = s - tx;
-      const b = biomeAt(tx, ty);
-      const h = heightAt(tx, ty);
-      const zTop = variedZ(tx, ty);
-      const alt = ((tx + ty) % 2 === 0) ? 0 : 1;
-      let top = PAL[b][alt];
+  // World edge treatment: deep water darkens toward the map border (stays dark)
+  if (b === B.DEEP) {
+    const nx = (tx / N) * 2 - 1, ny = (ty / N) * 2 - 1;
+    const edge = Math.sqrt(nx * nx + ny * ny);
+    const f = Math.max(0, Math.min(1, (edge - 0.75) / 0.45));
+    top = shade(top, 1 - f * 0.42);
+  }
 
-      // World edge treatment: deep water darkens toward the map border (stays dark)
-      if (b === B.DEEP) {
-        const nx = (tx / N) * 2 - 1, ny = (ty / N) * 2 - 1;
-        const edge = Math.sqrt(nx * nx + ny * ny);
-        const f = Math.max(0, Math.min(1, (edge - 0.75) / 0.45));
-        top = shade(top, 1 - f * 0.42);
-      }
+  /* Expansion 2a: the bake wrote into its own canvas at a fixed origin and
+     the whole sheet was then blitted at (w/2 - isoX(cam) - bakeOX, ...).
+     Composing those two steps cancels the bake origin exactly and leaves
+     worldToScreen(tx + 0.5, ty + 0.5, zTop) — the same pixel, derived, not
+     re-chosen. Everything below this line is the bake's own body, moved. */
+  const [cx, cy] = worldToScreen(tx + 0.5, ty + 0.5, zTop);
 
-      const cx = bx(tx + 0.5, ty + 0.5);
-      const cy = by(tx + 0.5, ty + 0.5) - zTop;
+  const hS = heightAt(tx, ty + 1);
+  const hE = heightAt(tx + 1, ty);
 
-      const hS = heightAt(tx, ty + 1);
-      const hE = heightAt(tx + 1, ty);
+  const grassy = (b === B.PLAINS || b === B.MEADOW || b === B.FOREST ||
+                  b === B.ENCHFOREST || b === B.SACMEADOW);   // v17
 
-      const grassy = (b === B.PLAINS || b === B.MEADOW || b === B.FOREST ||
-                      b === B.ENCHFOREST || b === B.SACMEADOW);   // v17
-
-      // Cream cliff faces (unchanged approach) + wear detail (2026-07-11)
-      if (h > Math.max(-1, hS)) {
-        const drop = zTop - Math.max(-1, hS) * HZ;
-        const faceCol = (b === B.VOLROCK || b === B.LAVA) ? shade("#5c3c3c", 0.8)
-          : b === B.CALDERA ? shade("#f2c884", 0.8)                 // v22: hot rock, not cream
-          : b === B.UNDERCAVE ? shade("#4a453e", 0.8) : CLIFF_SW;   // v18: cave walls are not cream cliffs
-        c.fillStyle = faceCol;
-        c.beginPath();
-        c.moveTo(cx - IW2, cy);
-        c.lineTo(cx, cy + IH2);
-        c.lineTo(cx, cy + IH2 + drop);
-        c.lineTo(cx - IW2, cy + drop);
-        c.closePath();
-        c.fill();
-        // subtle darker banding near the base
-        c.fillStyle = "rgba(40,32,20,0.06)";
-        c.beginPath();
-        c.moveTo(cx - IW2, cy + drop * 0.7);
-        c.lineTo(cx, cy + IH2 + drop * 0.7);
-        c.lineTo(cx, cy + IH2 + drop);
-        c.lineTo(cx - IW2, cy + drop);
-        c.closePath();
-        c.fill();
-        // occasional vertical crack
-        if (drop > HZ * 0.8 && hash2(tx, ty, 61) > 0.72) {
-          const crx = cx - IW2 * (0.25 + hash2(tx, ty, 63) * 0.5);
-          c.strokeStyle = "rgba(66,54,38,0.35)";
-          c.lineWidth = 1;
-          c.beginPath();
-          c.moveTo(crx, cy + IH2 * 0.5);
-          c.lineTo(crx + 1.5, cy + IH2 * 0.5 + drop * 0.55);
-          c.stroke();
-        }
-        // moss creeping down from grassy tops
-        if (grassy && hash2(tx, ty, 65) > 0.55) {
-          c.fillStyle = shade(top, 0.82);
-          const mx = cx - IW2 * (0.2 + hash2(tx, ty, 67) * 0.5);
-          c.fillRect(mx, cy + IH2 * 0.4, 4, 5 + hash2(tx, ty, 69) * 5);
-        }
-        // v8: irregular edge — a notch biting into the face top, or an outcrop chunk
-        if (hash2(tx, ty, 86) > 0.55) {
-          const nx2 = cx - IW2 * (0.3 + hash2(tx, ty, 88) * 0.4);
-          const nyTop = cy + IH2 * 0.45;
-          c.fillStyle = top;
-          c.beginPath();
-          c.moveTo(nx2 - 4, nyTop - 2);
-          c.lineTo(nx2 + 4, nyTop);
-          c.lineTo(nx2, nyTop + 5);
-          c.closePath();
-          c.fill();
-        } else if (hash2(tx, ty, 89) > 0.7 && drop > HZ) {
-          const ox2 = cx - IW2 * (0.2 + hash2(tx, ty, 90) * 0.5);
-          const oy2 = cy + IH2 * 0.6 + drop * 0.4;
-          c.fillStyle = shade(CLIFF, 0.9);
-          c.beginPath();
-          c.moveTo(ox2 - 5, oy2);
-          c.lineTo(ox2 + 1, oy2 - 4);
-          c.lineTo(ox2 + 6, oy2 + 1);
-          c.lineTo(ox2, oy2 + 5);
-          c.closePath();
-          c.fill();
-        }
-      }
-      if (h > Math.max(-1, hE)) {
-        const drop = zTop - Math.max(-1, hE) * HZ;
-        const faceCol = (b === B.VOLROCK || b === B.LAVA) ? shade("#5c3c3c", 0.58)
-          : b === B.CALDERA ? shade("#f2c884", 0.58)                 // v22
-          : b === B.UNDERCAVE ? shade("#4a453e", 0.58) : CLIFF_SE;   // v18
-        c.fillStyle = faceCol;
-        c.beginPath();
-        c.moveTo(cx, cy + IH2);
-        c.lineTo(cx + IW2, cy);
-        c.lineTo(cx + IW2, cy + drop);
-        c.lineTo(cx, cy + IH2 + drop);
-        c.closePath();
-        c.fill();
-        c.fillStyle = "rgba(40,32,20,0.08)";
-        c.beginPath();
-        c.moveTo(cx, cy + IH2 + drop * 0.7);
-        c.lineTo(cx + IW2, cy + drop * 0.7);
-        c.lineTo(cx + IW2, cy + drop);
-        c.lineTo(cx, cy + IH2 + drop);
-        c.closePath();
-        c.fill();
-        if (drop > HZ * 0.8 && hash2(tx, ty, 62) > 0.72) {
-          const crx = cx + IW2 * (0.2 + hash2(tx, ty, 64) * 0.5);
-          c.strokeStyle = "rgba(50,40,28,0.4)";
-          c.lineWidth = 1;
-          c.beginPath();
-          c.moveTo(crx, cy + IH2 * 0.6);
-          c.lineTo(crx - 1.5, cy + IH2 * 0.6 + drop * 0.5);
-          c.stroke();
-        }
-        if (grassy && hash2(tx, ty, 66) > 0.6) {
-          c.fillStyle = shade(top, 0.76);
-          const mx = cx + IW2 * (0.15 + hash2(tx, ty, 68) * 0.5);
-          c.fillRect(mx, cy + IH2 * 0.5, 4, 4 + hash2(tx, ty, 70) * 5);
-        }
-        // v8: irregular edge notch on the SE face too
-        if (hash2(tx, ty, 87) > 0.6) {
-          const nx2 = cx + IW2 * (0.25 + hash2(tx, ty, 91) * 0.4);
-          const nyTop = cy + IH2 * 0.5;
-          c.fillStyle = top;
-          c.beginPath();
-          c.moveTo(nx2 - 4, nyTop);
-          c.lineTo(nx2 + 4, nyTop - 2);
-          c.lineTo(nx2, nyTop + 5);
-          c.closePath();
-          c.fill();
-        }
-      }
-
+  // Cream cliff faces (unchanged approach) + wear detail (2026-07-11)
+  if (h > Math.max(-1, hS)) {
+    const drop = zTop - Math.max(-1, hS) * HZ;
+    const faceCol = (b === B.VOLROCK || b === B.LAVA) ? shade("#5c3c3c", 0.8)
+      : b === B.CALDERA ? shade("#f2c884", 0.8)                 // v22: hot rock, not cream
+      : b === B.UNDERCAVE ? shade("#4a453e", 0.8) : CLIFF_SW;   // v18: cave walls are not cream cliffs
+    c.fillStyle = faceCol;
+    c.beginPath();
+    c.moveTo(cx - IW2, cy);
+    c.lineTo(cx, cy + IH2);
+    c.lineTo(cx, cy + IH2 + drop);
+    c.lineTo(cx - IW2, cy + drop);
+    c.closePath();
+    c.fill();
+    // subtle darker banding near the base
+    c.fillStyle = "rgba(40,32,20,0.06)";
+    c.beginPath();
+    c.moveTo(cx - IW2, cy + drop * 0.7);
+    c.lineTo(cx, cy + IH2 + drop * 0.7);
+    c.lineTo(cx, cy + IH2 + drop);
+    c.lineTo(cx - IW2, cy + drop);
+    c.closePath();
+    c.fill();
+    // occasional vertical crack
+    if (drop > HZ * 0.8 && hash2(tx, ty, 61) > 0.72) {
+      const crx = cx - IW2 * (0.25 + hash2(tx, ty, 63) * 0.5);
+      c.strokeStyle = "rgba(66,54,38,0.35)";
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(crx, cy + IH2 * 0.5);
+      c.lineTo(crx + 1.5, cy + IH2 * 0.5 + drop * 0.55);
+      c.stroke();
+    }
+    // moss creeping down from grassy tops
+    if (grassy && hash2(tx, ty, 65) > 0.55) {
+      c.fillStyle = shade(top, 0.82);
+      const mx = cx - IW2 * (0.2 + hash2(tx, ty, 67) * 0.5);
+      c.fillRect(mx, cy + IH2 * 0.4, 4, 5 + hash2(tx, ty, 69) * 5);
+    }
+    // v8: irregular edge — a notch biting into the face top, or an outcrop chunk
+    if (hash2(tx, ty, 86) > 0.55) {
+      const nx2 = cx - IW2 * (0.3 + hash2(tx, ty, 88) * 0.4);
+      const nyTop = cy + IH2 * 0.45;
       c.fillStyle = top;
+      c.beginPath();
+      c.moveTo(nx2 - 4, nyTop - 2);
+      c.lineTo(nx2 + 4, nyTop);
+      c.lineTo(nx2, nyTop + 5);
+      c.closePath();
+      c.fill();
+    } else if (hash2(tx, ty, 89) > 0.7 && drop > HZ) {
+      const ox2 = cx - IW2 * (0.2 + hash2(tx, ty, 90) * 0.5);
+      const oy2 = cy + IH2 * 0.6 + drop * 0.4;
+      c.fillStyle = shade(CLIFF, 0.9);
+      c.beginPath();
+      c.moveTo(ox2 - 5, oy2);
+      c.lineTo(ox2 + 1, oy2 - 4);
+      c.lineTo(ox2 + 6, oy2 + 1);
+      c.lineTo(ox2, oy2 + 5);
+      c.closePath();
+      c.fill();
+    }
+  }
+  if (h > Math.max(-1, hE)) {
+    const drop = zTop - Math.max(-1, hE) * HZ;
+    const faceCol = (b === B.VOLROCK || b === B.LAVA) ? shade("#5c3c3c", 0.58)
+      : b === B.CALDERA ? shade("#f2c884", 0.58)                 // v22
+      : b === B.UNDERCAVE ? shade("#4a453e", 0.58) : CLIFF_SE;   // v18
+    c.fillStyle = faceCol;
+    c.beginPath();
+    c.moveTo(cx, cy + IH2);
+    c.lineTo(cx + IW2, cy);
+    c.lineTo(cx + IW2, cy + drop);
+    c.lineTo(cx, cy + IH2 + drop);
+    c.closePath();
+    c.fill();
+    c.fillStyle = "rgba(40,32,20,0.08)";
+    c.beginPath();
+    c.moveTo(cx, cy + IH2 + drop * 0.7);
+    c.lineTo(cx + IW2, cy + drop * 0.7);
+    c.lineTo(cx + IW2, cy + drop);
+    c.lineTo(cx, cy + IH2 + drop);
+    c.closePath();
+    c.fill();
+    if (drop > HZ * 0.8 && hash2(tx, ty, 62) > 0.72) {
+      const crx = cx + IW2 * (0.2 + hash2(tx, ty, 64) * 0.5);
+      c.strokeStyle = "rgba(50,40,28,0.4)";
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(crx, cy + IH2 * 0.6);
+      c.lineTo(crx - 1.5, cy + IH2 * 0.6 + drop * 0.5);
+      c.stroke();
+    }
+    if (grassy && hash2(tx, ty, 66) > 0.6) {
+      c.fillStyle = shade(top, 0.76);
+      const mx = cx + IW2 * (0.15 + hash2(tx, ty, 68) * 0.5);
+      c.fillRect(mx, cy + IH2 * 0.5, 4, 4 + hash2(tx, ty, 70) * 5);
+    }
+    // v8: irregular edge notch on the SE face too
+    if (hash2(tx, ty, 87) > 0.6) {
+      const nx2 = cx + IW2 * (0.25 + hash2(tx, ty, 91) * 0.4);
+      const nyTop = cy + IH2 * 0.5;
+      c.fillStyle = top;
+      c.beginPath();
+      c.moveTo(nx2 - 4, nyTop);
+      c.lineTo(nx2 + 4, nyTop - 2);
+      c.lineTo(nx2, nyTop + 5);
+      c.closePath();
+      c.fill();
+    }
+  }
+
+  c.fillStyle = top;
+  c.beginPath();
+  c.moveTo(cx, cy - IH2);
+  c.lineTo(cx + IW2, cy);
+  c.lineTo(cx, cy + IH2);
+  c.lineTo(cx - IW2, cy);
+  c.closePath();
+  c.fill();
+
+  // v8: sand gets texture and purpose — dunes, wet band, beach detail
+  if (b === B.SAND) {
+    const wetNear =
+      heightAt(tx + 1, ty) === -1 || heightAt(tx - 1, ty) === -1 ||
+      heightAt(tx, ty + 1) === -1 || heightAt(tx, ty - 1) === -1;
+    if (wetNear) {
+      c.fillStyle = "rgba(178,152,104,0.5)";   // wet sand band at the waterline
       c.beginPath();
       c.moveTo(cx, cy - IH2);
       c.lineTo(cx + IW2, cy);
@@ -3391,305 +3437,288 @@ function bakeTerrain() {
       c.lineTo(cx - IW2, cy);
       c.closePath();
       c.fill();
+    }
+    // wind-blown dune ripples
+    c.strokeStyle = "rgba(178,155,110,0.55)";
+    c.lineWidth = 1;
+    for (let k = 0; k < 2; k++) {
+      const ry = cy - IH2 * 0.4 + (hash2(tx, ty, 92 + k) * IH2 * 1.2);
+      const rx0 = cx - IW2 * 0.55, rx1 = cx + IW2 * 0.55;
+      c.beginPath();
+      c.moveTo(rx0, ry + 2);
+      c.quadraticCurveTo(cx, ry - 2 - hash2(tx, ty, 94 + k) * 2, rx1, ry + 1);
+      c.stroke();
+    }
+    // shells / driftwood
+    const bh = hash2(tx, ty, 96);
+    if (bh > 0.965) {
+      c.fillStyle = "#f2ece0";
+      c.fillRect(cx + (hash2(tx, ty, 97) - 0.5) * IW2, cy + (hash2(tx, ty, 98) - 0.5) * IH2, 2, 2);
+    } else if (bh > 0.94) {
+      c.strokeStyle = "#8a6540";
+      c.lineWidth = 1.6;
+      const dwx = cx + (hash2(tx, ty, 97) - 0.5) * IW2 * 0.7;
+      const dwy = cy + (hash2(tx, ty, 98) - 0.5) * IH2 * 0.7;
+      c.beginPath();
+      c.moveTo(dwx - 4, dwy + 1);
+      c.lineTo(dwx + 4, dwy - 1);
+      c.stroke();
+    }
+  }
 
-      // v8: sand gets texture and purpose — dunes, wet band, beach detail
-      if (b === B.SAND) {
-        const wetNear =
-          heightAt(tx + 1, ty) === -1 || heightAt(tx - 1, ty) === -1 ||
-          heightAt(tx, ty + 1) === -1 || heightAt(tx, ty - 1) === -1;
-        if (wetNear) {
-          c.fillStyle = "rgba(178,152,104,0.5)";   // wet sand band at the waterline
-          c.beginPath();
-          c.moveTo(cx, cy - IH2);
-          c.lineTo(cx + IW2, cy);
-          c.lineTo(cx, cy + IH2);
-          c.lineTo(cx - IW2, cy);
-          c.closePath();
-          c.fill();
-        }
-        // wind-blown dune ripples
-        c.strokeStyle = "rgba(178,155,110,0.55)";
-        c.lineWidth = 1;
-        for (let k = 0; k < 2; k++) {
-          const ry = cy - IH2 * 0.4 + (hash2(tx, ty, 92 + k) * IH2 * 1.2);
-          const rx0 = cx - IW2 * 0.55, rx1 = cx + IW2 * 0.55;
-          c.beginPath();
-          c.moveTo(rx0, ry + 2);
-          c.quadraticCurveTo(cx, ry - 2 - hash2(tx, ty, 94 + k) * 2, rx1, ry + 1);
-          c.stroke();
-        }
-        // shells / driftwood
-        const bh = hash2(tx, ty, 96);
-        if (bh > 0.965) {
-          c.fillStyle = "#f2ece0";
-          c.fillRect(cx + (hash2(tx, ty, 97) - 0.5) * IW2, cy + (hash2(tx, ty, 98) - 0.5) * IH2, 2, 2);
-        } else if (bh > 0.94) {
-          c.strokeStyle = "#8a6540";
-          c.lineWidth = 1.6;
-          const dwx = cx + (hash2(tx, ty, 97) - 0.5) * IW2 * 0.7;
-          const dwy = cy + (hash2(tx, ty, 98) - 0.5) * IH2 * 0.7;
-          c.beginPath();
-          c.moveTo(dwx - 4, dwy + 1);
-          c.lineTo(dwx + 4, dwy - 1);
-          c.stroke();
-        }
-      }
+  /* v17: Enchanted Forest ground — bioluminescent undergrowth baked into
+     the tile. Flat hard-edged specks, no gradients: the shimmer comes from
+     colour contrast against the desaturated canopy, matching the flat-
+     shaded rule. The drifting motes above it are live particles. */
+  if (b === B.ENCHFOREST) {
+    c.fillStyle = "rgba(126,232,206,0.30)";                 // faint glow pool
+    c.beginPath();
+    c.moveTo(cx, cy - IH2 * 0.55);
+    c.lineTo(cx + IW2 * 0.55, cy);
+    c.lineTo(cx, cy + IH2 * 0.55);
+    c.lineTo(cx - IW2 * 0.55, cy);
+    c.closePath();
+    c.fill();
+    for (let k = 0; k < 3; k++) {
+      const gh = hash2(tx, ty, 130 + k);
+      if (gh < 0.42) continue;
+      const gx2 = cx + (hash2(tx, ty, 140 + k) - 0.5) * IW2 * 1.1;
+      const gy2 = cy + (hash2(tx, ty, 150 + k) - 0.5) * IH2 * 1.1;
+      c.fillStyle = k === 0 ? "#a8f4dc" : "#7ad8c0";
+      c.fillRect(gx2, gy2, 2, 2);
+      c.fillStyle = "rgba(168,244,220,0.35)";
+      c.fillRect(gx2 - 1.5, gy2 - 1.5, 5, 5);
+    }
+  }
 
-      /* v17: Enchanted Forest ground — bioluminescent undergrowth baked into
-         the tile. Flat hard-edged specks, no gradients: the shimmer comes from
-         colour contrast against the desaturated canopy, matching the flat-
-         shaded rule. The drifting motes above it are live particles. */
-      if (b === B.ENCHFOREST) {
-        c.fillStyle = "rgba(126,232,206,0.30)";                 // faint glow pool
-        c.beginPath();
-        c.moveTo(cx, cy - IH2 * 0.55);
-        c.lineTo(cx + IW2 * 0.55, cy);
-        c.lineTo(cx, cy + IH2 * 0.55);
-        c.lineTo(cx - IW2 * 0.55, cy);
-        c.closePath();
-        c.fill();
-        for (let k = 0; k < 3; k++) {
-          const gh = hash2(tx, ty, 130 + k);
-          if (gh < 0.42) continue;
-          const gx2 = cx + (hash2(tx, ty, 140 + k) - 0.5) * IW2 * 1.1;
-          const gy2 = cy + (hash2(tx, ty, 150 + k) - 0.5) * IH2 * 1.1;
-          c.fillStyle = k === 0 ? "#a8f4dc" : "#7ad8c0";
-          c.fillRect(gx2, gy2, 2, 2);
-          c.fillStyle = "rgba(168,244,220,0.35)";
-          c.fillRect(gx2 - 1.5, gy2 - 1.5, 5, 5);
-        }
-      }
+  /* v17: Sacred Meadow ground — warm golden grass plus a soft light-shaft
+     treatment: a pale wedge laid across the tile in the sun's direction,
+     hard-edged like everything else, so it reads as a shaft not a bloom. */
+  if (b === B.SACMEADOW) {
+    if (hash2(tx, ty, 160) > 0.35) {
+      const shx = cx + (hash2(tx, ty, 162) - 0.5) * IW2 * 0.7;
+      c.fillStyle = "rgba(255,244,196,0.22)";
+      c.beginPath();
+      c.moveTo(shx - 2.5, cy - IH2 * 0.9);
+      c.lineTo(shx + 3.5, cy - IH2 * 0.9);
+      c.lineTo(shx + 7, cy + IH2 * 0.8);
+      c.lineTo(shx + 1.5, cy + IH2 * 0.8);
+      c.closePath();
+      c.fill();
+    }
+    c.strokeStyle = "rgba(226,196,110,0.55)";               // warm grass strokes
+    c.lineWidth = 1;
+    for (let k = 0; k < 2; k++) {
+      const bx2 = cx + (hash2(tx, ty, 170 + k) - 0.5) * IW2 * 0.9;
+      const by2 = cy + (hash2(tx, ty, 174 + k) - 0.5) * IH2 * 0.8;
+      c.beginPath();
+      c.moveTo(bx2, by2 + 2);
+      c.quadraticCurveTo(bx2 + 1, by2 - 1, bx2 + 2.4, by2 - 3.4);
+      c.stroke();
+    }
+    if (hash2(tx, ty, 178) > 0.86) {                        // occasional gold bloom
+      c.fillStyle = "#f6e08c";
+      c.fillRect(cx + (hash2(tx, ty, 180) - 0.5) * IW2 * 0.7,
+                 cy + (hash2(tx, ty, 182) - 0.5) * IH2 * 0.7, 2, 2);
+    }
+  }
 
-      /* v17: Sacred Meadow ground — warm golden grass plus a soft light-shaft
-         treatment: a pale wedge laid across the tile in the sun's direction,
-         hard-edged like everything else, so it reads as a shaft not a bloom. */
-      if (b === B.SACMEADOW) {
-        if (hash2(tx, ty, 160) > 0.35) {
-          const shx = cx + (hash2(tx, ty, 162) - 0.5) * IW2 * 0.7;
-          c.fillStyle = "rgba(255,244,196,0.22)";
-          c.beginPath();
-          c.moveTo(shx - 2.5, cy - IH2 * 0.9);
-          c.lineTo(shx + 3.5, cy - IH2 * 0.9);
-          c.lineTo(shx + 7, cy + IH2 * 0.8);
-          c.lineTo(shx + 1.5, cy + IH2 * 0.8);
-          c.closePath();
-          c.fill();
-        }
-        c.strokeStyle = "rgba(226,196,110,0.55)";               // warm grass strokes
-        c.lineWidth = 1;
-        for (let k = 0; k < 2; k++) {
-          const bx2 = cx + (hash2(tx, ty, 170 + k) - 0.5) * IW2 * 0.9;
-          const by2 = cy + (hash2(tx, ty, 174 + k) - 0.5) * IH2 * 0.8;
-          c.beginPath();
-          c.moveTo(bx2, by2 + 2);
-          c.quadraticCurveTo(bx2 + 1, by2 - 1, bx2 + 2.4, by2 - 3.4);
-          c.stroke();
-        }
-        if (hash2(tx, ty, 178) > 0.86) {                        // occasional gold bloom
-          c.fillStyle = "#f6e08c";
-          c.fillRect(cx + (hash2(tx, ty, 180) - 0.5) * IW2 * 0.7,
-                     cy + (hash2(tx, ty, 182) - 0.5) * IH2 * 0.7, 2, 2);
-        }
-      }
+  /* v18: Underground Caves ground — deep shadow pool, fissures in the
+     rock, and a sparse mineral glint for the "sparse ambient light" read.
+     Hard-edged flat shapes only, no gradients (flat-shaded rule). This is
+     deliberately NOT the v17 drifting-mote treatment: motes mark the two
+     rare SURFACE biomes and must not leak into a third one. */
+  if (b === B.UNDERCAVE) {
+    c.fillStyle = "rgba(12,10,16,0.34)";                     // deep shadow pool
+    c.beginPath();
+    c.moveTo(cx, cy - IH2 * 0.62);
+    c.lineTo(cx + IW2 * 0.62, cy);
+    c.lineTo(cx, cy + IH2 * 0.62);
+    c.lineTo(cx - IW2 * 0.62, cy);
+    c.closePath();
+    c.fill();
+    c.strokeStyle = "rgba(18,15,22,0.5)";                    // fissures
+    c.lineWidth = 1;
+    for (let k = 0; k < 2; k++) {
+      const fxc = cx + (hash2(tx, ty, 186 + k) - 0.5) * IW2 * 0.8;
+      const fyc = cy + (hash2(tx, ty, 190 + k) - 0.5) * IH2 * 0.8;
+      c.beginPath();
+      c.moveTo(fxc - 3, fyc + 1);
+      c.lineTo(fxc, fyc - 1);
+      c.lineTo(fxc + 3, fyc + 2);
+      c.stroke();
+    }
+    if (hash2(tx, ty, 194) > 0.72) {                         // sparse mineral glint
+      const gxc = cx + (hash2(tx, ty, 196) - 0.5) * IW2 * 0.7;
+      const gyc = cy + (hash2(tx, ty, 198) - 0.5) * IH2 * 0.7;
+      c.fillStyle = "rgba(212,182,120,0.20)";
+      c.fillRect(gxc - 1.5, gyc - 1.5, 5, 5);
+      c.fillStyle = "#d4b678";
+      c.fillRect(gxc, gyc, 2, 2);
+    }
+  }
 
-      /* v18: Underground Caves ground — deep shadow pool, fissures in the
-         rock, and a sparse mineral glint for the "sparse ambient light" read.
-         Hard-edged flat shapes only, no gradients (flat-shaded rule). This is
-         deliberately NOT the v17 drifting-mote treatment: motes mark the two
-         rare SURFACE biomes and must not leak into a third one. */
-      if (b === B.UNDERCAVE) {
-        c.fillStyle = "rgba(12,10,16,0.34)";                     // deep shadow pool
-        c.beginPath();
-        c.moveTo(cx, cy - IH2 * 0.62);
-        c.lineTo(cx + IW2 * 0.62, cy);
-        c.lineTo(cx, cy + IH2 * 0.62);
-        c.lineTo(cx - IW2 * 0.62, cy);
-        c.closePath();
-        c.fill();
-        c.strokeStyle = "rgba(18,15,22,0.5)";                    // fissures
-        c.lineWidth = 1;
-        for (let k = 0; k < 2; k++) {
-          const fxc = cx + (hash2(tx, ty, 186 + k) - 0.5) * IW2 * 0.8;
-          const fyc = cy + (hash2(tx, ty, 190 + k) - 0.5) * IH2 * 0.8;
-          c.beginPath();
-          c.moveTo(fxc - 3, fyc + 1);
-          c.lineTo(fxc, fyc - 1);
-          c.lineTo(fxc + 3, fyc + 2);
-          c.stroke();
-        }
-        if (hash2(tx, ty, 194) > 0.72) {                         // sparse mineral glint
-          const gxc = cx + (hash2(tx, ty, 196) - 0.5) * IW2 * 0.7;
-          const gyc = cy + (hash2(tx, ty, 198) - 0.5) * IH2 * 0.7;
-          c.fillStyle = "rgba(212,182,120,0.20)";
-          c.fillRect(gxc - 1.5, gyc - 1.5, 5, 5);
-          c.fillStyle = "#d4b678";
-          c.fillRect(gxc, gyc, 2, 2);
-        }
-      }
+  /* v21: Underwater Caves ground — the Underground Caves' shadow-and-
+     fissure language taken cold, plus the sparse bioluminescent accent the
+     spec asks for. The accent reuses the ENCHANTED FOREST UNDERGROWTH
+     treatment (hard-edged speck + flat square halo, baked into the tile),
+     shifted from teal to blue — deliberately NOT the drifting `mote`
+     particle kind, which marks the two rare SURFACE biomes and must not
+     leak into a third or fourth one (v18 rule, unchanged). Hard-edged flat
+     shapes only, no gradients. */
+  if (b === B.UWCAVE) {
+    c.fillStyle = "rgba(8,18,26,0.34)";                      // cold shadow pool
+    c.beginPath();
+    c.moveTo(cx, cy - IH2 * 0.62);
+    c.lineTo(cx + IW2 * 0.62, cy);
+    c.lineTo(cx, cy + IH2 * 0.62);
+    c.lineTo(cx - IW2 * 0.62, cy);
+    c.closePath();
+    c.fill();
+    c.strokeStyle = "rgba(14,28,38,0.5)";                    // fissures in the rock
+    c.lineWidth = 1;
+    for (let k = 0; k < 2; k++) {
+      const fxu = cx + (hash2(tx, ty, 202 + k) - 0.5) * IW2 * 0.8;
+      const fyu = cy + (hash2(tx, ty, 206 + k) - 0.5) * IH2 * 0.8;
+      c.beginPath();
+      c.moveTo(fxu - 3, fyu + 1);
+      c.lineTo(fxu, fyu - 1);
+      c.lineTo(fxu + 3, fyu + 2);
+      c.stroke();
+    }
+    for (let k = 0; k < 3; k++) {                            // bioluminescent accents
+      if (hash2(tx, ty, 210 + k) < 0.58) continue;
+      const gxu = cx + (hash2(tx, ty, 214 + k) - 0.5) * IW2 * 1.1;
+      const gyu = cy + (hash2(tx, ty, 218 + k) - 0.5) * IH2 * 1.1;
+      c.fillStyle = "rgba(143,232,244,0.30)";
+      c.fillRect(gxu - 1.5, gyu - 1.5, 5, 5);
+      c.fillStyle = k === 0 ? "#8fe8f4" : "#5fc4d8";
+      c.fillRect(gxu, gyu, 2, 2);
+    }
+  }
 
-      /* v21: Underwater Caves ground — the Underground Caves' shadow-and-
-         fissure language taken cold, plus the sparse bioluminescent accent the
-         spec asks for. The accent reuses the ENCHANTED FOREST UNDERGROWTH
-         treatment (hard-edged speck + flat square halo, baked into the tile),
-         shifted from teal to blue — deliberately NOT the drifting `mote`
-         particle kind, which marks the two rare SURFACE biomes and must not
-         leak into a third or fourth one (v18 rule, unchanged). Hard-edged flat
-         shapes only, no gradients. */
-      if (b === B.UWCAVE) {
-        c.fillStyle = "rgba(8,18,26,0.34)";                      // cold shadow pool
-        c.beginPath();
-        c.moveTo(cx, cy - IH2 * 0.62);
-        c.lineTo(cx + IW2 * 0.62, cy);
-        c.lineTo(cx, cy + IH2 * 0.62);
-        c.lineTo(cx - IW2 * 0.62, cy);
-        c.closePath();
-        c.fill();
-        c.strokeStyle = "rgba(14,28,38,0.5)";                    // fissures in the rock
-        c.lineWidth = 1;
-        for (let k = 0; k < 2; k++) {
-          const fxu = cx + (hash2(tx, ty, 202 + k) - 0.5) * IW2 * 0.8;
-          const fyu = cy + (hash2(tx, ty, 206 + k) - 0.5) * IH2 * 0.8;
-          c.beginPath();
-          c.moveTo(fxu - 3, fyu + 1);
-          c.lineTo(fxu, fyu - 1);
-          c.lineTo(fxu + 3, fyu + 2);
-          c.stroke();
-        }
-        for (let k = 0; k < 3; k++) {                            // bioluminescent accents
-          if (hash2(tx, ty, 210 + k) < 0.58) continue;
-          const gxu = cx + (hash2(tx, ty, 214 + k) - 0.5) * IW2 * 1.1;
-          const gyu = cy + (hash2(tx, ty, 218 + k) - 0.5) * IH2 * 1.1;
-          c.fillStyle = "rgba(143,232,244,0.30)";
-          c.fillRect(gxu - 1.5, gyu - 1.5, 5, 5);
-          c.fillStyle = k === 0 ? "#8fe8f4" : "#5fc4d8";
-          c.fillRect(gxu, gyu, 2, 2);
-        }
-      }
+  /* v22: Abyssal Hollow ground — the Underwater Caves' own treatment
+     taken down to the bottom of the sea. Same shapes, three deliberate
+     differences and nothing else: the shadow pool is heavier, there is
+     ONE fissure instead of two, and there is at most ONE bioluminescent
+     accent behind a much higher gate (0.86 vs 0.58) instead of up to
+     three. Sparse and cold is the entire read — this is the deepest
+     point in the world, not a livelier cave. Same baked speck-and-halo
+     language, still deliberately NOT the drifting `mote` particle,
+     which stays reserved for the two rare SURFACE biomes (v18 rule). */
+  if (b === B.ABYSSAL) {
+    c.fillStyle = "rgba(4,10,16,0.46)";                      // heavier shadow pool
+    c.beginPath();
+    c.moveTo(cx, cy - IH2 * 0.62);
+    c.lineTo(cx + IW2 * 0.62, cy);
+    c.lineTo(cx, cy + IH2 * 0.62);
+    c.lineTo(cx - IW2 * 0.62, cy);
+    c.closePath();
+    c.fill();
+    c.strokeStyle = "rgba(8,16,24,0.55)";                    // a single fissure
+    c.lineWidth = 1;
+    const fxa = cx + (hash2(tx, ty, 222) - 0.5) * IW2 * 0.8;
+    const fya = cy + (hash2(tx, ty, 224) - 0.5) * IH2 * 0.8;
+    c.beginPath();
+    c.moveTo(fxa - 3, fya + 1);
+    c.lineTo(fxa, fya - 1);
+    c.lineTo(fxa + 3, fya + 2);
+    c.stroke();
+    if (hash2(tx, ty, 226) > 0.86) {                         // minimal bioluminescence
+      const gxa = cx + (hash2(tx, ty, 228) - 0.5) * IW2 * 0.7;
+      const gya = cy + (hash2(tx, ty, 230) - 0.5) * IH2 * 0.7;
+      c.fillStyle = "rgba(74,150,190,0.22)";
+      c.fillRect(gxa - 1.5, gya - 1.5, 5, 5);
+      c.fillStyle = "#4a96be";
+      c.fillRect(gxa, gya, 2, 2);
+    }
+  }
 
-      /* v22: Abyssal Hollow ground — the Underwater Caves' own treatment
-         taken down to the bottom of the sea. Same shapes, three deliberate
-         differences and nothing else: the shadow pool is heavier, there is
-         ONE fissure instead of two, and there is at most ONE bioluminescent
-         accent behind a much higher gate (0.86 vs 0.58) instead of up to
-         three. Sparse and cold is the entire read — this is the deepest
-         point in the world, not a livelier cave. Same baked speck-and-halo
-         language, still deliberately NOT the drifting `mote` particle,
-         which stays reserved for the two rare SURFACE biomes (v18 rule). */
-      if (b === B.ABYSSAL) {
-        c.fillStyle = "rgba(4,10,16,0.46)";                      // heavier shadow pool
-        c.beginPath();
-        c.moveTo(cx, cy - IH2 * 0.62);
-        c.lineTo(cx + IW2 * 0.62, cy);
-        c.lineTo(cx, cy + IH2 * 0.62);
-        c.lineTo(cx - IW2 * 0.62, cy);
-        c.closePath();
-        c.fill();
-        c.strokeStyle = "rgba(8,16,24,0.55)";                    // a single fissure
-        c.lineWidth = 1;
-        const fxa = cx + (hash2(tx, ty, 222) - 0.5) * IW2 * 0.8;
-        const fya = cy + (hash2(tx, ty, 224) - 0.5) * IH2 * 0.8;
-        c.beginPath();
-        c.moveTo(fxa - 3, fya + 1);
-        c.lineTo(fxa, fya - 1);
-        c.lineTo(fxa + 3, fya + 2);
-        c.stroke();
-        if (hash2(tx, ty, 226) > 0.86) {                         // minimal bioluminescence
-          const gxa = cx + (hash2(tx, ty, 228) - 0.5) * IW2 * 0.7;
-          const gya = cy + (hash2(tx, ty, 230) - 0.5) * IH2 * 0.7;
-          c.fillStyle = "rgba(74,150,190,0.22)";
-          c.fillRect(gxa - 1.5, gya - 1.5, 5, 5);
-          c.fillStyle = "#4a96be";
-          c.fillRect(gxa, gya, 2, 2);
-        }
-      }
+  /* v22: Sunforge Caldera ground — the inverse of the cave treatment.
+     Where a cave bakes a dark pool into the tile, this bakes a BRIGHT
+     one, then cracks it open: hard-edged glowing fissures in the crust
+     and an occasional white-hot ember flake. Flat hard-edged shapes
+     only, no gradients — the heat reads through colour contrast, which
+     is the same rule the Enchanted Forest undergrowth follows. The
+     animated shimmer over the top is the v8 lava treatment reused, in
+     drawWorld() — no new particle system was built for this. */
+  if (b === B.CALDERA) {
+    c.fillStyle = "rgba(255,240,206,0.30)";                  // blinding inner pool
+    c.beginPath();
+    c.moveTo(cx, cy - IH2 * 0.62);
+    c.lineTo(cx + IW2 * 0.62, cy);
+    c.lineTo(cx, cy + IH2 * 0.62);
+    c.lineTo(cx - IW2 * 0.62, cy);
+    c.closePath();
+    c.fill();
+    c.strokeStyle = "rgba(226,110,40,0.55)";                 // glowing crust cracks
+    c.lineWidth = 1;
+    for (let k = 0; k < 2; k++) {
+      const fxk = cx + (hash2(tx, ty, 234 + k) - 0.5) * IW2 * 0.8;
+      const fyk = cy + (hash2(tx, ty, 238 + k) - 0.5) * IH2 * 0.8;
+      c.beginPath();
+      c.moveTo(fxk - 3, fyk + 1);
+      c.lineTo(fxk, fyk - 1);
+      c.lineTo(fxk + 3, fyk + 2);
+      c.stroke();
+    }
+    if (hash2(tx, ty, 242) > 0.7) {                          // white-hot ember flake
+      const gxk = cx + (hash2(tx, ty, 244) - 0.5) * IW2 * 0.7;
+      const gyk = cy + (hash2(tx, ty, 246) - 0.5) * IH2 * 0.7;
+      c.fillStyle = "rgba(255,196,110,0.28)";
+      c.fillRect(gxk - 1.5, gyk - 1.5, 5, 5);
+      c.fillStyle = "#fff2d2";
+      c.fillRect(gxk, gyk, 2, 2);
+    }
+  }
 
-      /* v22: Sunforge Caldera ground — the inverse of the cave treatment.
-         Where a cave bakes a dark pool into the tile, this bakes a BRIGHT
-         one, then cracks it open: hard-edged glowing fissures in the crust
-         and an occasional white-hot ember flake. Flat hard-edged shapes
-         only, no gradients — the heat reads through colour contrast, which
-         is the same rule the Enchanted Forest undergrowth follows. The
-         animated shimmer over the top is the v8 lava treatment reused, in
-         drawWorld() — no new particle system was built for this. */
-      if (b === B.CALDERA) {
-        c.fillStyle = "rgba(255,240,206,0.30)";                  // blinding inner pool
-        c.beginPath();
-        c.moveTo(cx, cy - IH2 * 0.62);
-        c.lineTo(cx + IW2 * 0.62, cy);
-        c.lineTo(cx, cy + IH2 * 0.62);
-        c.lineTo(cx - IW2 * 0.62, cy);
-        c.closePath();
-        c.fill();
-        c.strokeStyle = "rgba(226,110,40,0.55)";                 // glowing crust cracks
-        c.lineWidth = 1;
-        for (let k = 0; k < 2; k++) {
-          const fxk = cx + (hash2(tx, ty, 234 + k) - 0.5) * IW2 * 0.8;
-          const fyk = cy + (hash2(tx, ty, 238 + k) - 0.5) * IH2 * 0.8;
-          c.beginPath();
-          c.moveTo(fxk - 3, fyk + 1);
-          c.lineTo(fxk, fyk - 1);
-          c.lineTo(fxk + 3, fyk + 2);
-          c.stroke();
-        }
-        if (hash2(tx, ty, 242) > 0.7) {                          // white-hot ember flake
-          const gxk = cx + (hash2(tx, ty, 244) - 0.5) * IW2 * 0.7;
-          const gyk = cy + (hash2(tx, ty, 246) - 0.5) * IH2 * 0.7;
-          c.fillStyle = "rgba(255,196,110,0.28)";
-          c.fillRect(gxk - 1.5, gyk - 1.5, 5, 5);
-          c.fillStyle = "#fff2d2";
-          c.fillRect(gxk, gyk, 2, 2);
-        }
-      }
-
-      // v8: single deliberate packed-earth trail, Spawn -> Spawn Forge only
-      if (grassy) {
-        const dTrail = distToSeg(tx + 0.5, ty + 0.5, SPAWN.x, SPAWN.y, SPAWN_FORGE.x, SPAWN_FORGE.y);
-        if (dTrail < 0.55) {
-          const a = (1 - dTrail / 0.55) * 0.8;
-          c.fillStyle = `rgba(178,152,106,${a.toFixed(2)})`;
-          c.beginPath();
-          c.moveTo(cx, cy - IH2 * 0.8);
-          c.lineTo(cx + IW2 * 0.8, cy);
-          c.lineTo(cx, cy + IH2 * 0.8);
-          c.lineTo(cx - IW2 * 0.8, cy);
-          c.closePath();
-          c.fill();
-          if (hash2(tx, ty, 99) > 0.6) {
-            c.fillStyle = "rgba(140,116,78,0.5)";
-            c.fillRect(cx + (hash2(tx, ty, 100) - 0.5) * IW2 * 0.6, cy + (hash2(tx, ty, 101) - 0.5) * IH2 * 0.6, 2, 1.5);
-          }
-        }
-      }
-
-      // Jagged snow spikes on some peak tiles (2026-07-11)
-      if (b === B.PEAK && hash2(tx, ty, 75) > 0.55) {
-        const spx = cx + (hash2(tx, ty, 77) - 0.5) * IW2 * 0.8;
-        const sph = 6 + hash2(tx, ty, 79) * 9;
-        c.fillStyle = "#f2eee4";
-        c.beginPath();
-        c.moveTo(spx, cy - sph);
-        c.lineTo(spx - 4, cy + 2);
-        c.lineTo(spx, cy + 3);
-        c.closePath();
-        c.fill();
-        c.fillStyle = "#cfc9ba";
-        c.beginPath();
-        c.moveTo(spx, cy - sph);
-        c.lineTo(spx + 4, cy + 2);
-        c.lineTo(spx, cy + 3);
-        c.closePath();
-        c.fill();
-      }
-
-      if (b === B.RUINB && hash2(tx, ty, 44) > 0.5) {
-        c.strokeStyle = shade(top, 0.88);
-        c.lineWidth = 1;
-        c.beginPath();
-        c.moveTo(cx - IW2 / 2, cy - IH2 / 2);
-        c.lineTo(cx + IW2 / 2, cy + IH2 / 2);
-        c.stroke();
+  // v8: single deliberate packed-earth trail, Spawn -> Spawn Forge only
+  if (grassy) {
+    const dTrail = distToSeg(tx + 0.5, ty + 0.5, SPAWN.x, SPAWN.y, SPAWN_FORGE.x, SPAWN_FORGE.y);
+    if (dTrail < 0.55) {
+      const a = (1 - dTrail / 0.55) * 0.8;
+      c.fillStyle = `rgba(178,152,106,${a.toFixed(2)})`;
+      c.beginPath();
+      c.moveTo(cx, cy - IH2 * 0.8);
+      c.lineTo(cx + IW2 * 0.8, cy);
+      c.lineTo(cx, cy + IH2 * 0.8);
+      c.lineTo(cx - IW2 * 0.8, cy);
+      c.closePath();
+      c.fill();
+      if (hash2(tx, ty, 99) > 0.6) {
+        c.fillStyle = "rgba(140,116,78,0.5)";
+        c.fillRect(cx + (hash2(tx, ty, 100) - 0.5) * IW2 * 0.6, cy + (hash2(tx, ty, 101) - 0.5) * IH2 * 0.6, 2, 1.5);
       }
     }
+  }
+
+  // Jagged snow spikes on some peak tiles (2026-07-11)
+  if (b === B.PEAK && hash2(tx, ty, 75) > 0.55) {
+    const spx = cx + (hash2(tx, ty, 77) - 0.5) * IW2 * 0.8;
+    const sph = 6 + hash2(tx, ty, 79) * 9;
+    c.fillStyle = "#f2eee4";
+    c.beginPath();
+    c.moveTo(spx, cy - sph);
+    c.lineTo(spx - 4, cy + 2);
+    c.lineTo(spx, cy + 3);
+    c.closePath();
+    c.fill();
+    c.fillStyle = "#cfc9ba";
+    c.beginPath();
+    c.moveTo(spx, cy - sph);
+    c.lineTo(spx + 4, cy + 2);
+    c.lineTo(spx, cy + 3);
+    c.closePath();
+    c.fill();
+  }
+
+  if (b === B.RUINB && hash2(tx, ty, 44) > 0.5) {
+    c.strokeStyle = shade(top, 0.88);
+    c.lineWidth = 1;
+    c.beginPath();
+    c.moveTo(cx - IW2 / 2, cy - IH2 / 2);
+    c.lineTo(cx + IW2 / 2, cy + IH2 / 2);
+    c.stroke();
   }
 }
 
@@ -3771,7 +3800,9 @@ enterBtn.onclick = async () => {
     await loginPlayer(username, chosenClass);
     await loadPets();
     buildFeatureList();
-    bakeTerrain();
+    /* Expansion 2a: the bakeTerrain() call that stood here is gone. There is
+       no full-map canvas to build any more, so the ground needs nothing at
+       login beyond the caches the three clears above already reset. */
     await loadGroundItems();
     await loadBasePieces();          // v33: one select on login, like ground_items
     await joinRealtime();
@@ -4431,7 +4462,9 @@ async function performWorldReset() {
   tileCache.clear(); elevCache.clear(); rawHCache.clear();
   placeLandmarks();
   buildFeatureList();
-  bakeTerrain();
+  /* Expansion 2a: the v39 reset's bakeTerrain() call is gone with the bake.
+     The cache clears and the two rebuilds above are the whole rebuild now —
+     the next frame draws the new world's ground straight from them. */
   if (me) {
     const s = findSpawn();
     me.x = s.x; me.y = s.y; me.diving = false;
@@ -10020,9 +10053,64 @@ function render(t) {
     }
   }
 
-  const dx = w / 2 - (isoX(cam.x, cam.y) + bakeOX);
-  const dy = h / 2 - (isoY(cam.x, cam.y) + bakeOY);
-  ctx.drawImage(terrainBake, dx, dy);
+  /* Visible world bounds (clean rewrite). Expansion 2a moved this block up
+     from below the tower reflection so the ground pass can share it — it is
+     the SAME four-corner computation the entity pass has always used, in the
+     same place in the frame relative to everything that reads it, not a
+     second viewport-bounds system. It depends only on w, h and cam. */
+  const corners = [screenToWorld(0, 0), screenToWorld(w, 0), screenToWorld(0, h), screenToWorld(w, h)];
+  const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
+  const minX = Math.max(0, Math.floor(Math.min(...xs)) - 2);
+  const maxX = Math.min(N - 1, Math.ceil(Math.max(...xs)) + 2);
+  const minY = Math.max(0, Math.floor(Math.min(...ys)) - 3);
+  const maxY = Math.min(N - 1, Math.ceil(Math.max(...ys)) + 6);
+
+  /* Expansion 2a: the ground itself, drawn here every frame instead of being
+     blitted out of one pre-baked full-map canvas.
+
+     Order is the bake's own diagonal sweep, back-to-front by tx + ty, and it
+     has to be: a tile's cliff faces hang down over its southern and eastern
+     neighbours, so drawing row-major would put those faces UNDER tiles that
+     used to paint over them.
+
+     Two culls, cheap ones, in front of the expensive part. The rectangle is
+     the bounds above widened by GROUND_MARGIN; but that rectangle is the
+     bounding box of a diamond, so a little over half of it is off-screen at
+     any zoom. The per-tile test drops those before any drawing happens — the
+     same worldToScreen arithmetic the tile would have done anyway, not a
+     second bounds system. It is deliberately conservative in both axes
+     (GROUND_UP / GROUND_DOWN), and a run4 gate proves nothing that would
+     have painted inside the canvas is ever skipped.
+
+     Deliberately NOT skipped inside a cave interior: the pre-change frame
+     blitted the world ground unconditionally and then drew the interior over
+     the top of it, so skipping here would be a visible change, not a saving. */
+  {
+    const camIX = isoX(cam.x, cam.y), camIY = isoY(cam.x, cam.y);
+    const gMinX = Math.max(0, minX - GROUND_MARGIN), gMaxX = Math.min(N - 1, maxX + GROUND_MARGIN);
+    const gMinY = Math.max(0, minY - GROUND_MARGIN), gMaxY = Math.min(N - 1, maxY + GROUND_MARGIN);
+    let drawn = 0, scanned = 0;
+    for (let s = gMinX + gMinY; s <= gMaxX + gMaxY; s++) {
+      const txLo = Math.max(gMinX, s - gMaxY), txHi = Math.min(gMaxX, s - gMinY);
+      for (let tx = txLo; tx <= txHi; tx++) {
+        const ty = s - tx;
+        scanned++;
+        const bcx = w / 2 + isoX(tx + 0.5, ty + 0.5) - camIX;
+        if (bcx + IW2 < 0 || bcx - IW2 > w) continue;
+        const bcy = h / 2 + isoY(tx + 0.5, ty + 0.5) - camIY;
+        if (bcy + GROUND_DOWN < 0 || bcy - GROUND_UP > h) continue;
+        drawGroundTile(ctx, tx, ty);
+        drawn++;
+      }
+    }
+    groundStats.tiles = drawn; groundStats.scanned = scanned;
+    groundStats.minX = gMinX; groundStats.maxX = gMaxX;
+    groundStats.minY = gMinY; groundStats.maxY = gMaxY;
+    /* The camera and viewport this pass actually ran at, so a proof gate can
+       recompute the same screen positions instead of assuming them. */
+    groundStats.camX = cam.x; groundStats.camY = cam.y;
+    groundStats.w = w; groundStats.h = h;
+  }
 
   // v8: faded mirrored tower silhouette in the water below it (when coastal)
   if (REFLECT) {
@@ -10042,13 +10130,8 @@ function render(t) {
     }
   }
 
-  // Visible world bounds (clean rewrite)
-  const corners = [screenToWorld(0, 0), screenToWorld(w, 0), screenToWorld(0, h), screenToWorld(w, h)];
-  const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
-  const minX = Math.max(0, Math.floor(Math.min(...xs)) - 2);
-  const maxX = Math.min(N - 1, Math.ceil(Math.max(...xs)) + 2);
-  const minY = Math.max(0, Math.floor(Math.min(...ys)) - 3);
-  const maxY = Math.min(N - 1, Math.ceil(Math.max(...ys)) + 6);
+  /* Visible world bounds moved UP, above the ground pass (Expansion 2a) —
+     minX/maxX/minY/maxY are already in scope here, unchanged. */
 
   // v29: inside a cave, the interior's own floor/walls replace the world pass
   /* hotfix: the game reportedly locks up on cave entry for at least one

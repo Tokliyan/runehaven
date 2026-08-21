@@ -2837,6 +2837,200 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['v37 hooks are reachable', false]);
     }
 
+    /* ============ Expansion 2a: viewport-based ground rendering ===========
+       The single pre-baked full-map canvas is gone; ground tiles are drawn
+       per frame, visible ones only. These gates hold the three things that
+       conversion could plausibly have broken: that the bake is genuinely
+       removed rather than left dead, that the per-frame pass never drops a
+       tile that would have painted on screen (which is what a cliff face
+       popping at the viewport edge would look like), and that the per-frame
+       tile count stays bounded.
+
+       The op-for-op comparison against the pre-change file lives outside this
+       harness by necessity — it needs the old file, which only exists in git
+       history. It ran at the build that made the change: 9 camera positions
+       across coast, mountain, volcano, forest, dark forest and ruins, 17,853
+       tiles, 203,433 draw ops, zero mismatches. What is pinned HERE is
+       everything that can still be checked from the shipped file alone. */
+    if (typeof window.drawGroundTile === 'function' && window.debugWorldInfo) {
+      const g2a = () => window.debugWorldInfo().ground;
+      const info2a = window.debugWorldInfo();
+      const pump2a = (from, n) => {
+        for (let f = from; f < from + (n || 3); f++) {
+          const q = rafQ; rafQ = [];
+          for (const cb of q) { try { cb(f * 50); } catch (e) { if (!caught) caught = e; } }
+        }
+      };
+
+      /* --- the bake is genuinely gone, not left dead in the file ---------
+         Checked against the script with its COMMENTS STRIPPED, because the
+         new code explains itself by naming what it replaced — the point is
+         that no executable reference survives, not that the words don't. */
+      const stripped = gameScript
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/([^:"'`])\/\/[^\n]*/g, '$1');
+      const stripperSane = stripped.indexOf('function drawGroundTile') > 0 &&
+        stripped.indexOf('function render') > 0 &&
+        stripped.length > gameScript.length * 0.6;
+      results.push(['(the comment stripper these gates rely on is sane)', stripperSane]);
+      for (const dead of ['bakeTerrain', 'terrainBake', 'bakeOX', 'bakeOY']) {
+        results.push(['the bake is genuinely removed: no live `' + dead + '` anywhere',
+          stripperSane && stripped.indexOf(dead) < 0]);
+      }
+      results.push(['nothing blits a pre-baked terrain sheet any more',
+        stripped.indexOf('drawImage(terrainBake') < 0]);
+      results.push(['drawGroundTile() replaced it, and the frame really calls it',
+        stripped.indexOf('function drawGroundTile') > 0 &&
+        stripped.indexOf('drawGroundTile(ctx, tx, ty)') > 0]);
+      results.push(['the per-tile jitter helper survived the move intact',
+        typeof window.variedZ === 'function' &&
+        stripped.indexOf('hash2(tx2, ty2, 73) * 9') > 0]);
+      /* The bake's diagonal sweep is the reason cliff faces overlap correctly.
+         Row-major would put a face under a tile that used to paint over it. */
+      results.push(['ground still draws back-to-front by tx + ty, as the bake did',
+        stripped.indexOf('for (let s = gMinX + gMinY; s <= gMaxX + gMaxY; s++)') > 0]);
+
+      /* --- PART C: this version changes no world geometry at all --------- */
+      results.push(['N is untouched at 320', info2a.N === 320]);
+      results.push(['the safe zone radius is untouched at 36', info2a.SAFE_RADIUS === 36]);
+      results.push(['landmark placement is untouched — all three still found a spot',
+        info2a.VOLCANO.x > 0 && info2a.MOUNT.x > 0 && info2a.RUINS.length === 6]);
+
+      /* --- the real gate: no tile that would paint on screen is skipped ---
+         Walks a wide window of REAL tiles, computes each one's true painted
+         extent from its own height and its south/east neighbours' heights —
+         the same two lookups the cliff-face branches make — and fails if any
+         tile whose paint reaches inside the canvas was not drawn. This is
+         what "cliff faces do not pop at the viewport edge" means mechanically.
+
+         It runs at several camera positions AND across a slow pan, because
+         popping is a thing you see while moving, not while standing still. */
+      const IW2 = 22, IH2 = 11, HZ = 16, PAD = 22;
+      const isoXa = (x, y) => (x - y) * IW2, isoYa = (x, y) => (x + y) * IH2;
+      const B2a = info2a.B, N2a = info2a.N;
+
+      function missedTiles() {
+        const g = g2a();
+        const w2 = g.w, h2 = g.h;
+        const drawn = new Set();
+        for (let s = g.minX + g.minY; s <= g.maxX + g.maxY; s++) {
+          for (let tx = Math.max(g.minX, s - g.maxY); tx <= Math.min(g.maxX, s - g.minY); tx++) {
+            const ty = s - tx;
+            const bcx = w2 / 2 + isoXa(tx + 0.5, ty + 0.5) - isoXa(g.camX, g.camY);
+            if (bcx + IW2 < 0 || bcx - IW2 > w2) continue;
+            const bcy = h2 / 2 + isoYa(tx + 0.5, ty + 0.5) - isoYa(g.camX, g.camY);
+            if (bcy + info2a.GROUND_DOWN < 0 || bcy - info2a.GROUND_UP > h2) continue;
+            drawn.add(tx + ',' + ty);
+          }
+        }
+        if (drawn.size !== g.tiles) return { bad: -1, note: 'recomputed set ' + drawn.size + ' != reported ' + g.tiles };
+        let bad = 0, first = null;
+        for (let tx = Math.max(0, g.minX - PAD); tx <= Math.min(N2a - 1, g.maxX + PAD); tx++) {
+          for (let ty = Math.max(0, g.minY - PAD); ty <= Math.min(N2a - 1, g.maxY + PAD); ty++) {
+            if (drawn.has(tx + ',' + ty)) continue;
+            const zTop = window.variedZ(tx, ty);
+            const cx = w2 / 2 + isoXa(tx + 0.5, ty + 0.5) - isoXa(g.camX, g.camY);
+            const cy = h2 / 2 + isoYa(tx + 0.5, ty + 0.5) - isoYa(g.camX, g.camY) - zTop;
+            const hh = window.heightAt(tx, ty);
+            const hS = window.heightAt(tx, ty + 1), hE = window.heightAt(tx + 1, ty);
+            let bot = cy + IH2;
+            if (hh > Math.max(-1, hS)) bot = Math.max(bot, cy + IH2 + (zTop - Math.max(-1, hS) * HZ));
+            if (hh > Math.max(-1, hE)) bot = Math.max(bot, cy + IH2 + (zTop - Math.max(-1, hE) * HZ));
+            // PEAK tiles also throw a snow spike up to 15px above the top point
+            const top = cy - IH2 - (window.biomeAt(tx, ty) === B2a.PEAK ? 15 : 0);
+            if (cx + IW2 < 0 || cx - IW2 > w2 || bot < 0 || top > h2) continue;
+            bad++;
+            if (!first) first = tx + ',' + ty + ' would paint x[' + (cx - IW2).toFixed(0) + ',' +
+              (cx + IW2).toFixed(0) + '] y[' + top.toFixed(0) + ',' + bot.toFixed(0) + ']';
+          }
+        }
+        return { bad, note: first, tiles: g.tiles, scanned: g.scanned };
+      }
+
+      const spots2a = [];
+      const pickB = (label, key) => {
+        if (!(key in B2a)) return;
+        for (let y = 0; y < N2a; y++) for (let x = 0; x < N2a; x++)
+          if (window.biomeAt(x, y) === B2a[key]) { spots2a.push([label, x + 0.5, y + 0.5]); return; }
+      };
+      spots2a.push(['spawn', info2a.SPAWN.x, info2a.SPAWN.y]);
+      pickB('coast', 'SAND'); pickB('mountain', 'PEAK');
+      pickB('volcano', 'VOLROCK'); pickB('forest', 'FOREST');
+      spots2a.push(['volcano centre', info2a.VOLCANO.x, info2a.VOLCANO.y]);
+      spots2a.push(['mount centre', info2a.MOUNT.x, info2a.MOUNT.y]);
+
+      const before2a = window.debugWorldInfo().player;
+      let worstMiss = 0, missNote = null, peakTiles = 0, minTiles = 1e9, checked = 0;
+      for (const [label, sx, sy] of spots2a) {
+        window.debugSetPlayer({ x: sx, y: sy });
+        pump2a(1200 + checked * 10);
+        const m = missedTiles();
+        checked++;
+        if (m.bad !== 0 && !missNote) missNote = label + ': ' + m.note;
+        worstMiss = Math.max(worstMiss, m.bad);
+        peakTiles = Math.max(peakTiles, m.tiles || 0);
+        minTiles = Math.min(minTiles, m.tiles || 1e9);
+      }
+      console.log('Expansion 2a: ' + checked + ' camera positions checked, tiles/frame ' +
+        minTiles + '-' + peakTiles + ' (viewport ' + g2a().w + 'x' + g2a().h + ')');
+      results.push(['no visible ground tile is ever skipped, across ' + checked + ' biomes',
+        worstMiss === 0]);
+      if (missNote) console.log('     first miss:', missNote);
+
+      /* The pan. A tile entering from the edge must already be drawn a frame
+         before it is needed, which is what GROUND_MARGIN buys. Step a third
+         of a tile at a time so an edge tile is genuinely straddling. */
+      let panMiss = 0, panNote = null;
+      const p0 = spots2a[1] || spots2a[0];
+      for (let i = 0; i < 12; i++) {
+        window.debugSetPlayer({ x: p0[1] + i / 3, y: p0[2] + (i % 2 ? i / 3 : 0) });
+        pump2a(1400 + i * 10);
+        const m = missedTiles();
+        if (m.bad !== 0) { panMiss += Math.max(1, m.bad); if (!panNote) panNote = 'step ' + i + ': ' + m.note; }
+      }
+      results.push(['and none is skipped across a 12-step camera pan either', panMiss === 0]);
+      if (panNote) console.log('     first pan miss:', panNote);
+
+      /* --- PART B: the per-frame tile count stays in a reasonable range ---
+         The camera distance is fixed (IW2/IH2 are constants, there is no
+         zoom), so this scales purely with viewport pixels: one tile covers
+         2 * IW2 * IH2 = 484 screen px, and the margin ring adds ~20%. The
+         spec's proposed ~2000 ceiling is what that comes to at this
+         harness's 1024x768. The ratio gate below is the viewport-independent
+         half — it is what proves the per-tile cull is actually working,
+         since the bounds rectangle is the bounding box of a diamond and a
+         little over half of it is off screen at any size. */
+      const gEnd = g2a();
+      const ideal = (gEnd.w * gEnd.h) / (2 * IW2 * IH2);
+      console.log('Expansion 2a: ' + peakTiles + ' tiles/frame peak vs ' + ideal.toFixed(0) +
+        ' screen-fitting tiles (' + (peakTiles / ideal).toFixed(2) + 'x), from a ' +
+        gEnd.scanned + '-tile bounds rectangle');
+      results.push(['per-frame tile count stays under the proposed ~2000 at this viewport',
+        peakTiles > 0 && peakTiles <= 2000]);
+      results.push(['it is close to the tiles that actually fit on screen, not the rectangle',
+        peakTiles <= ideal * 1.35]);
+      results.push(['the per-tile cull really is dropping most of the bounds rectangle',
+        peakTiles < gEnd.scanned * 0.5]);
+      results.push(['and the whole-map pass is gone — the frame scans a viewport, not N*N',
+        gEnd.scanned > 0 && gEnd.scanned < info2a.N * info2a.N / 8]);
+
+      /* Every ground branch still runs: drawGroundTile is callable directly
+         on any tile, which is what run5's biome coverage now leans on. */
+      let direct2a = 0;
+      try {
+        const c2a = window.document.createElement('canvas').getContext('2d');
+        for (const [, sx, sy] of spots2a) { window.drawGroundTile(c2a, Math.floor(sx), Math.floor(sy)); direct2a++; }
+      } catch (e) { if (!caught) caught = e; }
+      results.push(['drawGroundTile draws any tile on demand, off camera included',
+        direct2a === spots2a.length]);
+
+      if (before2a) window.debugSetPlayer({ x: before2a.x, y: before2a.y, diving: !!before2a.diving });
+      pump2a(1600);
+      results.push(['frames still run clean after the whole Expansion 2a sweep', !caught]);
+    } else {
+      results.push(['Expansion 2a ground hooks are reachable', false]);
+    }
+
     /* ===================== v39: the Elder trio + the secret event ========= */
     if (typeof window.debugV39Info === 'function') {
       const v39 = () => window.debugV39Info();

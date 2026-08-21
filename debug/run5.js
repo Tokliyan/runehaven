@@ -272,42 +272,86 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         n += 1;
       }
     }
-    // v18: the Underground Caves ground treatment is baked inside bakeTerrain(),
-    // which paints EVERY tile of the map at boot — so the boot above has already
-    // executed that branch. Report the tile count so a silently-empty biome
-    // (which would mean the branch never ran) is visible here too.
+    /* v18/v21/v22 counted these biomes' tiles and took a non-zero count as
+       proof their ground art had drawn, because bakeTerrain() painted EVERY
+       tile of the map at boot.
+
+       EXPANSION 2A CHANGED WHAT THIS BLOCK MEANS. The whole-map bake is gone
+       — ground is drawn per frame for visible tiles only — so a boot at spawn
+       no longer touches a cave, a hollow or a caldera anywhere in the world,
+       and a tile count on its own now proves the biome EXISTS and nothing
+       about whether its branch ever ran. Counting alone would have quietly
+       become a weaker test that still passed, which is the worst kind.
+
+       So the counts stay (they are still the reachability check they always
+       were, and the Hollow's doubles as "the Shadow Dragon has somewhere to
+       spawn"), and every one of them now also DRAWS a real tile of that
+       biome through drawGroundTile — the same shape as the drawTree sweep
+       above. EXTEND GROUND_BIOMES whenever a biome gets its own ground
+       treatment inside drawGroundTile. */
+    if (window.biomeAt && window.debugWorldInfo && window.drawGroundTile) {
+      const gInfo = window.debugWorldInfo();
+      const GROUND_BIOMES = ['DEEP', 'SHALLOW', 'WATER', 'SAND', 'PLAINS', 'MEADOW',
+                             'FOREST', 'DARKFOREST', 'ROCK', 'PEAK', 'VOLROCK', 'LAVA',
+                             'RUINB', 'ENCHFOREST', 'SACMEADOW', 'UNDERCAVE', 'UWCAVE',
+                             'ABYSSAL', 'CALDERA'];
+      const gctx = window.document.createElement('canvas').getContext('2d');
+      let drewBiomes = 0, missing = [];
+      for (const name of GROUND_BIOMES) {
+        if (!(name in gInfo.B)) { missing.push(name + '(no such biome id)'); continue; }
+        let hit = null;
+        for (let y = 0; y < gInfo.N && !hit; y++) for (let x = 0; x < gInfo.N; x++) {
+          if (window.biomeAt(x, y) === gInfo.B[name]) { hit = [x, y]; break; }
+        }
+        if (!hit) { missing.push(name); continue; }
+        /* Draw the tile itself and its two uphill neighbours, so the SOUTH
+           and EAST cliff-face branches get a run at a real height step too. */
+        window.drawGroundTile(gctx, hit[0], hit[1]);
+        window.drawGroundTile(gctx, Math.max(0, hit[0] - 1), hit[1]);
+        window.drawGroundTile(gctx, hit[0], Math.max(0, hit[1] - 1));
+        n += 3; drewBiomes++;
+      }
+      console.log('ground biomes drawn through drawGroundTile:', drewBiomes, 'of', GROUND_BIOMES.length);
+      if (missing.length) {
+        console.log('COVERAGE GAP: no tile of', missing.join(', '),
+                    '— that ground branch never drew');
+        process.exit(1);
+      }
+    } else if (window.biomeAt && window.debugWorldInfo) {
+      console.log('COVERAGE GAP: drawGroundTile is missing — the ground pass cannot be covered');
+      process.exit(1);
+    }
     if (window.biomeAt && window.debugWorldInfo) {
       const { N, B } = window.debugWorldInfo();
       let cave = 0;
       for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
         if (window.biomeAt(x, y) === B.UNDERCAVE) cave++;
       }
-      console.log('undercave tiles baked this seed:', cave);
-      if (!cave) { console.log('COVERAGE GAP: no B.UNDERCAVE tile — cave ground art never drew'); process.exit(1); }
-      /* v21: the same check for the Underwater Caves ground treatment, which
-         is baked by the same whole-map pass. An empty biome here means the
-         branch never ran AND the biome is unreachable — a harder failure than
-         elsewhere, since the dive mechanic exists to reach exactly these. */
+      console.log('undercave tiles this seed:', cave);
+      if (!cave) { console.log('COVERAGE GAP: no B.UNDERCAVE tile in the world'); process.exit(1); }
+      /* v21: the same reachability check for the Underwater Caves. An empty
+         biome here is a harder failure than elsewhere, since the dive mechanic
+         exists to reach exactly these. (Expansion 2a: the ground BRANCH is now
+         covered by the drawGroundTile sweep above; this is the count.) */
       let uwc = 0;
       for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
         if (window.biomeAt(x, y) === B.UWCAVE) uwc++;
       }
-      console.log('uwcave tiles baked this seed:', uwc);
-      if (!uwc) { console.log('COVERAGE GAP: no B.UWCAVE tile — underwater cave ground art never drew'); process.exit(1); }
-      /* v22: the same check for the two new pockets. Both ground treatments
-         are baked by the same whole-map pass, so a zero count means the
-         branch never ran AND the biome is unreachable — and for the Hollow
-         that also means the Shadow Dragon has nowhere to spawn. */
+      console.log('uwcave tiles this seed:', uwc);
+      if (!uwc) { console.log('COVERAGE GAP: no B.UWCAVE tile in the world'); process.exit(1); }
+      /* v22: the same reachability check for the two new pockets. A zero
+         count means the biome is unreachable — and for the Hollow it also
+         means the Shadow Dragon has nowhere to spawn. */
       let aby = 0, cald = 0;
       for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
         const b = window.biomeAt(x, y);
         if (b === B.ABYSSAL) aby++;
         else if (b === B.CALDERA) cald++;
       }
-      console.log('abyssal tiles baked this seed:', aby);
-      if (!aby) { console.log('COVERAGE GAP: no B.ABYSSAL tile — Abyssal Hollow ground art never drew'); process.exit(1); }
-      console.log('caldera tiles baked this seed:', cald);
-      if (!cald) { console.log('COVERAGE GAP: no B.CALDERA tile — Sunforge Caldera ground art never drew'); process.exit(1); }
+      console.log('abyssal tiles this seed:', aby);
+      if (!aby) { console.log('COVERAGE GAP: no B.ABYSSAL tile in the world'); process.exit(1); }
+      console.log('caldera tiles this seed:', cald);
+      if (!cald) { console.log('COVERAGE GAP: no B.CALDERA tile in the world'); process.exit(1); }
     }
     /* v22: the Caldera's animated heat shimmer lives in drawWorld()'s tile
        loop, not in the bake, so it only runs when a caldera tile is actually
