@@ -102,75 +102,79 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (Expansion 2a — viewport-based ground rendering)
+## Confirmed, locked spec for the next build (Expansion 2b — the real scale-up)
 
-World Expansion (N=320) shipped successfully. This replaces the single
-pre-baked full-map canvas with per-frame viewport-only ground rendering —
-the prerequisite that makes the actual ~1000 scale-up (2b) safe, not the
-scale-up itself. No visible size change this version.
+Expansion 2a shipped successfully — viewport rendering confirmed, memory
+problem retired. This is the actual scale-up it was the prerequisite for.
 
-**Confirmed directly before writing this:** `bakeTerrain()` is genuinely
-complex, not a flat color-fill — elevation-based cliff faces (reading
-neighbor tile heights `heightAt(tx,ty+1)`/`heightAt(tx+1,ty)`), jittered
-PEAK tops, world-edge DEEP-water darkening (already correctly N-relative,
-untouched), and per-biome cliff-face coloring (VOLROCK/LAVA, CALDERA,
-UNDERCAVE each distinct). All of this behavior must be preserved exactly,
-not simplified. `terrainBake`/`bakeOX`/`bakeOY` are used in exactly 13
-places total — confirmed the full, real surface area, not assumed small.
-The entity-rendering pass already computes visible-tile bounds via
-`screenToWorld()` at all four screen corners — reuse this exact pattern
-for ground tiles, do not invent a second viewport-bounds system.
+**Confirmed live before writing this: N=320, INTERIOR_N=26.** Reusing the
+exact constant list World Expansion (240->320) already found and proved
+correct — not re-discovering it, just rescaling it to the new ratio
+(1000/320 = 3.125x). That version's own hard-won lesson stands: leave
+every biome rarity threshold and noise wavelength untouched, they scale
+proportionally on their own.
 
-**PART A — replace the bake-once model with draw-per-frame, visible tiles
-only.**
+**PART A — the scale.** `N: 320 -> 1000`.
 
-Remove `bakeTerrain()`'s full-map loop and the single `terrainBake`
-canvas entirely. In its place, a `drawGroundTile(tx, ty)` function
-containing the EXACT same per-tile drawing logic currently inside
-`bakeTerrain()`'s loop body — cliff faces, peak jitter, edge darkening,
-face coloring — moved verbatim, not rewritten. Called once per frame for
-every tile within the render viewport (the same corner-based bounds the
-entity pass already computes), plus a small margin (propose 3 tiles) so
-cliff faces reading a neighbor's height never pop at the exact viewport
-edge.
+**PART B — every constant relative to a fixed point, scaled by 3.125x,
+reusing the exact list already proven complete:**
+```
+SAFE_RADIUS:      36  -> 113
+RUIN_SEP:         53  -> 166
+RUIN_ZONE_SEP:    32  -> 100
+RUIN_FOOT:        6   -> 19
+ZONE_R:           11  -> 34
+ZONE_SEP:         53  -> 166
+VOLCANO from TOWER: 100 -> 313
+MOUNT from TOWER:   96  -> 300
+BAZAAR from TOWER:  64  -> 200
+ANCIENT from VOLCANO: 29 -> 91
+COLOSSEUM from TOWER: 80 -> 250
+DRAGON_ALTAR from TOWER: 45 -> 141
+Volcano cone (dV):  36  -> 113
+Lava core:          10  -> 31
+PEAK->ROCK buffer:  56  -> 175
+elevRaw dTower divisor: 160 -> 500
+elevRaw dMount divisor: 48  -> 150
+Ruin/Zone exclusion from Volcano/Mount: 56 -> 175
+inBounds edge margin: 48 -> 150
+Spawn-exclusion checks (wilds/mobs): 48/56 -> 150/175
+```
+Confirmed NOT to scale (player-interaction distances, unchanged from
+World Expansion's own list): `BAZAAR_R`, `ANCIENT_R`, `COLOSSEUM_R`,
+`DRAGON_ALTAR_R`, `BASE_MIN_SEP`.
 
-**PART B — performance is the real risk here, not correctness. Address
-it explicitly:**
-- Confirm the viewport tile count at typical zoom stays in a reasonable
-  range (propose asserting it never exceeds ~2000 tiles for the default
-  camera distance) — if it's larger, the per-tile draw cost multiplied by
-  that count is what would cause a real frame-rate problem.
-- `variedZ()`'s peak-jitter and any other `hash2()`/`valueNoise()` calls
-  inside the per-tile draw run every frame now instead of once — confirm
-  this is cheap enough, or cache per-tile jitter values in a Map keyed by
-  `tx,ty` computed lazily on first draw, reusing the exact caching pattern
-  `tileCache` already uses for biome lookups.
+**PART C — cave interiors, genuinely bigger.** `INTERIOR_N: 26 -> 50`.
+Confirmed independent of `N` — interiors are their own generated grid,
+untouched by anything in Part B. Node/mob/ore counts inside scale with
+the interior's own area, not left at their 26x26-tuned absolute counts —
+reuse the existing per-interior density logic, just against the new grid
+size.
 
-**PART C — nothing about world geometry, constants, or N changes this
-version.** This is a rendering-technique swap only. Confirm `N` stays at
-320, no distance constant is touched, and the resulting rendered world is
-VISUALLY IDENTICAL to the pre-change version at the same camera position
-— this is the single most important proof gate in this spec.
+**PART D — sized for real concurrency, not just bigger for its own
+sake.** Confirm a 1000x1000 world with the new Safe Zone/Ruin/Zone
+separations genuinely supports the six Ruins and four Safe Zones (reuse
+v20's exhaustive placement-scan technique) with real room for ~50
+concurrent players to each find their own space — not just technically
+placeable, actually spread out.
 
-**PART D — proof gates, standard gauntlet plus:**
-- Confirm visual output is pixel-equivalent (or within a small tolerance)
-  to the old baked version at several fixed camera positions across
-  different biomes (coast, mountain, volcano, forest) — this proves the
-  conversion preserved behavior rather than simplified it.
-- Confirm `terrainBake` and `bakeTerrain()` are genuinely removed, not
-  left dead in the file.
-- Confirm cliff faces at a viewport edge do not pop/disappear when the
-  camera pans slightly — the margin from Part A is what this tests.
-- Confirm per-frame tile count stays within the asserted reasonable bound
-  at the default camera distance.
-- Confirm no regression in any existing worldgen, landmark, or biome
-  proof gate — this version must not touch those systems at all.
+**PART E — proof gates, standard gauntlet plus:**
+- Confirm N=1000, no leftover reference to 320 anywhere.
+- Confirm six-seed sweep (reuse World Expansion's own reseed-and-rebuild
+  hook) for Sunforge Caldera and mountain-ruin presence — same rigor,
+  don't skip it because the constant list is reused.
+- Confirm all landmarks place without overlap at the new distances.
+- Confirm INTERIOR_N=50 caves generate with genuine connectivity (reuse
+  Expansion 1's flood-fill connectivity fix and guarantee) — this must
+  not regress just because the grid got bigger.
+- Confirm interior node/mob/ore density scales with the new interior
+  area, not left at 26x26-tuned absolute counts.
+- Confirm Expansion 2a's viewport tile-count assertion still holds at the
+  new N — this is the proof that 2a's work actually paid off here.
 
-**Explicitly not touched this version:** `N`, any distance constant, cave
-interior size, the actual ~1000 scale-up. All of that is 2b, and 2b
-should not be attempted until this version's visual-equivalence gate is
-confirmed passing.
+**Explicitly not touched this version:** any biome rarity threshold, any
+noise wavelength, the rendering technique itself (2a's job, already
+done).
 
 **After this version ships successfully, do not start any further
-version automatically** — wait for `NEXT_BUILD.md` to be updated with the
-next target.
+version automatically** — wait for `NEXT_BUILD.md` to be updated.
