@@ -577,12 +577,12 @@ function connectSupabase() {
 }
 
 /* ---------------- CONSTANTS ---------------- */
-const N = 240;
+const N = 320;
 const IW2 = 22, IH2 = 11;
 const HZ = 16;                       // taller steps: cliffs must READ
 const DAY_LENGTH = 600;
 const PLAYER_SPEED = 4.6;
-const SAFE_RADIUS = 27;
+const SAFE_RADIUS = 36;
 const BROADCAST_HZ = 10;
 const SAVE_EVERY = 5000;
 const RESPAWN_MINUTES = 10;
@@ -1134,7 +1134,7 @@ const COLOSSEUM_R = 9;   // the arena floor
    meaningless, and the walk is the whole mechanic. Distance is a tunable. */
 let DRAGON_ALTAR = { x: 0, y: 0 };
 const DRAGON_ALTAR_R = 2.2;      // interact reach, the Shrine/Oracle language
-const DRAGON_ALTAR_DIST = 34;    // TUNABLE: how far from the Tower it stands
+const DRAGON_ALTAR_DIST = 45;    // TUNABLE: how far from the Tower it stands
 let floatTexts = [];                 // v9: rising damage numbers
 let pulseT = 0;                      // v9: staff cast pulse timer
 let swingKind = null;                // v9: which weapon silhouette the swing sweeps
@@ -2124,12 +2124,12 @@ function placeLandmarks() {
   // Landmarks must keep clear of spawn so the safe zone stays green grass
   for (let attempt = 0; attempt < 12; attempt++) {
     const a1 = (hash2(1 + attempt, 1, worldSeed)) * Math.PI * 2;
-    VOLCANO = { x: Math.round(TOWER.x + Math.cos(a1) * 75), y: Math.round(TOWER.y + Math.sin(a1) * 75) };
+    VOLCANO = { x: Math.round(TOWER.x + Math.cos(a1) * 100), y: Math.round(TOWER.y + Math.sin(a1) * 100) };
     if (Math.hypot(VOLCANO.x - SPAWN.x, VOLCANO.y - SPAWN.y) > SAFE_RADIUS + 42) break;
   }
   for (let attempt = 0; attempt < 12; attempt++) {
     const a2 = (hash2(2 + attempt, 2, worldSeed)) * Math.PI * 2;
-    MOUNT = { x: Math.round(TOWER.x + Math.cos(a2) * 72), y: Math.round(TOWER.y + Math.sin(a2) * 72) };
+    MOUNT = { x: Math.round(TOWER.x + Math.cos(a2) * 96), y: Math.round(TOWER.y + Math.sin(a2) * 96) };
     if (Math.hypot(MOUNT.x - SPAWN.x, MOUNT.y - SPAWN.y) > SAFE_RADIUS + 36 &&
         Math.hypot(MOUNT.x - VOLCANO.x, MOUNT.y - VOLCANO.y) > 78) break;
   }
@@ -2137,7 +2137,7 @@ function placeLandmarks() {
      kept clear of spawn and of one another so they never overlap. */
   for (let attempt = 0; attempt < 20; attempt++) {
     const a4 = (hash2(4 + attempt, 4, worldSeed)) * Math.PI * 2;
-    BAZAAR = { x: Math.round(TOWER.x + Math.cos(a4) * 48), y: Math.round(TOWER.y + Math.sin(a4) * 48) };
+    BAZAAR = { x: Math.round(TOWER.x + Math.cos(a4) * 64), y: Math.round(TOWER.y + Math.sin(a4) * 64) };
     if (Math.hypot(BAZAAR.x - SPAWN.x, BAZAAR.y - SPAWN.y) > SAFE_RADIUS + 20 &&
         Math.hypot(BAZAAR.x - VOLCANO.x, BAZAAR.y - VOLCANO.y) > 40 &&
         Math.hypot(BAZAAR.x - MOUNT.x, BAZAAR.y - MOUNT.y) > 40) break;
@@ -2146,13 +2146,13 @@ function placeLandmarks() {
     const a5 = (hash2(5 + attempt, 5, worldSeed)) * Math.PI * 2;
     /* The Ancient Forge belongs near the volcano — it is the only place
        dragonsteel can be smelted, and dragonsteel comes from there. */
-    ANCIENT = { x: Math.round(VOLCANO.x + Math.cos(a5) * 22), y: Math.round(VOLCANO.y + Math.sin(a5) * 22) };
+    ANCIENT = { x: Math.round(VOLCANO.x + Math.cos(a5) * 29), y: Math.round(VOLCANO.y + Math.sin(a5) * 29) };
     if (Math.hypot(ANCIENT.x - SPAWN.x, ANCIENT.y - SPAWN.y) > SAFE_RADIUS + 30 &&
         Math.hypot(ANCIENT.x - BAZAAR.x, ANCIENT.y - BAZAAR.y) > 30) break;
   }
   for (let attempt = 0; attempt < 20; attempt++) {
     const a6 = (hash2(6 + attempt, 6, worldSeed)) * Math.PI * 2;
-    COLOSSEUM = { x: Math.round(TOWER.x + Math.cos(a6) * 60), y: Math.round(TOWER.y + Math.sin(a6) * 60) };
+    COLOSSEUM = { x: Math.round(TOWER.x + Math.cos(a6) * 80), y: Math.round(TOWER.y + Math.sin(a6) * 80) };
     if (Math.hypot(COLOSSEUM.x - SPAWN.x, COLOSSEUM.y - SPAWN.y) > SAFE_RADIUS + 26 &&
         Math.hypot(COLOSSEUM.x - BAZAAR.x, COLOSSEUM.y - BAZAAR.y) > 34 &&
         Math.hypot(COLOSSEUM.x - ANCIENT.x, COLOSSEUM.y - ANCIENT.y) > 34 &&
@@ -2195,11 +2195,11 @@ const RUIN_COUNT = 6, ZONE_COUNT = 4;
    seed change left none qualifying, Crystal Golem would be unreachable and
    this threshold is the thing to lower. Tunable. */
 const MOUNTAIN_RUIN_ELEV = 0.72;
-const RUIN_FOOT = 4.5;      // carve radius of one Ruin cluster (v19 value)
-const ZONE_R = 8;           // a Safe Zone's grass clearing AND its protected radius
-const RUIN_SEP = 40;        // Ruin-to-Ruin
-const ZONE_SEP = 40;        // Zone-to-Zone and Zone-to-SPAWN/TOWER/VOLCANO/MOUNT
-const RUIN_ZONE_SEP = 24;   // Ruin-to-Zone
+const RUIN_FOOT = 6;        // carve radius of one Ruin cluster (v19 value)
+const ZONE_R = 11;          // a Safe Zone's grass clearing AND its protected radius
+const RUIN_SEP = 53;        // Ruin-to-Ruin
+const ZONE_SEP = 53;        // Zone-to-Zone and Zone-to-SPAWN/TOWER/VOLCANO/MOUNT
+const RUIN_ZONE_SEP = 32;   // Ruin-to-Zone
 
 /* Land fitness for placement. This MUST use elevRaw() and never biomeAt():
    placeLandmarks() runs before tileCache.clear(), so a biomeAt() call here
@@ -2228,14 +2228,14 @@ function placeRuinsAndZones() {
   RUINS = [];
   OTHER_SAFE_ZONES = [];
   const H = (ax, ay, p) => Math.hypot(ax - p.x, ay - p.y);
-  const inBounds = (tx, ty) => tx >= 36 && tx <= N - 36 && ty >= 36 && ty <= N - 36;
+  const inBounds = (tx, ty) => tx >= 48 && tx <= N - 48 && ty >= 48 && ty <= N - 48;
   for (let a = 0; a < 60000 && RUINS.length < RUIN_COUNT; a++) {
     const tx = Math.floor(hash2(a, 61, worldSeed + 7717) * N);
     const ty = Math.floor(hash2(a, 67, worldSeed + 7723) * N);
     if (!inBounds(tx, ty) || !isPlaceableLand(tx, ty)) continue;
     if (H(tx, ty, SPAWN) <= SAFE_RADIUS + 24) continue;
-    if (H(tx, ty, VOLCANO) <= 42) continue;
-    if (H(tx, ty, MOUNT) <= 42) continue;
+    if (H(tx, ty, VOLCANO) <= 56) continue;
+    if (H(tx, ty, MOUNT) <= 56) continue;
     if (RUINS.some(r => H(tx, ty, r) <= RUIN_SEP)) continue;
     /* v25 PART A: tag the cluster mountain-or-not once, here, while elevRaw()
        is already the safe thing to call (see isPlaceableLand's note — this
@@ -2250,6 +2250,14 @@ function placeRuinsAndZones() {
     if (H(tx, ty, TOWER) <= ZONE_SEP) continue;
     if (H(tx, ty, VOLCANO) <= ZONE_SEP) continue;
     if (H(tx, ty, MOUNT) <= ZONE_SEP) continue;
+    /* hotfix (found by v41's expansion, latent since v37): this loop never
+       checked separation against the Bazaar, Ancient Forge, or Colosseum —
+       they didn't exist when this was written. A random zone could always
+       have landed on top of the Bazaar's own protection by coincidence;
+       shifted landmark positions finally triggered it on a real seed. */
+    if (H(tx, ty, BAZAAR) <= ZONE_SEP) continue;
+    if (H(tx, ty, ANCIENT) <= ZONE_SEP) continue;
+    if (H(tx, ty, COLOSSEUM) <= ZONE_SEP) continue;
     if (OTHER_SAFE_ZONES.some(z => H(tx, ty, z) <= ZONE_SEP)) continue;
     /* 24, not 40: at 40 six Ruins and four Zones are mutually impossible on
        this island's real habitable area (confirmed by an exhaustive per-tile
@@ -2266,8 +2274,8 @@ function elevRaw(tx, ty) {
   const dTower = Math.hypot(tx - TOWER.x, ty - TOWER.y);
   const dMount = Math.hypot(tx - MOUNT.x, ty - MOUNT.y);
   return fbm(tx, ty, worldSeed)
-       + Math.max(0, 1 - dTower / 120) * 0.16
-       + Math.max(0, 1 - dMount / 36) * 0.55
+       + Math.max(0, 1 - dTower / 160) * 0.16
+       + Math.max(0, 1 - dMount / 48) * 0.55
        - Math.max(0, edge - 0.60) * 1.6;
 }
 
@@ -2612,8 +2620,8 @@ function biomeAt(tx, ty) {
   }
 
   const dV = Math.hypot(tx - VOLCANO.x, ty - VOLCANO.y);
-  if (dV < 27 && b !== B.DEEP && b !== B.WATER) {
-    b = dV < 7.5 ? B.LAVA : B.VOLROCK;
+  if (dV < 36 && b !== B.DEEP && b !== B.WATER) {
+    b = dV < 10 ? B.LAVA : B.VOLROCK;
   }
   /* v22: the Sunforge Caldera — the same rare-pocket technique as every one
      before it, on its own independent field and seed offset, but applied
@@ -2625,7 +2633,7 @@ function biomeAt(tx, ty) {
   if (b === B.VOLROCK &&
       valueNoise(tx / 20, ty / 20, worldSeed + 1913) > CALDERA_RARITY) b = B.CALDERA;
   // Transition buffer: no stark white snow flush against volcanic rock
-  if (b === B.PEAK && dV < 42) b = B.ROCK;
+  if (b === B.PEAK && dV < 56) b = B.ROCK;
   /* v20: the RUINB carve now loops every cluster, same radius and same guards */
   if (!BLOCKED.has(b) && b !== B.WATER &&
       RUINS.some(r => Math.hypot(tx - r.x, ty - r.y) < RUIN_FOOT)) b = B.RUINB;
@@ -2635,7 +2643,14 @@ function biomeAt(tx, ty) {
   /* v20: every scattered Safe Zone gets the same plain-grass clearing, with
      the Ruin carve's guards so it can never paint grass over open water or a
      blocked tile. */
-  if (b !== B.PLAINS && !BLOCKED.has(b) && b !== B.WATER &&
+  /* hotfix (found by v41's expansion, latent since v20): the old guard used
+     !BLOCKED.has(b), which excludes PEAK — but PEAK is walkable, just
+     mountain-styled, unlike DEEP/LAVA which genuinely should not become
+     grass. A zone was never placed close enough to Mount for this to
+     surface before; a wider elevation-boost radius exposed it. Matches
+     the Spawn zone's own clearing two lines up, which already overrides
+     everything unconditionally. */
+  if (b !== B.PLAINS && b !== B.DEEP && b !== B.LAVA && b !== B.WATER &&
       OTHER_SAFE_ZONES.some(z => Math.hypot(tx - z.x, ty - z.y) < ZONE_R)) b = B.PLAINS;
   if (dTower < 4.5 && (BLOCKED.has(b) || b === B.WATER || b === B.ROCK || b === B.VOLROCK)) b = B.PLAINS;
 
@@ -3016,7 +3031,7 @@ function buildFeatureList() {
       const tx = Math.floor(hash2(a, 21 + placed, worldSeed + spSeed) * N);
       const ty = Math.floor(hash2(a, 37 + placed, worldSeed + spSeed * 3) * N);
       if (!def.biomes.includes(biomeAt(tx, ty))) continue;
-      if (Math.hypot(tx - SPAWN.x, ty - SPAWN.y) < 36) continue;
+      if (Math.hypot(tx - SPAWN.x, ty - SPAWN.y) < 48) continue;
       /* v25 PART A: Crystal Golem's extra gate, layered on top of the B.RUINB
          biome check both Golems already share — the tile must belong to a
          cluster tagged mtn at worldgen. Golem has no such field and is
@@ -3057,7 +3072,7 @@ function buildFeatureList() {
       const tx = Math.floor(hash2(a, 11 + placed, worldSeed + mobSeed) * N);
       const ty = Math.floor(hash2(a, 53 + placed, worldSeed + mobSeed * 3) * N);
       if (!def.biomes.includes(biomeAt(tx, ty))) continue;
-      if (Math.hypot(tx - SPAWN.x, ty - SPAWN.y) < 42) continue;
+      if (Math.hypot(tx - SPAWN.x, ty - SPAWN.y) < 56) continue;
       if (mobs.some(m => Math.hypot(m.hx - tx, m.hy - ty) < 4)) continue;
       if (wilds.some(w => Math.hypot(w.x - tx, w.y - ty) < 3)) continue;
       mobs.push({
