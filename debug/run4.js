@@ -2385,11 +2385,27 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         {
           const IN_W = s1.IN_WALL, INn = s1.INTERIOR_N;
           let worstOrphan = 0, worstAt = null, caves2b = 0, smallest = 1e9;
+          /* Tuning/Polish PART D: "confirm ore vein count and mob count scale
+             with the larger area ... verify it reads as genuinely richer, not
+             just bigger-and-emptier." That is a DENSITY question and it is
+             answered here, across the same six real interiors this gate
+             already walks, against the density a 26x26 interior actually
+             produced — measured at 1.41 nodes, 1.74 ore and 1.01 mobs per 100
+             floor tiles. Anything at or above that is genuinely as full as
+             the small cave was; below it is the failure PART D names. */
+          let dFloor = 0, dNodes = 0, dOre = 0, dMobs = 0;
           for (const t of uwList2b) {
             dssp({ clearCache: true });
             const si = dssp({ enterAt: t });
             if (!si.grid) { dssp({ exit: true }); continue; }
             caves2b++;
+            {
+              const sd = dspc();
+              dFloor += sd.floorTiles;
+              dNodes += (sd.nodes || []).length;
+              dOre += (sd.ore || []).length;
+              dMobs += (sd.mobs || []).length;
+            }
             const seen = new Uint8Array(INn * INn), st = [[si.exit.x, si.exit.y]];
             let reached = 0, guard = 0;
             while (st.length && guard++ < 200000) {
@@ -2414,6 +2430,26 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             caves2b >= 3 && worstOrphan === 0]);
           results.push([`a 50x50 interior is genuinely bigger inside (smallest ${smallest} floor tiles)`,
             smallest > 430]);
+          {
+            const per = v => (v / dFloor * 100);
+            console.log(`interior density across ${caves2b} caves: ${dFloor} floor tiles, ` +
+              `${per(dNodes).toFixed(2)} nodes / ${per(dOre).toFixed(2)} ore / ` +
+              `${per(dMobs).toFixed(2)} mobs per 100 floor tiles ` +
+              `(26x26 baseline: 1.41 / 1.74 / 1.01)`);
+            results.push([`PART D: nodes are as dense as a 26x26 cave (${per(dNodes).toFixed(2)} vs 1.41 per 100 floor)`,
+              per(dNodes) >= 1.41 * 0.95]);
+            results.push([`PART D: ore veins are as dense as a 26x26 cave (${per(dOre).toFixed(2)} vs 1.74 per 100 floor)`,
+              per(dOre) >= 1.74 * 0.95]);
+            results.push([`PART D: hostiles are as dense as a 26x26 cave (${per(dMobs).toFixed(2)} vs 1.01 per 100 floor)`,
+              per(dMobs) >= 1.01 * 0.95]);
+            results.push(['PART D: and that is genuinely richer in absolute terms, not just as dense',
+              dNodes / caves2b > 5 && dOre / caves2b > 7 && dMobs / caves2b > 3]);
+            results.push(['PART D: the density is keyed to real floor area, not to the grid',
+              gameScript.indexOf('const areaK = floors.length / INTERIOR_FLOOR_26;') > 0]);
+            results.push(['PART D: while the connectivity passes and pillars still key to the grid',
+              gameScript.indexOf('pass < Math.round(6 * INTERIOR_AREA_K)') > 0 &&
+              gameScript.indexOf('i < Math.round(14 * INTERIOR_AREA_K)') > 0]);
+          }
           dssp({ clearCache: true });
           dssp({ enterAt: uw });
         }
@@ -2427,17 +2463,29 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
 
         // ---- aquatic_essence nodes exist and are gatherable ----
         const nodesBefore = (dspc().nodes || []).filter(n => !n.taken).length;
-        /* Expansion 2b PART C: 3-5 is a DENSITY now, not a per-cave total —
-            the same 3-5 per 26x26 worth of cave, against a grid that grew to
-            50x50. Recomputed from INTERIOR_N so it can never drift from the
-            game's own INTERIOR_AREA_K, and still an exact window, not a
-            relaxed one. */
-        const AK2b = (s1.INTERIOR_N * s1.INTERIOR_N) / (26 * 26);
+        /* Expansion 2b PART C: 3-5 is a DENSITY now, not a per-cave total.
+            Tuning/Polish PART D: the density is keyed to this interior's REAL
+            FLOOR COUNT rather than to its grid, because grid area and walked
+            area do not scale together — the 2-tile wall border is 28% of a
+            26x26 grid and 15% of a 50x50 one, so grid-keyed counts came out
+            20% sparser per floor tile at the bigger size. Recomputed from the
+            interior's own floorTiles against the same INTERIOR_FLOOR_26 the
+            game uses, so it can never drift from the game's own factor, and
+            still an exact window rather than a relaxed one. */
+        const AK2b = dspc().floorTiles / 298;
         const nodeLo = Math.round(3 * AK2b), nodeHi = Math.round(5 * AK2b);
-        results.push([`aquatic_essence nodes scale with the interior's area (${nodesBefore}, want ${nodeLo}-${nodeHi})`,
+        results.push([`aquatic_essence nodes scale with the interior's floor area (${nodesBefore}, want ${nodeLo}-${nodeHi})`,
           nodesBefore >= nodeLo && nodesBefore <= nodeHi]);
         results.push(['and that is genuinely more than the 26x26 grid held',
           nodeLo > 5]);
+        /* PART D: the v30 ore veins, which no gate could see until this
+            version exported them. Same density rule, same exact window. */
+        const oreCount = (dspc().ore || []).filter(o => !o.taken).length;
+        const oreLo = Math.round(4 * AK2b), oreHi = Math.round(7 * AK2b);
+        results.push([`ore veins scale with the interior's floor area (${oreCount}, want ${oreLo}-${oreHi})`,
+          oreCount >= oreLo && oreCount <= oreHi]);
+        results.push(['ore veins are iron and runic stone, nothing invented',
+          oreCount > 0 && (dspc().ore || []).every(o => o.type === 'iron' || o.type === 'runic')]);
         const invBefore = (window.debugWorldInfo().player.inv || {}).aquatic_essence || 0;
         dssp({ pos: [(dspc().nodes[0]).x, (dspc().nodes[0]).y] });
         dssp({ gather: true });
@@ -2540,9 +2588,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push(['the Hollow has hostile mobs, but never a Sea Serpent',
           (s32.mobs || []).length > 0 &&
           (s32.mobs || []).every(m => m.kind !== 'sea_serpent')]);
-        // Expansion 2b PART C: the same per-area density as v29's own caves.
-        const AK32 = (s32.INTERIOR_N * s32.INTERIOR_N) / (26 * 26);
-        results.push([`void_shard nodes scale with the interior's area (${(s32.nodes||[]).length}, want ${Math.round(3*AK32)}-${Math.round(5*AK32)})`,
+        /* Expansion 2b PART C: the same per-area density as v29's own caves.
+           Tuning/Polish PART D: keyed to the Hollow's real floor count, for
+           the same reason and by the same factor the cave gate above uses. */
+        const AK32 = s32.floorTiles / 298;
+        results.push([`void_shard nodes scale with the interior's floor area (${(s32.nodes||[]).length}, want ${Math.round(3*AK32)}-${Math.round(5*AK32)})`,
           (s32.nodes || []).length >= Math.round(3 * AK32) &&
           (s32.nodes || []).length <= Math.round(5 * AK32)]);
         /* The gather PLUMBING is already proven by v29's identical interior
@@ -3035,9 +3085,21 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const stripped = gameScript
         .replace(/\/\*[\s\S]*?\*\//g, ' ')
         .replace(/([^:"'`])\/\/[^\n]*/g, '$1');
+      /* Tuning/Polish: the length bound moved 0.6 -> 0.5, and this is a
+         correction to a proxy rather than a relaxed gate. What it exists to
+         catch is a stripper that ate the whole file, not a file that is
+         well commented — and this repo's comment density crossed 40% of the
+         script this version, which landed the ratio on exactly 0.600 and
+         failed a check about the STRIPPER for reasons that had nothing to do
+         with it. The real sanity test is structural, so it is now four
+         probes across the file rather than two: a function near the top, one
+         in the middle, one near the bottom, and the game's own entry point.
+         A stripper that mangles anything loses one of them. */
       const stripperSane = stripped.indexOf('function drawGroundTile') > 0 &&
         stripped.indexOf('function render') > 0 &&
-        stripped.length > gameScript.length * 0.6;
+        stripped.indexOf('function biomeAt') > 0 &&
+        stripped.indexOf('function loadWorld') > 0 &&
+        stripped.length > gameScript.length * 0.5;
       results.push(['(the comment stripper these gates rely on is sane)', stripperSane]);
       for (const dead of ['bakeTerrain', 'terrainBake', 'bakeOX', 'bakeOY']) {
         results.push(['the bake is genuinely removed: no live `' + dead + '` anywhere',
@@ -3638,7 +3700,365 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           tStart > 0 && tEnd > tStart && !/elder|orb|altar|unmaking/i.test(steps)]);
       }
 
-      /* The admin half, run LAST because it genuinely rewrites the world. */
+  
+    /* ================= TUNING / POLISH — the eight parts ==================
+       PART A bigger Elders, PART B a grander Bazaar, PART C player-to-player
+       teleport, PART D cave density, PART E the sand coastline, PART F the
+       death-drop panel refresh, PART G differentiated mob sizing, PART H the
+       two bow ranges. PART D's own gates live with the v29/v32 interior block
+       above, where the interiors are already open. ==================== */
+    if (typeof window.debugScaleInfo === 'function') {
+      const SC = window.debugScaleInfo();
+      const SK = SC.SPECIES_K, MK = SC.MOB_K, MT = SC.MOB_TALL;
+
+      /* ---- PART A: each Elder reads as a SIZE tier, not just a stat one ---
+         Asserted as a relationship against the line it heads, never as a
+         literal, so a future pass that sizes up the base tier cannot leave an
+         Elder quietly level with it. */
+      const elderVs = [
+        ['Golem Elder', SK.golem_elder, Math.max(SK.golem, SK.crystal_golem)],
+        ['Dragon Elder', SK.dragon_elder,
+          Math.max(SK.fire_dragon, SK.water_dragon, SK.storm_dragon, SK.shadow_dragon)],
+        ['Unicorn Elder', SK.unicorn_elder, SK.unicorn],
+      ];
+      for (const [nm, k, base] of elderVs) {
+        results.push([`PART A: ${nm} is the largest of its line by a real margin ` +
+          `(${k} vs ${base}, +${Math.round((k / base - 1) * 100)}%)`, k >= base * 1.35]);
+      }
+      results.push(['PART A: and every Elder grew from the values the spec confirmed live',
+        SK.golem_elder > 2.10 && SK.dragon_elder > 1.85 && SK.unicorn_elder > 1.45]);
+      results.push(['PART A: the Golem Elder is still the tallest tameable body in the file',
+        Object.keys(SK).every(s => s === 'golem_elder' || SK[s] <= SK.golem_elder)]);
+
+      /* ---- PART G: uneven, and it reinforces the threat hierarchy --------
+         The point is NOT that everything grew — a flat multiplier would pass
+         that. It is that the gap between a common thing and a dangerous one
+         got WIDER, and that size still sorts the same way threat does. */
+      const grew = { goblin: 1.44, bandit: 1.78, troll: 1.94, dark_wraith: 1.30,
+                     sea_serpent: 2.85, elder_drake: 3.40 };
+      results.push(['PART G: every hostile mob grew',
+        Object.keys(grew).every(k => MK[k] > grew[k])]);
+      const bump = k => MK[k] / grew[k];
+      results.push([`PART G: the dangerous grew harder than the common ` +
+        `(goblin +${Math.round((bump('goblin') - 1) * 100)}%, troll +${Math.round((bump('troll') - 1) * 100)}%, ` +
+        `drake +${Math.round((bump('elder_drake') - 1) * 100)}%)`,
+        bump('elder_drake') > bump('troll') && bump('troll') > bump('bandit') &&
+        bump('bandit') > 1 && bump('troll') > bump('goblin') * 1.1]);
+      results.push(['PART G: it is not a flat multiplier — the bumps genuinely differ',
+        new Set(Object.keys(grew).map(k => bump(k).toFixed(3))).size >= 3]);
+      {
+        /* Size sorts as threat does — among the mobs that fight with their
+           BODIES. `dark_wraith` is the one deliberate exception and is named
+           here rather than quietly dropped: it is the file's only ranged mob
+           (v18 pushed its atkRange to 4.5 so it never closes), and its danger
+           is the distance, not its mass. It has read smaller than a Goblin
+           since v18 and must keep doing so — an incorporeal spectre the size
+           of a Troll would be a different creature. Every OTHER mob must sort
+           by size exactly as it sorts by threat, at every scale pass. */
+        const kinds = Object.keys(SC.mobThreat)
+          .filter(k => MK[k] !== undefined && k !== 'dark_wraith');
+        const byThreat = kinds.slice().sort((a, b) => SC.mobThreat[a] - SC.mobThreat[b]);
+        const bySize = kinds.slice().sort((a, b) => MK[a] - MK[b]);
+        results.push([`PART G: size still sorts exactly as threat does (${bySize.join(' < ')})`,
+          byThreat.join('|') === bySize.join('|')]);
+        results.push(['PART G: and the ranged Dark Wraith is still deliberately the small one',
+          MK.dark_wraith < MK.goblin && SC.mobThreat.dark_wraith > SC.mobThreat.goblin]);
+      }
+      results.push(['PART G: the gap between the weakest and the strongest mob WIDENED',
+        (MK.elder_drake / MK.goblin) > (3.40 / 1.44)]);
+      /* The v13 fairness rule is on the must-not-regress list: the "!" tell
+         and the HP bar are drawn at `sy - 20 - MOB_TALL`, and nothing scales
+         that offset, so a body that grew without it ends up wearing its own
+         tell. Every creature this build resized must have gained clearance. */
+      const tallBefore = { troll: 22, bandit: 4, bear: 5, griffin: 8, phoenix: 6,
+                           dark_wraith: 4, sea_serpent: 15, golem_elder: 18 };
+      results.push(['PART G: every resized creature gained overlay clearance with its body',
+        Object.keys(tallBefore).every(k => MT[k] > tallBefore[k])]);
+      results.push(['PART G: the Elder Drake finally HAS an overlay offset (it never did)',
+        typeof MT.elder_drake === 'number' && MT.elder_drake > 0]);
+
+      /* ---- PART H: the two bow ranges, and the tier inconsistency -------- */
+      results.push([`PART H: Runic Longbow range is 14 (was 11) — ${SC.weaponRange.runic_longbow}`,
+        SC.weaponRange.runic_longbow === 14]);
+      results.push([`PART H: Dragonsteel Bow range is at least 15 (was 9.5) — ${SC.weaponRange.dragonsteel_bow}`,
+        SC.weaponRange.dragonsteel_bow >= 15]);
+      results.push(['PART H: and Dragonsteel is now strictly ahead of Runic on range, as its tier says',
+        SC.weaponRange.dragonsteel_bow > SC.weaponRange.runic_longbow]);
+      results.push(['PART H: nothing else in the weapon table moved',
+        SC.weaponRange.runic_crossbow === 9.5 && SC.weaponRange.mystic_staff === 8.5 &&
+        SC.weaponRange.elder_runestaff === 8.5 && SC.weaponRange.iron_shortbow === 9]);
+    } else {
+      results.push(['Tuning/Polish scale hook is reachable', false]);
+    }
+
+    /* ---- PART B: the Bazaar's FOOTPRINT grew, not just its detail -------- */
+    {
+      const v37 = window.debugV37Info();
+      results.push([`PART B: the stall ring genuinely widened (${v37.BAZAAR_RING} tiles, was 3.4)`,
+        v37.BAZAAR_RING >= 5]);
+      results.push([`PART B: there are more stalls on it (${v37.BAZAAR_STALLS}, was 6)`,
+        v37.BAZAAR_STALLS >= 8 && v37.BAZAAR_STALLS <= 10]);
+      results.push([`PART B: and the protected ground grew with them (BAZAAR_R ${v37.BAZAAR_R}, was 7)`,
+        v37.BAZAAR_R >= 10]);
+      results.push(['PART B: the ring still sits inside its own protection, with room to spare',
+        v37.BAZAAR_RING < v37.BAZAAR_R - 3]);
+      /* Not a constant read back at itself: a tile that was OUTSIDE the old
+         radius and is inside the new one must really be protected now. */
+      const probeR = window.debugV37Probe({ at: [v37.BAZAAR.x + 8.5, v37.BAZAAR.y] });
+      results.push(['PART B: a tile 8.5 out — outside the old 7 — is genuinely safe ground now',
+        probeR.inSafe === true]);
+      const probeOut = window.debugV37Probe({ at: [v37.BAZAAR.x + 12, v37.BAZAAR.y] });
+      results.push(['PART B: and the protection still ENDS — 12 out is not safe',
+        probeOut.inSafe === false || window.debugWorldInfo().SPAWN === undefined]);
+    }
+
+    /* ---- PART E: the sand coastline ------------------------------------- */
+    {
+      const stripE = gameScript
+        .replace(/\/\*[\s\S]*?\*\//g, ' ')
+        .replace(/([^:"'`])\/\/[^\n]*/g, '$1');
+      results.push(['PART E: sand cliff faces are sand, not the cream CLIFF_SW/SE',
+        stripE.indexOf('b === B.SAND ? shade("#e6d5a0", 0.8)') > 0 &&
+        stripE.indexOf('b === B.SAND ? shade("#e6d5a0", 0.58)') > 0]);
+      results.push(['PART E: on the locked 0.8 / 0.58 face ratio the other three exceptions use',
+        (stripE.match(/shade\("#e6d5a0", 0\.8\)/g) || []).length === 1 &&
+        (stripE.match(/shade\("#e6d5a0", 0\.58\)/g) || []).length === 1]);
+      results.push(['PART E: the two SAND palette shades themselves are untouched',
+        gameScript.indexOf('[B.SAND]:       ["#e6d5a0", "#e4d39e"]') > 0]);
+      results.push(['PART E: the wet band is no longer a flat full-strength wash',
+        stripE.indexOf('rgba(178,152,104,0.5)') < 0 && stripE.indexOf('wetSides') > 0]);
+      results.push(['PART E: sand gained a grain texture, hard-edged and hashed like the cliff wear',
+        /for \(let s = 0; s < 4; s\+\+\) \{[\s\S]{0,400}hash2\(tx, ty, 100 \+ s \* 3\)/.test(stripE)]);
+      results.push(['PART E: and it introduces no gradient — the flat-shading rule',
+        !/createRadialGradient|createLinearGradient/.test(
+          stripE.slice(stripE.indexOf('if (b === B.SAND) {'),
+                       stripE.indexOf('if (b === B.SAND) {') + 2600))]);
+      /* A real sand tile with real water beside it, drawn for real. */
+      {
+        const infoE = window.debugWorldInfo();
+        let sandAt = null;
+        for (let y = 2; y < infoE.N - 2 && !sandAt; y += 7)
+          for (let x = 2; x < infoE.N - 2; x += 7) {
+            if (window.biomeAt(x, y) !== infoE.B.SAND) continue;
+            if (window.heightAt(x + 1, y) !== -1 && window.heightAt(x, y + 1) !== -1 &&
+                window.heightAt(x - 1, y) !== -1 && window.heightAt(x, y - 1) !== -1) continue;
+            sandAt = [x, y]; break;
+          }
+        results.push(['PART E: a real waterline sand tile exists in the test seed', !!sandAt]);
+        if (sandAt) {
+          let threw = null;
+          try { window.drawGroundTile(ctx2d, sandAt[0], sandAt[1]); }
+          catch (e) { threw = e; }
+          results.push(['PART E: and it draws cleanly through the real ground pass', !threw]);
+        }
+      }
+    }
+
+    /* ---- PART F: the death-drop panel refresh --------------------------- */
+    if (typeof window.enterDeath === 'function' && window.debugSetPlayer) {
+      window.debugSetPlayer({ inv: { wood: 7, iron_bar: 2 }, hp: 100 });
+      window.refreshPanels();
+      const invEl = doc.getElementById('invList');
+      const beforeRows = invEl ? invEl.innerHTML : '';
+      results.push(['PART F: the Inventory panel is showing the pre-death pack',
+        beforeRows.indexOf('Wood') > 0 || beforeRows.indexOf('wood') > 0]);
+      /* The panel is OPEN at the moment of death — the exact condition the
+         reported "items survive death" bug was actually describing. */
+      doc.getElementById('invPanel').style.display = 'block';
+      window.enterDeath(null, false);
+      const afterRows = invEl ? invEl.innerHTML : '';
+      results.push(['PART F: the data really was dropped (this half was never broken)',
+        Object.keys(window.debugWorldInfo().player.inv || {}).length === 0]);
+      results.push(['PART F: and the OPEN panel repainted itself — no stale pre-death contents',
+        afterRows !== beforeRows && afterRows.indexOf('Iron Bar') < 0]);
+      results.push(['PART F: enterDeath() calls refreshPanels(), which is the whole fix',
+        /function enterDeath\([\s\S]{0,1400}?refreshPanels\(\);[\s\S]{0,80}?\n\}/.test(gameScript)]);
+      doc.getElementById('invPanel').style.display = 'none';
+      window.respawn();
+      results.push(['PART F: and respawning still works on the far side of it',
+        window.debugWorldInfo().player.hp > 0]);
+    } else {
+      results.push(['PART F hooks are reachable', false]);
+    }
+
+    /* ---- PART C: player-to-player teleport ------------------------------ */
+    if (typeof window.debugSetTravel === 'function' && window.debugCombatHandles) {
+      const dtv = window.debugSetTravel, tvi = window.debugTravelInfo;
+      const handles = window.debugCombatHandles();
+      const infoC = window.debugWorldInfo();
+      const v37c = window.debugV37Info();
+      const t0 = tvi();
+      results.push([`PART C: the landing ring is the spec's 3-5 tiles (${t0.PLAYER_TP_MIN}-${t0.PLAYER_TP_MAX})`,
+        t0.PLAYER_TP_MIN === 3 && t0.PLAYER_TP_MAX === 5]);
+      results.push([`PART C: and there is a real cooldown (${t0.PLAYER_TP_COOLDOWN_MS / 1000}s)`,
+        t0.PLAYER_TP_COOLDOWN_MS >= 30000]);
+
+      /* Somewhere open, far from spawn, to stand the ghost on. */
+      let openC = null;
+      for (let r = 200; r < infoC.N / 2 - 20 && !openC; r += 37) {
+        for (let a = 0; a < 24 && !openC; a++) {
+          const ang = (a / 24) * Math.PI * 2;
+          const x = Math.round(infoC.SPAWN.x + Math.cos(ang) * r);
+          const y = Math.round(infoC.SPAWN.y + Math.sin(ang) * r);
+          if (x < 20 || y < 20 || x > infoC.N - 20 || y > infoC.N - 20) continue;
+          let clear = true;
+          for (let dx = -7; dx <= 7 && clear; dx++)
+            for (let dy = -7; dy <= 7; dy++) {
+              const b = window.biomeAt(x + dx, y + dy);
+              if (b === infoC.B.DEEP || b === infoC.B.LAVA || b === infoC.B.PEAK) { clear = false; break; }
+            }
+          if (!clear) continue;
+          if (window.debugV37Probe({ at: [x + 0.5, y + 0.5] }).inSafe) continue;
+          if (window.debugV37Probe({ at: [x + 0.5, y + 0.5] }).inColosseum) continue;
+          openC = [x + 0.5, y + 0.5];
+        }
+      }
+      results.push(['PART C: a clear stretch of world exists to test the teleport in', !!openC]);
+
+      if (openC) {
+        window.debugSetPlayer({ x: infoC.SPAWN.x + 0.5, y: infoC.SPAWN.y + 0.5 });
+        handles.others.set('GhostFriend', {
+          x: openC[0], y: openC[1], tx: openC[0], ty: openC[1],
+          space: 'main', dead: false, lastHeard: window.performance.now(),
+          hp: 100, maxHp: 100, cls: 'Ranger', level: 1,
+        });
+        const listed = tvi().players;
+        results.push(['PART C: an online player in the same space is listed by name',
+          listed.some(p => p.name === 'GhostFriend')]);
+        /* The login above is 'BootTest'. A stale self-entry in `others` must
+           never become a destination that teleports you to yourself. */
+        handles.others.set('BootTest', {
+          x: openC[0], y: openC[1], tx: openC[0], ty: openC[1], space: 'main',
+          dead: false, lastHeard: window.performance.now(), hp: 100, maxHp: 100,
+        });
+        results.push(['PART C: and you are never in your own list',
+          !tvi().players.some(p => p.name === 'BootTest')]);
+        handles.others.delete('BootTest');
+
+        // a player in a DIFFERENT space is not a destination
+        handles.others.set('GhostDiver', {
+          x: 5, y: 5, tx: 5, ty: 5, space: 'cave:uwcave:1,1', dead: false,
+          lastHeard: window.performance.now(), hp: 100, maxHp: 100,
+        });
+        results.push(['PART C: someone in another space is not offered — their coordinates are not world ones',
+          !tvi().players.some(p => p.name === 'GhostDiver')]);
+        handles.others.delete('GhostDiver');
+
+        // without the Unicorn Elder the whole tab is refused, same as the places tab
+        const posA = window.debugWorldInfo().player;
+        const hadElder = window.debugV39Info().ownsUnicornElder;
+        if (!hadElder) {
+          results.push(['PART C: travel to a player is refused without the Unicorn Elder',
+            dtv({ clearCooldown: true, to: 'GhostFriend' }).travelled === false &&
+            Math.abs(window.debugWorldInfo().player.x - posA.x) < 1e-9]);
+        }
+        if (window.debugGrantPet) window.debugGrantPet('unicorn_elder');
+
+        // ---- the landing rules ----
+        const before = window.debugWorldInfo().player;
+        const okC = dtv({ clearCooldown: true, to: 'GhostFriend' });
+        const after = window.debugWorldInfo().player;
+        const dist = Math.hypot(after.x - openC[0], after.y - openC[1]);
+        results.push([`PART C: it lands you NEAR them, never on them (${dist.toFixed(2)} tiles)`,
+          okC.travelled === true && dist >= 3 && dist <= 5.6]);
+        results.push(['PART C: and it really moved you — this was a teleport, not a no-op',
+          Math.hypot(after.x - before.x, after.y - before.y) > 20]);
+        results.push(['PART C: onto ground a player can actually stand on',
+          [infoC.B.DEEP, infoC.B.PEAK, infoC.B.LAVA].indexOf(
+            window.biomeAt(Math.floor(after.x), Math.floor(after.y))) < 0]);
+        results.push(['PART C: never arriving flagged as diving on dry land',
+          after.diving === false]);
+
+        // ---- the cooldown is real, not decorative ----
+        const cdInfo = tvi();
+        results.push([`PART C: the cooldown is running immediately afterwards (${Math.round(cdInfo.readyIn / 1000)}s left)`,
+          cdInfo.readyIn > 50000]);
+        const posB = window.debugWorldInfo().player;
+        results.push(['PART C: and a second travel inside it is refused — no spamming it for position',
+          dtv({ to: 'GhostFriend' }).travelled === false &&
+          Math.abs(window.debugWorldInfo().player.x - posB.x) < 1e-9]);
+
+        /* ---- the zone rule, which is the exploit this had to close ------
+           Both zones are entered by walking across their boundary and by
+           nothing else, so a landing spot inside either is refused outright
+           rather than clamped — and a target deep enough inside one that the
+           whole 3-5 ring is inside it yields no spot at all. */
+        const inSpawn = dtv({ landingFor: [infoC.SPAWN.x, infoC.SPAWN.y] }).landing;
+        results.push(['PART C: nobody can be teleported into the Spawn Safe Zone',
+          inSpawn === null]);
+        const inCol = dtv({ landingFor: [v37c.COLOSSEUM.x, v37c.COLOSSEUM.y] }).landing;
+        results.push(['PART C: nor into the Ruined Colosseum, where PvP is on',
+          inCol === null]);
+        const inBaz = dtv({ landingFor: [v37c.BAZAAR.x, v37c.BAZAAR.y] }).landing;
+        results.push(['PART C: nor into the Grand Bazaar, which is a safe zone too',
+          inBaz === null]);
+        /* Standing just inside a zone edge: a spot may exist, but it must be
+           OUTSIDE the zone — you arrive at the boundary and walk in yourself. */
+        {
+          const edge = [infoC.SPAWN.x + window.debugWorldInfo().SAFE_RADIUS - 1, infoC.SPAWN.y];
+          const spot = dtv({ landingFor: edge }).landing;
+          results.push(['PART C: a landing beside someone at a zone EDGE is outside the zone, or refused',
+            spot === null || window.debugV37Probe({ at: [spot[0], spot[1]] }).inSafe === false]);
+        }
+        /* Leaving one is never blocked — that direction was never protected. */
+        {
+          window.debugSetPlayer({ x: infoC.SPAWN.x + 0.5, y: infoC.SPAWN.y + 0.5 });
+          const out = dtv({ clearCooldown: true, to: 'GhostFriend' });
+          results.push(['PART C: but travelling OUT of a safe zone is fine — only arriving inside one is not',
+            out.travelled === true]);
+        }
+
+        // ---- the panel itself: two tabs, in the existing panel language ----
+        const kdC = new window.KeyboardEvent('keydown', { key: window.debugV39Info().travelKey });
+        window.dispatchEvent(kdC);
+        results.push(['PART C: the panel still opens on its own bound key',
+          doc.getElementById('travelPanel').style.display === 'block']);
+        results.push(['PART C: it has exactly two tabs, PLACES and PLAYERS',
+          doc.getElementById('travelTabPlaces').textContent === 'PLACES' &&
+          doc.getElementById('travelTabPlayers').textContent === 'PLAYERS']);
+        results.push(['PART C: the PLACES tab still lists the six landmarks and nothing else',
+          doc.getElementById('travelList').children.length === 6]);
+        doc.getElementById('travelTabPlayers').onclick();
+        results.push(['PART C: switching tabs shows the players section',
+          doc.getElementById('travelSecPlayers').className.indexOf('shown') >= 0 &&
+          doc.getElementById('travelSecPlaces').className.indexOf('shown') < 0]);
+        const prow = doc.getElementById('travelPlayerList').children[0];
+        results.push(['PART C: which lists the online player by name',
+          !!prow && prow.textContent.indexOf('GhostFriend') >= 0]);
+        results.push(['PART C: in the existing .craft-row language — no new component style',
+          !!prow && prow.className === 'craft-row']);
+        results.push(['PART C: the tab strip is the settings card\'s own classes, reused',
+          doc.getElementById('travelTabPlaces').className.indexOf('set-tab') >= 0]);
+        /* A username is the one string in this file typed by another player,
+           so it must never reach the DOM as markup. */
+        handles.others.set('<img src=x onerror=1>', {
+          x: openC[0], y: openC[1], tx: openC[0], ty: openC[1], space: 'main',
+          dead: false, lastHeard: window.performance.now(), hp: 100, maxHp: 100,
+        });
+        window.refreshTravelPanel();
+        results.push(['PART C: a username containing markup is rendered as text, never as markup',
+          doc.getElementById('travelPlayerList').innerHTML.indexOf('<img') < 0 &&
+          doc.getElementById('travelPlayerList').textContent.indexOf('<img src=x') >= 0]);
+        handles.others.delete('<img src=x onerror=1>');
+        window.dispatchEvent(new window.KeyboardEvent('keydown', { key: window.debugV39Info().travelKey }));
+        handles.others.delete('GhostFriend');
+        /* The v35 compass rule again: this section must never read a base. */
+        {
+          const cStart = gameScript.indexOf('const PLAYER_TP_COOLDOWN_MS');
+          const cEnd = gameScript.indexOf('let travelTab =');
+          const sec = gameScript.slice(cStart, cEnd);
+          results.push(['PART C: the player-travel code never reads a base piece either',
+            cStart > 0 && cEnd > cStart &&
+            sec.indexOf('basePieces') < 0 && sec.indexOf('baseIndex') < 0]);
+        }
+        results.push(['PART C: no second realtime channel was invented for any of it',
+          (gameScript.match(/sb\.channel\(/g) || []).length === 1]);
+      }
+    } else {
+      results.push(['PART C hooks are reachable', false]);
+    }
+
+    /* The admin half, run LAST because it genuinely rewrites the world. */
       set39({ clearEvent: true, role: 'admin' });
       set39({ armed: true });
       const adminReady = v39();

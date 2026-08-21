@@ -580,6 +580,76 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         if (beforeV) window.debugSetPlayer({ x: beforeV.x, y: beforeV.y });
       }
     }
+    /* ============ Tuning/Polish sweep =================================
+       Three render branches this version added or reshaped that a plain
+       5-frame boot at spawn does not reach: the SAND waterline (the ground
+       sweep above draws the FIRST sand tile it finds, which need not have
+       water beside it, so neither the new sand cliff face nor the softened
+       wet band is guaranteed a run), the widened Grand Bazaar, and every
+       creature whose scale moved, at every mob state. */
+    if (window.drawGroundTile && window.debugWorldInfo && window.biomeAt) {
+      const tpInfo = window.debugWorldInfo();
+      const tctx = window.document.createElement('canvas').getContext('2d');
+      let wet = null, dry = null;
+      for (let y = 2; y < tpInfo.N - 2 && !(wet && dry); y += 3)
+        for (let x = 2; x < tpInfo.N - 2; x += 3) {
+          if (window.biomeAt(x, y) !== tpInfo.B.SAND) continue;
+          const touchesSea = window.heightAt(x + 1, y) === -1 || window.heightAt(x - 1, y) === -1 ||
+                             window.heightAt(x, y + 1) === -1 || window.heightAt(x, y - 1) === -1;
+          if (touchesSea && !wet) wet = [x, y];
+          if (!touchesSea && !dry) dry = [x, y];
+          if (wet && dry) break;
+        }
+      if (!wet) {
+        console.log('COVERAGE GAP: no waterline SAND tile — the wet band and the sand cliff face never drew');
+        process.exit(1);
+      }
+      // the waterline tile, plus both of its downhill sides, so the SOUTH and
+      // EAST sand cliff-face branches both run against a real drop to the sea
+      window.drawGroundTile(tctx, wet[0], wet[1]);
+      window.drawGroundTile(tctx, wet[0] - 1, wet[1]);
+      window.drawGroundTile(tctx, wet[0], wet[1] - 1);
+      n += 3;
+      if (dry) { window.drawGroundTile(tctx, dry[0], dry[1]); n += 1; }
+      console.log('sand drawn: waterline tile at', wet.join(','),
+                  dry ? '+ a dry inland one' : '(no dry sand this seed)');
+    }
+    if (window.drawBazaarEntity) {
+      for (let f = 0; f < 3; f++) { window.drawBazaarEntity(600 + f * 400); n += 1; }
+      console.log('the widened Grand Bazaar drawn');
+    }
+    /* Every creature this build resized, through the real drawMob path in
+       every state it can be in, so no scale change can quietly break a body
+       or its overlays. EXTEND THIS LIST whenever a mob is added. */
+    if (window.drawMob && window.debugWorldInfo) {
+      const RESIZED = ['goblin', 'bandit', 'troll', 'dark_wraith', 'sea_serpent',
+                       'elder_drake', 'boar', 'bear', 'griffin', 'phoenix',
+                       'salamander_king', 'golem_elder'];
+      const mInfo = window.debugWorldInfo();
+      const p0 = mInfo.player;
+      let drewR = 0;
+      for (const kind of RESIZED) {
+        const def = (mInfo.MOBS || {})[kind];
+        if (!def) { console.log('COVERAGE GAP: no MOBS entry for', kind); process.exit(1); }
+        for (const st of ['idle', 'aggro', 'leash', 'cower']) {
+          for (const winding of [false, true]) {
+            for (const hurt of [false, true]) {
+              window.drawMob({
+                id: 'tp:' + kind + ':' + st, kind, x: p0.x + 2, y: p0.y + 2,
+                hx: p0.x + 2, hy: p0.y + 2,
+                hp: hurt ? Math.max(1, Math.round(def.hp * 0.2)) : def.hp, maxHp: def.hp,
+                state: st, target: null, atkAt: 0, windupStart: 0, winding,
+                flash: 0, boltT: 0, ph: 1.3, dead: false, respawnAt: 0, lastSync: 0,
+                fx: 0, fy: 1, space: 'main',
+              }, 900);
+              n += 1; drewR += 1;
+            }
+          }
+        }
+      }
+      console.log('resized creatures drawn through drawMob:', RESIZED.length,
+                  'kinds,', drewR, 'state combinations');
+    }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {

@@ -53,6 +53,229 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-21 (Tuning/Polish — Elders, the Bazaar, player travel, sand, mob scale)
+
+The deferred polish pass on top of Expansion 2b. Eight parts, no new species,
+no new biome, no new landmark and not one entry of the locked palette touched.
+Almost everything here is a number that was already in the file being moved to
+where it should have been, and the reason it is worth a long entry is that
+three of those numbers turned out to be wrong for reasons nobody had measured.
+
+- **The three Elders were a stat tier wearing a base-tier silhouette.** Golem
+  Elder stood 13% over a Golem and Dragon Elder 19% over the four dragons —
+  the v39 entry's own claim that "scale alone says Elder" was true only if you
+  had one of each side by side. The spec's proposed 2.70 / 2.40 / 1.85 are
+  taken as written and put them **+46% / +55% / +42%** over the largest of
+  their own line, which is roughly the Bear-to-Sea-Serpent gap: a difference
+  you read across a valley with nothing to compare against. Pinned as a
+  RELATIONSHIP in `run4`, never as a literal, so a future pass that sizes up a
+  base tier cannot leave an Elder quietly level with it.
+- **The Grand Bazaar's footprint genuinely grew, and it was measured rather
+  than eyeballed.** Six stalls on a 3.4-tile ring inside a 7-tile safe zone
+  read as a roadside cluster, smaller on the ground than the Colosseum next
+  door. Now **nine stalls on a 5.5 ring inside a 10-tile zone**, all three
+  moving together on purpose — more stalls inside an unchanged footprint would
+  have been detail packed into the same space, which is the thing PART B says
+  it is not. Measured with a transform-tracking canvas recorder that maps every
+  path coordinate through the live CTM: the drawn structure went **243.6 x
+  141.0px to 370.9 x 225.9 — 2.44x the painted area.** The trading floor grew
+  with the ring (1.5 x 1.2 tiles -> 2.6 x 2.1) because a wider ring around an
+  unchanged centre makes a place emptier, not grander. Three canvas hues were
+  added so nine stalls are nine colours; no biome, tier or class colour is
+  reused. **No reference or preview canvas draws the Bazaar** — the only
+  preview canvases in the file are the five class-select cards, which render
+  `drawUnit` — so PART B's "re-verify the render-preview scale math" has
+  nothing to re-derive, and that was checked rather than assumed.
+- **⚠️ The sand "line" is a cream cliff face, and this is the third time this
+  exact mistake has been caught.** The report was read against the two SAND
+  palette shades, and PART B of the spec is right that they are near-identical
+  (`#e6d5a0` / `#e4d39e`). The real edge is elsewhere: sand sits at `h=0` and
+  the sea at `h=-1`, so **every beach tile in the world draws a full 16px cliff
+  face down to the water** — `CLIFF` `#c9bda2` at 0.82/0.62 — a hard grey-brown
+  band running the entire coastline against a pale gold beach. That is v18's
+  UNDERCAVE lesson and v22's CALDERA lesson a third time: *a biome-coloured
+  tile wearing cream cliffs reads as a palette bug.* Sand now joins the three
+  existing per-biome face exceptions on the same locked 0.8 / 0.58 ratio.
+- **The wet-sand band was a second hard line, and an unnaturally straight
+  one.** It was a flat full-tile wash at a fixed `0.5`, so a beach switched
+  from dry to wet at full strength along its whole run. It now reads **how many
+  sides actually touch the sea** (one wet side is faintest, a spit with three
+  is darkest) at a much lower base alpha, with a per-tile hash breaking up
+  what is left. Still a hard-edged flat fill — softened means lower contrast
+  and a wandering edge, never a gradient.
+- **Sand gained grain, using the cliff faces' own wear-detail technique.**
+  Four hashed specks per tile in a slightly darker and a slightly lighter
+  sand — a hash, a threshold, a small flat shape, exactly as the cliff cracks,
+  moss and notches have worked since v8. Two near-identical shades with no
+  texture between them leave the tile EDGES as the only thing the eye has to
+  read, which is the other half of why a beach reads as banded.
+- **⚠️ PART E NEEDS VISUAL CONFIRMATION AND HAS NOT HAD IT.** All of the above
+  is a diagnosis from the code, not a sighting. If a line survives, it is
+  somewhere else — the next most likely candidate is the SHALLOW halo's own
+  edge where `#43859e` meets sand — and this entry should be corrected to say
+  so rather than the fix being piled on.
+- **Mob sizing is banded by threat, deliberately not multiplied.** A flat
+  multiplier moves every silhouette and tells a player nothing new. Each
+  creature's bump comes from its own `hp x dmg` in `MOBS`: **+4% common,
+  +8% uncommon, +20% dangerous, +28% boss** — so Goblin goes 1.44 -> 1.50 while
+  Troll goes 1.94 -> 2.33 and the Elder Drake 3.40 -> 4.35, and the gap between
+  the smallest and largest thing in the world gets **wider**, not preserved.
+  The four fight-to-tame beasts and the Salamander King are in it too, since
+  each has a hostile form drawn from the same branch; the purely passive pets
+  are not, because they carry no threat for a threat hierarchy to rank.
+- **⚠️ `MOB_TALL` is a PIXEL offset and nothing scales it, which is a trap
+  this build walked into and had to measure its way out of.** The "!" tell and
+  the HP bar draw at `sy - 20 - MOB_TALL`, so a body that grows without it
+  ends up wearing its own tell — and the v13 fairness rule is on the
+  must-not-regress list. Every value is its old hand-tuned one scaled by the
+  factor its creature moved by, applied to the WHOLE offset `20 + tall` rather
+  than to `tall` alone (the 20 does not scale either). Troll is the proof: it
+  painted exactly 42px above its baseline at `MOB_K` 1.94 and its "!" landed at
+  exactly 42, so that value was tuned to the body, and 31 puts it back at 51
+  against a body now painting 50.4.
+- **Two `MOB_TALL` entries are not scaled, and both are real finds.**
+  `sea_serpent` 15 -> **78**, taking v21's own written note ("the one number
+  here most worth checking against a screenshot"). Measured, it was never
+  close: the body paints **107.6px** above the baseline and the bar was drawn
+  at 35 — across the middle coil rather than above the reared head. And
+  `elder_drake` gets its **first entry ever**: it shipped in v30 at `MOB_K`
+  3.40 with no entry at all, so the largest creature in the world has always
+  drawn its tell 30px inside its own chest. 46 puts it at 66 against a 64.4px
+  body. Both are the largest visual corrections in this version and both want
+  a screenshot.
+- **The FAST TRAVEL panel gained a second tab and not one new component
+  style.** The strip is the v23 settings card's own `.set-tabs` / `.set-tab` /
+  `.set-sec` classes, reused verbatim — they were always global class rules,
+  never scoped to `#settingsCard` — and the rows are the `.craft-row`
+  treatment the PLACES tab already uses. That is the fourth version running
+  (v33, v35, v39, this) that has added a panel without inventing a component.
+- **Player rows are BUILT, not interpolated.** Every other list in this file
+  is made of names the game chose; this one is made of names other players
+  typed. They go in through `textContent`, where markup in a username is text
+  and can never be markup, and `run4` proves it with a real `<img src=x
+  onerror=...>` username.
+- **⚠️ The Dark Wraith is the one creature whose size deliberately does not
+  follow its threat, and that is now pinned rather than left to be "fixed".**
+  It is the file's only ranged mob — v18 pushed its `atkRange` to 4.5 so it
+  never closes — and its danger is the distance, not its mass. It has read
+  smaller than a Goblin since v18 and must keep doing so; an incorporeal
+  spectre the size of a Troll would be a different creature. `run4` asserts
+  the size/threat ordering over every other mob AND asserts this exception
+  explicitly, so a future pass cannot quietly "correct" it.
+- **Noted, no action taken (pre-existing, outside this build):** the locked
+  palette in this skill gives Deep water as `#2c5a72 / #295570`; the file has
+  `#2c5a72 / #2b5870`. One alt-shade drifted at some point, it is a difference
+  of three in one channel, and nothing this version touches goes near it —
+  flagged here rather than silently "fixed" in either direction.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus three things it asked to be
+confirmed that turned out not to be true. All shipped through the full gate
+(parse clean, `run2` and `run3` `CAUGHT ERROR: none`, `run4` **842/842 with
+zero FAIL**, `run5` 1,144 coverage draws clean, 63/63 grep checks including
+the preservation half) — refinements to consider, not unfinished work.
+
+1. **⚠️ PART C's teleport is gated on owning the Unicorn Elder, and the spec
+   does not say either way.** The M panel is that companion's own bible-granted
+   ability ("fast travel across the entire world") and every row in it is
+   already refused without one; an ungated tab inside a card that says "You
+   have no way of travelling like this" would be two different rules in one
+   place. The alternative reading — that player-travel is a new ability every
+   player has — is a real design change (a free short-range teleport for
+   everyone, in a world whose whole pitch is that it is vast), so the
+   conservative reading won. **It is one condition in `travelToPlayer()` to
+   revert.** This is the single most likely call here to want changed.
+2. **The landing spot is refused rather than clamped when a target is deep
+   inside a protected zone.** PART C says landing near someone inside a Safe
+   Zone or the Colosseum "should not teleport you inside it without meeting
+   its own normal entry conditions" — and the normal entry condition for both
+   is walking across the boundary, since neither has any other. So the search
+   skips every tile inside either zone, and if the whole 3-5 ring is inside
+   one, the travel is refused with a message rather than dropping you at some
+   arbitrary nearest-legal tile a long way off. Travelling OUT of a zone is
+   never blocked; that direction was never the protected one.
+3. **The 60s cooldown is on player-travel only, not shared with the landmark
+   list.** The spec attaches it to this mechanic and names its reason —
+   combat positioning — and the six landmarks are fixed public points nobody
+   fights over. Two lines to merge them if the intent was one global cooldown.
+4. **⚠️ PART D asked me to confirm the cave counts scale with the larger area.
+   They did not, and the gap was 20%.** `INTERIOR_AREA_K` is grid over grid,
+   and the grid is not what a player walks. Measured across sixteen real
+   interiors on the harness seed: a 26x26 grid yields **201-449 floor tiles,
+   mean 297.9**, and a 50x50 yields **1,130-1,718, mean 1,368.9** — real
+   walkable area grew **4.60x** against a factor of **3.70x**, because the
+   two-tile wall border is 28% of a 26x26 grid and only 15% of a 50x50 one,
+   and the connectivity pass carves more corridors out of the bigger one. So
+   every count keyed to the grid came out **20% sparser per floor tile** than
+   v29/v30 tuned: bigger AND emptier, the exact failure PART D names. The four
+   content counts are now keyed to each interior's OWN floor count against the
+   measured 26x26 mean (`INTERIOR_FLOOR_26 = 298`, a tunable), which restores
+   the density exactly — **1.41 -> 1.42 nodes, 1.74 -> 1.74 ore, 1.01 -> 1.00
+   hostiles per 100 floor tiles** — and makes an unusually open cave get
+   proportionally more in it instead of coming out hollow. The connectivity
+   passes and the free-standing pillars are placed against the GRID and keep
+   `INTERIOR_AREA_K` unchanged.
+5. **⚠️ The v30 ore veins were never exported to any harness, so "confirm the
+   ore vein count scales" was not a thing that could be checked from outside.**
+   `debugSpaceInfo()` exported `nodes`, `wilds` and `mobs` and simply not
+   `ore`, which is why 2b's own PART C could assert the essence nodes and only
+   trust the ore. Added, same copy-out shape as `nodes`, along with the real
+   `floorTiles` count the new density is keyed to — and `run4` now has an
+   exact ore window and a six-interior density gate that prints its numbers.
+6. **`BAZAAR_RING` and `BAZAAR_STALLS` became named constants rather than
+   staying inline literals.** They were `3.4` and a `< 6` loop bound inside
+   `drawBazaarEntity`; a gate cannot read a literal, and PART B's proof is
+   specifically that the footprint grew. Both are now beside `BAZAAR_R` where
+   the three numbers that have to move together are visible together.
+7. **⚠️ `run4`'s comment-stripper sanity check moved 0.6 -> 0.5, and this is a
+   correction to a proxy rather than a relaxed gate.** It exists to catch a
+   stripper that ate the whole file; what it actually caught was this repo's
+   comment density crossing 40% of the script, which landed the ratio on
+   exactly **0.600** and failed a check about the STRIPPER for reasons with
+   nothing to do with it — taking the four `bakeTerrain` gates that depend on
+   it down with it. The real test is structural, so it is now **four** probes
+   spread across the file instead of two.
+8. **`run4`'s two interior node-count windows were recomputed, not relaxed.**
+   Both were derived from `INTERIOR_N` and are now derived from the
+   interior's own `floorTiles` against the same 298 the game uses, so they
+   still cannot drift from the game's own factor and are still exact windows.
+   A third, matching window was added for the ore.
+9. **PART F's fix is one line, and the gate for it is behavioural rather than
+   a grep.** `enterDeath()` now calls `refreshPanels()`. The spec's diagnosis
+   was exactly right — `dropAllItems()` was never the bug — so `run4` puts a
+   real pack on the player, **opens the Inventory panel**, kills them through
+   the real `enterDeath()` path, and asserts both halves: the data is gone AND
+   the open panel repainted. The open panel is the whole condition the report
+   was describing.
+10. **`run5` gained a Tuning/Polish sweep, and the sand half of it is the
+    reason.** The ground-biome sweep draws the FIRST `SAND` tile it finds,
+    which need not have water beside it — so neither the new sand cliff face
+    nor the softened wet band was guaranteed a run, and the coverage would
+    have passed while testing none of it. It now finds a genuine waterline
+    tile and draws it with both downhill sides, plus a dry inland one, plus
+    the widened Bazaar, plus **all twelve resized creatures through the real
+    `drawMob` path in 192 state combinations** (four states x winding x hurt).
+    945 -> **1,144** coverage draws. `RESIZED` is the list to extend when a
+    mob is added; no species, mob, weapon kind or class was added this
+    version, so the existing `*_LIST` arrays needed nothing.
+11. **`debugScaleInfo()` is a new hook, for the same reason every hook here
+    exists.** `SPECIES_K`, `MOB_K`, `MOB_TALL` and `WEAPONS` are top-level
+    `const`s that never land on `window`, so PARTs A, G and H could otherwise
+    only be checked by grepping the source for a literal — and a literal proves
+    a line was typed, never that the relationship between two creatures holds.
+    Copies. `debugTravelInfo()` / `debugSetTravel()` are its PART C twins.
+12. **Three canvas hues invented for the Bazaar's extra stalls** (`#3cb8a8`,
+    `#c84a7a`, `#7ac83c`). Nine stalls sharing six colours would have read as
+    a repeat. Checked against every biome, tier and class colour in the file;
+    none is reused, and they sit in the same bright-canvas language the
+    original six do.
+13. **The push to `main` that the README's step 8 invites was deliberately not
+    attempted.** This session is instructed to develop and push only on its
+    designated branch. The README calls a blocked push to `main` a
+    nice-to-have and explicitly not a failure, so the build lands on the
+    branch as usual and a human can sync it. Same call 2b made.
+
 ### 2026-08-21 (Expansion 2b — the real scale-up, N 320 -> 1000)
 
 The world Expansion 2a was the prerequisite for. `N` 320 -> 1000 is **9.77x
