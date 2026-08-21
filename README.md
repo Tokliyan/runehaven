@@ -102,87 +102,74 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v41 — World Expansion)
+## Confirmed, locked spec for the next build (Expansion 2a — viewport-based ground rendering)
 
-v39 shipped successfully. This is the highest-risk version on the
-remaining roadmap — comparable to v19's original scale-up, now touching
-more systems than v19 ever had to. Full constant audit done before
-writing a line of this spec, not assumed.
+World Expansion (N=320) shipped successfully. This replaces the single
+pre-baked full-map canvas with per-frame viewport-only ground rendering —
+the prerequisite that makes the actual ~1000 scale-up (2b) safe, not the
+scale-up itself. No visible size change this version.
 
-**The single most important finding, confirmed directly against the real
-file: every biome-pocket and terrain-shaping noise call uses a fixed
-wavelength divisor (`/20` for all six pockets, `/13`/`/9`/`/3.5` for
-elevation/clusters/height) — none reference `N`.** Left untouched, a
-bigger map gets proportionally more of everything at the same per-pocket
-size and the same relative coverage automatically. **Do not touch
-`ENCH_RARITY`, `SACRED_RARITY`, `UNDERCAVE_RARITY`, `UWCAVE_RARITY`,
-`ABYSSAL_RARITY`, `CALDERA_RARITY`, or any `valueNoise(tx/N, ty/N, ...)`
-wavelength divisor anywhere.** Confirmed these need zero changes — this
-is the majority of what made v19 hard, and it's already solved by how the
-noise system was built.
+**Confirmed directly before writing this:** `bakeTerrain()` is genuinely
+complex, not a flat color-fill — elevation-based cliff faces (reading
+neighbor tile heights `heightAt(tx,ty+1)`/`heightAt(tx+1,ty)`), jittered
+PEAK tops, world-edge DEEP-water darkening (already correctly N-relative,
+untouched), and per-biome cliff-face coloring (VOLROCK/LAVA, CALDERA,
+UNDERCAVE each distinct). All of this behavior must be preserved exactly,
+not simplified. `terrainBake`/`bakeOX`/`bakeOY` are used in exactly 13
+places total — confirmed the full, real surface area, not assumed small.
+The entity-rendering pass already computes visible-tile bounds via
+`screenToWorld()` at all four screen corners — reuse this exact pattern
+for ground tiles, do not invent a second viewport-bounds system.
 
-**PART A — the new scale.** `N: 240 -> 480`. Doubling, not repeating
-v19's full 3x — this version already touches more surface area than v19
-did, and a more conservative multiplier is the right tradeoff against a
-first-attempt failure on the riskiest version left.
+**PART A — replace the bake-once model with draw-per-frame, visible tiles
+only.**
 
-**PART B — every constant that genuinely IS relative to a fixed point,
-scaled by the same 2x factor, confirmed as the complete real list:**
-```
-SAFE_RADIUS:      27  -> 54
-RUIN_SEP:         40  -> 80
-RUIN_ZONE_SEP:    24  -> 48
-VOLCANO from TOWER: 75  -> 150
-MOUNT from TOWER:   72  -> 144
-BAZAAR from TOWER:  48  -> 96
-ANCIENT from VOLCANO: 22 -> 44
-COLOSSEUM from TOWER: 60 -> 120
-DRAGON_ALTAR from TOWER: 34 -> 68
-```
+Remove `bakeTerrain()`'s full-map loop and the single `terrainBake`
+canvas entirely. In its place, a `drawGroundTile(tx, ty)` function
+containing the EXACT same per-tile drawing logic currently inside
+`bakeTerrain()`'s loop body — cliff faces, peak jitter, edge darkening,
+face coloring — moved verbatim, not rewritten. Called once per frame for
+every tile within the render viewport (the same corner-based bounds the
+entity pass already computes), plus a small margin (propose 3 tiles) so
+cliff faces reading a neighbor's height never pop at the exact viewport
+edge.
 
-**PART C — explicitly, confirmed, must NOT scale — these are
-player-interaction distances, not world geography, and touching them
-would be a real regression:**
-```
-BAZAAR_R = 7          ANCIENT_R = 4
-COLOSSEUM_R = 9        DRAGON_ALTAR_R = 2.2
-BASE_MIN_SEP = 3
-```
-These represent "how close does a player need to stand" — identical
-regardless of map size. Confirmed by name in the real file before writing
-this list, not inferred.
+**PART B — performance is the real risk here, not correctness. Address
+it explicitly:**
+- Confirm the viewport tile count at typical zoom stays in a reasonable
+  range (propose asserting it never exceeds ~2000 tiles for the default
+  camera distance) — if it's larger, the per-tile draw cost multiplied by
+  that count is what would cause a real frame-rate problem.
+- `variedZ()`'s peak-jitter and any other `hash2()`/`valueNoise()` calls
+  inside the per-tile draw run every frame now instead of once — confirm
+  this is cheap enough, or cache per-tile jitter values in a Map keyed by
+  `tx,ty` computed lazily on first draw, reusing the exact caching pattern
+  `tileCache` already uses for biome lookups.
 
-**PART D — Elder Drake's local search.** `for (let r = 3; r < 26; r++)`
-searches near VOLCANO for valid terrain — VOLCANO's own position already
-scales correctly via Part B, so this local radius likely needs no change,
-but confirm directly: run the search against the new N=480 world and
-verify it still finds a valid VOLROCK/ROCK/CALDERA tile. If it doesn't,
-widen the bound — do not assume without checking.
+**PART C — nothing about world geometry, constants, or N changes this
+version.** This is a rendering-technique swap only. Confirm `N` stays at
+320, no distance constant is touched, and the resulting rendered world is
+VISUALLY IDENTICAL to the pre-change version at the same camera position
+— this is the single most important proof gate in this spec.
 
-**PART E — proof gates, standard gauntlet plus:**
-- Confirm `N === 480` and no leftover reference to the old value anywhere.
-- Confirm all six Ruins and four Safe Zones can still be placed at the
-  new scale with the new separation — reuse the exact exhaustive
-  placement-scan technique v20 originally used to prove this, don't
-  assume proportional scaling preserves feasibility without checking.
-- Confirm every landmark (Tower, Volcano, Mount, Bazaar, Ancient Forge,
-  Colosseum, Dragon Altar, Shrine) places without overlapping any other,
-  at the new distances.
-- Confirm biome-pocket proportions are genuinely unchanged — bake a test
-  seed at the new N, measure each pocket's percentage of its parent
-  terrain, and confirm it matches the pre-expansion percentage within a
-  small tolerance. This is the proof that leaving the wavelengths alone
-  actually worked as intended, not just an assumption.
-- Confirm the Elder Drake still spawns successfully in a swept test.
-- Confirm the Unicorn Elder's uniform-random tile selection still covers
-  the full new map with no bias — it already scales automatically via
-  `hash2(...) * N`, confirm this rather than assume.
-- Confirm Meteor Shower site placement (`hash2(...) * N`) still lands
-  correctly across the full new map.
+**PART D — proof gates, standard gauntlet plus:**
+- Confirm visual output is pixel-equivalent (or within a small tolerance)
+  to the old baked version at several fixed camera positions across
+  different biomes (coast, mountain, volcano, forest) — this proves the
+  conversion preserved behavior rather than simplified it.
+- Confirm `terrainBake` and `bakeTerrain()` are genuinely removed, not
+  left dead in the file.
+- Confirm cliff faces at a viewport edge do not pop/disappear when the
+  camera pans slightly — the margin from Part A is what this tests.
+- Confirm per-frame tile count stays within the asserted reasonable bound
+  at the default camera distance.
+- Confirm no regression in any existing worldgen, landmark, or biome
+  proof gate — this version must not touch those systems at all.
 
-**Explicitly not touched this version:** any biome rarity threshold, any
-noise wavelength, any player-interaction-scale radius, cave interiors
-(their own separate 26x26 grids, entirely unaffected by N).
+**Explicitly not touched this version:** `N`, any distance constant, cave
+interior size, the actual ~1000 scale-up. All of that is 2b, and 2b
+should not be attempted until this version's visual-equivalence gate is
+confirmed passing.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated with the
