@@ -577,12 +577,12 @@ function connectSupabase() {
 }
 
 /* ---------------- CONSTANTS ---------------- */
-const N = 320;
+const N = 1000;
 const IW2 = 22, IH2 = 11;
 const HZ = 16;                       // taller steps: cliffs must READ
 const DAY_LENGTH = 600;
 const PLAYER_SPEED = 4.6;
-const SAFE_RADIUS = 36;
+const SAFE_RADIUS = 113;
 const BROADCAST_HZ = 10;
 const SAVE_EVERY = 5000;
 const RESPAWN_MINUTES = 10;
@@ -916,13 +916,25 @@ let rawHCache = new Map();     // v11: pre-erosion heights
    tile-units of slack against a worst case of ~7.5 (see GROUND_UP below).
 
    GROUND_UP / GROUND_DOWN — how far a tile's paint can reach above and below
-   its own z=0 baseline, in pixels. UP is the tallest terrain (h=3) plus the
-   PEAK jitter plus the tallest snow spike; DOWN is half a tile plus one full
+   its own z=0 baseline, in pixels. UP is the tallest terrain plus the PEAK
+   jitter plus the tallest snow spike; DOWN is half a tile plus one full
    height step, which is the deepest a cliff face can hang. Both are proved,
    not assumed: a run4 gate walks a wide window of real tiles and fails if any
-   tile the cull skipped would have painted inside the canvas. */
+   tile the cull skipped would have painted inside the canvas.
+
+   ⚠️ Expansion 2b: `3 * HZ` was WRONG and is now `4 * HZ` — a real Expansion
+   2a bug, latent until this scale-up made the gate above catch it. The
+   comment said "the tallest terrain (h=3)", but rawHeight()'s peak branch is
+   `h = 2 + Math.round(valueNoise(...) * 2)`, which is v8's "peak height now
+   varies 2-4 levels" and genuinely returns 4. A height-4 PEAK carrying full
+   jitter reaches 4*16 + 9 = 73px, and 80 could not cover that plus its snow
+   spike — so such a tile sitting just past the bottom edge of the screen was
+   culled while its spike still belonged on screen, which is a peak popping
+   into view as you walk south. Found at N=1000 rather than introduced by it:
+   the same arithmetic was short at N=320 and no tested camera happened to
+   stand over the case. */
 const GROUND_MARGIN = 3;
-const GROUND_UP = 3 * HZ + 9 + 15 + 8;
+const GROUND_UP = 4 * HZ + 9 + 15 + 8;
 const GROUND_DOWN = IH2 + HZ + 8;
 let groundStats = { tiles: 0, scanned: 0, minX: 0, maxX: 0, minY: 0, maxY: 0,
                     camX: 0, camY: 0, w: 0, h: 0 };
@@ -1154,7 +1166,7 @@ const COLOSSEUM_R = 9;   // the arena floor
    meaningless, and the walk is the whole mechanic. Distance is a tunable. */
 let DRAGON_ALTAR = { x: 0, y: 0 };
 const DRAGON_ALTAR_R = 2.2;      // interact reach, the Shrine/Oracle language
-const DRAGON_ALTAR_DIST = 45;    // TUNABLE: how far from the Tower it stands
+const DRAGON_ALTAR_DIST = 141;   // TUNABLE: how far from the Tower it stands
 let floatTexts = [];                 // v9: rising damage numbers
 let pulseT = 0;                      // v9: staff cast pulse timer
 let swingKind = null;                // v9: which weapon silhouette the swing sweeps
@@ -1928,7 +1940,21 @@ const WILD_SPECIES = {
      so it takes the second of its two bible-supported homes this version and
      the Dark Dungeons spawn waits for Dungeons to ship — the same precedent
      the Dark Wraith's second location set in v18. */
-  storm_dragon:  { name: "Storm Dragon",  base: 0.25, flier: false, count: 3, biomes: [B.PEAK],    bloodFavored: false, shunnedByBlood: false },
+  /* `reachOnFoot` is Expansion 2b's, and it exists for exactly one species.
+     Storm Dragon's only biome is B.PEAK, which is in BLOCKED — so a player
+     can never stand on its tile and must tame it from a walkable neighbour.
+     v22 shipped it knowing one of the three could land out of reach and
+     wrote down the fix ("a walkable-adjacency filter on the spawn search")
+     rather than taking it. At N=1000 that stopped being a corner: snow
+     massifs grew from 2,174 tiles to 19,224, so a PEAK tile picked at random
+     is usually deep inside one, and all THREE dragons came out unreachable
+     (two with no walkable tile anywhere within five tiles). This is the
+     filter v22 named, opted into per species exactly like crystal_golem's
+     `mountainRuinOnly`, so no other species' spawn search can shift under
+     it. Griffin is also PEAK-only and deliberately does NOT carry it: it is
+     a mob with an 8-tile aggro radius, so it comes down off the peak to you.
+     A wild only wanders 0.9 tiles from home and never will. */
+  storm_dragon:  { name: "Storm Dragon",  base: 0.25, flier: false, count: 3, biomes: [B.PEAK],    reachOnFoot: true, bloodFavored: false, shunnedByBlood: false },
   /* v32: moved INSIDE the Abyssal Hollow interiors, same as Water Dragon in
      v29 — biomes:[] means no surface spawn at all. Moved, not duplicated. */
   shadow_dragon: { name: "Shadow Dragon", base: 0.25, flier: false, count: 3, biomes: [], bloodFavored: false, shunnedByBlood: false },
@@ -2148,43 +2174,64 @@ const PAL = {
   [B.CALDERA]:    ["#f2c884", "#eec27c"],
 };
 
+/* Expansion 2b: the landmark-to-landmark separations below (244 / 125 / 94 /
+   106 / 75) are the World Expansion list's own blind spot, found by PART E's
+   "confirm all landmarks place without overlap at the new distances" gate and
+   scaled by the same 3.125x PART B applies to everything else measured from a
+   fixed point. They had survived 240->320 unchanged only because at that ratio
+   they still cleared the features they exist to clear; at 3.125x they no
+   longer did, and the two consequences were both real and both visible:
+
+     78 (MOUNT from VOLCANO) against a PEAK->ROCK buffer that scaled to 175
+     put the entire snow mountain inside the volcano's no-snow buffer — the
+     mountain came out bare ROCK, which is the 2026-07-11 "snow flush against
+     volcanic rock" fix running backwards. Measured on the boot seed before
+     the change: MOUNT 137.6 from VOLCANO, PEAK down from 2.12% of the map to
+     0.61%, none of it on the mountain.
+
+     40 (BAZAAR from VOLCANO) against a cone that scaled to 113 would have
+     allowed the trading hub to be raised on volcanic rock, and 34 would have
+     put the Colosseum in the lava core.
+
+   Each new value is old * 3.125 rounded, so every one keeps exactly the
+   proportion to the feature it guards that it had at N=320. */
 function placeLandmarks() {
   // Landmarks must keep clear of spawn so the safe zone stays green grass
   for (let attempt = 0; attempt < 12; attempt++) {
     const a1 = (hash2(1 + attempt, 1, worldSeed)) * Math.PI * 2;
-    VOLCANO = { x: Math.round(TOWER.x + Math.cos(a1) * 100), y: Math.round(TOWER.y + Math.sin(a1) * 100) };
+    VOLCANO = { x: Math.round(TOWER.x + Math.cos(a1) * 313), y: Math.round(TOWER.y + Math.sin(a1) * 313) };
     if (Math.hypot(VOLCANO.x - SPAWN.x, VOLCANO.y - SPAWN.y) > SAFE_RADIUS + 42) break;
   }
   for (let attempt = 0; attempt < 12; attempt++) {
     const a2 = (hash2(2 + attempt, 2, worldSeed)) * Math.PI * 2;
-    MOUNT = { x: Math.round(TOWER.x + Math.cos(a2) * 96), y: Math.round(TOWER.y + Math.sin(a2) * 96) };
+    MOUNT = { x: Math.round(TOWER.x + Math.cos(a2) * 300), y: Math.round(TOWER.y + Math.sin(a2) * 300) };
     if (Math.hypot(MOUNT.x - SPAWN.x, MOUNT.y - SPAWN.y) > SAFE_RADIUS + 36 &&
-        Math.hypot(MOUNT.x - VOLCANO.x, MOUNT.y - VOLCANO.y) > 78) break;
+        Math.hypot(MOUNT.x - VOLCANO.x, MOUNT.y - VOLCANO.y) > 244) break;
   }
   /* v37: the three remaining landmarks, same hashed-angle technique, each
      kept clear of spawn and of one another so they never overlap. */
   for (let attempt = 0; attempt < 20; attempt++) {
     const a4 = (hash2(4 + attempt, 4, worldSeed)) * Math.PI * 2;
-    BAZAAR = { x: Math.round(TOWER.x + Math.cos(a4) * 64), y: Math.round(TOWER.y + Math.sin(a4) * 64) };
+    BAZAAR = { x: Math.round(TOWER.x + Math.cos(a4) * 200), y: Math.round(TOWER.y + Math.sin(a4) * 200) };
     if (Math.hypot(BAZAAR.x - SPAWN.x, BAZAAR.y - SPAWN.y) > SAFE_RADIUS + 20 &&
-        Math.hypot(BAZAAR.x - VOLCANO.x, BAZAAR.y - VOLCANO.y) > 40 &&
-        Math.hypot(BAZAAR.x - MOUNT.x, BAZAAR.y - MOUNT.y) > 40) break;
+        Math.hypot(BAZAAR.x - VOLCANO.x, BAZAAR.y - VOLCANO.y) > 125 &&
+        Math.hypot(BAZAAR.x - MOUNT.x, BAZAAR.y - MOUNT.y) > 125) break;
   }
   for (let attempt = 0; attempt < 20; attempt++) {
     const a5 = (hash2(5 + attempt, 5, worldSeed)) * Math.PI * 2;
     /* The Ancient Forge belongs near the volcano — it is the only place
        dragonsteel can be smelted, and dragonsteel comes from there. */
-    ANCIENT = { x: Math.round(VOLCANO.x + Math.cos(a5) * 29), y: Math.round(VOLCANO.y + Math.sin(a5) * 29) };
+    ANCIENT = { x: Math.round(VOLCANO.x + Math.cos(a5) * 91), y: Math.round(VOLCANO.y + Math.sin(a5) * 91) };
     if (Math.hypot(ANCIENT.x - SPAWN.x, ANCIENT.y - SPAWN.y) > SAFE_RADIUS + 30 &&
-        Math.hypot(ANCIENT.x - BAZAAR.x, ANCIENT.y - BAZAAR.y) > 30) break;
+        Math.hypot(ANCIENT.x - BAZAAR.x, ANCIENT.y - BAZAAR.y) > 94) break;
   }
   for (let attempt = 0; attempt < 20; attempt++) {
     const a6 = (hash2(6 + attempt, 6, worldSeed)) * Math.PI * 2;
-    COLOSSEUM = { x: Math.round(TOWER.x + Math.cos(a6) * 80), y: Math.round(TOWER.y + Math.sin(a6) * 80) };
+    COLOSSEUM = { x: Math.round(TOWER.x + Math.cos(a6) * 250), y: Math.round(TOWER.y + Math.sin(a6) * 250) };
     if (Math.hypot(COLOSSEUM.x - SPAWN.x, COLOSSEUM.y - SPAWN.y) > SAFE_RADIUS + 26 &&
-        Math.hypot(COLOSSEUM.x - BAZAAR.x, COLOSSEUM.y - BAZAAR.y) > 34 &&
-        Math.hypot(COLOSSEUM.x - ANCIENT.x, COLOSSEUM.y - ANCIENT.y) > 34 &&
-        Math.hypot(COLOSSEUM.x - VOLCANO.x, COLOSSEUM.y - VOLCANO.y) > 34) break;
+        Math.hypot(COLOSSEUM.x - BAZAAR.x, COLOSSEUM.y - BAZAAR.y) > 106 &&
+        Math.hypot(COLOSSEUM.x - ANCIENT.x, COLOSSEUM.y - ANCIENT.y) > 106 &&
+        Math.hypot(COLOSSEUM.x - VOLCANO.x, COLOSSEUM.y - VOLCANO.y) > 106) break;
   }
 
   /* v39 PART B: the Dragon Elder Altar, the same technique a seventh time.
@@ -2195,11 +2242,11 @@ function placeLandmarks() {
     DRAGON_ALTAR = { x: Math.round(TOWER.x + Math.cos(a7) * DRAGON_ALTAR_DIST),
                      y: Math.round(TOWER.y + Math.sin(a7) * DRAGON_ALTAR_DIST) };
     if (Math.hypot(DRAGON_ALTAR.x - SPAWN.x, DRAGON_ALTAR.y - SPAWN.y) > SAFE_RADIUS + 4 &&
-        Math.hypot(DRAGON_ALTAR.x - BAZAAR.x, DRAGON_ALTAR.y - BAZAAR.y) > 24 &&
-        Math.hypot(DRAGON_ALTAR.x - ANCIENT.x, DRAGON_ALTAR.y - ANCIENT.y) > 24 &&
-        Math.hypot(DRAGON_ALTAR.x - COLOSSEUM.x, DRAGON_ALTAR.y - COLOSSEUM.y) > 24 &&
-        Math.hypot(DRAGON_ALTAR.x - VOLCANO.x, DRAGON_ALTAR.y - VOLCANO.y) > 24 &&
-        Math.hypot(DRAGON_ALTAR.x - MOUNT.x, DRAGON_ALTAR.y - MOUNT.y) > 24) break;
+        Math.hypot(DRAGON_ALTAR.x - BAZAAR.x, DRAGON_ALTAR.y - BAZAAR.y) > 75 &&
+        Math.hypot(DRAGON_ALTAR.x - ANCIENT.x, DRAGON_ALTAR.y - ANCIENT.y) > 75 &&
+        Math.hypot(DRAGON_ALTAR.x - COLOSSEUM.x, DRAGON_ALTAR.y - COLOSSEUM.y) > 75 &&
+        Math.hypot(DRAGON_ALTAR.x - VOLCANO.x, DRAGON_ALTAR.y - VOLCANO.y) > 75 &&
+        Math.hypot(DRAGON_ALTAR.x - MOUNT.x, DRAGON_ALTAR.y - MOUNT.y) > 75) break;
   }
 
   const clamp = p => { p.x = Math.max(36, Math.min(N - 36, p.x)); p.y = Math.max(36, Math.min(N - 36, p.y)); };
@@ -2222,12 +2269,33 @@ const RUIN_COUNT = 6, ZONE_COUNT = 4;
    exactly one of the six clusters qualifies, which run4 asserts — if a future
    seed change left none qualifying, Crystal Golem would be unreachable and
    this threshold is the thing to lower. Tunable. */
-const MOUNTAIN_RUIN_ELEV = 0.72;
-const RUIN_FOOT = 6;        // carve radius of one Ruin cluster (v19 value)
-const ZONE_R = 11;          // a Safe Zone's grass clearing AND its protected radius
-const RUIN_SEP = 53;        // Ruin-to-Ruin
-const ZONE_SEP = 53;        // Zone-to-Zone and Zone-to-SPAWN/TOWER/VOLCANO/MOUNT
-const RUIN_ZONE_SEP = 32;   // Ruin-to-Zone
+/* Expansion 2b: 0.72 -> 0.66, taking the remedy the paragraph above already
+   names. The threshold did not need SCALING — elevRaw is a 0..1 field at any
+   N — but the pool it is applied to moved. Ruins are drawn from tiles at
+   least 150 in from the edge and clear of spawn/volcano/mount, and at N=1000
+   that pool is genuinely lower-lying: measured over every eligible tile,
+   elevRaw >= 0.72 covers 19.90% of it at N=320 and only 13.31% at N=1000.
+   Held at 0.72, the six ruins of the run3/run4/run5 seed topped out at
+   0.6666 and NONE qualified — Crystal Golem unreachable, exactly the case
+   the sentence above was written for.
+
+   Measured across twelve seeds, taking each world's highest ruin:
+     N=320  @ 0.72 -> a mountain ruin on  7/12 seeds, almost always exactly 1
+     N=1000 @ 0.72 -> 4/12      @ 0.69 -> 6/12      @ 0.66 -> 9/12
+   0.66 is chosen over the share-preserving 0.69 because 0.69 still leaves
+   the harness seed at zero, and over anything lower because 0.64 buys no
+   extra seeds (9/12 either way) while tagging two or three ruins per world
+   instead of one — and "mountain ruins only" should stay a place you find,
+   not a quarter of the ruins in the world. It sits at the eligible pool's
+   own p75, so "meaningfully elevated" is still what it means, and it is
+   nowhere near demanding snow (the placeable band stops at 0.84, PEAK
+   starts at 0.86). Still the tunable this comment always said it was. */
+const MOUNTAIN_RUIN_ELEV = 0.66;
+const RUIN_FOOT = 19;       // carve radius of one Ruin cluster (v19 value)
+const ZONE_R = 34;          // a Safe Zone's grass clearing AND its protected radius
+const RUIN_SEP = 166;       // Ruin-to-Ruin
+const ZONE_SEP = 166;       // Zone-to-Zone and Zone-to-SPAWN/TOWER/VOLCANO/MOUNT
+const RUIN_ZONE_SEP = 100;  // Ruin-to-Zone
 
 /* Land fitness for placement. This MUST use elevRaw() and never biomeAt():
    placeLandmarks() runs before tileCache.clear(), so a biomeAt() call here
@@ -2256,14 +2324,14 @@ function placeRuinsAndZones() {
   RUINS = [];
   OTHER_SAFE_ZONES = [];
   const H = (ax, ay, p) => Math.hypot(ax - p.x, ay - p.y);
-  const inBounds = (tx, ty) => tx >= 48 && tx <= N - 48 && ty >= 48 && ty <= N - 48;
+  const inBounds = (tx, ty) => tx >= 150 && tx <= N - 150 && ty >= 150 && ty <= N - 150;
   for (let a = 0; a < 60000 && RUINS.length < RUIN_COUNT; a++) {
     const tx = Math.floor(hash2(a, 61, worldSeed + 7717) * N);
     const ty = Math.floor(hash2(a, 67, worldSeed + 7723) * N);
     if (!inBounds(tx, ty) || !isPlaceableLand(tx, ty)) continue;
     if (H(tx, ty, SPAWN) <= SAFE_RADIUS + 24) continue;
-    if (H(tx, ty, VOLCANO) <= 56) continue;
-    if (H(tx, ty, MOUNT) <= 56) continue;
+    if (H(tx, ty, VOLCANO) <= 175) continue;
+    if (H(tx, ty, MOUNT) <= 175) continue;
     if (RUINS.some(r => H(tx, ty, r) <= RUIN_SEP)) continue;
     /* v25 PART A: tag the cluster mountain-or-not once, here, while elevRaw()
        is already the safe thing to call (see isPlaceableLand's note — this
@@ -2302,8 +2370,8 @@ function elevRaw(tx, ty) {
   const dTower = Math.hypot(tx - TOWER.x, ty - TOWER.y);
   const dMount = Math.hypot(tx - MOUNT.x, ty - MOUNT.y);
   return fbm(tx, ty, worldSeed)
-       + Math.max(0, 1 - dTower / 160) * 0.16
-       + Math.max(0, 1 - dMount / 48) * 0.55
+       + Math.max(0, 1 - dTower / 500) * 0.16
+       + Math.max(0, 1 - dMount / 150) * 0.55
        - Math.max(0, edge - 0.60) * 1.6;
 }
 
@@ -2318,7 +2386,15 @@ function elevRaw(tx, ty) {
    is in the same space together, matching the bible's one-world rule.
    The mechanism is one extra field on the move broadcast plus a filter
    on the receiving end. No new channel, no new sync system. */
-const INTERIOR_N = 26;           // interior grid is 26x26 tiles
+const INTERIOR_N = 50;           // interior grid is 50x50 tiles
+/* Expansion 2b PART C: the interior grid grew 26 -> 50 and everything inside
+   it was tuned as an ABSOLUTE count against 26x26. Left alone, a cave 3.7x
+   the area would hold exactly as many nodes, ore veins and hostiles as the
+   small one did — "genuinely bigger" would have meant "genuinely emptier".
+   This is the one factor those counts are multiplied by, derived from
+   INTERIOR_N itself rather than written as a number, so the next change to
+   the grid size carries the density with it automatically. */
+const INTERIOR_AREA_K = (INTERIOR_N * INTERIOR_N) / (26 * 26);
 const IN_WALL = 0, IN_FLOOR = 1, IN_EXIT = 2;
 const interiorCache = new Map();  // spaceId -> { grid, exit, spawnedAt }
 
@@ -2416,7 +2492,17 @@ function buildInterior(spaceId, anchor) {
       }
     }
   };
-  for (let pass = 0; pass < 6; pass++) {
+  /* Expansion 2b: the pass CAP scales with the grid, for the same reason the
+     node and ore counts do. Each pass joins the single largest orphaned
+     region, so the number of passes needed tracks how many separate regions
+     the noise produced — which tracks area. At 50x50, six was no longer
+     enough: measured across sixteen real interiors, three finished with one
+     floor tile still sealed off, against zero at 26x26. That is small, but
+     "every floor tile is reachable" is the guarantee the cave overhaul was
+     built to make and PART E asks explicitly that it not regress. The loop
+     still breaks the moment nothing is orphaned, so the higher cap costs
+     nothing on an interior that was already connected. */
+  for (let pass = 0; pass < Math.round(6 * INTERIOR_AREA_K); pass++) {
     const reach = connectFrom(4, 5);
     let orphan = null, best = -1;
     /* Find the LARGEST unreachable region and connect that one first, so a
@@ -2446,7 +2532,7 @@ function buildInterior(spaceId, anchor) {
 
   /* Free-standing pillars: isolated rock columns inside open chambers, so
      a big room has something in it instead of being an empty field. */
-  for (let i = 0; i < 14; i++) {
+  for (let i = 0; i < Math.round(14 * INTERIOR_AREA_K); i++) {
     const px = 3 + Math.floor(hash2(i, 21, seed) * (INTERIOR_N - 6));
     const py = 3 + Math.floor(hash2(i, 22, seed) * (INTERIOR_N - 6));
     let open = 0;
@@ -2492,13 +2578,18 @@ function populateInterior(spaceId, rec) {
   const dragonSp = isAbyss ? "shadow_dragon" : "water_dragon";
 
   rec.nodes = [];
-  const nNodes = 3 + Math.floor(hash2(1, 1, seed) * 3);   // 3-5, per spec
+  /* 2b PART C: the 3-5 density is the v29 spec's own, kept — it is now
+     3-5 per 26x26 worth of cave rather than 3-5 per cave. */
+  const nNodes = Math.round((3 + Math.floor(hash2(1, 1, seed) * 3)) * INTERIOR_AREA_K);
   for (let i = 0; i < nNodes; i++) {
     const [x, y] = pick(i * 3 + 11);
     rec.nodes.push({ x: x + 0.5, y: y + 0.5, type: nodeType, taken: false });
   }
   rec.wilds = [];
-  const [wx, wy] = pick(41);
+  /* 41 -> 907: the node stream below is `i * 3 + 11`, which now runs to 62
+     at the scaled node count and would have started landing on 41 — the
+     dragon's own tile. Its own index, clear of every other stream. */
+  const [wx, wy] = pick(907);
   rec.wilds.push({ id: spaceId + ":" + dragonSp, species: dragonSp,
                    x: wx + 0.5, y: wy + 0.5, ph: hash2(2, 2, seed) * 6 });
   rec.mobs = [];
@@ -2509,10 +2600,17 @@ function populateInterior(spaceId, rec) {
      never drew (m.hp < m.maxHp is NaN, which is always false). They are now
      built with the exact same shape as a surface mob and pushed into `mobs`
      so every existing system treats them identically. */
-  const mkInteriorMob = (kind, mx, my, phSeed) => {
+  /* 2b PART C: `idx` is new. The id was `spaceId + ":" + kind`, which was
+     already ambiguous for the two same-kind hostiles below — both trolls in
+     a cave carried the identical id, so a peer's damage/death broadcast
+     (`mobs.find(x => x.id === p.id)`) could only ever resolve to the first
+     of them. Latent and rarely visible at two; scaling that count to seven
+     would have made it the normal case, so the index is folded in here at
+     the line the count change touches rather than copied forward broken. */
+  const mkInteriorMob = (kind, mx, my, phSeed, idx) => {
     const def = MOBS[kind];
     return {
-      id: spaceId + ":" + kind, kind,
+      id: spaceId + ":" + kind + ":" + (idx || 0), kind,
       x: mx, y: my, hx: mx, hy: my,
       hp: Math.round(def.hp * bloodMoonMobMult()),
       maxHp: Math.round(def.hp * bloodMoonMobMult()),
@@ -2521,17 +2619,25 @@ function populateInterior(spaceId, rec) {
       fx: 0, fy: 1, space: spaceId,
     };
   };
+  /* 2b PART C: both hostile counts are per-26x26 densities now, not per-cave
+     totals. One Sea Serpent in a 2500-tile cave is a creature you can walk a
+     whole interior without meeting; four across that area is the same odds of
+     running into one that the 676-tile cave always had. */
   if (!isAbyss) {
-    const [sx2, sy2] = pick(73);
-    rec.mobs.push(mkInteriorMob("sea_serpent", sx2 + 0.5, sy2 + 0.5, hash2(3, 3, seed) * 6));
+    const serpents = Math.round(1 * INTERIOR_AREA_K);
+    for (let i = 0; i < serpents; i++) {
+      const [sx2, sy2] = pick(73 + i * 3);
+      rec.mobs.push(mkInteriorMob("sea_serpent", sx2 + 0.5, sy2 + 0.5,
+        hash2(3 + i, 3, seed) * 6, i));
+    }
   }
   /* Caves should have something to fight beyond one boss-ish creature —
      Glow Moths already belong in caves per the bible, and a couple of
      Golems give the deeper chambers real teeth. */
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < Math.round(2 * INTERIOR_AREA_K); i++) {
     const [gx, gy] = pick(91 + i * 7);
     rec.mobs.push(mkInteriorMob(isAbyss ? "dark_wraith" : "troll",
-      gx + 0.5, gy + 0.5, hash2(4 + i, 4, seed) * 6));
+      gx + 0.5, gy + 0.5, hash2(4 + i, 4, seed) * 6, i));
   }
   rec.mobs.forEach(m => mobs.push(m));   // join the real mob array
 
@@ -2539,7 +2645,8 @@ function populateInterior(spaceId, rec) {
      and until now an interior had exactly one resource type and nothing to
      mine. These use the same gatherable node shape as the essence nodes. */
   rec.ore = [];
-  const oreCount = 4 + Math.floor(hash2(9, 9, seed) * 4);   // 4-7
+  // 2b PART C: 4-7 per 26x26 worth of cave, scaled with the grid like the nodes
+  const oreCount = Math.round((4 + Math.floor(hash2(9, 9, seed) * 4)) * INTERIOR_AREA_K);
   for (let i = 0; i < oreCount; i++) {
     const [ox, oy] = pick(131 + i * 5);
     const kind = hash2(i, 17, seed) > 0.55 ? "runic" : "iron";
@@ -2648,8 +2755,8 @@ function biomeAt(tx, ty) {
   }
 
   const dV = Math.hypot(tx - VOLCANO.x, ty - VOLCANO.y);
-  if (dV < 36 && b !== B.DEEP && b !== B.WATER) {
-    b = dV < 10 ? B.LAVA : B.VOLROCK;
+  if (dV < 113 && b !== B.DEEP && b !== B.WATER) {
+    b = dV < 31 ? B.LAVA : B.VOLROCK;
   }
   /* v22: the Sunforge Caldera — the same rare-pocket technique as every one
      before it, on its own independent field and seed offset, but applied
@@ -2661,7 +2768,7 @@ function biomeAt(tx, ty) {
   if (b === B.VOLROCK &&
       valueNoise(tx / 20, ty / 20, worldSeed + 1913) > CALDERA_RARITY) b = B.CALDERA;
   // Transition buffer: no stark white snow flush against volcanic rock
-  if (b === B.PEAK && dV < 56) b = B.ROCK;
+  if (b === B.PEAK && dV < 175) b = B.ROCK;
   /* v20: the RUINB carve now loops every cluster, same radius and same guards */
   if (!BLOCKED.has(b) && b !== B.WATER &&
       RUINS.some(r => Math.hypot(tx - r.x, ty - r.y) < RUIN_FOOT)) b = B.RUINB;
@@ -3059,13 +3166,25 @@ function buildFeatureList() {
       const tx = Math.floor(hash2(a, 21 + placed, worldSeed + spSeed) * N);
       const ty = Math.floor(hash2(a, 37 + placed, worldSeed + spSeed * 3) * N);
       if (!def.biomes.includes(biomeAt(tx, ty))) continue;
-      if (Math.hypot(tx - SPAWN.x, ty - SPAWN.y) < 48) continue;
+      if (Math.hypot(tx - SPAWN.x, ty - SPAWN.y) < 150) continue;
       /* v25 PART A: Crystal Golem's extra gate, layered on top of the B.RUINB
          biome check both Golems already share — the tile must belong to a
          cluster tagged mtn at worldgen. Golem has no such field and is
          completely unaffected: it still reaches every Ruin. */
       if (def.mountainRuinOnly &&
           !RUINS.some(r => r.mtn && Math.hypot(tx - r.x, ty - r.y) < RUIN_FOOT)) continue;
+      /* Expansion 2b: a species whose own biome is BLOCKED has to be tameable
+         from somewhere — see WILD_SPECIES.storm_dragon, the only entry that
+         sets this. One orthogonally adjacent standable tile puts a player
+         1.0 tiles from the spawn point, inside the 1.8-tile tame reach with
+         room for the whole wander ellipse. `diveBlocked` rather than
+         `BLOCKED` because a diving player genuinely can occupy deep water,
+         which is the same rule run4's own reach measurement uses. */
+      if (def.reachOnFoot &&
+          ![[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => {
+            const nx = tx + dx, ny = ty + dy;
+            return nx >= 0 && ny >= 0 && nx < N && ny < N && !diveBlocked(biomeAt(nx, ny));
+          })) continue;
       if (wilds.some(w => Math.hypot(w.x - tx, w.y - ty) < 3)) continue;
       wilds.push({ id: sp + ":" + tx + "," + ty, species: sp, x: tx + 0.5, y: ty + 0.5, ph: a * 1.7 });
       placed++;
@@ -3075,9 +3194,20 @@ function buildFeatureList() {
   mobs = [];
   /* v30: the Elder Drake is placed by hand, not by the hashed loop — it has
      biomes:[] so the loop skips it entirely. One drake, near the Volcano,
-     the same fixed point for every player. */
+     the same fixed point for every player.
+
+     Expansion 2b: the ring was 3..26, measured from the volcano centre, and
+     it is the same class of missed constant as the landmark separations in
+     placeLandmarks() — a distance from a fixed point that PART B's reused
+     list does not name. Once the lava core scaled 10 -> 31, every tile the
+     old ring could reach was inside the lava, so the search found no
+     VOLROCK, returned null, and the bible's only boss-tier creature was
+     simply absent from the world (confirmed: `elder_drake` gone from the mob
+     roster on the boot seed). 3..26 * 3.125 = 9..81, which starts inside the
+     core exactly as 3 did and ends inside the 113-tile cone exactly as 26
+     did. */
   const edPlace = () => {
-    for (let r = 3; r < 26; r++) {
+    for (let r = 9; r < 81; r++) {
       for (let a = 0; a < 24; a++) {
         const ang = (a / 24) * Math.PI * 2;
         const tx = Math.round(VOLCANO.x + Math.cos(ang) * r);
@@ -3100,7 +3230,7 @@ function buildFeatureList() {
       const tx = Math.floor(hash2(a, 11 + placed, worldSeed + mobSeed) * N);
       const ty = Math.floor(hash2(a, 53 + placed, worldSeed + mobSeed * 3) * N);
       if (!def.biomes.includes(biomeAt(tx, ty))) continue;
-      if (Math.hypot(tx - SPAWN.x, ty - SPAWN.y) < 56) continue;
+      if (Math.hypot(tx - SPAWN.x, ty - SPAWN.y) < 175) continue;
       if (mobs.some(m => Math.hypot(m.hx - tx, m.hy - ty) < 4)) continue;
       if (wilds.some(w => Math.hypot(w.x - tx, w.y - ty) < 3)) continue;
       mobs.push({

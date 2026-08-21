@@ -53,6 +53,238 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-21 (Expansion 2b — the real scale-up, N 320 -> 1000)
+
+The world Expansion 2a was the prerequisite for. `N` 320 -> 1000 is **9.77x
+the area** — 102,400 tiles become 1,000,000 — and cave interiors go 26x26 ->
+50x50. Not one biome colour, rarity threshold, noise wavelength or drawing
+decision was touched; every number that moved is a DISTANCE, scaled by the
+one ratio 1000/320 = 3.125.
+
+- **This is the version 2a made survivable, and the proof is a number that
+  did not move.** The old bake at N=1000 would have been a ~3.8 GB offscreen
+  canvas painted at every login. There is no bake, so per-frame cost follows
+  the viewport and nothing else: **2,009 tiles at 1024x768**, against 1,985
+  before the scale-up, and the whole 24-tile difference is a bug fix
+  (`GROUND_UP`, below) rather than the ten-fold world. The frame scans a
+  viewport, not `N*N`, and `run4` pins that as a ratio as well as a count.
+- **The volcano, the mountain and the snow line all keep their silhouettes,
+  because every radius that draws them scaled together** — cone 36 -> 113,
+  lava core 10 -> 31, the PEAK->ROCK buffer 56 -> 175, and `elevRaw`'s two
+  distance divisors 160 -> 500 and 48 -> 150. The landmark is the same
+  proportion of the world it always was, which is what the World Expansion
+  entry below spent a whole failed night learning.
+- **⚠️ The spec's reused constant list was NOT complete at this ratio, and
+  the two things it missed were both visible.** It was proved complete at
+  240 -> 320 and reused on that authority; PART E's own "confirm all
+  landmarks place without overlap at the new distances" gate is what caught
+  it. Both misses are the same shape — a distance from a fixed point that
+  the list does not name — and both are now scaled by the same 3.125x:
+  - **`MOUNT` had to clear `VOLCANO` by only 78 tiles against a no-snow
+    buffer that had just scaled to 175.** The mountain landed 137.6 from the
+    volcano and came out bare ROCK: PEAK fell from 2.12% of the map to 0.61%
+    and **none of the remainder was on the mountain**. That is the
+    2026-07-11 "snow flush against volcanic rock" fix running in reverse,
+    and it is on the must-not-regress list. Now 244, and the mountain is
+    513.8 clear with snow back at 1.93%.
+  - **The Elder Drake vanished from the world entirely.** Its hand-placement
+    sweeps a ring 3..26 tiles from the volcano centre looking for VOLROCK;
+    once the lava core scaled to 31, every tile that ring could reach was
+    lava, the search returned `null`, and the bible's only boss-tier
+    creature simply was not there. Ring is 9..81 now — inside the core where
+    3 was, inside the cone where 26 was.
+  - The same class of miss was corrected in the other four separations
+    (Bazaar 40 -> 125, Ancient 30 -> 94, Colosseum 34 -> 106, Dragon Elder
+    Altar 24 -> 75) before it could bite. At 40 the Grand Bazaar could have
+    been raised on volcanic rock; at 34 the Colosseum could have been in the
+    lava core.
+- **⚠️ A real Expansion 2a bug, latent until this scale made it fire:
+  `GROUND_UP` was derived from `3 * HZ` and terrain reaches height 4.**
+  Its own comment said "the tallest terrain (h=3)", but `rawHeight()`'s peak
+  branch is `2 + Math.round(valueNoise(...) * 2)` — that is v8's "peak height
+  now varies 2-4 levels", and it genuinely returns 4. A height-4 PEAK with
+  full jitter stands 73px tall and 80 could not cover it plus its snow spike,
+  so such a tile sitting just past the bottom edge was culled while its spike
+  still belonged on screen. **That is a peak popping into view as you walk
+  south**, and the same arithmetic was short at N=320 — no tested camera had
+  ever stood over the case. `4 * HZ + 9 + 15 + 8`. Cost: 24 tiles a frame.
+- **⚠️ The Storm Dragon became completely untameable, and v22's own written
+  fix is now taken.** Its only biome is `B.PEAK`, which is in `BLOCKED`, so
+  it must be tamed from a walkable neighbour — v22 shipped knowing one of the
+  three could land out of reach and wrote down the remedy rather than taking
+  it ("a walkable-adjacency filter on the spawn search"). Snow massifs grew
+  from 2,174 tiles to 19,224, so a random PEAK tile is now usually deep
+  inside one: **all three dragons came out unreachable, two with no standable
+  tile within five tiles in any direction.** `reachOnFoot` is opted into by
+  exactly one species, the same way `mountainRuinOnly` is, so no other
+  spawn search shifts under it. 0/3 -> **3/3 tameable**, better than the 2/3
+  this seed managed at N=320. Griffin is also PEAK-only and deliberately does
+  NOT carry the flag: it is a mob with an 8-tile aggro radius, so it comes
+  down off the peak to you. A wild wanders 0.9 tiles from home and never will.
+- **Cave interiors are genuinely bigger and genuinely as full.** 676 tiles ->
+  2,500; measured floor area per interior 201-430 -> **1,130-1,594**. Every
+  count inside is multiplied by one factor, `INTERIOR_AREA_K`, written as
+  `(INTERIOR_N * INTERIOR_N) / (26 * 26)` rather than as a number so the next
+  change to the grid carries its own density: essence/void nodes 3-5 -> 11-18,
+  ore veins 4-7 -> 15-26, hostiles 3 -> 11 in a cave and 2 -> 7 in a Hollow,
+  free-standing pillars 14 -> 52. The per-cave density a player actually
+  walks through is unchanged; there is just 3.7x more cave to walk.
+- **Connectivity did not regress, but only because the pass count scales
+  too.** The overhaul's guarantee is that every floor tile is reachable from
+  the arrival point, and the loop that delivers it joins the largest orphaned
+  region once per pass — six passes over a 3.7x grid left **one sealed-off
+  tile in three of sixteen real interiors**, against zero at 26x26. The cap
+  is `6 * INTERIOR_AREA_K` now and breaks the instant nothing is orphaned, so
+  a connected cave pays nothing for it. Back to zero, and `run4` now walks six
+  real interiors and hard-fails on a single unreachable tile.
+- **⚠️ The ocean outgrew the diver, and that is the spec's own decision
+  showing through.** `BREATH_MAX` is on PART B's explicit do-NOT-scale list
+  beside the other player-interaction distances, so the sea got 3.125x wider
+  and one tank of air did not. v21's bar was EVERY Underwater Cave pocket
+  within one tank; at N=1000 there are **205 pockets instead of 21**, and
+  **175 of them (88.5% of the biome by area)** are within the 138-tile budget,
+  with the worst at 334. The Hollow is 115/131 and 90.9%. The biome is not
+  lost — the largest pocket in the world, 1,663 tiles, sits directly on the
+  shore — but there is now open sea you cannot cross, and the count is
+  printed by `run4` on every run so it can never go quiet. Same treatment
+  v22 gave the out-of-reach Storm Dragon and v39 the Unicorn Elder.
+- **Room for fifty players, measured rather than assumed.** 438,812 walkable
+  land tiles, 43.9% of the map: **8,776 tiles each at 50 concurrent, 93.7
+  tiles of mean spacing, and 221 screenfuls of land** at the viewport the
+  ground pass actually draws. Six Ruins sit at least 166.7 apart and four
+  Safe Zones at least 235.1, on every seed swept.
+- **A latent interior bug fixed in passing, because the count change lands on
+  its line:** `mkInteriorMob` built its id as `spaceId + ":" + kind`, so both
+  trolls in a cave carried the identical id and a peer's damage or death
+  broadcast (`mobs.find(x => x.id === p.id)`) could only ever resolve to the
+  first of them. Rare enough to miss at two; at seven it would have been the
+  normal case. The index is folded in.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, or where following its reused
+constant list literally would have shipped something broken. All shipped
+through the full gate (parse clean, `run3` `CAUGHT ERROR: none`, `run4`
+**771/771 with zero FAIL**, `run5` 945 coverage draws clean with all 19 ground
+biomes drawn, 63/63 grep checks) plus a genuine six-seed sweep and a
+like-for-like sweep of the pre-change build on the same seeds — refinements to
+consider, not unfinished work.
+
+1. **⚠️ Six constants were scaled that PART B's list does not name.** The
+   spec's heading is "every constant relative to a fixed point, scaled by
+   3.125x" and offers the list as the enumeration of those; the five landmark
+   separations and the Elder Drake's search ring are constants relative to a
+   fixed point that the enumeration misses. Applying the stated RULE to them
+   is following the spec, and every value is `old * 3.125` rounded with no
+   design freedom in it — the same call v19 made under "Part B's explicit
+   catch-all". The alternative was knowingly shipping a snowless mountain and
+   a world with no boss in it, which is precisely the failure the World
+   Expansion's own RED report is about. This is the single most important
+   thing to check on this build.
+2. **`MOUNTAIN_RUIN_ELEV` 0.72 -> 0.66, taking the remedy the constant's own
+   comment already names.** The threshold did not need scaling — `elevRaw` is
+   a 0..1 field at any `N` — but the pool it is applied to moved: ruins are
+   drawn from tiles 150 in from the edge and clear of spawn/volcano/mount, and
+   at N=1000 that pool is genuinely lower-lying (elevRaw >= 0.72 covers 19.90%
+   of it at N=320 and 13.31% at N=1000). Held at 0.72 the six ruins of the
+   harness seed topped out at 0.6666 and **none** qualified — Crystal Golem
+   unreachable, exactly the case the comment was written for. Measured across
+   twelve seeds by each world's highest ruin: N=320 @ 0.72 gives a mountain
+   ruin on 7/12; N=1000 gives 4/12 @ 0.72, 6/12 @ 0.69, **9/12 @ 0.66**.
+   0.66 beat the share-preserving 0.69 because 0.69 still leaves the harness
+   seed at zero, and beat 0.64 because 0.64 buys no extra seeds while tagging
+   two or three ruins per world instead of one. It sits at the eligible pool's
+   own p75, so "meaningfully elevated" still means something, and nowhere near
+   demanding snow. **⚠️ It clears the harness seed by only 0.0066** — that
+   seed is deterministic so it cannot drift on its own, but it is the number
+   to re-derive if worldgen moves again.
+3. **The interior Sea Serpent count scales; the interior DRAGON does not.**
+   PART C says node/mob/ore counts scale, and the Sea Serpent is a mob — one
+   of them in a 2,500-tile cave is a creature you can walk a whole interior
+   without meeting, so four across that area is the density v29 actually
+   tuned. The Water/Shadow Dragon is a WILD, is not in PART C's list, and
+   v29 made it a deliberate singleton ("matches how rare and dangerous
+   finding one should feel"); multiplying it by 3.7 would change pet rarity,
+   which is a design decision and not a density one. One per interior, as
+   before.
+4. **Free-standing pillars scale too, though PART C names only node/mob/ore.**
+   They are the thing that stops a big chamber reading as an empty field, and
+   14 of them across 3.7x the floor is visibly sparser. Same factor, same
+   line of reasoning; a one-word revert if the sparser cave was wanted.
+5. **⚠️ `run4`'s dive-reachability bar is RESTATED, and it is the one gate
+   here that is genuinely weaker than before.** "Every pocket within one
+   tank" was reachable at N=320 and is arithmetically impossible at N=1000
+   with `BREATH_MAX` on the spec's do-not-scale list — every lever that could
+   prevent it (breath, the pocket noise wavelength, the rarity threshold) is
+   explicitly locked by the spec. It is now three assertions instead of one —
+   at least 80% of pockets, at least 80% of the biome by AREA, and the single
+   largest pocket in the world must be reachable — plus a printed count of
+   what falls outside. Real margins today are 85%/88.5% and 88%/90.9%. If
+   the intent was that a diver can reach anywhere, the fix is a real design
+   change (scale breath, or keep pockets off the deep ocean) and it belongs
+   in a spec, not here.
+6. **`run4`'s "Golem/Bandit spawns near multiple Ruin clusters" is retargeted
+   rather than forced.** It was always a coin flip and is now a losing one:
+   three Golems drawn independently across six clusters land in two or more
+   only ~72% of the time, and this seed happened to win at N=320 and lose at
+   N=1000 (20260821 spreads them across two clusters, 777777 across three —
+   nothing in the placement code changed). Bandits are worse; they draw from
+   PLAINS as well as RUINB, and RUINB is ~4% of that pool at BOTH scales, so
+   barely one of the nine ever stands in a ruin at all. What is pinned now is
+   deterministic and is what would really be broken if the carve or the search
+   regressed: every Golem is inside a real cluster, they are a population and
+   not a pile, and the cluster spread is still printed on every run.
+7. **Two `run4` test SPOTS were derived rather than left as literals**, both
+   broken by `SAFE_RADIUS` 36 -> 113 and neither a game bug. The combat-music
+   test took its hit at spawn + 60, which is now inside the safe zone where
+   `applyDamage` correctly returns early. The v27 ability block picked the
+   first clear ring it found, which now lands 0.8 tiles outside the boundary
+   — so the ghost player it places 1.4 tiles inward sat INSIDE the zone and
+   `dealHit` refused, which is the game working. It now requires the whole
+   working area clear, since that block puts dummies 5.6 tiles out.
+8. **`run4`'s snow-spike model was corrected, and it is a correction, not a
+   relaxation.** The gate assumed a spike rises 15px above a tile's diamond
+   TOP; the code draws `moveTo(spx, cy - sph)`, 15px above its CENTRE. The
+   gate was 11px pessimistic, which matters because it is the thing sizing
+   `GROUND_UP` — modelling the real geometry is what let the genuine `4 * HZ`
+   bug be fixed at its true size instead of papered over with 27px of slack
+   the frame would have paid for every tile.
+9. **The three scale-bound `run4` pins were updated, not relaxed** — `N`
+   320 -> 1000, `SAFE_RADIUS` 36 -> 113, Dark Forest 1,528 -> 12,687
+   re-measured rather than derived (it is not a clean multiple; rare
+   noise-threshold biomes are high-variance on any single seed, already
+   documented below). The RUINB-per-cluster census window and the
+   Golem-near-cluster radius now follow `RUIN_FOOT` instead of the v20
+   literals, and the per-frame tile ceiling moved 2000 -> 2100 for the 24
+   tiles the `GROUND_UP` fix costs, with the viewport-independent ratio gate
+   unchanged at 1.35x. The two Expansion 2a pins that said "N is untouched at
+   320" now say 1000: 2a's job was to change nothing, 2b's is to change
+   exactly this, and what they still prove is that the ground pass reads
+   whatever `N` is rather than carrying a baked assumption.
+10. **`run4` gained an interior-connectivity gate, which PART E asks for and
+    nothing previously covered.** It walks six real interiors from six
+    different cave entrances at least 120 tiles apart, flood-fills from the
+    real exit tile, and hard-fails on a single unreachable floor tile — plus
+    asserts the smallest interior has more floor than the LARGEST 26x26 one
+    ever produced (430), so "genuinely bigger" is pinned rather than claimed.
+11. **Nothing was added to `run5`'s coverage lists because nothing new was
+    added to the game** — no species, mob, weapon kind or class this version.
+    Coverage moved 949 -> 945 draws purely because the roster a single seed
+    happens to spawn shifted; all 19 ground biomes still draw through
+    `drawGroundTile`, which is the assertion that matters.
+12. **⚠️ The Ancient Forge still stands inside the volcano cone, and that is
+    unchanged behaviour, not a new overlap.** It places 91 tiles from the
+    volcano centre inside a 113-tile cone — exactly the ratio it had at
+    N=320 (29 inside 36). It is the only place dragonsteel can be smelted and
+    dragonsteel comes from the volcano, so this is the design working; it is
+    called out because a naive footprint check flags it and the next person
+    to run one should not think it new.
+13. **The push to `main` that step 8 invites was deliberately not attempted.**
+    This session is instructed to develop and push only on its designated
+    branch. The README calls a blocked push to `main` a nice-to-have and
+    explicitly not a failure, so the build lands on the branch as usual and a
+    human can sync it.
+
 ### 2026-08-21 (Expansion 2a — viewport-based ground rendering)
 
 The single pre-baked full-map terrain canvas is gone. Ground tiles are drawn

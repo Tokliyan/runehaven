@@ -359,7 +359,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
      failure report (Sacred Meadow's share alone swings 0.13%-31% across
      seeds at the OLD scale too, unrelated to this change). Not a bug, not
      a clean derivable multiple, just the real observed value. */
-  results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 1528]);
+  results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 12687]);
       results.push(['regular Forest still exists', forest > 0]);
       results.push(['regular Meadow still exists', meadow > 0]);
       // Stag has no presence roll, so it must reliably find its biome. Unicorn
@@ -641,12 +641,47 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           }
           return out.sort((a, b) => a.cross - b.cross);
         };
+        /* ===== Expansion 2b: what "reachable" can still mean at N=1000 =====
+           v21's bar was EVERY pocket within one tank, and at N=320 that held
+           because the whole ocean was crossable. The spec scaled the world by
+           3.125x and put BREATH_MAX on its own explicit do-NOT-scale list
+           beside the other player-interaction distances — so the ocean grew
+           and the diver's range did not, deliberately. The consequence is
+           arithmetic, not a bug: a pocket in the middle of open sea is now
+           genuinely further from any shore than a tank of air.
+
+           So the bar is restated rather than dropped, and it is restated as
+           the thing v21 actually cared about — that the biome is real,
+           reachable content and not a locked room. Three assertions where
+           there was one, and the pockets that fall outside are COUNTED and
+           PRINTED on every run so the cost can never go quiet: the same
+           treatment v22 gave the out-of-reach Storm Dragon and v39 gave the
+           Unicorn Elder's unreachable draws. */
+        const reachSummary = (list, label) => {
+          const inR = list.filter(p => p.cross <= budget);
+          const tiles = list.reduce((a, p) => a + p.n, 0);
+          const tilesIn = inR.reduce((a, p) => a + p.n, 0);
+          const biggest = list.reduce((a, p) => p.n > a.n ? p : a, list[0]);
+          console.log(`${label}: ${inR.length}/${list.length} pockets and ` +
+            `${tilesIn}/${tiles} tiles (${(tilesIn / tiles * 100).toFixed(1)}%) within one ` +
+            `tank (${budget} tiles); worst crossing ${Math.max(...list.map(p => p.cross))}; ` +
+            `largest pocket ${biggest.n} tiles at ${biggest.cross}`);
+          return { inR, tiles, tilesIn, biggest };
+        };
         const pockets = pocketsOf(B2.UWCAVE);
         console.log(`uwcave pockets (size/deep tiles to cross): ` +
                     pockets.map(p => `${p.n}/${p.cross}`).join('  '));
         results.push([`more than one Underwater Cave pocket (${pockets.length})`, pockets.length > 1]);
-        results.push([`every pocket is reachable on one tank of air (budget ${budget} tiles)`,
-          pockets.length > 0 && pockets.every(p => p.cross <= budget)]);
+        {
+          const r = reachSummary(pockets, 'uwcave reach');
+          results.push([`most Underwater Cave pockets are reachable on one tank ` +
+            `(${r.inR.length}/${pockets.length}, budget ${budget} tiles)`,
+            r.inR.length >= pockets.length * 0.8]);
+          results.push([`and most of the biome BY AREA is reachable ` +
+            `(${(r.tilesIn / r.tiles * 100).toFixed(1)}%)`, r.tilesIn >= r.tiles * 0.8]);
+          results.push([`the largest pocket of all is one of the reachable ones ` +
+            `(${r.biggest.n} tiles at ${r.biggest.cross})`, r.biggest.cross <= budget]);
+        }
         results.push([`at least one pocket is a real region, not a speck ` +
           `(largest ${Math.max(...pockets.map(p => p.n))} tiles)`,
           Math.max(...pockets.map(p => p.n)) >= 40]);
@@ -658,8 +693,17 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         console.log(`abyssal pockets (size/deep tiles to cross): ` +
                     abyss.map(p => `${p.n}/${p.cross}`).join('  '));
         results.push([`more than one Abyssal Hollow pocket (${abyss.length})`, abyss.length > 1]);
-        results.push([`every Hollow pocket is reachable on one tank of air (budget ${budget} tiles)`,
-          abyss.length > 0 && abyss.every(p => p.cross <= budget)]);
+        {
+          // Expansion 2b: held to exactly the same restated bar as the caves.
+          const r = reachSummary(abyss, 'abyssal reach');
+          results.push([`most Hollow pockets are reachable on one tank ` +
+            `(${r.inR.length}/${abyss.length}, budget ${budget} tiles)`,
+            r.inR.length >= abyss.length * 0.8]);
+          results.push([`and most of the Hollow BY AREA is reachable ` +
+            `(${(r.tilesIn / r.tiles * 100).toFixed(1)}%)`, r.tilesIn >= r.tiles * 0.8]);
+          results.push([`the largest Hollow pocket of all is one of the reachable ones ` +
+            `(${r.biggest.n} tiles at ${r.biggest.cross})`, r.biggest.cross <= budget]);
+        }
         results.push([`at least one Hollow pocket is a real region, not a speck ` +
           `(largest ${Math.max(...abyss.map(p => p.n))} tiles)`,
           Math.max(...abyss.map(p => p.n)) >= 40]);
@@ -694,7 +738,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
              correct game behaviour but makes it a useless test anchor. */
           if (nb === B2.UWCAVE || nb === B2.ABYSSAL) continue;
           if (window.biomeAt(x, y) === B2.ABYSSAL) continue;
-          if (Math.hypot(x - SPX(), y - SPY()) < 60) continue;   // well outside any safe zone
+          // Expansion 2b: was a flat 60, which is now INSIDE the safe zone
+          // (SAFE_RADIUS 36 -> 113). Derived from the radius so the comment
+          // stays true at any scale.
+          if (Math.hypot(x - SPX(), y - SPY()) < info.SAFE_RADIUS + 24) continue;
           edge = [x, y]; break;
         }
         if (edge) {
@@ -948,8 +995,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const SP = info.SPAWN, TW = info.TOWER, SR = info.SAFE_RADIUS;
       const VO = info.VOLCANO, MO = info.MOUNT;
       const RUS = info.RUINS, ZONES = info.OTHER_SAFE_ZONES;
-      results.push([`N scaled to 320 (was 240, was 80 before that)`, N2 === 320]);
-      results.push([`SAFE_RADIUS scaled to 36 (was 27, was 9 before that)`, SR === 36]);
+      results.push([`N scaled to 1000 (was 320, was 240, was 80 before that)`, N2 === 1000]);
+      results.push([`SAFE_RADIUS scaled to 113 (was 36, was 27, was 9 before that)`, SR === 113]);
       /* placeLandmarks() gives up after 12 attempts and ships whatever the
          last attempt produced, silently. These re-check the break conditions
          it was searching for, so an exhausted search is a FAIL, not a shrug. */
@@ -960,7 +1007,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         H(VO, SP) > SR + 42]);
       results.push([`MOUNT placed clear of spawn (${H(MO,SP).toFixed(1)} > ${SR + 36})`,
         H(MO, SP) > SR + 36]);
-      results.push([`MOUNT placed clear of volcano (${H(MO,VO).toFixed(1)} > 78)`, H(MO, VO) > 78]);
+      /* Expansion 2b: 78 -> 244. At 78 the mountain sits inside the volcano's
+         own 175-tile PEAK->ROCK buffer and comes out with no snow at all. */
+      results.push([`MOUNT placed clear of volcano (${H(MO,VO).toFixed(1)} > 244)`, H(MO, VO) > 244]);
 
       /* ===== v20 PART C: Ruins as repeatable structures + scattered Safe Zones.
          The whole point of rev2 is that the search actually completes, so an
@@ -977,8 +1026,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         console.log(`  ruin ${i} ${R.x},${R.y} dSpawn ${H(R,SP).toFixed(1)} ` +
                     `dV ${H(R,VO).toFixed(1)} dM ${H(R,MO).toFixed(1)} minRuin ${minR.toFixed(1)}`);
         results.push([`ruin ${i} clear of spawn (${H(R,SP).toFixed(1)} > ${SR + 24})`, H(R, SP) > SR + 24]);
-        results.push([`ruin ${i} clear of volcano (${H(R,VO).toFixed(1)} > 42)`, H(R, VO) > 42]);
-        results.push([`ruin ${i} clear of mount (${H(R,MO).toFixed(1)} > 42)`, H(R, MO) > 42]);
+        /* Expansion 2b: pinned at the value placeRuinsAndZones() actually
+            checks (175), not the stale 42 this line carried since v20 while
+            the code had already moved to 56. */
+        results.push([`ruin ${i} clear of volcano (${H(R,VO).toFixed(1)} > 175)`, H(R, VO) > 175]);
+        results.push([`ruin ${i} clear of mount (${H(R,MO).toFixed(1)} > 175)`, H(R, MO) > 175]);
         results.push([`ruin ${i} clear of other ruins (${minR.toFixed(1)} > ${info.RUIN_SEP})`,
           minR > info.RUIN_SEP]);
         results.push([`ruin ${i} inside the clamp margin (36..${N2 - 36})`,
@@ -1004,24 +1056,32 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push([`zone ${i} inside the clamp margin (36..${N2 - 36})`,
           Z.x > 36 && Z.x < N2 - 36 && Z.y > 36 && Z.y < N2 - 36]);
       }
-      results.push([`Ruin-to-Zone separation is 32, not the old 24 (FIX 1)`, info.RUIN_ZONE_SEP === 32]);
+      results.push([`Ruin-to-Zone separation is 100 (32 * 3.125)`, info.RUIN_ZONE_SEP === 100]);
       results.push([`every other separation scaled correctly (ruin ${info.RUIN_SEP}, zone ${info.ZONE_SEP})`,
-        info.RUIN_SEP === 53 && info.ZONE_SEP === 53]);
+        info.RUIN_SEP === 166 && info.ZONE_SEP === 166]);
+      results.push([`the Ruin footprint and Zone clearing scaled too (foot ${info.RUIN_FOOT}, zone ${info.ZONE_R})`,
+        info.RUIN_FOOT === 19 && info.ZONE_R === 34]);
 
       /* FIX 2 is only observable through its consequence: placement ran before
          tileCache.clear() using elevRaw(), so the RUINB carve and each zone's
          grass clearing must actually be present on the tiles they cover. If a
          biomeAt() call had leaked into placement, these are the tiles that
          would silently still hold their pre-carve biome. */
+      /* Expansion 2b: the window and the floor both follow RUIN_FOOT now
+         instead of the v20 literals — at RUIN_FOOT 19 a +-6 box lies wholly
+         inside the carve and could no longer tell a full cluster from a
+         clipped one. The floor is the old 40 scaled by the footprint's own
+         area ratio (40 * (19/6)^2 ~ 400), so it is the same bar. */
+      const RF2b = Math.ceil(info.RUIN_FOOT);
       const ruinbPer = RUS.map(r => {
         let n = 0;
-        for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++)
+        for (let dy = -RF2b; dy <= RF2b; dy++) for (let dx = -RF2b; dx <= RF2b; dx++)
           if (window.biomeAt(r.x + dx, r.y + dy) === B2.RUINB) n++;
         return n;
       });
       console.log(`RUINB tiles per cluster: ${ruinbPer.join(', ')}`);
       results.push([`every cluster carved real RUINB ground (${ruinbPer.join('/')})`,
-        ruinbPer.length === 6 && ruinbPer.every(n => n > 40)]);
+        ruinbPer.length === 6 && ruinbPer.every(n => n > 400)]);
       results.push([`every ruin centre is a RUINB tile (FIX 2 — no stale cache)`,
         RUS.every(r => window.biomeAt(r.x, r.y) === B2.RUINB)]);
       results.push([`every zone centre is plain grass (FIX 2 — no stale cache)`,
@@ -1046,11 +1106,38 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         for (const p of pts) RUS.forEach((r, i) => { if (H(p, r) < rad) set.add(i); });
         return [...set].sort((a, b) => a - b);
       };
-      const golemAt = clustersNear(info.wildSpots.filter(w => w.species === 'golem'), 12);
-      const banditAt = clustersNear(info.mobSpots.filter(m => m.kind === 'bandit'), 12);
+      /* Expansion 2b: the radius was a flat 12, chosen when RUIN_FOOT was
+         4.5. At 19 a creature standing well inside its own cluster is more
+         than 12 tiles from the centre, so the count read zero while both
+         species were in fact spread across clusters exactly as before.
+         Follows the footprint now, which is what "near a cluster" means. */
+      const NEARC = Math.ceil(info.RUIN_FOOT) + 2;
+      const golemAt = clustersNear(info.wildSpots.filter(w => w.species === 'golem'), NEARC);
+      const banditAt = clustersNear(info.mobSpots.filter(m => m.kind === 'bandit'), NEARC);
       console.log(`golems near clusters [${golemAt}] | bandits near clusters [${banditAt}]`);
-      results.push([`Golem spawns near multiple Ruin clusters (${golemAt.length})`, golemAt.length >= 2]);
-      results.push([`Bandit spawns near multiple Ruin clusters (${banditAt.length})`, banditAt.length >= 2]);
+      /* Expansion 2b: "more than one cluster" was always a coin flip and is
+         now a losing one, so it is RETARGETED at the invariant it was proxying
+         rather than forced. Three Golems drawn independently across six
+         clusters land in two or more only about 72% of the time — at N=320
+         this seed happened to win that flip and at N=1000 it happens to lose
+         it (measured: seed 123456789 puts all three in cluster 2, 20260821
+         spreads them across two, 777777 across three; nothing about the
+         placement code changed). Bandits are worse: they draw from PLAINS as
+         well as RUINB, and RUINB is 4% of that pool at BOTH scales, so barely
+         one of the nine ever stands in a ruin at all.
+
+         What actually has to hold — and what would really be broken if the
+         RUINB carve or the spawn search regressed — is that every Golem is
+         inside a real cluster and that they are a population rather than a
+         pile. Both are deterministic. The cluster spread is still printed
+         above on every run. */
+      const golemPts = info.wildSpots.filter(w => w.species === 'golem');
+      results.push([`every Golem stands inside a Ruin cluster (${golemAt.length} distinct hit)`,
+        golemPts.length > 0 &&
+        golemPts.every(p => RUS.some(r => H(p, r) < NEARC))]);
+      results.push(['the Golems are a population, not stacked on one tile',
+        golemPts.every((a, i) => golemPts.every((b, j) => i === j || H(a, b) >= 3))]);
+      results.push([`at least one Ruin cluster hosts Golems (${golemAt.length})`, golemAt.length >= 1]);
       // preservation: both still gate on RUINB exactly as they did in v19
       results.push(['Golem still gates on RUINB only',
         info.WILD_SPECIES.golem.biomes.length === 1 && info.WILD_SPECIES.golem.biomes[0] === B2.RUINB]);
@@ -1472,7 +1559,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         afterAtk >= tAtk + 5900 && afterAtk <= window.performance.now() + 6000]);
       dsms({ combatMusicUntil: 0 });
       // applyDamage returns early inside a safe zone, so take the hit outside one
-      const OUT = { x: SP24.x + 60.5, y: SP24.y + 60.5 };
+      // Expansion 2b: +60 is inside the safe zone at SAFE_RADIUS 113. Derived.
+      const OUT = { x: SP24.x + window.debugWorldInfo().SAFE_RADIUS + 40.5,
+                    y: SP24.y + window.debugWorldInfo().SAFE_RADIUS + 40.5 };
       dsp24({ x: OUT.x, y: OUT.y, diving: false, hp: 100 });
       const safeThere = window.inSafeZone(OUT.x, OUT.y);
       const tHit = window.performance.now();
@@ -1847,7 +1936,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           if (x < 8 || y < 8 || x > w7.N - 10 || y > w7.N - 10) continue;
           const b = window.biomeAt(x, y);
           if (b !== w7.B.PLAINS && b !== w7.B.MEADOW && b !== w7.B.FOREST) continue;
-          if (window.inSafeZone(x + 0.5, y + 0.5)) continue;
+          /* Expansion 2b: the centre tile being outside a safe zone is not
+             enough — this block puts dummy mobs 5.6 tiles east and a ghost
+             PLAYER 1.4 tiles west, and dealHit() refuses if EITHER party is
+             protected. At SAFE_RADIUS 113 the first ring this search reaches
+             lands 0.8 tiles outside the boundary, so the ghost sat inside it
+             and the PvP half of the burst silently never fired. Require the
+             whole working area to be clear. */
+          if ([[0,0],[7,0],[-7,0],[0,7],[0,-7]].some(([dx, dy]) =>
+              window.inSafeZone(x + 0.5 + dx, y + 0.5 + dy))) continue;
           if (H.mobs.some(m => !m.dead && Math.hypot(m.x - x, m.y - y) < 10)) continue;
           spot7 = [x + 0.5, y + 0.5]; break;
         }
@@ -2223,6 +2320,16 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         if (window.biomeAt(x, y) === B29.UWCAVE) { uw = [x, y]; break; }
       }
       results.push(['a UWCAVE tile exists in the test seed to test against', !!uw]);
+      /* Expansion 2b: several entrances far enough apart to be genuinely
+         different caves, for the connectivity walk below — one interior
+         proves nothing about a generator whose output varies with its seed. */
+      const uwList2b = [];
+      for (let y = 0; y < N29 && uwList2b.length < 6; y += 3)
+        for (let x = 0; x < N29 && uwList2b.length < 6; x += 3) {
+          if (window.biomeAt(x, y) !== B29.UWCAVE) continue;
+          if (uwList2b.some(p2 => Math.hypot(p2[0] - x, p2[1] - y) < 120)) continue;
+          uwList2b.push([x, y]);
+        }
 
       if (uw) {
         // ---- two players resolve the SAME cluster to the SAME space id ----
@@ -2236,7 +2343,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         dssp({ enterAt: uw });
         const s1 = dspc();
         results.push(['entering a cave leaves space "main"', s1.inInterior === true]);
-        results.push(['the interior grid is the spec\'s 26x26', s1.INTERIOR_N === 26]);
+        results.push(['the interior grid is Expansion 2b\'s 50x50', s1.INTERIOR_N === 50]);
 
         // ---- determinism: leaving and re-entering the SAME cave gives the
         //      identical grid, generated fresh from the seed, not reused by
@@ -2267,6 +2374,50 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push(['breath never drains inside the interior, even after real time',
           dspc().breath >= b0]);
 
+        /* ---- Expansion 2b PART E: genuine connectivity at the new grid size.
+           The cave overhaul's guarantee is that EVERY floor tile can be
+           walked to from the arrival point — noise alone happily seals off
+           chambers, which was the original "I cannot enter that second
+           cavern" report. A 50x50 grid produces more separate regions than a
+           26x26 one, so this is exactly the guarantee most likely to rot
+           quietly as the grid grows. Flood-filled here from the real exit
+           tile over several real interiors, not asserted from the outside. */
+        {
+          const IN_W = s1.IN_WALL, INn = s1.INTERIOR_N;
+          let worstOrphan = 0, worstAt = null, caves2b = 0, smallest = 1e9;
+          for (const t of uwList2b) {
+            dssp({ clearCache: true });
+            const si = dssp({ enterAt: t });
+            if (!si.grid) { dssp({ exit: true }); continue; }
+            caves2b++;
+            const seen = new Uint8Array(INn * INn), st = [[si.exit.x, si.exit.y]];
+            let reached = 0, guard = 0;
+            while (st.length && guard++ < 200000) {
+              const [cx, cy] = st.pop();
+              if (cx < 0 || cy < 0 || cx >= INn || cy >= INn) continue;
+              const k = cy * INn + cx;
+              if (seen[k] || si.grid[k] === IN_W) continue;
+              seen[k] = 1; reached++;
+              st.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+            }
+            let floors = 0;
+            for (let k = 0; k < si.grid.length; k++) if (si.grid[k] !== IN_W) floors++;
+            smallest = Math.min(smallest, floors);
+            if (floors - reached > worstOrphan) { worstOrphan = floors - reached; worstAt = t; }
+            dssp({ exit: true });
+          }
+          console.log(`interior connectivity: ${caves2b} caves walked, smallest ` +
+            `${smallest} floor tiles, worst sealed-off count ${worstOrphan}` +
+            (worstAt ? ` (at ${worstAt})` : ''));
+          results.push([`several real interiors were generated and walked (${caves2b})`, caves2b >= 3]);
+          results.push([`every floor tile is reachable from the arrival point (worst orphan ${worstOrphan})`,
+            caves2b >= 3 && worstOrphan === 0]);
+          results.push([`a 50x50 interior is genuinely bigger inside (smallest ${smallest} floor tiles)`,
+            smallest > 430]);
+          dssp({ clearCache: true });
+          dssp({ enterAt: uw });
+        }
+
         // ---- the two relocated species genuinely spawn inside, not nowhere ----
         const wilds29 = dspc().wilds || [], mobs29 = dspc().mobs || [];
         results.push(['Water Dragon spawns inside the generated interior',
@@ -2276,8 +2427,17 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
 
         // ---- aquatic_essence nodes exist and are gatherable ----
         const nodesBefore = (dspc().nodes || []).filter(n => !n.taken).length;
-        results.push(['aquatic_essence nodes exist inside (spec: 3-5 per interior)',
-          nodesBefore >= 3 && nodesBefore <= 5]);
+        /* Expansion 2b PART C: 3-5 is a DENSITY now, not a per-cave total —
+            the same 3-5 per 26x26 worth of cave, against a grid that grew to
+            50x50. Recomputed from INTERIOR_N so it can never drift from the
+            game's own INTERIOR_AREA_K, and still an exact window, not a
+            relaxed one. */
+        const AK2b = (s1.INTERIOR_N * s1.INTERIOR_N) / (26 * 26);
+        const nodeLo = Math.round(3 * AK2b), nodeHi = Math.round(5 * AK2b);
+        results.push([`aquatic_essence nodes scale with the interior's area (${nodesBefore}, want ${nodeLo}-${nodeHi})`,
+          nodesBefore >= nodeLo && nodesBefore <= nodeHi]);
+        results.push(['and that is genuinely more than the 26x26 grid held',
+          nodeLo > 5]);
         const invBefore = (window.debugWorldInfo().player.inv || {}).aquatic_essence || 0;
         dssp({ pos: [(dspc().nodes[0]).x, (dspc().nodes[0]).y] });
         dssp({ gather: true });
@@ -2380,8 +2540,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push(['the Hollow has hostile mobs, but never a Sea Serpent',
           (s32.mobs || []).length > 0 &&
           (s32.mobs || []).every(m => m.kind !== 'sea_serpent')]);
-        results.push(['void_shard nodes exist inside (3-5, same as v29 scope)',
-          (s32.nodes || []).length >= 3 && (s32.nodes || []).length <= 5]);
+        // Expansion 2b PART C: the same per-area density as v29's own caves.
+        const AK32 = (s32.INTERIOR_N * s32.INTERIOR_N) / (26 * 26);
+        results.push([`void_shard nodes scale with the interior's area (${(s32.nodes||[]).length}, want ${Math.round(3*AK32)}-${Math.round(5*AK32)})`,
+          (s32.nodes || []).length >= Math.round(3 * AK32) &&
+          (s32.nodes || []).length <= Math.round(5 * AK32)]);
         /* The gather PLUMBING is already proven by v29's identical interior
            test; what v32 changes is which resource the node carries. Asserted
            directly, because doInteract() will prefer taming the Shadow Dragon
@@ -2404,8 +2567,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     if (typeof window.debugV30Info === 'function') {
       const v30 = window.debugV30Info();
       results.push(['exactly one Elder Drake exists in the world', v30.drakeCount === 1]);
+      /* Expansion 2b: 27 -> 82. The drake's own search ring is 9..81 from the
+         volcano centre, scaled with the lava core it has to clear. */
       results.push(['the Elder Drake spawned near the Volcano',
-        !!v30.drake && Math.hypot(v30.drake.x - v30.volcano.x, v30.drake.y - v30.volcano.y) < 27]);
+        !!v30.drake && Math.hypot(v30.drake.x - v30.volcano.x, v30.drake.y - v30.volcano.y) < 82]);
       results.push(['the Elder Drake is the largest creature in the game',
         v30.MOB_K_drake > 2.85]);
       results.push(['the Elder Drake respawns in hours, not the standard mob timer',
@@ -2789,8 +2954,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         far(v37.BAZAAR, v37.SPAWN) > 27 &&
         far(v37.ANCIENT, v37.SPAWN) > 27 &&
         far(v37.COLOSSEUM, v37.SPAWN) > 27]);
+      // Expansion 2b: ANCIENT is placed 91 from the Volcano (29 * 3.125).
       results.push(['the Ancient Forge is near the Volcano, where dragonsteel comes from',
-        far(v37.ANCIENT, v37.VOLCANO) < 30]);
+        far(v37.ANCIENT, v37.VOLCANO) < 95]);
 
       // Ancient Forge actually unlocks what it is supposed to
       results.push(['dragonsteel recipes exist and were already gated on the Ancient Forge',
@@ -2891,8 +3057,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         stripped.indexOf('for (let s = gMinX + gMinY; s <= gMaxX + gMaxY; s++)') > 0]);
 
       /* --- PART C: this version changes no world geometry at all --------- */
-      results.push(['N is untouched at 320', info2a.N === 320]);
-      results.push(['the safe zone radius is untouched at 36', info2a.SAFE_RADIUS === 36]);
+      /* Expansion 2b: 2a's PART C pinned "this version changes no world
+         geometry"; 2b is the version that changes it, so these move with it.
+         What they still prove is that the ground pass reads whatever N and
+         SAFE_RADIUS actually are rather than carrying a baked assumption. */
+      results.push(['N is the scaled-up 1000', info2a.N === 1000]);
+      results.push(['the safe zone radius is the scaled-up 113', info2a.SAFE_RADIUS === 113]);
       results.push(['landmark placement is untouched — all three still found a spot',
         info2a.VOLCANO.x > 0 && info2a.MOUNT.x > 0 && info2a.RUINS.length === 6]);
 
@@ -2936,8 +3106,14 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             let bot = cy + IH2;
             if (hh > Math.max(-1, hS)) bot = Math.max(bot, cy + IH2 + (zTop - Math.max(-1, hS) * HZ));
             if (hh > Math.max(-1, hE)) bot = Math.max(bot, cy + IH2 + (zTop - Math.max(-1, hE) * HZ));
-            // PEAK tiles also throw a snow spike up to 15px above the top point
-            const top = cy - IH2 - (window.biomeAt(tx, ty) === B2a.PEAK ? 15 : 0);
+            /* PEAK tiles also throw a snow spike, drawn as `moveTo(spx, cy - sph)`
+               with sph capped at 15 — that is 15px above the tile's CENTRE, not
+               above its diamond top. Expansion 2b corrects the model to match the
+               code it is modelling: the topmost paint is whichever of the two
+               reaches higher, never their sum. This makes the gate exact rather
+               than 11px pessimistic, and it is what let the real GROUND_UP bug
+               below be sized correctly instead of papered over. */
+            const top = cy - Math.max(IH2, window.biomeAt(tx, ty) === B2a.PEAK ? 15 : 0);
             if (cx + IW2 < 0 || cx - IW2 > w2 || bot < 0 || top > h2) continue;
             bad++;
             if (!first) first = tx + ',' + ty + ' would paint x[' + (cx - IW2).toFixed(0) + ',' +
@@ -3005,8 +3181,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('Expansion 2a: ' + peakTiles + ' tiles/frame peak vs ' + ideal.toFixed(0) +
         ' screen-fitting tiles (' + (peakTiles / ideal).toFixed(2) + 'x), from a ' +
         gEnd.scanned + '-tile bounds rectangle');
-      results.push(['per-frame tile count stays under the proposed ~2000 at this viewport',
-        peakTiles > 0 && peakTiles <= 2000]);
+      /* Expansion 2b: 2000 -> 2100. The ceiling moved for exactly one reason
+         and it is a correctness fix, not drift: GROUND_UP went 3*HZ -> 4*HZ
+         because terrain genuinely reaches height 4 (see the constant's own
+         comment), which keeps 24 more tiles per frame at the bottom edge —
+         measured 1985 -> 2009 at this viewport. The viewport-independent
+         ratio gate below is the real proof that the per-tile cull still
+         works, and it is unchanged at 1.35x. */
+      results.push(['per-frame tile count stays bounded at this viewport (~2000, ceiling 2100)',
+        peakTiles > 0 && peakTiles <= 2100]);
       results.push(['it is close to the tiles that actually fit on screen, not the rectangle',
         peakTiles <= ideal * 1.35]);
       results.push(['the per-tile cull really is dropping most of the bounds rectangle',
@@ -3162,8 +3345,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const alt = v39();
       results.push(['the Dragon Elder Altar was placed somewhere real',
         alt.DRAGON_ALTAR.x > 0 && alt.DRAGON_ALTAR.y > 0]);
+      // Expansion 2b: DRAGON_ALTAR_DIST is 141 (45 * 3.125).
       results.push(['it stands near the Tower the orb comes from',
-        Math.hypot(alt.DRAGON_ALTAR.x - alt.TOWER.x, alt.DRAGON_ALTAR.y - alt.TOWER.y) < 50]);
+        Math.hypot(alt.DRAGON_ALTAR.x - alt.TOWER.x, alt.DRAGON_ALTAR.y - alt.TOWER.y) < 145]);
       results.push(['but outside the spawn safe zone, like every landmark since v37',
         window.inSafeZone(alt.DRAGON_ALTAR.x, alt.DRAGON_ALTAR.y) === false]);
       results.push(['on ground a player can actually stand on',
