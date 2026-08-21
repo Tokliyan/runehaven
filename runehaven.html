@@ -442,7 +442,21 @@
 <div class="panel" id="travelPanel">
   <h3>FAST TRAVEL</h3>
   <div class="sub" id="travelWho"></div>
-  <div id="travelList"></div>
+  <!-- Tuning/Polish PART C: the second tab. The strip is the v23 settings
+       card's own .set-tabs / .set-tab / .set-sec classes, reused verbatim —
+       they are global class rules, not scoped to #settingsCard, so this adds
+       no new component style at all, exactly as v33, v35 and v39 managed. -->
+  <div class="set-tabs">
+    <button class="set-tab selected" id="travelTabPlaces">PLACES</button>
+    <button class="set-tab" id="travelTabPlayers">PLAYERS</button>
+  </div>
+  <div class="set-sec shown" id="travelSecPlaces">
+    <div id="travelList"></div>
+  </div>
+  <div class="set-sec" id="travelSecPlayers">
+    <div class="sub" id="travelPlayerNote"></div>
+    <div id="travelPlayerList"></div>
+  </div>
 </div>
 
 <div class="panel" id="petPanel">
@@ -809,11 +823,11 @@ const WEAPONS = {
      dmg IS their mining power, so tier already scales how fast they dig. */
   iron_pickaxe:     { name: "Iron Pickaxe",     tier: "iron",        type: "melee",  dmg: 11, range: 1.6, cd: 700 },
   runic_pickaxe:    { name: "Runic Pickaxe",    tier: "runic",       type: "melee",  dmg: 22, range: 1.6, cd: 680 },
-  runic_longbow:    { name: "Runic Longbow",     tier: "runic",       type: "ranged", dmg: 18, range: 11, cd: 550 },
+  runic_longbow:    { name: "Runic Longbow",     tier: "runic",       type: "ranged", dmg: 18, range: 14, cd: 550 },
   runic_crossbow:   { name: "Runic Crossbow",    tier: "runic",       type: "ranged", dmg: 22, range: 9.5, cd: 700 },
   mystic_staff:     { name: "Mystic Staff",      tier: "runic",       type: "ranged", dmg: 19, range: 8.5, cd: 600 },
   dragonsteel_sword:{ name: "Dragonsteel Sword", tier: "dragonsteel", type: "melee",  dmg: 40, range: 2.1, cd: 450 },
-  dragonsteel_bow:  { name: "Dragonsteel Bow",   tier: "dragonsteel", type: "ranged", dmg: 34, range: 9.5, cd: 620, pk: "arrow" },
+  dragonsteel_bow:  { name: "Dragonsteel Bow",   tier: "dragonsteel", type: "ranged", dmg: 34, range: 15, cd: 620, pk: "arrow" },
   dragonsteel_axe:  { name: "Dragonsteel Axe",   tier: "dragonsteel", type: "melee",  dmg: 44, range: 2.0, cd: 620 },
   elder_runestaff:  { name: "Elder Runestaff",   tier: "dragonsteel", type: "ranged", dmg: 36, range: 8.5, cd: 560, pk: "orb" },
   shadow_dagger:    { name: "Shadow Dagger",     tier: "dragonsteel", type: "melee",  dmg: 30, range: 1.5, cd: 300 },
@@ -1151,7 +1165,22 @@ function refreshTutorialHud() {
    Placed deterministically from worldSeed at worldgen like every other
    landmark, so every player finds them in the same place. */
 let BAZAAR = { x: 0, y: 0 }, ANCIENT = { x: 0, y: 0 }, COLOSSEUM = { x: 0, y: 0 };
-const BAZAAR_R = 7;      // its own safe radius — the bible puts it INSIDE a safe zone
+/* Tuning/Polish PART B: the Bazaar is the bible's trading hub and read as a
+   roadside stall cluster — six stalls on a 3.4-tile ring inside a 7-tile
+   zone, smaller on the ground than the Colosseum next door. All three numbers
+   grow together on purpose: a wider ring with more stalls inside the same
+   protection would have been detail packed into an unchanged footprint, which
+   is the thing this part says it is not. Measured with a transform-tracking
+   canvas recorder rather than guessed: the drawn structure went 243.6px wide
+   x 141.0px tall to 370.9 x 225.9 — 1.52x wide, 1.60x tall, 2.44x the painted
+   area — and the ring still sits inside its own safe radius with room to
+   spare (5.5 of 10, where it was 3.4 of 7), so nothing spills outside the
+   protection. No reference or preview canvas draws the Bazaar — the only
+   preview canvases in the file are the five class-select cards, which render
+   drawUnit — so there is no scale factor anywhere else to re-derive. */
+const BAZAAR_R = 10;     // its own safe radius — the bible puts it INSIDE a safe zone
+const BAZAAR_RING = 5.5; // tiles from centre to the stall ring
+const BAZAAR_STALLS = 9; // the spec's 8-10, taken at the middle
 const ANCIENT_R = 4;     // crafting proximity, matching SPAWN_FORGE's own 4
 const COLOSSEUM_R = 9;   // the arena floor
 /* ============ v39 PART B — THE DRAGON ELDER ALTAR ================
@@ -1445,6 +1474,42 @@ function debugSetAbility(patch) {
   return debugAbilityInfo();
 }
 function debugCombatHandles() { return { others, mobs, projectiles }; }
+/* Tuning/Polish PARTS A / G / H hook. `SPECIES_K`, `MOB_K`, `MOB_TALL` and
+   `WEAPONS` are all top-level `const`s, which never land on `window`, so the
+   size tables and the two bow ranges cannot be checked from outside without
+   grepping the source for a literal — and a literal grep proves the line was
+   typed, never that the RELATIONSHIP between two creatures holds. Copies. */
+function debugScaleInfo() {
+  return {
+    SPECIES_K: Object.assign({}, SPECIES_K),
+    MOB_K: Object.assign({}, MOB_K),
+    MOB_TALL: Object.assign({}, MOB_TALL),
+    mobThreat: Object.fromEntries(Object.keys(MOBS).map(k => [k, MOBS[k].hp * MOBS[k].dmg])),
+    weaponRange: Object.fromEntries(Object.keys(WEAPONS).map(k => [k, WEAPONS[k].range])),
+  };
+}
+/* Tuning/Polish PART C hooks. `playerTpAt` and `travelTab` are top-level
+   `let`s, which never land on `window`, so the cooldown and the tab state are
+   invisible to a harness otherwise — same shape and same reason as the
+   v21/v23/v27/v39 hooks. The setter writes only what the game itself writes,
+   and `landingFor` is a pure probe that moves nothing. */
+function debugTravelInfo() {
+  return {
+    tab: travelTab,
+    PLAYER_TP_COOLDOWN_MS, PLAYER_TP_MIN, PLAYER_TP_MAX,
+    readyIn: playerTpReadyIn(),
+    players: travelablePlayers(),
+  };
+}
+function debugSetTravel(patch) {
+  if (!patch) return debugTravelInfo();
+  if (patch.clearCooldown) playerTpAt = -PLAYER_TP_COOLDOWN_MS;
+  if ("tab" in patch) travelTab = patch.tab;
+  const out = {};
+  if ("landingFor" in patch) out.landing = playerLandingSpot(patch.landingFor[0], patch.landingFor[1]);
+  if ("to" in patch) out.travelled = travelToPlayer(patch.to);
+  return Object.assign(debugTravelInfo(), out);
+}
 /* v35: harness hook. Every piece of state this version adds is either a
    top-level `let` (tutorialActive/tutorialStep/tutorialDone, oracleIdx) or a
    field on `me`, and neither lands on `window` — so PART F's gates cannot see
@@ -1500,6 +1565,8 @@ function debugV37Info() {
   return {
     BAZAAR: { ...BAZAAR }, ANCIENT: { ...ANCIENT }, COLOSSEUM: { ...COLOSSEUM },
     BAZAAR_R, ANCIENT_R, COLOSSEUM_R,
+    BAZAAR_RING, BAZAAR_STALLS,   // Tuning/Polish PART B
+
     TOWER: { ...TOWER }, SPAWN: { x: SPAWN.x, y: SPAWN.y }, VOLCANO: { ...VOLCANO },
     bazaarIsSafe: inSafeZone(BAZAAR.x, BAZAAR.y),
     colosseumIsSafe: inSafeZone(COLOSSEUM.x, COLOSSEUM.y),
@@ -1677,6 +1744,15 @@ function debugSpaceInfo() {
     grid: rec ? Array.from(rec.grid) : null,
     exit: rec ? { ...rec.exit } : null,
     nodes: rec ? (rec.nodes || []).map(n => ({ x: n.x, y: n.y, taken: n.taken, type: n.type })) : null,
+    /* Tuning/Polish PART D: the v30 ore veins were never exported here, so
+       "confirm ore vein count scales with the larger area" was not a thing
+       any harness could see from outside — the count was asserted for the
+       essence nodes and simply trusted for the ore. Same copy-out shape as
+       `nodes` directly above it. */
+    ore: rec ? (rec.ore || []).map(o => ({ x: o.x, y: o.y, taken: o.taken, type: o.type })) : null,
+    /* PART D: the real walkable count, which is what the density below is
+       keyed to and what a player actually walks. */
+    floorTiles: rec ? Array.prototype.reduce.call(rec.grid, (a, v) => a + (v === IN_WALL ? 0 : 1), 0) : null,
     wilds: rec ? (rec.wilds || []).map(w => ({ species: w.species, x: w.x, y: w.y })) : null,
     mobs: rec ? (rec.mobs || []).map(m => ({ kind: m.kind, x: m.x, y: m.y })) : null,
     breath: me ? me.breath : null,
@@ -2395,6 +2471,29 @@ const INTERIOR_N = 50;           // interior grid is 50x50 tiles
    INTERIOR_N itself rather than written as a number, so the next change to
    the grid size carries the density with it automatically. */
 const INTERIOR_AREA_K = (INTERIOR_N * INTERIOR_N) / (26 * 26);
+/* Tuning/Polish PART D. PART D asked to confirm the ore and mob counts really
+   scale with the larger area, and measured across sixteen real interiors on
+   the harness seed they do not, quite. INTERIOR_AREA_K is GRID over grid and
+   the grid is not what a player walks:
+
+     26x26 grid: 676 tiles ->   201-449 floor, mean  297.9
+     50x50 grid: 2500 tiles -> 1130-1718 floor, mean 1368.9
+
+   Real walkable area grew 4.60x while INTERIOR_AREA_K grew 3.70x, because the
+   two-tile wall border is 28% of a 26x26 grid and only 15% of a 50x50 one,
+   and the connectivity pass — whose cap scales too — carves more corridors
+   out of the bigger one. So every count keyed to the grid came out 20%
+   sparser per floor tile than the density v29/v30 tuned: bigger AND emptier,
+   which is the exact failure PART D names.
+
+   The fix keys the contents to each interior's OWN floor count instead, so a
+   cave that generated more room to walk gets proportionally more in it, and
+   the density a player experiences stops depending on the wall fraction.
+   INTERIOR_AREA_K keeps its grid meaning for the two things that ARE placed
+   against the grid — the connectivity passes and the free-standing pillars —
+   and is unchanged there. 298 is the measured mean above; it is a tunable and
+   the one number here worth re-deriving if the generator ever moves. */
+const INTERIOR_FLOOR_26 = 298;
 const IN_WALL = 0, IN_FLOOR = 1, IN_EXIT = 2;
 const interiorCache = new Map();  // spaceId -> { grid, exit, spawnedAt }
 
@@ -2570,6 +2669,15 @@ function populateInterior(spaceId, rec) {
   const pick = (i) => floors[Math.min(floors.length - 1,
     Math.floor(hash2(i, 7, seed) * floors.length))];
 
+  /* Tuning/Polish PART D: this interior's OWN walkable area against the mean
+     a 26x26 interior actually produced — see INTERIOR_FLOOR_26. Every content
+     count below multiplies by this rather than by the grid-over-grid
+     INTERIOR_AREA_K, so density is preserved per tile WALKED, and a cave that
+     generated an unusually open floor plan is filled to match instead of
+     coming out hollow. Ranges 3.79-5.77 across the harness seed's sixteen
+     interiors where INTERIOR_AREA_K is a flat 3.70 for all of them. */
+  const areaK = floors.length / INTERIOR_FLOOR_26;
+
   /* v32: what lives inside depends on which biome the interior belongs to.
      Same structure, same counts — only the contents differ. */
   const kind32 = spaceKindOf(spaceId);
@@ -2580,7 +2688,7 @@ function populateInterior(spaceId, rec) {
   rec.nodes = [];
   /* 2b PART C: the 3-5 density is the v29 spec's own, kept — it is now
      3-5 per 26x26 worth of cave rather than 3-5 per cave. */
-  const nNodes = Math.round((3 + Math.floor(hash2(1, 1, seed) * 3)) * INTERIOR_AREA_K);
+  const nNodes = Math.round((3 + Math.floor(hash2(1, 1, seed) * 3)) * areaK);
   for (let i = 0; i < nNodes; i++) {
     const [x, y] = pick(i * 3 + 11);
     rec.nodes.push({ x: x + 0.5, y: y + 0.5, type: nodeType, taken: false });
@@ -2624,7 +2732,7 @@ function populateInterior(spaceId, rec) {
      whole interior without meeting; four across that area is the same odds of
      running into one that the 676-tile cave always had. */
   if (!isAbyss) {
-    const serpents = Math.round(1 * INTERIOR_AREA_K);
+    const serpents = Math.round(1 * areaK);
     for (let i = 0; i < serpents; i++) {
       const [sx2, sy2] = pick(73 + i * 3);
       rec.mobs.push(mkInteriorMob("sea_serpent", sx2 + 0.5, sy2 + 0.5,
@@ -2634,7 +2742,7 @@ function populateInterior(spaceId, rec) {
   /* Caves should have something to fight beyond one boss-ish creature —
      Glow Moths already belong in caves per the bible, and a couple of
      Golems give the deeper chambers real teeth. */
-  for (let i = 0; i < Math.round(2 * INTERIOR_AREA_K); i++) {
+  for (let i = 0; i < Math.round(2 * areaK); i++) {
     const [gx, gy] = pick(91 + i * 7);
     rec.mobs.push(mkInteriorMob(isAbyss ? "dark_wraith" : "troll",
       gx + 0.5, gy + 0.5, hash2(4 + i, 4, seed) * 6, i));
@@ -2646,7 +2754,7 @@ function populateInterior(spaceId, rec) {
      mine. These use the same gatherable node shape as the essence nodes. */
   rec.ore = [];
   // 2b PART C: 4-7 per 26x26 worth of cave, scaled with the grid like the nodes
-  const oreCount = Math.round((4 + Math.floor(hash2(9, 9, seed) * 4)) * INTERIOR_AREA_K);
+  const oreCount = Math.round((4 + Math.floor(hash2(9, 9, seed) * 4)) * areaK);
   for (let i = 0; i < oreCount; i++) {
     const [ox, oy] = pick(131 + i * 5);
     const kind = hash2(i, 17, seed) > 0.55 ? "runic" : "iron";
@@ -3437,6 +3545,7 @@ function drawGroundTile(c, tx, ty) {
     const drop = zTop - Math.max(-1, hS) * HZ;
     const faceCol = (b === B.VOLROCK || b === B.LAVA) ? shade("#5c3c3c", 0.8)
       : b === B.CALDERA ? shade("#f2c884", 0.8)                 // v22: hot rock, not cream
+      : b === B.SAND ? shade("#e6d5a0", 0.8)                    // PART E: beaches are sand, not cream rock
       : b === B.UNDERCAVE ? shade("#4a453e", 0.8) : CLIFF_SW;   // v18: cave walls are not cream cliffs
     c.fillStyle = faceCol;
     c.beginPath();
@@ -3497,8 +3606,22 @@ function drawGroundTile(c, tx, ty) {
   }
   if (h > Math.max(-1, hE)) {
     const drop = zTop - Math.max(-1, hE) * HZ;
+    /* Tuning/Polish PART E. The reported "line" in the sand is here, and it
+       is the same mistake v18 and v22 each caught once: a biome-coloured tile
+       wearing CREAM cliff faces. Sand sits at h=0 and the sea at h=-1, so
+       EVERY beach tile in the world draws a full 16px cliff face down to the
+       water — cream #c9bda2 shaded to 0.82/0.62, which against sand's #e6d5a0
+       is a hard grey-brown band running the entire coastline. That is a much
+       stronger edge than the two SAND palette shades (#e6d5a0 / #e4d39e) the
+       report was read against, and those two really are near-identical. Sand
+       now joins VOLROCK/CALDERA/UNDERCAVE as a per-biome face colour on the
+       same locked 0.8 / 0.58 ratio, so a beach steps down to the sea in its
+       own tone. ⚠️ NEEDS VISUAL CONFIRMATION: this is a diagnosis, not a
+       sighting. If a line survives it is somewhere else — most likely the
+       SHALLOW halo's own edge — and this entry should say so. */
     const faceCol = (b === B.VOLROCK || b === B.LAVA) ? shade("#5c3c3c", 0.58)
       : b === B.CALDERA ? shade("#f2c884", 0.58)                 // v22
+      : b === B.SAND ? shade("#e6d5a0", 0.58)                    // PART E
       : b === B.UNDERCAVE ? shade("#4a453e", 0.58) : CLIFF_SE;   // v18
     c.fillStyle = faceCol;
     c.beginPath();
@@ -3555,11 +3678,23 @@ function drawGroundTile(c, tx, ty) {
 
   // v8: sand gets texture and purpose — dunes, wet band, beach detail
   if (b === B.SAND) {
-    const wetNear =
-      heightAt(tx + 1, ty) === -1 || heightAt(tx - 1, ty) === -1 ||
-      heightAt(tx, ty + 1) === -1 || heightAt(tx, ty - 1) === -1;
-    if (wetNear) {
-      c.fillStyle = "rgba(178,152,104,0.5)";   // wet sand band at the waterline
+    /* PART E: the wet band was a flat full-tile wash at a fixed 0.5, so a
+       beach one tile deep switched from dry sand to wet sand at full strength
+       along its whole run — a second hard line beside the cliff-face one, and
+       an unnaturally even one, since a real waterline is not a uniform stripe.
+       Softened two ways, both still hard-edged flat fills with no gradient:
+       the base alpha comes down, and it now reads how MUCH water the tile
+       actually touches, so a tile with one wet side is faintest and a spit
+       with sea on three sides is darkest. A per-tile hash breaks up what is
+       left, so the band's own edge wanders instead of ruling a line. */
+    let wetSides = 0;
+    if (heightAt(tx + 1, ty) === -1) wetSides++;
+    if (heightAt(tx - 1, ty) === -1) wetSides++;
+    if (heightAt(tx, ty + 1) === -1) wetSides++;
+    if (heightAt(tx, ty - 1) === -1) wetSides++;
+    if (wetSides > 0) {
+      const wet = (0.12 + wetSides * 0.055) * (0.72 + hash2(tx, ty, 121) * 0.56);
+      c.fillStyle = `rgba(178,152,104,${wet.toFixed(3)})`;   // wet sand at the waterline
       c.beginPath();
       c.moveTo(cx, cy - IH2);
       c.lineTo(cx + IW2, cy);
@@ -3578,6 +3713,22 @@ function drawGroundTile(c, tx, ty) {
       c.moveTo(rx0, ry + 2);
       c.quadraticCurveTo(cx, ry - 2 - hash2(tx, ty, 94 + k) * 2, rx1, ry + 1);
       c.stroke();
+    }
+    /* PART E: grain. Four hashed specks per tile in a slightly darker and a
+       slightly lighter sand — the same wear-detail technique the cliff faces
+       have used since v8 (a hash, a threshold, a small flat shape), just
+       applied to the top face. Hard-edged, deterministic, no gradient. It
+       gives the eye something to read INSIDE a sand tile, which is the other
+       half of why a beach reads as banded: two near-identical shades with no
+       texture between them leave the tile edges as the only thing to see. */
+    for (let s = 0; s < 4; s++) {
+      const gh = hash2(tx, ty, 100 + s * 3);
+      if (gh < 0.34) continue;
+      const gu = (hash2(tx, ty, 101 + s * 3) - 0.5) * 1.3;   // tile-local u,v in [-0.65,0.65]
+      const gv = (hash2(tx, ty, 102 + s * 3) - 0.5) * 1.3;
+      if (Math.abs(gu) + Math.abs(gv) > 0.82) continue;      // keep it inside the diamond
+      c.fillStyle = gh > 0.72 ? "rgba(244,232,196,0.45)" : "rgba(196,172,122,0.4)";
+      c.fillRect(cx + (gu - gv) * IW2, cy + (gu + gv) * IH2, 1.4, 1.4);
     }
     // shells / driftwood
     const bh = hash2(tx, ty, 96);
@@ -5309,6 +5460,16 @@ function enterDeath(killer, resumed) {
   }
   document.getElementById("deathBy").textContent = killer ? `Slain by ${killer}` : "";
   document.getElementById("deathOverlay").style.display = "flex";
+  /* Tuning/Polish PART F: the death-drop "bug" was reported as items surviving
+     death, and the data was never wrong — dropAllItems() genuinely clears
+     me.inv / me.equipped / me.armor and mints real ground drops. What was
+     missing is this line. Every panel repaints from `me` only when something
+     asks it to, so an Inventory panel that happened to be OPEN at the moment
+     of death kept showing its pre-death contents until it was closed and
+     reopened by hand — the player was reading a stale panel, not a full pack.
+     Repainting here is the same call every other mutation of the inventory
+     already makes, and it covers the equip/armor/companion panels with it. */
+  refreshPanels();
   sendMove(true);
   savePlayer();
 }
@@ -6234,6 +6395,115 @@ function fastTravelTo(idx) {
   savePlayer();
   return true;
 }
+/* ============ Tuning/Polish PART C — TRAVELLING TO A PLAYER ==========
+   A second destination list in the panel v39 already built, rather than a
+   second panel or a second key: the thing you are doing is fast travel, and
+   the only question is whether the destination is a place or a person.
+
+   Three rules do the real design work here, and each is a rule about what
+   this must NOT become:
+
+   1. It lands you NEAR them, never on them. 3-5 tiles is close enough to be
+      the same encounter and far enough that arriving is not itself a move in
+      a fight — you appear at conversational distance, not inside someone's
+      swing.
+   2. It CANNOT put you inside a Safe Zone or the Colosseum. Both zones have
+      exactly one entry condition — walk across the boundary on your own feet
+      — and a teleport that ignored it would be an escape hatch out of a fight
+      into protected ground, or a way into a duelling arena somebody else is
+      already standing in. So the landing search refuses any tile inside
+      either, and if a target is far enough inside one that no tile in the
+      whole 3-5 ring is outside it, the travel is refused outright and says
+      so. Being inside one yourself is no obstacle to LEAVING, which is the
+      direction that was never protected.
+   3. A real cooldown, so it cannot be spammed for combat positioning — the
+      only use of a short-range teleport that would genuinely change how
+      fighting works.
+
+   It is gated on the Unicorn Elder exactly as the landmark list is. The whole
+   panel is that companion's own bible-granted ability ("fast travel across
+   the entire world"), and an ungated tab inside a card that says "You have no
+   way of travelling like this" would be two different rules in one place.
+   ⚠️ FLAGGED: the spec does not say either way, and ungating it is one
+   condition in travelToPlayer() if free player-travel was what was wanted. */
+const PLAYER_TP_COOLDOWN_MS = 60000;   // TUNABLE — the spec's own proposed 60s
+const PLAYER_TP_MIN = 3, PLAYER_TP_MAX = 5;   // TUNABLE — the spec's own 3-5 tiles
+let playerTpAt = -PLAYER_TP_COOLDOWN_MS;      // so the first travel of a session is free
+function playerTpReadyIn() {
+  return Math.max(0, PLAYER_TP_COOLDOWN_MS - (performance.now() - playerTpAt));
+}
+/* Everyone whose broadcasts are arriving right now, in the same space as you.
+   The space filter is the v29 rule again and is not optional here: inside a
+   cave the coordinates are the interior's own, so a name from another space
+   is not a place this could ever put you. The 30s window is the same one
+   update() already prunes `others` by, so the list can never offer somebody
+   who has actually gone. */
+function travelablePlayers() {
+  if (!me) return [];
+  const mySpace = me.space || "main";
+  const now = performance.now();
+  const out = [];
+  for (const [name, o] of others) {
+    if (name === me.username) continue;
+    if ((o.space || "main") !== mySpace) continue;
+    if (now - (o.lastHeard || 0) > 30000) continue;
+    const px = o.tx !== undefined ? o.tx : o.x, py = o.ty !== undefined ? o.ty : o.y;
+    if (px === undefined || py === undefined) continue;
+    out.push({ name, x: px, y: py, dead: !!o.dead });
+  }
+  out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return out;
+}
+/* Sweeps the 3-5 ring outward in half-tile steps, so the answer is the
+   closest legal spot rather than the first angle that happens to work. */
+function playerLandingSpot(cx, cy) {
+  for (let r = PLAYER_TP_MIN; r <= PLAYER_TP_MAX + 1e-9; r += 0.5) {
+    const steps = Math.max(8, Math.round(r * 10));
+    for (let a = 0; a < steps; a++) {
+      const ang = (a / steps) * Math.PI * 2;
+      const lx = cx + Math.cos(ang) * r, ly = cy + Math.sin(ang) * r;
+      const tx = Math.floor(lx), ty = Math.floor(ly);
+      if (tx < 2 || ty < 2 || tx >= N - 2 || ty >= N - 2) continue;
+      if (BLOCKED.has(biomeAt(tx, ty))) continue;
+      if (basePieceBlocks(lx, ly)) continue;
+      // rule 2 — neither zone may be entered by arriving inside it
+      if (inSafeZone(lx, ly) || inColosseum(lx, ly)) continue;
+      return [lx, ly];
+    }
+  }
+  return null;
+}
+function travelToPlayer(name) {
+  if (!me || dead) return false;
+  if (!ownsUnicornElder()) {
+    toast("Nothing carries you. This is not a road you can walk onto.");
+    return false;
+  }
+  if (inInterior()) { toast("Not from down here — find the way out first."); return false; }
+  const left = playerTpReadyIn();
+  if (left > 0) { toast(`The world will not fold again for ${Math.ceil(left / 1000)}s.`); return false; }
+  const target = travelablePlayers().find(p => p.name === name);
+  if (!target) { toast("They are not out there any more."); return false; }
+  if (target.dead) { toast("They have fallen. Wait for them to wake."); return false; }
+  const spot = playerLandingSpot(target.x, target.y);
+  if (!spot) {
+    toast("They are somewhere you cannot simply appear — walk in yourself.");
+    return false;
+  }
+  me.x = spot[0]; me.y = spot[1];
+  cam.x = me.x; cam.y = me.y;
+  /* v21's respawn rule again: never arrive flagged as diving on dry land. */
+  me.diving = false;
+  me.breath = breathMax();
+  playerTpAt = performance.now();
+  burst(me.x, me.y, "#f4ecfa", 14, 2.6);
+  toast(`The world folds — beside ${name}.`);
+  sendMove(true);
+  savePlayer();
+  return true;
+}
+
+let travelTab = "places";
 function refreshTravelPanel() {
   const who = document.getElementById("travelWho");
   const list = document.getElementById("travelList");
@@ -6243,6 +6513,20 @@ function refreshTravelPanel() {
     who.textContent = owned
       ? "The Unicorn Elder walks with you. Choose a place."
       : "You have no way of travelling like this.";
+  }
+  /* PART C: the tab strip. Both sections are rebuilt on every open and on
+     every tab switch, so the cooldown line and the roster are never stale. */
+  const tabP = document.getElementById("travelTabPlaces");
+  const tabW = document.getElementById("travelTabPlayers");
+  const secP = document.getElementById("travelSecPlaces");
+  const secW = document.getElementById("travelSecPlayers");
+  if (tabP && tabW && secP && secW) {
+    tabP.classList.toggle("selected", travelTab === "places");
+    tabW.classList.toggle("selected", travelTab === "players");
+    secP.classList.toggle("shown", travelTab === "places");
+    secW.classList.toggle("shown", travelTab === "players");
+    tabP.onclick = () => { travelTab = "places"; refreshTravelPanel(); };
+    tabW.onclick = () => { travelTab = "players"; refreshTravelPanel(); };
   }
   list.innerHTML = fastTravelPoints().map((p, i) =>
     `<div class="craft-row">
@@ -6255,6 +6539,53 @@ function refreshTravelPanel() {
       refreshPanels();
     }
   });
+  const plist = document.getElementById("travelPlayerList");
+  const pnote = document.getElementById("travelPlayerNote");
+  if (!plist) return;
+  const cdLeft = playerTpReadyIn();
+  const people = travelablePlayers();
+  if (pnote) {
+    pnote.textContent = !owned
+      ? "You have no way of travelling like this."
+      : cdLeft > 0
+        ? `The world will not fold again for ${Math.ceil(cdLeft / 1000)}s.`
+        : "Everyone out in the world right now. You arrive near them, never on top of them — and never inside a Safe Zone or the Colosseum.";
+  }
+  /* Rows are BUILT, not interpolated. Every other list in this file is made
+     of names the game itself chose; this one is made of names other players
+     typed, so they go in through textContent where markup in a username is
+     text and can never be markup. */
+  plist.textContent = "";
+  if (!people.length) {
+    const empty = document.createElement("div");
+    empty.className = "inv-row";
+    const q = document.createElement("span");
+    q.className = "qty";
+    q.textContent = "Nobody else is out in the world right now.";
+    empty.appendChild(q);
+    plist.appendChild(empty);
+    return;
+  }
+  for (const p of people) {
+    const row = document.createElement("div");
+    row.className = "craft-row";
+    const nm = document.createElement("div");
+    nm.textContent = p.dead ? `${p.name} — fallen` : p.name;
+    const btn = document.createElement("button");
+    btn.textContent = "TRAVEL";
+    btn.disabled = !owned || p.dead || cdLeft > 0;
+    btn.onclick = () => {
+      if (travelToPlayer(p.name)) {
+        travelPanel.style.display = "none";
+        refreshPanels();
+      } else {
+        refreshTravelPanel();
+      }
+    };
+    row.appendChild(nm);
+    row.appendChild(btn);
+    plist.appendChild(row);
+  }
 }
 
 /* v11: companion roster — species icon, name, active state */
@@ -7993,9 +8324,15 @@ function enforceMountValidity() {
 
 const SPECIES_K = {
   tree_sprite: 0.53, water_sprite: 0.61, stone_sprite: 0.84, wind_sprite: 0.69,
-  wolf: 1.06, golem: 1.85, shadowfox: 1.66,           // hotfix: golem sized up
+  wolf: 1.10, golem: 1.85, shadowfox: 1.66,           // PART G: wolf +4% (common)
   stag: 1.15, unicorn: 1.30, lightfox: 1.05,          // v17 reference-sheet ratios
-  boar: 1.12, bear: 1.60, griffin: 1.50, phoenix: 1.02, // hotfix: griffin sized up
+  /* PART G reaches the four fight-to-tame beasts too: each has a HOSTILE form
+     drawn from this same branch, so it is ranked by the same MOBS threat
+     bands — boar +4% (350), phoenix and griffin +8% (825/770), bear +8%
+     (1040). The purely passive pets below are left alone: they carry no
+     threat for a threat hierarchy to rank, and moving them would be the flat
+     multiplier this part exists to avoid. */
+  boar: 1.16, bear: 1.73, griffin: 1.62, phoenix: 1.10,
   fire_dragon: 1.55, glow_moth: 0.32,                 // v18 (hotfix: dragons sized up)
   water_dragon: 1.55,                                 // v21: hotfix: matches fire_dragon's new size
   storm_dragon: 1.55, shadow_dragon: 1.55,            // v22: hotfix: same shared body, sized up
@@ -8015,16 +8352,37 @@ const SPECIES_K = {
      offsets) — nothing else reads it, so flipping it back to 1.15 is a
      one-line change if the smaller silhouette was genuinely intended. */
   crystal_golem: 1.70,                                // hotfix: matches golem's new size ratio
-  krakenling: 1.10, salamander_king: 1.20,
+  /* PART G: the Salamander King rampages — it is the fifth creature in the
+     file with a hostile form, and an Epic one, so it takes the uncommon
+     band's +8%. Krakenling has no hostile form and is left where v25 put it. */
+  krakenling: 1.10, salamander_king: 1.30,
   /* v39: the Elder trio. Each is deliberately the LARGEST of its own line —
      Golem Elder above Golem's 1.85 and Crystal Golem's 1.70, Dragon Elder
      above the four 1.55 dragons, Unicorn Elder above Unicorn's 1.30 — so
      "this is the Elder one" reads from silhouette alone at a distance,
      before any of its colour does. Pure render scale, all tunable. */
-  golem_elder: 2.10, dragon_elder: 1.85, unicorn_elder: 1.45,
+  /* Tuning/Polish PART A: 2.10 / 1.85 / 1.45 read as "the big one of its
+     line" and not as a SIZE TIER of its own — Golem Elder stood only 13%
+     over Golem, and Dragon Elder 19% over four dragons it is meant to
+     tower above. These are the spec's own proposed values, taken as
+     written: each is now 46% / 55% / 42% over its base-tier counterpart,
+     which is the gap between a Bear (1.60) and a Sea Serpent — a
+     difference you read from across a valley with no label on it. */
+  golem_elder: 2.70, dragon_elder: 2.40, unicorn_elder: 1.85,
 };
-const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94, dark_wraith: 1.30, sea_serpent: 2.85,
-  elder_drake: 3.40 };   // v30: the largest thing in the world, by design
+/* Tuning/Polish PART G: a differentiated sizing pass, deliberately NOT a flat
+   multiplier. A flat one moves every silhouette and tells a player nothing
+   new; this one is banded by each creature's own threat in the MOBS table
+   (hp x dmg), so the size gap between a Goblin and a Troll gets WIDER and
+   size goes on saying what it already says about danger:
+     common     (<500)      +4%   goblin 240, bandit 495, boar 350, wolf
+     uncommon   (500-1100)  +8%   wraith 780, griffin 770, phoenix 825, bear 1040
+     dangerous  (1100-3000) +20%  troll 1260, sea_serpent 2340
+     boss       (>3000)     +28%  elder_drake 25200
+   Every value is old x its band, rounded to two places. Pure render scale
+   (it also scales the v16 overlay offsets below) — one line to revert. */
+const MOB_K = { goblin: 1.50, bandit: 1.85, troll: 2.33, dark_wraith: 1.40, sea_serpent: 3.42,
+  elder_drake: 4.35 };   // v30: the largest thing in the world, by design
 /* hotfix: sea_serpent was already the single largest creature in the game
    by a wide margin (2.60, next highest was troll at 1.94) — bumped more
    modestly than the others since it was already dominant in scale.
@@ -8038,7 +8396,36 @@ const MOB_K = { goblin: 1.44, bandit: 1.78, troll: 1.94, dark_wraith: 1.30, sea_
 /* v39: the Golem Elder's hostile form is the tallest tameable body in the
    file (SPECIES_K 2.10 over a ~15px art), so its "!" tell and HP bar have to
    clear the head slab rather than sit inside it. Tunable, same as the rest. */
-const MOB_TALL = { troll: 22, bandit: 4, bear: 5, griffin: 8, phoenix: 6, dark_wraith: 4, sea_serpent: 15, salamander_king: 4, golem_elder: 18 };
+/* Tuning/Polish PART A+G: these are PIXEL offsets and nothing scales them, so
+   a body that grows without them leaves its own "!" tell and HP bar buried in
+   its chest — and the v13 fairness rule (the tell must READ before a hit
+   lands) is on the must-not-regress list. Each value is its old, hand-tuned
+   one multiplied by the exact factor its own MOB_K / SPECIES_K moved by, so
+   every creature keeps the relationship to its head it was tuned to have,
+   rather than being re-guessed. Verified against the real art with a
+   transform-tracking canvas recorder. Note the factor lands on the WHOLE
+   offset, `20 + tall`, not on `tall` alone — the 20 in drawMobOverlays does
+   not scale either, so scaling only this half would quietly shrink every
+   creature's clearance. Troll is the check: it painted 42px above its
+   baseline at MOB_K 1.94 and its "!" landed at exactly 42; at 2.33 it paints
+   50.4 and 31 puts the "!" back at 51.
+
+   Two entries are NOT scaled, and both are deliberate:
+
+   - `sea_serpent` 15 -> 78, taking v21's own open note ("MOB_TALL of 15 is a
+     starting estimate ... the one number here most worth checking against a
+     screenshot"). Measured, it was never close: the body paints 107.6px above
+     the baseline and the bar was drawn at 35, across the middle coil rather
+     than above the reared head. 78 puts it at 98 — over the head, under the
+     topmost rising bubble. The largest correction in this table, and the one
+     most worth a screenshot.
+   - `elder_drake` is genuinely new. It shipped in v30 at MOB_K 3.40 with no
+     entry at all, so the biggest creature in the world has always drawn its
+     tell 30px inside its own chest. Its body paints 64.4px above the baseline
+     at the new 4.35, so 46 puts the "!" at 66, just clear of the head.
+   `salamander_king` keeps 4: it is long and low, paints 10.1px, and its bar
+   was already floating well clear of it. */
+const MOB_TALL = { troll: 31, bandit: 5, bear: 7, griffin: 10, phoenix: 8, dark_wraith: 6, sea_serpent: 78, salamander_king: 4, golem_elder: 29, elder_drake: 46 };
 
 const KIT = {
   Ranger:      { trim: "#2e4a22", accent: "#c8b078", cloth: "#5a4a30" },
@@ -8565,25 +8952,33 @@ function drawMobOverlays(m, sx, sy, t, def) {
 /* ============ v37: the three remaining landmarks ============ */
 function drawBazaarEntity(t) {
   const [sx, sy] = worldToScreen(BAZAAR.x, BAZAAR.y, groundZ(BAZAAR.x, BAZAAR.y));
-  drawShadow(sx, sy, 56, 40);
+  drawShadow(sx, sy, 96, 68);
   /* A ring of market stalls around an open trading floor — bright canvas
      against the world's greens, so it reads as "somewhere people gather"
      from a distance. */
-  const STALL = ["#c85a3c", "#3c7ac8", "#d4a03c", "#4aa85a", "#a04ac8", "#c8843c"];
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2 + 0.4;
-    const bx = BAZAAR.x + Math.cos(a) * 3.4, by = BAZAAR.y + Math.sin(a) * 3.4;
+  /* PART B: three more canvas hues, so nine stalls are nine colours rather
+     than six and a repeat. Same bright-canvas language, spaced around the
+     wheel — no palette entry is shared with any biome, tier or class. */
+  const STALL = ["#c85a3c", "#3c7ac8", "#d4a03c", "#4aa85a", "#a04ac8", "#c8843c",
+                 "#3cb8a8", "#c84a7a", "#7ac83c"];
+  for (let i = 0; i < BAZAAR_STALLS; i++) {
+    const a = (i / BAZAAR_STALLS) * Math.PI * 2 + 0.4;
+    const bx = BAZAAR.x + Math.cos(a) * BAZAAR_RING, by = BAZAAR.y + Math.sin(a) * BAZAAR_RING;
     drawBox(bx, by, 0.75, 0.6, 4, "#6b5540");                     // stall counter
-    drawBox(bx, by, 0.85, 0.7, 2, STALL[i], 9);                   // awning
+    drawBox(bx, by, 0.85, 0.7, 2, STALL[i % STALL.length], 9);    // awning
     const [px, py] = worldToScreen(bx, by, groundZ(bx, by));
     ctx.fillStyle = "rgba(40,30,20,0.5)";
     ctx.fillRect(px - 5, py - 9, 1.2, 9);                          // posts
     ctx.fillRect(px + 4, py - 9, 1.2, 9);
   }
-  drawBox(BAZAAR.x, BAZAAR.y, 1.5, 1.2, 2, "#8a7a5e");            // central floor
+  /* The trading floor grows with the ring. Left at 1.5 tiles inside a 5.5
+     ring the middle of the Bazaar would have been bare grass with a circle
+     of stalls around the edge of it — a wider ring on its own makes the place
+     emptier, not grander, which is the failure mode this part names. */
+  drawBox(BAZAAR.x, BAZAAR.y, 2.6, 2.1, 2, "#8a7a5e");            // central floor
   const gl = 0.5 + 0.3 * Math.sin(t / 900);
   ctx.fillStyle = `rgba(244,207,107,${gl * 0.4})`;
-  ctx.beginPath(); ctx.ellipse(sx, sy - 2, 22, 12, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(sx, sy - 2, 38, 21, 0, 0, Math.PI * 2); ctx.fill();
 }
 
 function drawAncientEntity(t) {
