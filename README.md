@@ -102,79 +102,83 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (Expansion 2b — the real scale-up)
+## Confirmed, locked spec for the next build (Tuning/Polish)
 
-Expansion 2a shipped successfully — viewport rendering confirmed, memory
-problem retired. This is the actual scale-up it was the prerequisite for.
+Expansion 2b shipped successfully (N=1000, caves=50). This is the
+deferred polish pass — bigger Elders, a grander Bazaar, player-to-player
+teleport, cave and sand fixes, mob sizing, longbow range, and the actual
+death-drop investigation.
 
-**Confirmed live before writing this: N=320, INTERIOR_N=26.** Reusing the
-exact constant list World Expansion (240->320) already found and proved
-correct — not re-discovering it, just rescaling it to the new ratio
-(1000/320 = 3.125x). That version's own hard-won lesson stands: leave
-every biome rarity threshold and noise wavelength untouched, they scale
-proportionally on their own.
+**PART A — bigger Elders.** Confirmed live: `golem_elder: 2.10,
+dragon_elder: 1.85, unicorn_elder: 1.45`. Increase each meaningfully —
+propose `golem_elder: 2.70, dragon_elder: 2.40, unicorn_elder: 1.85` —
+they should read as unmistakably larger than any of their base-tier
+counterparts on sight, matching "Elder" as a real size tier, not just a
+stat tier.
 
-**PART A — the scale.** `N: 320 -> 1000`.
+**PART B — a grander Bazaar.** Confirmed `drawBazaarEntity()`'s current
+ring radius is 3.4 tiles with 6 stalls. Widen the ring (propose 5.5) and
+the stall count (propose 8-10), and increase `BAZAAR_R` from 7 to ~10 to
+match — this is a genuine footprint increase, not just more detail packed
+into the same space. Re-verify the render-preview scale math the same
+careful way art reference v4 did (measure the true unscaled footprint,
+don't guess a scale factor) if this affects any existing reference
+canvas.
 
-**PART B — every constant relative to a fixed point, scaled by 3.125x,
-reusing the exact list already proven complete:**
-```
-SAFE_RADIUS:      36  -> 113
-RUIN_SEP:         53  -> 166
-RUIN_ZONE_SEP:    32  -> 100
-RUIN_FOOT:        6   -> 19
-ZONE_R:           11  -> 34
-ZONE_SEP:         53  -> 166
-VOLCANO from TOWER: 100 -> 313
-MOUNT from TOWER:   96  -> 300
-BAZAAR from TOWER:  64  -> 200
-ANCIENT from VOLCANO: 29 -> 91
-COLOSSEUM from TOWER: 80 -> 250
-DRAGON_ALTAR from TOWER: 45 -> 141
-Volcano cone (dV):  36  -> 113
-Lava core:          10  -> 31
-PEAK->ROCK buffer:  56  -> 175
-elevRaw dTower divisor: 160 -> 500
-elevRaw dMount divisor: 48  -> 150
-Ruin/Zone exclusion from Volcano/Mount: 56 -> 175
-inBounds edge margin: 48 -> 150
-Spawn-exclusion checks (wilds/mobs): 48/56 -> 150/175
-```
-Confirmed NOT to scale (player-interaction distances, unchanged from
-World Expansion's own list): `BAZAAR_R`, `ANCIENT_R`, `COLOSSEUM_R`,
-`DRAGON_ALTAR_R`, `BASE_MIN_SEP`.
+**PART C — player-to-player teleport.** New mechanic, needs real design,
+not just "add a button": propose a Fast Travel-style menu (`M`, already
+bound) gets a second tab listing currently-online players by name;
+selecting one teleports you to a point near them (propose 3-5 tiles away,
+never on top of them), with a genuine cooldown (propose 60s) so it can't
+be spammed for combat positioning. Confirm this cannot be used to bypass
+Safe Zone or Colosseum boundaries in an exploitable way — landing near a
+player who is inside one of those zones should not teleport you inside it
+without meeting its own normal entry conditions.
 
-**PART C — cave interiors, genuinely bigger.** `INTERIOR_N: 26 -> 50`.
-Confirmed independent of `N` — interiors are their own generated grid,
-untouched by anything in Part B. Node/mob/ore counts inside scale with
-the interior's own area, not left at their 26x26-tuned absolute counts —
-reuse the existing per-interior density logic, just against the new grid
-size.
+**PART D — cave polish.** Bounded, not open-ended: reuse the exact
+connectivity guarantee and 3D-wall techniques from the original cave
+overhaul, now applied at the new `INTERIOR_N=50` scale — confirm ore vein
+count and mob count scale with the larger area (already partly handled by
+Expansion 2b's Part C, verify it reads as genuinely richer, not just
+bigger-and-emptier).
 
-**PART D — sized for real concurrency, not just bigger for its own
-sake.** Confirm a 1000x1000 world with the new Safe Zone/Ruin/Zone
-separations genuinely supports the six Ruins and four Safe Zones (reuse
-v20's exhaustive placement-scan technique) with real room for ~50
-concurrent players to each find their own space — not just technically
-placeable, actually spread out.
+**PART E — sand art.** Confirmed the two SAND palette shades are already
+close (`#e6d5a0`/`#e4d39e}`), so the reported "line" most likely reads
+from the coastline glow/cliff-face boundary where sand meets water or
+higher terrain, not the checkerboard itself. Soften that specific
+boundary treatment and add a subtle grain/speckle texture within sand
+tiles themselves (matching the existing wear-detail technique already
+used on cliffs). **This needs visual confirmation once built** — flag
+clearly if the actual line turns out to be somewhere else.
 
-**PART E — proof gates, standard gauntlet plus:**
-- Confirm N=1000, no leftover reference to 320 anywhere.
-- Confirm six-seed sweep (reuse World Expansion's own reseed-and-rebuild
-  hook) for Sunforge Caldera and mountain-ruin presence — same rigor,
-  don't skip it because the constant list is reused.
-- Confirm all landmarks place without overlap at the new distances.
-- Confirm INTERIOR_N=50 caves generate with genuine connectivity (reuse
-  Expansion 1's flood-fill connectivity fix and guarantee) — this must
-  not regress just because the grid got bigger.
-- Confirm interior node/mob/ore density scales with the new interior
-  area, not left at 26x26-tuned absolute counts.
-- Confirm Expansion 2a's viewport tile-count assertion still holds at the
-  new N — this is the proof that 2a's work actually paid off here.
+**PART F — the death-drop investigation. Confirmed directly:
+`dropAllItems()` genuinely clears `me.inv`/`equipped`/`armor` and creates
+real ground-item drops — the underlying data is correct.** The real gap:
+`enterDeath()` never calls `refreshPanels()`. If the Inventory panel
+happens to be open at the moment of death, it keeps showing stale
+pre-death contents until manually reopened — a real UI bug, not the data
+bug it was reported as. Fix: call `refreshPanels()` inside `enterDeath()`.
 
-**Explicitly not touched this version:** any biome rarity threshold, any
-noise wavelength, the rendering technique itself (2a's job, already
-done).
+**PART G — mob sizing, differentiated.** A broader pass across `MOB_K`/
+`SPECIES_K`, genuinely uneven rather than a flat multiplier — propose
+larger, more dangerous things (Troll, Sea Serpent, Elder Drake) get a
+bigger relative bump than common ones (Goblin, Wolf), so size increases
+reinforce the existing threat hierarchy rather than flattening it.
+
+**PART H — longbow range.** Confirmed `runic_longbow` range is 11.
+Increase to 14. Also confirmed `dragonsteel_bow` sits at 9.5 — LOWER than
+the runic longbow's current 11, a real tier inconsistency. Raise it to at
+least 15 so Dragonsteel stays strictly ahead of Runic on this stat too.
+
+**Explicitly not part of this build:** art reference v4's full item/mob/
+biome list — that's a documentation deliverable, handled separately from
+game code, not a build spec item.
+
+**Proof gates:** standard gauntlet, plus confirm each Elder's visual
+scale increased, Bazaar footprint genuinely grew (not just visual detail
+added), teleport respects Safe Zone/Colosseum entry rules, cave ore/mob
+density scales with the new interior size, `refreshPanels()` is called in
+`enterDeath()`, and both bow range changes are live.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
