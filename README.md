@@ -102,66 +102,67 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (Rare Pet Population + Real Music)
+## Confirmed, locked spec for the next build (Mob Rarity + Music)
 
-Tuning/Polish shipped successfully. Confirmed live before writing this:
-credits currently read "Harsh D", `BG_PLAYLIST` is `[Pop.mp3,
-Slower_Jamz.mp3, Long_Way_Home.mp3, song.mp3]`, Skeptik's credit entry
-already exists with role "Dev Team".
+Tuning/Polish shipped successfully. Confirmed live: `BG_PLAYLIST` currently
+holds Pop/Slower_Jamz/Long_Way_Home/song. `audio/tension.mp3` and
+`audio/siren.mp3` are already pushed to the repo, ready to wire in.
+Credits currently read `{ role: "Created by", name: "Harsh D and the
+RuneHaven development team" }`, Skeptik and Advay both listed as "Dev
+Team".
 
-**PART A — real population cap + daily restock, not a % chance tweak.**
-The ask is explicit: rare/epic species must not be encounterable "every
-other step" — there should be a genuine world-wide LIMIT on how many of a
-given rare species exist at once, replenished daily rather than always
-freely spawnable. Add a `DAILY_RESTOCK` tier flag to Rare and Epic
-species (Water/Fire/Storm/Shadow Dragon, Crystal Golem, Unicorn,
-Shadowfox, Lightfox, Krakenling, Salamander King) — reuse `worldDayNum()`
-(already exists, drives Blood Moon and Krakenling's own cycle) as the
-restock clock. A tagged species' total live count across the whole world
-is capped at its existing `count` value per the wild-spawn system already
-in place; the restock is that this cap is evaluated fresh once per game
-day rather than being a permanently-topped-up pool, so a fully-hunted
-rare species is genuinely gone until the next day, not silently
-respawning the moment a slot opens.
+**PART A — real population caps with daily restock, not probability
+tuning.** The actual ask: rare species (propose the Rare tier and up —
+dragons, Crystal Golem, and above) should be genuinely scarce at any
+moment, not just individually unlikely per spawn roll. Add a per-species
+world-population cap for this tier, reusing the exact `worldDayNum()`
+counter Krakenling and Blood Moon already key off — once a species hits
+its cap for the day (tamed or killed), no more of that species spawns
+until the next day boundary, when the pool refills. This is a genuine new
+mechanic layered on top of the existing `count`/`base` system, not a
+replacement for it — the existing density logic still governs where and
+how they spawn within whatever the day's remaining allotment is.
 
-**PART B — mob size, broad pass, deliberately uneven.** Every pet and
-mob's `SPECIES_K`/`MOB_K` increases — genuinely large/dangerous things
-(Elder Drake, Sea Serpent, Troll, all four Dragons, both Golems) get 2x;
-common/small things (Sprites, Wolf, Boar, Goblin) get 1.5x. Your explicit
-discretion call on the split — use the existing established size
-hierarchy (already-larger things get the larger multiplier) rather than
-inventing a new ranking.
+**PART B — Griffin and Shadowfox, corrected against their real tiers.**
+Confirmed directly: Griffin (Uncommon) sits at `base: 0.35`, its own
+tier-mates run 0.40-0.50 — raise to 0.42. Shadowfox (Epic) sits at
+`base: 0.35` while its real tier-mates (Lightfox, Krakenling) run 0.20,
+despite ALREADY carrying extra restrictions (night-only, a presence roll)
+those don't compound as heavily — lower to 0.20, matching its actual
+tier. Basilisk remains genuinely unbuilt — tied to Dungeons, which do not
+exist — not part of this version, an honest scope gap, not a bug to fix
+here.
 
-**PART C — real music, four tracks, real attribution.**
-```
-audio/boss_tension.mp3   - combat/boss track (Skeptik)
-audio/roaming_song.mp3   - background rotation (Skeptik)
-audio/roaming_pop.mp3    - background rotation (Skeptik)
-audio/roaming_siren.mp3  - background rotation (Advay)
-```
-All four already pushed to the repo's `audio/` folder. Wire
-`boss_tension.mp3` into the existing combat-music trigger (the same
-`combatMusicUntil` system `nu_metal.mp3` already used) and the three
-roaming tracks into `BG_PLAYLIST`, replacing its current contents —
-reuse the existing rotation/crossfade system exactly as built, this is a
-track-list swap, not a new audio system.
+**PART C — every pet gets bigger, discretion applied by tier, not a flat
+multiplier.** Common: 1.15-1.25x. Uncommon: 1.3-1.4x. Rare: 1.5-1.65x.
+Epic: 1.7-1.85x. Elders were already increased in Tuning/Polish — a
+smaller additional bump only (propose 1.1x on top of their current
+value), not a second full pass.
 
-**PART D — credits.** `"Harsh D"` -> `"Harsh Devarajan"`. Add Advay's
-attribution for `roaming_siren.mp3` alongside his existing "Dev Team"
-credit entry (or a new line if a role split reads more clearly — your
-call on exact wording, the attribution itself is not optional). Skeptik's
-existing entry already covers his three tracks; no new entry needed for
-him, this is additive to what exists.
+**PART D — the real music.** Two tracks are genuinely new
+(`tension.mp3`, `siren.mp3`); Pop/song are confirmed byte-identical to
+what's already wired in, no changes needed there. Add `siren.mp3` to
+`BG_PLAYLIST` as a fifth roaming track. Add `tension.mp3` as a real boss
+track — reuse the exact `combatMusicUntil`/`COMBAT_MUSIC_LINGER`
+mechanism already built for `nu_metal.mp3`, but scoped specifically to
+Elder Drake and Elder-tier fights (`m.kind === "elder_drake" || def.elder`)
+rather than all combat, so it reads as a distinct "this is a real boss"
+cue rather than replacing the existing regular-combat track.
 
-**Explicitly not touched this version:** Basilisk (still genuinely
-absent, tied to Dungeons — separate decision, not part of this build).
+**PART E — credits.** Skeptik's role stays "Dev Team" but gets explicit
+composer credit for `Pop.mp3`, `song.mp3`, and `tension.mp3`. Advay's
+entry gets explicit composer credit for `siren.mp3`. Update `"Created by"`
+name from `"Harsh D"` to the full `"Harsh Devarajan"`, and ensure it
+appears directly alongside the existing "Hashbrown Studios" line rather
+than only in the separate "Created by" row.
 
-**Proof gates:** standard gauntlet, plus confirm the restock cap
-genuinely blocks a rare species from spawning again mid-day once its cap
-is hit in a simulated sweep, confirm size multipliers landed at the
-correct 1.5x/2x split, confirm all four tracks are reachable and wired to
-the correct trigger, confirm credits show the full name and both
-composers.
+**Proof gates:** standard gauntlet plus confirm the daily population cap
+genuinely blocks a capped species from spawning again until
+`worldDayNum()` advances, confirm Griffin/Shadowfox's new base values are
+live, confirm every tier's size multiplier landed within its proposed
+range, confirm both new tracks are reachable and correctly scoped
+(`siren.mp3` in rotation, `tension.mp3` only on Elder-tier combat), and
+confirm the credits/name updates are live.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
