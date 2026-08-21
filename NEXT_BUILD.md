@@ -1,1 +1,1 @@
-Build exactly per the locked spec section in README.md.
+Build exactly per the "Confirmed, locked spec for the next build — Mob Rarity + Music" section in README.md.
