@@ -53,6 +53,38 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### World Expansion — N 240 -> 320, built after a genuine RED
+
+The overnight attempt correctly stopped: its "complete list" of constants
+relative to a fixed point missed the volcano cone radius, lava core,
+PEAK->ROCK buffer, elevRaw's distance terms, and the ruin/zone exclusion
+radii near Volcano/Mount — leaving Sunforge Caldera and Crystal Golem
+unreachable. Rebuilt with the real complete list, scaled N to 320 instead
+of the original 480 target: bakeTerrain() pre-renders the whole map into
+one canvas, and canvas memory scales with N^2 — 480 would have meant ~4x
+memory, 320 keeps it to ~1.8x, a deliberate safety call once the real
+cost was understood, not a retreat.
+
+Two MORE real regressions found during verification, both latent bugs
+exposed by the new landmark positions, not new bugs introduced by them:
+- Safe Zone terrain-clearing excluded `BLOCKED.has(b)`, which includes
+  PEAK — a zone near enough to Mount for its natural elevation to reach
+  PEAK never got flattened to grass. Never triggered before because no
+  zone had ever landed that close. Fixed to match the Spawn zone's own
+  clearing, which already overrides everything unconditionally.
+- Safe Zone placement never checked separation against the Bazaar,
+  Ancient Forge, or Colosseum — they didn't exist when that loop was
+  written (v20, landmarks added v37). A zone could always in principle
+  have landed on the Bazaar's own protection; new positions finally
+  triggered it on a real seed. Added the three missing checks.
+
+Verified with a genuine six-seed sweep (worldSeed swapped, tileCache
+cleared, placeLandmarks() re-run, not six calls to a no-op), same rigor
+the original failure report used: Sunforge Caldera 3/6 -> 5/6 seeds,
+Crystal-Golem-viable mountain ruins 0/6 -> 2/6 (baseline was 3/6 — a real
+but honest partial gap, not a perfect match, worth knowing rather than
+overclaiming). Full gauntlet 741/0.
+
 ### 2026-08-20 (v39 — the Elder trio, the Golden Orb, and the secret event)
 
 The three Elder pets the bible has listed since the beginning, the Eternal
