@@ -53,6 +53,228 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-22 (Mob Rarity + Music — rarity-banded pet scale, the Elder band, the boss cue)
+
+Five parts, and only two of them are rendering: PART C resizes the entire
+tameable roster by its bible rarity, and PART E adds a MUSIC block to the
+credits panel. PART A's daily population caps, PART B's two corrected tame
+bases and PART D's playlist wiring live in the README and the commit message.
+Not one palette entry, biome, landmark, cliff-face ratio or `MOB_K` value was
+touched, and the whole world outside the creatures themselves draws exactly as
+it did yesterday.
+
+- **Every pet's silhouette now says its rarity, and it is the only thing in
+  the world that says it.** Rarity had never been written down in the file —
+  it existed as a comment beside a tame chance and nowhere else — so
+  `PET_RARITY` is the bible's own table transcribed, and PART C's four bands
+  are applied straight off it: **common x1.20, uncommon x1.35, rare x1.575,
+  epic x1.775**, each the midpoint of the spec's range. Measured across the
+  roster the realised bands are **x1.199 / x1.352 / x1.575 / x1.775** — four
+  genuinely different amounts in rarity order, so the gap between the
+  commonest pet and the rarest widened **1.48x** rather than being preserved.
+  That is Tuning/Polish PART G's rule (size says danger) applied to the axis
+  the pets actually differ on.
+- **⚠️ The Elders needed a dedicated band or this build would have made them
+  SMALLER than the line they head, and that is not arithmetic — it is what the
+  previous attempt proved empirically before it stopped.** A Rare-banded
+  Crystal Golem lands at **2.68** against Tuning/Polish's 2.70 Golem Elder,
+  and Rare-banded dragons at **2.44** against a 2.40 Dragon Elder. Any
+  multiplier the Elders could legally have taken closed the gap the previous
+  version had just opened. So `golem_elder: 4.05, dragon_elder: 3.60,
+  unicorn_elder: 2.78` are absolute values, not a bump — **+51% / +48% / +36%**
+  over their own line at the NEW tier sizes, and `run4` pins that as the
+  relationship rather than as the literal, exactly as before.
+- **⚠️ `MOB_TALL` is the same trap Tuning/Polish measured its way out of,
+  entered through a different door, and it was measured again rather than
+  guessed.** The "!" tell and the HP bar draw at `sy - 20 - MOB_TALL` and
+  nothing scales that offset, so five bodies that grew 35-58% would have ended
+  up wearing their own tell. Every value is the whole offset `20 + tall` times
+  the factor that creature's own `SPECIES_K` moved by: **bear 7 -> 17, griffin
+  10 -> 21, phoenix 8 -> 24, golem_elder 29 -> 54**, and **boar gets its first
+  entry ever at 7** — it had none, exactly as the Elder Drake had none before
+  v30. Verified with a transform-tracking canvas recorder that maps every path
+  coordinate through the live CTM, run against the pre-change file first to
+  reproduce Tuning/Polish's own published numbers (troll 49.9px vs its
+  documented 50.4, sea serpent 106.6 vs 107.6) before a value was moved.
+- **The Salamander King keeps its 4 for the SECOND version running, and it is
+  now a better fit than it was.** Tuning/Polish's reason was that it is the one
+  long-and-low body in the table and its bar was already floating well clear.
+  Measured: at x1.775 it paints **18.3px** against a 24px offset, so the rule
+  would have pushed its bar to **43** — a body-length above a creature it is
+  supposed to belong to. Its clearance goes **+13.2 -> +5.7px**, which is the
+  bar sitting closer to the King, not further.
+- **⚠️ Five creatures paint decorative elements ABOVE their own tell and always
+  have. Nothing regressed, and the numbers are here so nobody re-derives them.**
+  Measured clearance (tell minus topmost painted pixel), before -> after:
+  bandit -2.2 -> -2.2, dark_wraith -6.5 -> -6.5, sea_serpent -8.6 -> -8.6 (its
+  own entry says this: "over the head, under the topmost rising bubble"), bear
+  -3.8 -> -4.2, phoenix -2.9 -> -3.9, griffin -11 -> -14, **golem_elder -25.7
+  -> -37.4**. Every ratio is preserved exactly, which is the rule working — the
+  tell keeps the relationship to its body it was tuned to have. **The Golem
+  Elder is the one worth a screenshot**: it is the largest of them, its excess
+  is its gold Elder aura and crown rather than the body, and if the "!" reads
+  as buried the fix is a real value for that creature, not another scale pass.
+- **The credits panel gained a MUSIC block and not one new component style.**
+  Same `.cr-row` / `.cr-role` / `.cr-name` the RUNEHAVEN block has used since
+  v23, driven off a second data array beside `CREDITS`, through one shared
+  builder so the two lists cannot drift into different languages. That is the
+  fifth version running (v33, v35, v38, v39, this) that has added to a panel
+  without inventing a component.
+- **⚠️ A world at its daily cap is a world with things visibly MISSING from
+  it, and that is new.** Until now every client generated the same rare roster
+  at every login; from this version a Rare-and-up species that has been taken
+  today simply is not drawn anywhere, and `run5` renders that world for real
+  (**rare+ wilds left: 0** on the harness seed). Nothing marks the absence — no
+  message, no empty nest, no tell of any kind — which is correct for a world
+  whose pitch is that a taken pet is gone, but it means a player can walk the
+  whole Undercave and find nothing without ever learning why.
+- **Noted, no action taken (pre-existing, outside this build):** the
+  Tuning/Polish entry below claims `run5` "gained a Tuning/Polish sweep" taking
+  it 945 -> 1,144 draws. The committed `debug/run5.js` is unchanged since
+  Expansion 2a and measured **945** on the pre-change file — that sweep is not
+  in the repo. Flagged here rather than reconstructed, since guessing at what
+  it contained would be inventing a test. This version's own sweep is real and
+  additive (945 -> **1,055**), and it adds the `RESIZED` list that entry says
+  should exist.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus one thing it asserts about
+the file that turned out not to be true. All shipped through the full gate
+(parse clean, `run2` and `run3` `CAUGHT ERROR: none`, `run4` **899/899 with
+zero FAIL** over ten consecutive runs, `run5` 1,055 coverage draws clean,
+65/65 grep checks including the preservation half) — refinements to consider,
+not unfinished work.
+
+1. **⚠️ A small SQL update is needed for the cap to persist**, and it is the
+   spec's own statement verbatim: `create table rare_takes (id bigserial
+   primary key, species text, day_num integer, taken_at timestamptz default
+   now());`. Both directions are asserted by real gates: with the table absent
+   every select and insert reads as "no takes yet today", the world spawns
+   exactly as it did before this version, and recording a take never throws.
+   Same shape of note as v25, v33, v34 and v38.
+2. **⚠️ The daily cap for a species is its own world population — its
+   `count` — and the spec names no number.** The alternative was inventing a
+   per-tier budget, which is a design decision rather than a tunable; `count`
+   is the number of that species that would have stood in the world anyway, so
+   the cap reads as "the whole world's worth, and then it restocks tomorrow".
+   Dragons and Salamander Kings get 3, Crystal Golems 2, Shadowfox/Lightfox/
+   Krakenling/Unicorn 4, Phoenix 3 (from `MOBS`, since its wild form is a
+   hostile beast), the three Elders 1. **`speciesDailyCap()` is the one line to
+   change** if a tighter daily budget was meant.
+3. **⚠️ The spec says the PvP-dragon-killing mechanic is "a separate,
+   already-built system". It is not built.** There is no wild dragon mob, no
+   dragonsteel drop from a tamed pet, and no kill path for a companion at all —
+   a downed pet recovers at full HP and is never lost. The requirement it
+   attaches is a NEGATIVE one ("must not interact with this cap at all"), so it
+   is satisfied, and satisfied structurally rather than by luck: a take is
+   recorded from exactly two wild-side places, a tamed creature is a `pets` row
+   that can reach neither, and nothing in the file ever deletes a `rare_takes`
+   row. Noted rather than silently corrected, the same way Expansion 2a noted
+   the spec's "13 places" count.
+4. **The cap gates the hostile-beast spawn loop and the two hand-placed
+   singletons too, not just the passive wilds.** "That species does not spawn
+   again" has to mean the place it actually spawns from: Phoenix is Rare and
+   spawns through `MOBS`, and the Golem Elder and Unicorn Elder are placed by
+   hand after both loops. An uncapped species gets its full count back from the
+   same helper, so no Goblin, Bandit, Troll, Wraith, Sea Serpent or Elder Drake
+   population moves by a single spawn — asserted, not assumed.
+5. **The Unicorn Elder's cap decides WHETHER there is one today, never WHERE.**
+   The tile is still drawn uniformly across the whole map with no biome test,
+   so the bible's "no pattern or hint" is untouched and v39's flagged cost
+   (roughly 2 seeds in 200 put it somewhere unreachable) is unchanged.
+6. **The world reset does NOT clear `rare_takes`.** The spec names
+   `base_pieces` and the three Elder flags; a take is a record of something
+   that happened today rather than progress a player holds, and the cap
+   restocks on its own at the next `worldDayNum()` either way. Same reasoning
+   v39 gave for leaving `mined_nodes` and `ground_items` alone.
+7. **Each band is the MIDPOINT of the spec's range rather than an end of it.**
+   The spec gives ranges and the Elder percentages it quotes (+51/+48/+35) only
+   reconcile against a Rare multiplier near 1.57, so the midpoints are what its
+   own arithmetic was computed from. Realised: +51% / +48% / **+36%** — the
+   Unicorn Elder is one point off the spec's figure, which is 2dp rounding on
+   `unicorn` (1.30 x 1.575 = 2.0475 -> 2.05), and it clears `run4`'s 1.35
+   relationship bar with the least room of the three. **That is the number to
+   re-derive first if the Rare band is ever retuned.**
+8. **`MOB_TALL` was moved at all, which PART C does not mention.** It is not a
+   size, it is the pixel offset the v13 fairness rule depends on, and the file's
+   own comment already prescribes the rule for it. Leaving it would have buried
+   five creatures' tells inside their own chests — the exact failure
+   Tuning/Polish wrote a paragraph about. One-line reverts, individually.
+9. **`PET_RARITY` is a new top-level table, and it is transcription, not
+   design.** Every entry is the tier the bible's rarity table already assigns.
+   Basilisk and the Duskfox Elder are deliberately absent — both are in the
+   bible, both are genuinely unbuilt, and an entry for a species that does not
+   exist would be the first invented thing in it. `run4` asserts the table
+   against an independent copy of the bible's own list and asserts both
+   absences.
+10. **The Elder cue is scoped by three call sites, and the third is the only
+    one that can ever fire for two of the four Elders.** A hit landed on a mob,
+    a mob's own swing, and an active companion's attack. The Dragon Elder and
+    the Unicorn Elder are never mobs, so without the companion signal the
+    `WILD_SPECIES` half of PART D's two-table rule would have been dead code —
+    `run4` drives a real tamed Dragon Elder into a real fight to prove it is
+    not.
+11. **The switch compares against the track currently playing, not against a
+    boolean.** `inCombatMusic` was enough when there was one combat track; with
+    two, a fight that turns into an Elder fight mid-way has to be able to hand
+    the channel over without first passing through the rotation. `combatTrackUrl`
+    is that memory, and the Elder branch is deliberately FIRST so its priority
+    is the branch order rather than a rule written somewhere else.
+12. **`siren.mp3` is appended to the playlist rather than inserted.** An
+    existing session's `bgIndex` keeps landing on the track it would have
+    landed on until it wraps. `audio/` also holds `boss_tension.mp3`,
+    `roaming_pop.mp3`, `roaming_siren.mp3` and `roaming_song.mp3` — byte-identical
+    duplicates of `tension.mp3`, `Pop.mp3`, `siren.mp3` and `song.mp3` under
+    other names. The spec names `siren.mp3` and `tension.mp3` specifically, so
+    those are what is wired; the four aliases are referenced nowhere, exactly
+    like v24's held-out sixth track.
+13. **Composer credit is a new MUSIC block in the credits panel, and only the
+    attributed tracks are in it.** The spec attributes four tracks to two
+    people; `Slower_Jamz.mp3`, `Long_Way_Home.mp3` and `nu_metal.mp3` have no
+    named composer and are deliberately absent rather than guessed at. The two
+    existing "Dev Team" collaboration rows are untouched — a composer credit is
+    a different claim from a collaboration credit, and `run4` asserts both
+    survive.
+14. **Six `run4` literals were updated, not relaxed**, plus one turned from a
+    literal into the thing it was actually testing. The playlist is still an
+    exact list in an exact order (five tracks now, and the rotation loop reads
+    its own length so the next track added cannot leave a stale bound behind);
+    `playMusic` is still pinned to an exact call-site count (three, not two);
+    the audio-file manifest still insists every named file exists on disk (eight
+    now); the two mount-seat `SPECIES_K` literals move with PART C while the
+    ordering assertion beside them — `shadowfox > griffin > lightfox` — is
+    untouched and still holds. The one that changed shape is v39's "the roster
+    is loaded BEFORE the roll that reads it", which was an ADJACENCY literal
+    (`await loadPets();\n    buildFeatureList();`) and is now a genuine ordering
+    check, because PART A correctly puts `loadRareTakes()` between them.
+15. **⚠️ `run4`'s Mob Rarity block freezes `Date.now()` for its duration**, and
+    this is a correction to a real flake rather than a convenience. The world
+    day is 600 real seconds long and `run4` runs for a good few of them, so
+    `worldDayNum()` can tick over mid-block — which would reset the very
+    counter being measured, and would also let a Blood Moon start between two
+    `buildFeatureList()` calls being compared and move the presence rolls under
+    both. The clock is handed back at the end. Every day-boundary assertion in
+    the block crosses one deliberately, via the setter.
+16. **`run4`'s supabase stub learned to filter `.eq()`, for one table.** "The
+    take was recorded for TODAY" and "the day rolled over" are the same query
+    against a stub that returns the whole table, so the reload gate could not
+    have been honest without it. Scoped to `rare_takes` by name, on the same
+    allow-list `base_pieces` and `pets` already use for insert recording.
+17. **`run5` gained a Mob Rarity sweep and the `RESIZED` list.** 945 ->
+    **1,055** draws: every resized creature through `drawSpecies` and the six
+    with hostile forms through `drawMob` wearing their tell and their bar, a
+    world rebuilt at its daily cap and rendered over real frames, the three
+    music states driven through the real per-frame check, and the credits
+    panel. No species, mob, weapon kind or class was added this version, so the
+    existing `*_LIST` arrays needed nothing; `RESIZED` is the list to extend
+    when a creature is resized.
+18. **The push to `main` that the README's step 8 invites was deliberately not
+    attempted.** This session is instructed to develop and push only on its
+    designated branch. The README calls a blocked push to `main` a nice-to-have
+    and explicitly not a failure, so the build lands on the branch as usual and
+    a human can sync it. Same call Expansion 2b and Tuning/Polish both made.
+
 ### 2026-08-21 (Tuning/Polish — Elders, the Bazaar, player travel, sand, mob scale)
 
 The deferred polish pass on top of Expansion 2b. Eight parts, no new species,
