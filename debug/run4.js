@@ -39,6 +39,7 @@ const tableData = {
   ground_items: [],
   pets: [],
   base_pieces: [],        // v33
+  rare_takes: [],         // Mob Rarity PART A
 };
 /* v33: a real round trip is needed for exactly one table. PART D has to prove
    a placed piece survives a reload — insert, then re-select, same data back —
@@ -52,18 +53,30 @@ const tableData = {
    the real client uses to return ONE row rather than an array; without it the
    awakening would push an array onto the roster. Nothing outside these two
    tables sees any change. */
-const INSERT_RECORDING = new Set(['base_pieces', 'pets']);
+/* Mob Rarity PART A: `rare_takes` joins it for the same reason and on the
+   same allow-list — the cap's whole claim is that it is REAL persistence and
+   not a session counter, which cannot be shown without a genuine insert ->
+   re-select round trip. It also needs the one thing neither earlier table
+   did: `.eq('day_num', n)` has to actually filter, or "the take was recorded
+   for TODAY" and "the day rolled over" would be the same query. Scoped to
+   this table by name, so no existing assertion shifts underneath it. */
+const INSERT_RECORDING = new Set(['base_pieces', 'pets', 'rare_takes']);
+const EQ_FILTERING = new Set(['rare_takes']);
 let insertSeq = 0;
 function chain(table) {
   let pending = null;
   let singled = false;
+  const eqs = [];
   const result = () => {
     if (pending) {
       const r = singled ? (pending[0] || null) : pending;
       pending = null; singled = false;
       return { data: r, error: null };
     }
-    const d = tableData[table];
+    let d = tableData[table];
+    if (EQ_FILTERING.has(table) && Array.isArray(d) && eqs.length) {
+      d = d.filter(row => eqs.every(([col, val]) => row[col] === val));
+    }
     return { data: d === undefined ? null : d, error: null };
   };
   const c = new Proxy(function () {}, {
@@ -73,6 +86,9 @@ function chain(table) {
         return (res) => res(r);
       }
       if (prop === 'single') { return (...a) => { singled = true; return c; }; }
+      if (prop === 'eq' && EQ_FILTERING.has(table)) {
+        return (col, val) => { eqs.push([col, val]); return c; };
+      }
       if (prop === 'insert' && INSERT_RECORDING.has(table)) {
         return (rows) => {
           const arr = Array.isArray(rows) ? rows : [rows];
@@ -1399,8 +1415,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         gameScript.split('AudioEngine.init()').length === 2]);   // exactly one call site in the whole file
       results.push(['SFX stays unwired — no sound-effect files have been provided yet',
         gameScript.split('AudioEngine.playSFX(').length === 1]);
-      results.push(['music is wired from exactly the two v24 sites (rotation + combat switch)',
-        gameScript.split('AudioEngine.playMusic(').length === 3]);
+      /* Mob Rarity PART D: three sites now, not two — the rotation, the
+         ordinary combat track, and the Elder cue. Updated, not relaxed: the
+         point of this gate is that no FOURTH place in the file can quietly
+         start playing something. */
+      results.push(['music is wired from exactly three sites (rotation + combat + Elder cue)',
+        gameScript.split('AudioEngine.playMusic(').length === 4]);
       window.applySettings();   // put the gains back where the settings say
 
       // ---- PART D: the favicon — deliberately removed, confirm it's genuinely gone
@@ -1471,13 +1491,16 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
        are stubbed above. The player is put back at spawn at the end. ========= */
     const path = require('path');
     const AUDIO_DIR = path.join(path.dirname(path.resolve(FILE)), 'audio');
+    /* Mob Rarity PART D: siren.mp3 (rotation) and tension.mp3 (the Elder cue)
+       join the list the harness insists actually exist on disk. */
     const AUDIO_FILES = ['nu_metal.mp3', 'Pop.mp3', 'Slower_Jamz.mp3',
-                         'Long_Way_Home.mp3', 'seduced.mp3', 'song.mp3'];
+                         'Long_Way_Home.mp3', 'seduced.mp3', 'song.mp3',
+                         'siren.mp3', 'tension.mp3'];
     const missingAudio = AUDIO_FILES.filter(f => {
       try { return fs.statSync(path.join(AUDIO_DIR, f)).size < 1024; }
       catch (e) { return true; }
     });
-    results.push(['all 6 audio files are present at audio/<name>.mp3' +
+    results.push(['all 8 audio files are present at audio/<name>.mp3' +
       (missingAudio.length ? ' (missing ' + missingAudio.join(', ') + ')' : ''),
       missingAudio.length === 0]);
 
@@ -1512,12 +1535,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       AE24.ctx = null;                       // let init() build against the mock
       results.push(['AudioEngine.init() succeeds against a real AudioContext', AE24.init() === true]);
 
-      // ---- PART B: the four-track rotation, and the wrap back to track 0
+      // ---- PART B: the rotation, and the wrap back to track 0
+      // Mob Rarity PART D: five tracks now, siren.mp3 appended — updated, not
+      // relaxed: it is still an exact list in an exact order.
       dsms({ bgIndex: 0, inCombatMusic: false });
       const PLAYLIST = dmi().BG_PLAYLIST;
-      results.push(['the background rotation is the four locked tracks, in order',
+      results.push(['the background rotation is the five locked tracks, in order',
         PLAYLIST.join('|') === ['audio/Pop.mp3', 'audio/Slower_Jamz.mp3',
-                                'audio/Long_Way_Home.mp3', 'audio/song.mp3'].join('|')]);
+                                'audio/Long_Way_Home.mp3', 'audio/song.mp3',
+                                'audio/siren.mp3'].join('|')]);
       fetched.length = 0;
       await window.playNextBgTrack();
       results.push(['the first track is requested from its relative path',
@@ -1530,7 +1556,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          The handler itself is not async, so the fetch/decode it kicks off has
          to be allowed to settle before the next track can be asserted. */
       const settle = () => new Promise(r => setTimeout(r, 0));
-      for (let i = 1; i < 4; i++) {
+      for (let i = 1; i < PLAYLIST.length; i++) {
         AE24.musicSource.onended();
         await settle();
         results.push([`onended advances the rotation to ${PLAYLIST[i]}`,
@@ -1538,11 +1564,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       AE24.musicSource.onended();
       await settle();
-      results.push(['after the 4th track the rotation wraps back to track 0',
-        fetched[4] === 'audio/Pop.mp3' && dmi().bgIndex === 5 &&
+      results.push([`after the ${PLAYLIST.length}th track the rotation wraps back to track 0`,
+        fetched[PLAYLIST.length] === 'audio/Pop.mp3' &&
+        dmi().bgIndex === PLAYLIST.length + 1 &&
         PLAYLIST[dmi().bgIndex % PLAYLIST.length] === 'audio/Slower_Jamz.mp3']);
       results.push(['every URL the rotation asked for resolved to a real file',
-        fetched.length === 5 && fetched.every(u => fs.existsSync(
+        fetched.length === PLAYLIST.length + 1 && fetched.every(u => fs.existsSync(
           path.join(path.dirname(path.resolve(FILE)), u)))]);
 
       // ---- PART C: the two real combat signals set the linger window
@@ -1596,10 +1623,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       window.update(0.016, 501000);
       await new Promise(r => setTimeout(r, 0));
       results.push(['past the linger window the loop check reverts to the rotation',
-        dmi().inCombatMusic === false && fetched[0] === PLAYLIST[bgAt % 4] &&
+        dmi().inCombatMusic === false && fetched[0] === PLAYLIST[bgAt % PLAYLIST.length] &&
         dmi().bgIndex === bgAt + 1]);
-      results.push([`the rotation resumed mid-playlist (track ${bgAt % 4}), not back at 0`,
-        bgAt === 5 && fetched[0] === 'audio/Slower_Jamz.mp3' &&
+      results.push([`the rotation resumed mid-playlist (track ${bgAt % PLAYLIST.length}), not back at 0`,
+        bgAt === PLAYLIST.length + 1 && fetched[0] === 'audio/Slower_Jamz.mp3' &&
         fetched[0] !== PLAYLIST[0]]);
       // a rotation track that ends while combat owns the channel must not butt in
       dsms({ inCombatMusic: true });
@@ -2211,10 +2238,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
 
       // seat height genuinely scales per species, not one flat number
       const so = m0.seatOffsets;
+      /* Mob Rarity PART C resized the whole tameable roster by bible rarity,
+         so both literals here move with it — 1.05 -> 1.86 (Lightfox, Epic)
+         and 1.66 -> 2.95 (Shadowfox, Epic). Updated, not relaxed: the
+         ORDERING assertion beside them is the part that must survive every
+         scale pass, and shadowfox > griffin > lightfox still holds. */
       results.push(['seat height scales with each species\' own art ratio',
         so.shadowfox < so.griffin && so.griffin < so.lightfox &&
-        Math.abs(so.lightfox - (-(2.2 * 1.05))) < 1e-9 &&
-        Math.abs(so.shadowfox - (-(2.2 * 1.66))) < 1e-9]);
+        Math.abs(so.lightfox - (-(2.2 * 1.86))) < 1e-9 &&
+        Math.abs(so.shadowfox - (-(2.2 * 2.95))) < 1e-9]);
 
       // every one of the nine mounts without error — not a sample
       let allNineOk = true, failedOn = null;
@@ -3531,8 +3563,16 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             owned.ownsUnicornElder === true && owned.luckNow === owned.UNICORN_ELDER_LUCK]);
           results.push(['the buff is the Blood Moon\'s own shape, added to the presence roll',
             /presenceRoll \+ \(bloodMoonActive\(\) \? BLOOD_MOON_RARE_BOOST : 0\)[\s\S]{0,40}\+ unicornElderLuck\(\)/.test(gameScript)]);
+          /* Mob Rarity PART A puts loadRareTakes() between these two, so the
+             adjacency literal this used to be no longer describes the file.
+             What it was ever testing is the ORDER, so it is an order now —
+             and the day's rare-take budget, which buildFeatureList() also
+             reads exactly once, is held to the same rule. */
+          const iPets24 = gameScript.indexOf('await loadPets();');
+          const iTakes24 = gameScript.indexOf('await loadRareTakes();');
+          const iBuild24 = gameScript.indexOf('buildFeatureList();', iPets24);
           results.push(['and the roster is loaded BEFORE the roll that reads it',
-            gameScript.indexOf('await loadPets();\n    buildFeatureList();') > 0]);
+            iPets24 > 0 && iTakes24 > iPets24 && iBuild24 > iTakes24]);
           const t0 = dwi39().player;
           const ok = window.fastTravelTo(1);   // the Volcano
           const t1 = dwi39().player;
@@ -4056,6 +4096,400 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
     } else {
       results.push(['PART C hooks are reachable', false]);
+    }
+
+    /* ================= MOB RARITY + MUSIC — the five parts ================
+       PART A world-wide daily population caps with real persistence, PART B
+       Griffin and Shadowfox's corrected tame bases, PART C the rarity-banded
+       size pass and the Elders' dedicated band, PART D the fifth rotation
+       track and the Elder boss cue, PART E the credits.
+
+       Run late and deliberately: the PART A gates re-run worldgen several
+       times over, so they sit immediately before the world-reset block that
+       rewrites it anyway, and the world is put back with an empty take map at
+       the end of them. ================================================== */
+    if (typeof window.debugRareTakesInfo === 'function' &&
+        typeof window.debugSetRareTakes === 'function') {
+      const rti = window.debugRareTakesInfo, srt = window.debugSetRareTakes;
+      /* The world day is 600 real seconds long and this block runs for a good
+         few of them, so worldDayNum() can genuinely tick over in the middle of
+         it — which would silently reset the very counter being measured, and
+         would also let a Blood Moon start mid-block and move the presence
+         rolls under two buildFeatureList() calls being compared. The clock is
+         held still for the duration and handed back at the end; every
+         assertion below is about a day boundary being crossed ON PURPOSE. */
+      const realDateNow = window.Date.now;
+      const FROZEN_NOW = realDateNow.call(window.Date);
+      window.Date.now = () => FROZEN_NOW;
+      const R0 = rti();
+      const dayNow = R0.day;
+
+      /* ---- PART A: the rarity table is the BIBLE's, transcribed ---------- */
+      const BIBLE_RARITY = {
+        tree_sprite: 'common', water_sprite: 'common', stone_sprite: 'common',
+        wind_sprite: 'common', glow_moth: 'common',
+        wolf: 'uncommon', bear: 'uncommon', boar: 'uncommon',
+        griffin: 'uncommon', golem: 'uncommon', stag: 'uncommon',
+        unicorn: 'rare', crystal_golem: 'rare', phoenix: 'rare',
+        water_dragon: 'rare', fire_dragon: 'rare', storm_dragon: 'rare',
+        shadow_dragon: 'rare',
+        shadowfox: 'epic', lightfox: 'epic', krakenling: 'epic',
+        salamander_king: 'epic',
+        golem_elder: 'elder', dragon_elder: 'elder', unicorn_elder: 'elder',
+      };
+      const PR = R0.PET_RARITY;
+      results.push([`PART A: every pet carries its BIBLE rarity and nothing else does (${Object.keys(PR).length})`,
+        Object.keys(BIBLE_RARITY).every(k => PR[k] === BIBLE_RARITY[k]) &&
+        Object.keys(PR).length === Object.keys(BIBLE_RARITY).length]);
+      results.push(['PART A: and it invents nothing — no Basilisk, no Duskfox Elder, both genuinely unbuilt',
+        PR.basilisk === undefined && PR.duskfox_elder === undefined]);
+      results.push(['PART A: the cap is Rare-and-up, exactly as the spec words it',
+        R0.CAPPED_RARITIES.slice().sort().join('|') === 'elder|epic|rare']);
+      results.push(['PART A: so dragons, Crystal Golem and everything above them are capped...',
+        ['fire_dragon', 'water_dragon', 'storm_dragon', 'shadow_dragon', 'crystal_golem',
+         'unicorn', 'phoenix', 'shadowfox', 'lightfox', 'krakenling', 'salamander_king',
+         'golem_elder', 'dragon_elder', 'unicorn_elder'].every(s => window.speciesIsCapped(s))]);
+      results.push(['PART A: ...and nothing Common, Uncommon or non-pet ever is',
+        ['tree_sprite', 'glow_moth', 'wolf', 'golem', 'stag', 'boar', 'bear', 'griffin']
+          .every(s => !window.speciesIsCapped(s)) &&
+        !window.speciesIsCapped('elder_drake') && !window.speciesIsCapped('goblin')]);
+
+      /* ---- PART A: the cap genuinely stops a species spawning ------------
+         Driven on a species with no presence roll, so what is measured is the
+         cap and never a coin flip. */
+      srt({ takes: {}, day: dayNow });
+      window.buildFeatureList();
+      const full = rti();
+      const DETERMINISTIC = ['fire_dragon', 'storm_dragon', 'crystal_golem',
+                             'salamander_king', 'water_dragon', 'shadow_dragon'];
+      const capPop = DETERMINISTIC.filter(s =>
+        (full.wildSpeciesInWorld[s] || 0) === full.caps[s] && full.caps[s] >= 2);
+      results.push([`PART A: a capped species spawns its full world population on this seed (${capPop.join(', ') || 'none'})`,
+        capPop.length > 0]);
+      const SPC = capPop[0] || 'fire_dragon';
+      const capSPC = full.caps[SPC];
+
+      srt({ takes: { [SPC]: 1 }, day: dayNow });
+      window.buildFeatureList();
+      const partial = rti();
+      results.push([`PART A: one ${SPC} taken today, and one fewer spawns (${partial.wildSpeciesInWorld[SPC] || 0} of ${capSPC})`,
+        (partial.wildSpeciesInWorld[SPC] || 0) === capSPC - 1]);
+
+      srt({ takes: { [SPC]: capSPC }, day: dayNow });
+      window.buildFeatureList();
+      const capped = rti();
+      results.push(['PART A: at the cap that species does not spawn AT ALL',
+        (capped.wildSpeciesInWorld[SPC] || 0) === 0 && capped.budget[SPC] === 0]);
+      results.push(['PART A: and no uncapped population moved by a single spawn while it did',
+        capped.wildSpeciesInWorld.wolf === full.wildSpeciesInWorld.wolf &&
+        capped.wildSpeciesInWorld.tree_sprite === full.wildSpeciesInWorld.tree_sprite &&
+        capped.mobKindsInWorld.goblin === full.mobKindsInWorld.goblin &&
+        capped.mobKindsInWorld.griffin === full.mobKindsInWorld.griffin &&
+        capped.mobKindsInWorld.elder_drake === full.mobKindsInWorld.elder_drake]);
+
+      /* the two hand-placed singletons obey it too */
+      srt({ takes: { golem_elder: 1, unicorn_elder: 1 }, day: dayNow });
+      window.buildFeatureList();
+      const eldersGone = rti();
+      results.push(['PART A: an Elder taken today leaves its place genuinely empty',
+        (eldersGone.mobKindsInWorld.golem_elder || 0) === 0 &&
+        (eldersGone.wildSpeciesInWorld.unicorn_elder || 0) === 0 &&
+        (full.mobKindsInWorld.golem_elder || 0) === 1 &&
+        (full.wildSpeciesInWorld.unicorn_elder || 0) === 1]);
+
+      /* ---- PART A: and the next world day restocks it -------------------- */
+      srt({ takes: { [SPC]: capSPC }, day: dayNow - 1 });   // yesterday's takes
+      window.buildFeatureList();
+      const tomorrow = rti();
+      results.push(['PART A: the day rolling over restocks it — yesterday\'s takes cap nothing today',
+        tomorrow.takes[SPC] === 0 && tomorrow.budget[SPC] === capSPC &&
+        (tomorrow.wildSpeciesInWorld[SPC] || 0) === capSPC]);
+
+      /* ---- PART A: real persistence, not a session counter --------------- */
+      tableData.rare_takes.length = 0;
+      srt({ takes: {}, day: dayNow });
+      window.noteRareTake(SPC);
+      window.noteRareTake(SPC);
+      results.push(['PART A: a take is counted locally the moment it happens',
+        rti().takes[SPC] === 2]);
+      srt({ takes: {}, day: 0 });             // wipe the session, as a page load would
+      results.push(['PART A: (and the in-session count really was cleared first)',
+        rti().takes[SPC] === 0]);
+      await window.loadRareTakes();
+      results.push(['PART A: the cap survives a reload — it comes back off the table, not the session',
+        rti().takes[SPC] === 2 && rti().budget[SPC] === capSPC - 2]);
+      results.push(['PART A: and the rows really are in rare_takes, stamped with today\'s day_num',
+        tableData.rare_takes.length === 2 &&
+        tableData.rare_takes.every(r => r.species === SPC && r.day_num === dayNow)]);
+
+      /* ---- PART A: a tamed creature never returns its slot ---------------
+         The spec is explicit: once tamed, anything that happens to it
+         afterwards — another player killing it for its dragonsteel included —
+         must not free the day's slot. */
+      const beforePvp = rti().takes[SPC];
+      window.debugGrantPet(SPC);
+      results.push(['PART A: a take is recorded from exactly two places, both wild-side',
+        gameScript.split('noteRareTake(').length === 4]);   // the definition + 2 call sites
+      results.push(['PART A: and NOTHING in the file ever deletes a rare_takes row',
+        gameScript.indexOf('rare_takes') > 0 &&
+        !/rare_takes[\s\S]{0,200}\.delete\(/.test(gameScript)]);
+      window.petTakeDamage(99999);            // downed hard, by anything at all
+      results.push(['PART A: downing a TAMED one returns nothing to the pool',
+        rti().takes[SPC] === beforePvp && rti().budget[SPC] === capSPC - beforePvp]);
+      results.push(['PART A: because a tamed creature is a pets row — never a mob, never a wild',
+        !window.debugCombatHandles().mobs.some(m => String(m.id).indexOf('dbg:') === 0)]);
+
+      /* ---- PART A: both halves of "taken", through the REAL paths -------- */
+      tableData.rare_takes.length = 0;
+      srt({ takes: {}, day: dayNow });
+      const SPW = window.debugWorldInfo().SPAWN;
+      /* window.Math, not the harness's own Math — the game is evaluated inside
+         jsdom's realm, so patching this file's global would leave the real
+         50/50 tame roll in place and make this gate a coin flip. */
+      const realRandom = window.Math.random;
+      try {
+        window.Math.random = () => 0;         // force resolveTaming's success branch
+        window.startTaming({ id: 'gate:rare', species: SPC,
+                             x: SPW.x + 0.5, y: SPW.y + 0.5 });
+        await window.resolveTaming();
+      } finally { window.Math.random = realRandom; }
+      results.push([`PART A: a real successful tame records a take through the real path (${rti().takes[SPC]})`,
+        rti().takes[SPC] === 1]);
+
+      const phoenixTakes0 = rti().takes.phoenix || 0;
+      await window.mobKill({ id: 'gate:phoenix', kind: 'phoenix',
+        x: SPW.x + 0.5, y: SPW.y + 0.5, hx: SPW.x + 0.5, hy: SPW.y + 0.5,
+        hp: 0, maxHp: 75, state: 'idle', winding: false, flash: 0,
+        fx: 1, fy: 0, dead: false, target: null, ph: 1 }, true);
+      results.push(['PART A: and a Rare creature dying while still WILD records one too',
+        (rti().takes.phoenix || 0) === phoenixTakes0 + 1]);
+
+      /* ---- PART A: and none of it needs the SQL step to have been run ---- */
+      const savedTakeRows = tableData.rare_takes;
+      delete tableData.rare_takes;            // the table simply does not exist
+      await window.loadRareTakes();
+      const degraded = rti();
+      results.push(['PART A: with no rare_takes table at all it reads as "no takes yet today"',
+        Object.keys(degraded.takes).every(s => degraded.takes[s] === 0)]);
+      window.buildFeatureList();
+      results.push(['PART A: so a world whose SQL step has not been run spawns exactly as before',
+        (rti().wildSpeciesInWorld[SPC] || 0) === capSPC]);
+      window.noteRareTake(SPC);               // the insert must not throw either
+      results.push(['PART A: and recording a take against the missing table never throws',
+        rti().takes[SPC] === 1]);
+      tableData.rare_takes = savedTakeRows;
+
+      /* ---- PART B: Griffin and Shadowfox, at their real tiers ------------ */
+      {
+        const WS = window.debugWorldInfo().WILD_SPECIES;
+        const baseOf = s => WS[s].base;
+        const UNCOMMON = ['wolf', 'bear', 'boar', 'golem', 'stag'].map(baseOf);
+        const EPIC = ['lightfox', 'krakenling', 'salamander_king'].map(baseOf);
+        results.push([`PART B: Griffin's tame base is 0.42, not 0.35 (${baseOf('griffin')})`,
+          Math.abs(baseOf('griffin') - 0.42) < 1e-9]);
+        results.push([`PART B: which lands it inside its own Uncommon band (${Math.min(...UNCOMMON)}-${Math.max(...UNCOMMON)})`,
+          baseOf('griffin') >= Math.min(...UNCOMMON) && baseOf('griffin') <= Math.max(...UNCOMMON)]);
+        results.push([`PART B: Shadowfox's tame base is 0.20, not 0.35 (${baseOf('shadowfox')})`,
+          Math.abs(baseOf('shadowfox') - 0.20) < 1e-9]);
+        results.push(['PART B: which is exactly what every one of its Epic tier-mates runs',
+          EPIC.every(b => Math.abs(b - baseOf('shadowfox')) < 1e-9)]);
+        results.push(['PART B: and no other tame base moved',
+          Math.abs(baseOf('wolf') - 0.50) < 1e-9 && Math.abs(baseOf('bear') - 0.40) < 1e-9 &&
+          Math.abs(baseOf('unicorn') - 0.25) < 1e-9 && Math.abs(baseOf('phoenix') - 0.30) < 1e-9 &&
+          Math.abs(baseOf('golem_elder') - 0.15) < 1e-9]);
+      }
+
+      /* ---- PART C: the size pass, band by band --------------------------- */
+      {
+        const SKn = window.debugScaleInfo().SPECIES_K;
+        const MTn = window.debugScaleInfo().MOB_TALL;
+        const BEFORE = {
+          tree_sprite: 0.53, water_sprite: 0.61, stone_sprite: 0.84, wind_sprite: 0.69,
+          glow_moth: 0.32,
+          wolf: 1.10, golem: 1.85, stag: 1.15, boar: 1.16, bear: 1.73, griffin: 1.62,
+          unicorn: 1.30, crystal_golem: 1.70, phoenix: 1.10, fire_dragon: 1.55,
+          water_dragon: 1.55, storm_dragon: 1.55, shadow_dragon: 1.55,
+          shadowfox: 1.66, lightfox: 1.05, krakenling: 1.10, salamander_king: 1.30,
+        };
+        const BAND = { common: [1.15, 1.25], uncommon: [1.3, 1.4],
+                       rare: [1.5, 1.65], epic: [1.7, 1.85] };
+        const offBand = [];
+        for (const s of Object.keys(BEFORE)) {
+          const r = SKn[s] / BEFORE[s];
+          const b = BAND[PR[s]];
+          if (!b || r < b[0] || r > b[1]) offBand.push(`${s} x${r.toFixed(3)}`);
+        }
+        results.push([`PART C: every pet grew by its own rarity band${offBand.length ? ' — OFF: ' + offBand.join(', ') : ''}`,
+          offBand.length === 0]);
+        /* The point is not that everything grew — a flat multiplier passes
+           that. It is that the four bands are four DIFFERENT amounts, in
+           rarity order, and that the gap between the commonest pet and the
+           rarest one got meaningfully wider rather than being preserved. */
+        const bandMid = tier => {
+          const rs = Object.keys(BEFORE).filter(s => PR[s] === tier)
+                           .map(s => SKn[s] / BEFORE[s]);
+          return rs.reduce((a, b) => a + b, 0) / rs.length;
+        };
+        const mids = ['common', 'uncommon', 'rare', 'epic'].map(bandMid);
+        results.push([`PART C: and it is genuinely banded, not one flat multiplier (x${mids.map(m => m.toFixed(3)).join(' / x')})`,
+          mids[0] < mids[1] && mids[1] < mids[2] && mids[2] < mids[3] &&
+          mids[3] / mids[0] > 1.4]);
+        results.push(['PART C: the Elders land on their dedicated band, exactly',
+          SKn.golem_elder === 4.05 && SKn.dragon_elder === 3.60 && SKn.unicorn_elder === 2.78]);
+        /* The whole reason the band is dedicated: a Rare-banded Crystal Golem
+           and Rare-banded dragons must not catch the Elder that heads them. */
+        results.push([`PART C: and the Elder gap SURVIVED the tier bump ` +
+          `(+${Math.round((SKn.golem_elder / SKn.crystal_golem - 1) * 100)}% / ` +
+          `+${Math.round((SKn.dragon_elder / SKn.fire_dragon - 1) * 100)}% / ` +
+          `+${Math.round((SKn.unicorn_elder / SKn.unicorn - 1) * 100)}%)`,
+          SKn.golem_elder > SKn.crystal_golem * 1.35 &&
+          SKn.dragon_elder > SKn.fire_dragon * 1.35 &&
+          SKn.unicorn_elder > SKn.unicorn * 1.35]);
+        /* v13's fairness rule: MOB_TALL is a pixel offset nothing scales, so
+           every resized body must have taken its overlay clearance with it. */
+        const TALL_BEFORE = { bear: 7, griffin: 10, phoenix: 8, golem_elder: 29, boar: 0 };
+        const drift = [];
+        for (const s of Object.keys(TALL_BEFORE)) {
+          const want = SKn[s] / (BEFORE[s] || 2.70);          // golem_elder: 4.05/2.70
+          const got = (20 + MTn[s]) / (20 + TALL_BEFORE[s]);
+          if (Math.abs(got - want) > 0.03) drift.push(`${s} ${got.toFixed(3)} vs ${want.toFixed(3)}`);
+        }
+        results.push([`PART C: every resized body took its overlay offset with it${drift.length ? ' — DRIFT: ' + drift.join(', ') : ''}`,
+          drift.length === 0]);
+        results.push(['PART C: and nothing whose size did NOT change had its offset touched',
+          MTn.troll === 31 && MTn.bandit === 5 && MTn.dark_wraith === 6 &&
+          MTn.sea_serpent === 78 && MTn.elder_drake === 46]);
+        results.push(['PART C: the long-and-low Salamander King is still the named exception at 4',
+          MTn.salamander_king === 4]);
+      }
+
+      /* ---- PART D: the Elder boss cue ------------------------------------ */
+      {
+        const dmiE = window.debugMusicInfo, dsmsE = window.debugSetMusicState;
+        results.push(['PART D: an Elder is read from BOTH tables — the flagged pets and the named boss',
+          window.isElderCombatant('golem_elder') === true &&
+          window.isElderCombatant('dragon_elder') === true &&
+          window.isElderCombatant('unicorn_elder') === true &&
+          window.isElderCombatant('elder_drake') === true]);
+        results.push(['PART D: and nothing else is, however dangerous it is',
+          !window.isElderCombatant('sea_serpent') && !window.isElderCombatant('troll') &&
+          !window.isElderCombatant('griffin') && !window.isElderCombatant('phoenix') &&
+          !window.isElderCombatant('wolf') && !window.isElderCombatant('')]);
+        /* Not one expression over one table: WILD_SPECIES is the only place
+           the `elder` flag exists and MOBS is the only place the drake does. */
+        results.push(['PART D: the check really is two separate table lookups',
+          /function isElderCombatant\([\s\S]{0,400}WILD_SPECIES\[kind\][\s\S]{0,300}MOBS\[kind\]/.test(gameScript)]);
+
+        // a hit landed on the boss is an Elder fight; a hit on a Troll is not
+        dsmsE({ elderMusicUntil: 0, combatMusicUntil: 0, inCombatMusic: false, musicCheckAt: 0 });
+        window.mobHit({ id: 'gate:troll', kind: 'troll', x: SPW.x + 0.5, y: SPW.y + 0.5,
+          hp: 500, maxHp: 500, dead: false, flash: 0 }, 1, {});
+        results.push(['PART D: an ordinary fight never wakes the Elder cue',
+          dmiE().elderMusicUntil === 0]);
+        const tE = window.performance.now();
+        window.mobHit({ id: 'gate:drake', kind: 'elder_drake', x: SPW.x + 0.5, y: SPW.y + 0.5,
+          hp: 900, maxHp: 900, dead: false, flash: 0 }, 1, {});
+        results.push(['PART D: a hit landed on the Elder Drake pushes the cue ~6s out',
+          dmiE().elderMusicUntil >= tE + 5900 &&
+          dmiE().elderMusicUntil <= window.performance.now() + 6000]);
+        results.push(['PART D: on the SAME linger the combat track already uses — no second timer',
+          dmiE().COMBAT_MUSIC_LINGER === 6000]);
+
+        // the switch itself: Elder outranks combat, combat outranks the rotation
+        const fetchedE = [];
+        const realFetch = window.fetch;
+        window.fetch = async (url) => { fetchedE.push(String(url)); return { arrayBuffer: async () => new ArrayBuffer(8) }; };
+        dsmsE({ inCombatMusic: false, musicCheckAt: 0,
+                combatMusicUntil: window.performance.now() + 6000,
+                elderMusicUntil: window.performance.now() + 6000 });
+        window.update(0.016, 700000);
+        await new Promise(r => setTimeout(r, 0));
+        results.push(['PART D: an Elder fight takes the channel with tension.mp3, looping',
+          fetchedE[0] === 'audio/tension.mp3' && dmiE().inCombatMusic === true &&
+          dmiE().combatTrackUrl === 'audio/tension.mp3']);
+        fetchedE.length = 0;
+        dsmsE({ musicCheckAt: 0 });
+        window.update(0.016, 700100);
+        results.push(['PART D: and a second check inside the window does not restart it',
+          fetchedE.length === 0]);
+        // the Elder dies, the ordinary fight goes on: hand back to nu_metal
+        dsmsE({ musicCheckAt: 0, elderMusicUntil: window.performance.now() - 1,
+                combatMusicUntil: window.performance.now() + 6000 });
+        window.update(0.016, 700200);
+        await new Promise(r => setTimeout(r, 0));
+        results.push(['PART D: when the Elder cue lapses mid-fight the ordinary combat track takes over',
+          fetchedE[0] === 'audio/nu_metal.mp3' && dmiE().combatTrackUrl === 'audio/nu_metal.mp3']);
+        fetchedE.length = 0;
+        dsmsE({ musicCheckAt: 0, elderMusicUntil: 0, combatMusicUntil: 0 });
+        window.update(0.016, 700300);
+        await new Promise(r => setTimeout(r, 0));
+        results.push(['PART D: and with both lapsed it is back to the rotation',
+          dmiE().inCombatMusic === false && dmiE().combatTrackUrl === null &&
+          fetchedE.length === 1 && fetchedE[0].indexOf('audio/') === 0]);
+        window.fetch = realFetch;
+
+        /* The Dragon Elder and the Unicorn Elder are never mobs, so the
+           companion path is the ONLY way either can ever wake the cue — this
+           is the WILD_SPECIES flag doing what the MOBS table cannot. */
+        const OUTE = { x: SPW.x + window.debugWorldInfo().SAFE_RADIUS + 40.5,
+                       y: SPW.y + window.debugWorldInfo().SAFE_RADIUS + 40.5 };
+        results.push(['PART D: (the companion test really is outside a safe zone)',
+          window.inSafeZone(OUTE.x, OUTE.y) === false]);
+        window.debugSetPlayer({ x: OUTE.x, y: OUTE.y, hp: 100, diving: false });
+        window.debugGrantPet('dragon_elder');
+        const handlesE = window.debugCombatHandles();
+        handlesE.mobs.push({ id: 'gate:petfoe', kind: 'goblin',
+          x: OUTE.x + 0.4, y: OUTE.y + 0.4, hx: OUTE.x + 0.4, hy: OUTE.y + 0.4,
+          hp: 4000, maxHp: 4000, state: 'idle', target: null, atkAt: 1e12,
+          windupStart: 0, winding: false, flash: 0, boltT: 0, ph: 1,
+          dead: false, respawnAt: 0, lastSync: 1e12, fx: 0, fy: 1 });
+        dsmsE({ elderMusicUntil: 0 });
+        for (let i = 0; i < 3; i++) window.update(0.016, 701000 + i * 20);
+        results.push(['PART D: a tamed Dragon Elder swinging is an Elder fight all by itself',
+          dmiE().elderMusicUntil > window.performance.now()]);
+        const idx = handlesE.mobs.findIndex(m => m.id === 'gate:petfoe');
+        if (idx >= 0) handlesE.mobs.splice(idx, 1);
+        dsmsE({ elderMusicUntil: 0, combatMusicUntil: 0, inCombatMusic: false, musicCheckAt: 0 });
+        window.debugSetPlayer({ x: SPW.x + 0.5, y: SPW.y + 0.5, hp: 100, diving: false });
+      }
+
+      /* ---- PART E: the credits ------------------------------------------- */
+      {
+        const dsiE = window.debugSettingsInfo();
+        results.push(['PART E: "Created by" carries the full name now',
+          dsiE.CREDITS[0].role === 'Created by' &&
+          dsiE.CREDITS[0].name.indexOf('Harsh Devarajan') === 0]);
+        results.push(['PART E: directly alongside the Hashbrown Studios line, as it always was',
+          dsiE.CREDITS[1].name === 'Hashbrown Studios' && dsiE.CREDITS.length === 2]);
+        results.push(['PART E: Skeptik is credited as composer, by track',
+          dsiE.MUSIC_CREDITS.some(c => c.role.indexOf('Skeptik') === 0 &&
+            c.name.indexOf('Pop.mp3') >= 0 && c.name.indexOf('song.mp3') >= 0 &&
+            c.name.indexOf('tension.mp3') >= 0)]);
+        results.push(['PART E: Advay is credited as composer for siren.mp3',
+          dsiE.MUSIC_CREDITS.some(c => c.role === 'Advay' && c.name.indexOf('siren.mp3') >= 0)]);
+        window.renderCredits();
+        const mcl = doc.getElementById('musicCreditsList');
+        results.push(['PART E: and the MUSIC block really renders, in the panel\'s own .cr-row language',
+          !!mcl && mcl.children.length === dsiE.MUSIC_CREDITS.length &&
+          Array.prototype.every.call(mcl.children, r => r.className === 'cr-row')]);
+        results.push(['PART E: no new component style was invented for it',
+          !!mcl && Array.prototype.every.call(mcl.children, r =>
+            r.children[0].className === 'cr-role' && r.children[1].className === 'cr-name')]);
+        results.push(['PART E: the two Dev Team collaboration rows are untouched',
+          dsiE.COLLABORATIONS.some(c => c.name.indexOf('Skeptik') === 0 && c.role === 'Dev Team') &&
+          dsiE.COLLABORATIONS.some(c => c.name === 'Advay' && c.role === 'Dev Team')]);
+      }
+
+      /* put the world back the way the rest of this file expects it */
+      srt({ takes: {}, day: dayNow });
+      window.buildFeatureList();
+      results.push(['Mob Rarity: the world rebuilds clean with an empty take map',
+        (rti().wildSpeciesInWorld[SPC] || 0) === capSPC &&
+        (rti().mobKindsInWorld.elder_drake || 0) === 1]);
+      window.Date.now = realDateNow;          // the clock runs again
+      srt({ day: rti().day });                // and the map is stamped for the real today
+    } else {
+      results.push(['Mob Rarity PART A hooks are reachable', false]);
     }
 
     /* The admin half, run LAST because it genuinely rewrites the world. */
