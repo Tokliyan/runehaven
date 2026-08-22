@@ -102,49 +102,68 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (PIN Fixes)
+## Confirmed, locked spec for the next build (Pre-Launch QA Pass)
 
-**Corrected after a genuine, valuable RED.** The previous version of this
-spec contained two real mistakes, both mine, not the build's — caught by
-the automated process reading the actual bible and the actual file
-rather than trusting the spec's own claims:
+PIN Fixes shipped successfully — every roadmap item is now complete. This
+is a genuine audit, not new content. Real bugs across this whole project
+have consistently appeared at the SEAMS between systems, not inside any
+one system in isolation — a new landmark that an older placement loop
+never learned to avoid, a new item missing its counterpart in a sibling
+table, a safe-zone override that never anticipated a specific biome. This
+spec is structured around that actual pattern, not a generic sweep.
 
-- **Guilds are dropped entirely, not scoped down.** The bible's TEAMING &
-  ALLIANCES section explicitly rules out a formal guild/clan system, with
-  a stated design reason ("keeps the world raw and unpredictable —
-  anyone could be an enemy or an ally"). My prior spec's claim that "the
-  bible scopes this as identity and grouping only" was simply wrong — it
-  says the opposite. Not touched this version or any future one unless
-  the bible itself is deliberately amended, which is not a call to make
-  inside a build spec.
-- **Admin bootstrap is dropped entirely — it was never actually
-  missing.** Confirmed directly: `runehaven.html` line 4354 already reads
-  `role: p.role === "admin" ? "admin" : "player"` straight off the real
-  `players` table on every login — the exact mechanism the bible itself
-  names ("promote other players to admin via Supabase, role column").
-  The "bootstrap gap" in the prior spec was based on an incomplete search
-  that only found the debug-only hook. Nothing needs building here.
+**PART A — cross-table completeness, checked programmatically, not by
+eye.** For every entry in `WEAPONS`, confirm a matching `ITEM_META` entry
+exists and a `RECIPES` entry can produce it (unless explicitly a
+world-drop-only item — flag those separately, don't assume). For every
+entry in `ARMORS`, confirm the reverse: every item with `armor: true` in
+`ITEM_META` has a matching `ARMORS` entry (this exact class of bug shipped
+once already — `dragonsteel_shield` — confirm nothing else has the same
+gap). For every `MOBS`/`WILD_SPECIES` entry, confirm a drawing function
+is actually reachable for its `kind`/`species` — a mob with stats but no
+matching art branch would fail silently, not throw.
 
-**PART A — visible signal when the PIN system is inactive.** Confirmed:
-`accountPinLookup()` initializes `mode: "none"` and returns early on any
-`account_pins` query failure, before ever reaching the line that sets
-`mode: "create"`. A missing table makes the whole feature silently
-invisible, new account or not. Show a small, dismissible, one-time notice
-near the username field when this happens — "PIN protection isn't active
-on this world yet" — not blocking, not repeated every keystroke.
+**PART B — every placement/exclusion loop, checked against every
+landmark that exists now, not the landmark list at the time it was
+written.** Ruin placement, Zone placement, Elder Drake's search, base
+placement, and any other loop that excludes proximity to named landmarks
+— confirm each one checks against the FULL current landmark set (Tower,
+Volcano, Mount, Spawn, Bazaar, Ancient Forge, Colosseum, Dragon Altar,
+Shrine), not whichever subset existed when that loop was first written.
+This exact class of bug shipped twice already (Ruins missing the
+Volcano/Mount exclusion at the new scale, Zones never checking the three
+v37 landmarks at all) — treat finding a third instance as likely, not
+unlikely.
 
-**PART B — retroactive PIN-setting for pre-existing unprotected
-accounts.** Confirmed: `mode === "none"` currently means "skip the field
-entirely," with no route for an existing unprotected account to ever set
-one. Add an optional "Protect this name with a PIN" link shown whenever
-`mode === "none"` — clicking it reveals the same create-PIN field,
-submitting writes `account_pins` exactly like a new account does. Never
-required, always available.
+**PART C — every biome-override guard, checked against what it actually
+excludes.** The Safe Zone clearing bug (excluding PEAK via `BLOCKED.has`)
+was a real, shipped bug for a long time before anything exposed it —
+confirm every other biome-override check (Ruin carve, cliff-face
+selection, any terrain force-override) makes the same distinction between
+"genuinely impassable" (DEEP, LAVA) and "just a different, walkable
+terrain type" (PEAK, ROCK) rather than treating them as one category by
+habit.
 
-**Proof gates:** standard gauntlet plus confirm the PIN-inactive notice
-shows exactly once per session, confirm the retroactive PIN link appears
-only for `mode === "none"` and correctly writes `account_pins`, confirm
-nothing related to guilds or a new admin table was added anywhere.
+**PART D — a real end-to-end new-player walkthrough**, run once fully
+rather than tested system-by-system: create an account with a PIN, land
+at spawn, complete or skip the tutorial, gather a resource, craft a basic
+tool, tame a common species, build a Foundation and one other piece,
+survive a day/night cycle, and confirm nothing in that ordinary sequence
+throws or silently does nothing. This is the sequence an actual new
+player takes Monday — confirm it as a whole, not as isolated features.
+
+**PART E — a real stability check at N=1000, not the automated tests'
+stubbed environment.** Confirm the viewport ground renderer (Expansion
+2a) holds its per-frame tile-count bound at multiple camera positions
+across the now much-larger map, not just the position it was originally
+verified at.
+
+**Proof gates:** every gap found in Parts A-C gets fixed with the same
+"invariant survives, specific number/reference updates" discipline used
+all session — not silently patched, not left as a note. Part D's
+walkthrough is itself a proof gate: it either completes clean or the
+build stops and reports exactly where it didn't. Standard gauntlet
+throughout.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
