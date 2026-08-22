@@ -6752,10 +6752,13 @@ function refreshTravelPanel() {
   if (!plist) return;
   const cdLeft = playerTpReadyIn();
   const people = travelablePlayers();
+  /* hotfix: this reused `owned` (Unicorn Elder ownership), which only
+     gates landmark travel. Player-to-player teleport was always meant to
+     be its own standalone mechanic (Tuning/Polish PART C) — nothing in
+     that spec ties it to owning an Elder, and requiring one made it
+     unusable for every player who hadn't tamed one yet. */
   if (pnote) {
-    pnote.textContent = !owned
-      ? "You have no way of travelling like this."
-      : cdLeft > 0
+    pnote.textContent = cdLeft > 0
         ? `The world will not fold again for ${Math.ceil(cdLeft / 1000)}s.`
         : "Everyone out in the world right now. You arrive near them, never on top of them — and never inside a Safe Zone or the Colosseum.";
   }
