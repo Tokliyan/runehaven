@@ -102,36 +102,74 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (Account PIN Protection)
+## Confirmed, locked spec for the next build (PIN Fixes + Guilds + Admin)
 
-Real gap: any existing username can currently be typed by anyone to load
-straight into that account. New table, same house pattern as
-`base_pieces`/`rare_takes`:
+Account PIN Protection shipped successfully. This addresses two real
+gaps found testing it, plus the last genuinely unbuilt bible system.
+
+**PART A — visible signal when the PIN system is inactive.** Confirmed
+directly: `accountPinLookup()` initializes `mode: "none"` and returns
+early on any `account_pins` query failure — before ever reaching the line
+that would set `mode: "create"`. This means a missing table doesn't just
+degrade gracefully, it makes the whole feature silently invisible, new
+account or not. Add a real signal: if `out.system === false` is ever
+returned during a lookup, show a small, dismissible one-time notice near
+the username field — "PIN protection isn't active on this world yet" —
+not blocking, not repeated every keystroke, just visible instead of
+silent.
+
+**PART B — retroactive PIN-setting for pre-existing unprotected
+accounts.** Confirmed: `mode === "none"` currently means "existing name,
+no PIN, skip the field entirely." Add a genuine path: when `mode ===
+"none"`, show a smaller, optional "Protect this name with a PIN" link
+rather than nothing — clicking it reveals the same create-PIN field,
+submitting writes the `account_pins` row exactly like a new account does.
+Never required, always available, so an account like a long-running dev
+account can close this gap without needing a database edit.
+
+**PART C — Guilds.** New tables, same house pattern as `base_pieces`:
 ```sql
-create table account_pins (
-  username text primary key,
-  pin text
+create table guilds (
+  id bigserial primary key,
+  name text unique,
+  leader text
+);
+create table guild_members (
+  guild_id bigint references guilds(id),
+  username text primary key
 );
 ```
+A player with no guild can create one (name + becomes leader) or request
+to join an existing one by name. The leader can accept/remove members.
+A guild tag renders next to a member's name wherever their username
+already shows (nameplate, chat if any exists, kill feed) — reuse the
+existing name-rendering call sites, don't add a second one. No guild
+perks, no shared storage, no guild-only mechanics — the bible scopes this
+as identity and grouping only; anything mechanical is explicitly out of
+scope for this version.
 
-**Flow, exactly as specified:** the login screen already has a username
-field. The moment the typed name does NOT match any row in the players
-table (a genuinely new name), a second field appears directly below it —
-"Create a PIN" — before the account is created. Submitting both together
-creates the player row AND the `account_pins` row in the same action. If
-the typed name DOES match an existing row, the PIN field appears asking
-to confirm it, and login only proceeds if it matches. No PIN on file for
-an existing name (created before this shipped) means login proceeds as
-before — do not lock out every pre-existing account on day one.
+**PART D — Admin tooling, including the bootstrap gap this build found.**
+Confirmed: the only existing path to `role === "admin"` is a debug-only
+hook — no real player can ever become admin right now, which means the
+world-reset safeguard's second key is currently unreachable by design,
+not by choice. Add a real bootstrap: the very first row ever inserted
+into a new `admins` table (`create table admins (username text primary
+key);`) can only be set directly in Supabase — document this plainly, do
+not invent an in-game way to self-promote, that would defeat the whole
+point of a second key. Once at least one real admin exists, they get an
+in-game panel (reachable only when `isAdmin()` is true) to promote or
+demote other players by username, writing to that same table. This
+panel is the ONLY thing that writes to `admins` — the world-reset
+executor keeps reading `isAdmin()` exactly as it already does, unchanged.
 
-Must degrade gracefully if `account_pins` doesn't exist yet — same
-fallback discipline as every prior new table: treat a failed query as
-"no PIN system active," never throw, never block login.
-
-**Proof gates:** standard gauntlet plus confirm a new username genuinely
-cannot be created without a PIN, confirm an existing protected username
-rejects the wrong PIN, confirm a pre-existing unprotected username still
-logs in normally, confirm the missing-table fallback never throws.
+**Proof gates:** standard gauntlet plus confirm the PIN-inactive notice
+shows exactly once per session, not repeatedly; confirm the retroactive
+PIN link appears only for `mode === "none"` and correctly writes
+`account_pins`; confirm a guild tag renders at every existing
+name-display call site with no new one invented; confirm the admin panel
+is completely unreachable without `isAdmin()` true; confirm promoting a
+second admin through the panel actually grants them panel access too, not
+just the flag.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
