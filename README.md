@@ -104,65 +104,84 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
 
 ## Confirmed, locked spec for the next build (Mob Rarity + Music)
 
-Tuning/Polish shipped successfully. Confirmed live: `BG_PLAYLIST` currently
-holds Pop/Slower_Jamz/Long_Way_Home/song. `audio/tension.mp3` and
-`audio/siren.mp3` are already pushed to the repo, ready to wire in.
-Credits currently read `{ role: "Created by", name: "Harsh D and the
-RuneHaven development team" }`, Skeptik and Advay both listed as "Dev
-Team".
+Revised after a genuine RED — the original PART C gave Rare/Epic pets a
+bigger multiplier than the Elders, closing the size gap Tuning/Polish had
+just established. Caught empirically, not by arithmetic: the failed build
+built both ends of every range on a scratch copy and proved even the best
+legal value left Unicorn Elder virtually the same size as a plain
+Unicorn. Fixed below. PARTS B/D/E were independently verified clean
+against the live file — unchanged from the original spec.
 
-**PART A — real population caps with daily restock, not probability
-tuning.** The actual ask: rare species (propose the Rare tier and up —
-dragons, Crystal Golem, and above) should be genuinely scarce at any
-moment, not just individually unlikely per spawn roll. Add a per-species
-world-population cap for this tier, reusing the exact `worldDayNum()`
-counter Krakenling and Blood Moon already key off — once a species hits
-its cap for the day (tamed or killed), no more of that species spawns
-until the next day boundary, when the pool refills. This is a genuine new
-mechanic layered on top of the existing `count`/`base` system, not a
-replacement for it — the existing density logic still governs where and
-how they spawn within whatever the day's remaining allotment is.
+**PART A — real population caps, world-wide, with genuine persistence.**
+New table, `rare_takes` — same house pattern as `base_pieces`, small SQL
+step:
+```sql
+create table rare_takes (
+  id bigserial primary key,
+  species text,
+  day_num integer,
+  taken_at timestamptz default now()
+);
+```
+A wild Rare-tier-and-up species (dragons, Crystal Golem, and above)
+counts as "taken" for the day the moment it is EITHER successfully tamed
+OR dies while still wild — both remove it from the world's available
+pool, matching the bible's own framing ("once a pet goes... it's gone").
+**Once a creature is tamed, anything that happens to it afterward —
+including another player killing it for its dragonsteel — does not
+return a slot to the pool.** That slot was already spent the day it was
+first taken; the PvP-dragon-killing mechanic is a separate, already-built
+system and must not interact with this cap at all. Query the day's take
+count per species before allowing a new wild spawn; once at cap, that
+species does not spawn again until `worldDayNum()` advances. Code must
+degrade gracefully if the table doesn't exist yet — same fallback
+discipline as every prior new column (v25, v33, v34): treat a failed
+insert/select as "no takes yet today" rather than throwing.
 
-**PART B — Griffin and Shadowfox, corrected against their real tiers.**
-Confirmed directly: Griffin (Uncommon) sits at `base: 0.35`, its own
-tier-mates run 0.40-0.50 — raise to 0.42. Shadowfox (Epic) sits at
-`base: 0.35` while its real tier-mates (Lightfox, Krakenling) run 0.20,
-despite ALREADY carrying extra restrictions (night-only, a presence roll)
-those don't compound as heavily — lower to 0.20, matching its actual
-tier. Basilisk remains genuinely unbuilt — tied to Dungeons, which do not
-exist — not part of this version, an honest scope gap, not a bug to fix
-here.
+**PART B — Griffin and Shadowfox, corrected to their real tiers.**
+Confirmed live: both sit at `base: 0.35`. Uncommon tier-mates run
+0.40-0.50 (Griffin -> 0.42, exact fit). Epic tier-mates run 0.20
+(Shadowfox -> 0.20, exact fit). No existing run4 assertion pins either
+value. Basilisk remains genuinely unbuilt (needs Dungeons) — not this
+version.
 
-**PART C — every pet gets bigger, discretion applied by tier, not a flat
-multiplier.** Common: 1.15-1.25x. Uncommon: 1.3-1.4x. Rare: 1.5-1.65x.
-Epic: 1.7-1.85x. Elders were already increased in Tuning/Polish — a
-smaller additional bump only (propose 1.1x on top of their current
-value), not a second full pass.
+**PART C — every pet gets bigger, Elders get their own band so the gap
+survives.** Common: 1.15-1.25x. Uncommon: 1.3-1.4x. Rare: 1.5-1.65x.
+Epic: 1.7-1.85x. **Elders get a dedicated band, not a percentage bump on
+top of Tuning/Polish's numbers**: `golem_elder: 4.05, dragon_elder: 3.60,
+unicorn_elder: 2.78` — landing +51%/+48%/+35% over their Tuning/Polish
+values, so a future pass that sizes up a base tier still cannot leave an
+Elder quietly level with it. Update the two `run4` SPECIES_K literals in
+the mount-seat gate to match (updated, not relaxed — the ordering
+`shadowfox > griffin > lightfox` holds at every band).
 
-**PART D — the real music.** Two tracks are genuinely new
-(`tension.mp3`, `siren.mp3`); Pop/song are confirmed byte-identical to
-what's already wired in, no changes needed there. Add `siren.mp3` to
-`BG_PLAYLIST` as a fifth roaming track. Add `tension.mp3` as a real boss
-track — reuse the exact `combatMusicUntil`/`COMBAT_MUSIC_LINGER`
-mechanism already built for `nu_metal.mp3`, but scoped specifically to
-Elder Drake and Elder-tier fights (`m.kind === "elder_drake" || def.elder`)
-rather than all combat, so it reads as a distinct "this is a real boss"
-cue rather than replacing the existing regular-combat track.
+**PART D — the music.** Confirmed live: `BG_PLAYLIST` holds exactly
+Pop/Slower_Jamz/Long_Way_Home/song, `audio/siren.mp3` and
+`audio/tension.mp3` are both already in the repo. Add `siren.mp3` to
+`BG_PLAYLIST` as a fifth track. Add a real Elder-scoped boss cue using
+`tension.mp3`, reusing the exact `combatMusicUntil`/
+`COMBAT_MUSIC_LINGER` mechanism already built for `nu_metal.mp3`. **Read
+both tables to detect an Elder fight** — `WILD_SPECIES` entries for the
+three tamed Elders carry `elder: true`; `MOBS` has no such flag, so
+Elder Drake is matched by `m.kind === "elder_drake"` specifically. Do not
+write a single expression assuming both live on one table. Four `run4`
+literals need updating to match the new playlist length (5, not 4) and
+the new call-site count — updated, not relaxed.
 
-**PART E — credits.** Skeptik's role stays "Dev Team" but gets explicit
-composer credit for `Pop.mp3`, `song.mp3`, and `tension.mp3`. Advay's
-entry gets explicit composer credit for `siren.mp3`. Update `"Created by"`
-name from `"Harsh D"` to the full `"Harsh Devarajan"`, and ensure it
-appears directly alongside the existing "Hashbrown Studios" line rather
-than only in the separate "Created by" row.
+**PART E — credits.** Skeptik gets explicit composer credit for
+`Pop.mp3`, `song.mp3`, `tension.mp3`. Advay gets explicit composer credit
+for `siren.mp3`. `"Created by"` name updates from `"Harsh D"` to the full
+`"Harsh Devarajan"`, placed directly alongside the existing "Hashbrown
+Studios" line.
 
-**Proof gates:** standard gauntlet plus confirm the daily population cap
-genuinely blocks a capped species from spawning again until
-`worldDayNum()` advances, confirm Griffin/Shadowfox's new base values are
-live, confirm every tier's size multiplier landed within its proposed
-range, confirm both new tracks are reachable and correctly scoped
-(`siren.mp3` in rotation, `tension.mp3` only on Elder-tier combat), and
-confirm the credits/name updates are live.
+**Proof gates:** standard gauntlet plus confirm a capped species
+genuinely stops spawning at its daily limit and resumes the next
+`worldDayNum()`, confirm the cap survives a simulated reload (real
+persistence, not session-local), confirm a tamed-then-PvP-killed dragon
+does NOT free up a slot, confirm Griffin/Shadowfox's corrected values are
+live, confirm every tier lands in its proposed range and the Elder band
+lands at its dedicated values specifically, confirm both tracks are
+correctly scoped, confirm credits are live.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
