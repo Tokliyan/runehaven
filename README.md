@@ -102,74 +102,49 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (PIN Fixes + Guilds + Admin)
+## Confirmed, locked spec for the next build (PIN Fixes)
 
-Account PIN Protection shipped successfully. This addresses two real
-gaps found testing it, plus the last genuinely unbuilt bible system.
+**Corrected after a genuine, valuable RED.** The previous version of this
+spec contained two real mistakes, both mine, not the build's — caught by
+the automated process reading the actual bible and the actual file
+rather than trusting the spec's own claims:
 
-**PART A — visible signal when the PIN system is inactive.** Confirmed
-directly: `accountPinLookup()` initializes `mode: "none"` and returns
-early on any `account_pins` query failure — before ever reaching the line
-that would set `mode: "create"`. This means a missing table doesn't just
-degrade gracefully, it makes the whole feature silently invisible, new
-account or not. Add a real signal: if `out.system === false` is ever
-returned during a lookup, show a small, dismissible one-time notice near
-the username field — "PIN protection isn't active on this world yet" —
-not blocking, not repeated every keystroke, just visible instead of
-silent.
+- **Guilds are dropped entirely, not scoped down.** The bible's TEAMING &
+  ALLIANCES section explicitly rules out a formal guild/clan system, with
+  a stated design reason ("keeps the world raw and unpredictable —
+  anyone could be an enemy or an ally"). My prior spec's claim that "the
+  bible scopes this as identity and grouping only" was simply wrong — it
+  says the opposite. Not touched this version or any future one unless
+  the bible itself is deliberately amended, which is not a call to make
+  inside a build spec.
+- **Admin bootstrap is dropped entirely — it was never actually
+  missing.** Confirmed directly: `runehaven.html` line 4354 already reads
+  `role: p.role === "admin" ? "admin" : "player"` straight off the real
+  `players` table on every login — the exact mechanism the bible itself
+  names ("promote other players to admin via Supabase, role column").
+  The "bootstrap gap" in the prior spec was based on an incomplete search
+  that only found the debug-only hook. Nothing needs building here.
+
+**PART A — visible signal when the PIN system is inactive.** Confirmed:
+`accountPinLookup()` initializes `mode: "none"` and returns early on any
+`account_pins` query failure, before ever reaching the line that sets
+`mode: "create"`. A missing table makes the whole feature silently
+invisible, new account or not. Show a small, dismissible, one-time notice
+near the username field when this happens — "PIN protection isn't active
+on this world yet" — not blocking, not repeated every keystroke.
 
 **PART B — retroactive PIN-setting for pre-existing unprotected
-accounts.** Confirmed: `mode === "none"` currently means "existing name,
-no PIN, skip the field entirely." Add a genuine path: when `mode ===
-"none"`, show a smaller, optional "Protect this name with a PIN" link
-rather than nothing — clicking it reveals the same create-PIN field,
-submitting writes the `account_pins` row exactly like a new account does.
-Never required, always available, so an account like a long-running dev
-account can close this gap without needing a database edit.
-
-**PART C — Guilds.** New tables, same house pattern as `base_pieces`:
-```sql
-create table guilds (
-  id bigserial primary key,
-  name text unique,
-  leader text
-);
-create table guild_members (
-  guild_id bigint references guilds(id),
-  username text primary key
-);
-```
-A player with no guild can create one (name + becomes leader) or request
-to join an existing one by name. The leader can accept/remove members.
-A guild tag renders next to a member's name wherever their username
-already shows (nameplate, chat if any exists, kill feed) — reuse the
-existing name-rendering call sites, don't add a second one. No guild
-perks, no shared storage, no guild-only mechanics — the bible scopes this
-as identity and grouping only; anything mechanical is explicitly out of
-scope for this version.
-
-**PART D — Admin tooling, including the bootstrap gap this build found.**
-Confirmed: the only existing path to `role === "admin"` is a debug-only
-hook — no real player can ever become admin right now, which means the
-world-reset safeguard's second key is currently unreachable by design,
-not by choice. Add a real bootstrap: the very first row ever inserted
-into a new `admins` table (`create table admins (username text primary
-key);`) can only be set directly in Supabase — document this plainly, do
-not invent an in-game way to self-promote, that would defeat the whole
-point of a second key. Once at least one real admin exists, they get an
-in-game panel (reachable only when `isAdmin()` is true) to promote or
-demote other players by username, writing to that same table. This
-panel is the ONLY thing that writes to `admins` — the world-reset
-executor keeps reading `isAdmin()` exactly as it already does, unchanged.
+accounts.** Confirmed: `mode === "none"` currently means "skip the field
+entirely," with no route for an existing unprotected account to ever set
+one. Add an optional "Protect this name with a PIN" link shown whenever
+`mode === "none"` — clicking it reveals the same create-PIN field,
+submitting writes `account_pins` exactly like a new account does. Never
+required, always available.
 
 **Proof gates:** standard gauntlet plus confirm the PIN-inactive notice
-shows exactly once per session, not repeatedly; confirm the retroactive
-PIN link appears only for `mode === "none"` and correctly writes
-`account_pins`; confirm a guild tag renders at every existing
-name-display call site with no new one invented; confirm the admin panel
-is completely unreachable without `isAdmin()` true; confirm promoting a
-second admin through the panel actually grants them panel access too, not
-just the flag.
+shows exactly once per session, confirm the retroactive PIN link appears
+only for `mode === "none"` and correctly writes `account_pins`, confirm
+nothing related to guilds or a new admin table was added anywhere.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
