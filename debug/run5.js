@@ -580,6 +580,92 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         if (beforeV) window.debugSetPlayer({ x: beforeV.x, y: beforeV.y });
       }
     }
+    /* ============ Mob Rarity + Music sweep ================================
+       PART C resized the ENTIRE tameable roster, so every one of these bodies
+       paints at a scale it has never painted at — including the overlay
+       offsets, which are pixel values that do not scale with the art. The
+       SPECIES / MOBK / drawPet sweeps above already walk every one of them,
+       so RESIZED exists to be the named list a future size pass extends
+       rather than to add a path they miss: it draws each resized creature
+       through drawMob in every combat state AND through drawSpecies, with the
+       "!" tell and the HP bar up, which is where a body that outgrew its
+       offset actually shows. EXTEND IT whenever a creature is resized. */
+    const RESIZED = ['tree_sprite', 'water_sprite', 'stone_sprite', 'wind_sprite',
+                     'glow_moth', 'wolf', 'golem', 'stag', 'boar', 'bear', 'griffin',
+                     'unicorn', 'crystal_golem', 'phoenix', 'fire_dragon',
+                     'water_dragon', 'storm_dragon', 'shadow_dragon',
+                     'shadowfox', 'lightfox', 'krakenling', 'salamander_king',
+                     'golem_elder', 'dragon_elder', 'unicorn_elder'];
+    if (window.drawSpecies) {
+      const c2 = window.document.createElement('canvas').getContext('2d');
+      for (const sp of RESIZED) {
+        for (const moving of [true, false]) { window.drawSpecies(sp, 90, 90, 1200, moving); n += 1; }
+      }
+      // the ones with a hostile form, wearing their tell and their bar
+      if (window.drawMob) {
+        for (const mk of ['boar', 'bear', 'griffin', 'phoenix', 'salamander_king', 'golem_elder']) {
+          for (const st of ['idle', 'aggro', 'attack', 'cower']) {
+            for (const winding of [false, true]) {
+              window.drawMob({ id: mk + ':resized', kind: mk, x: 41, y: 51, hx: 41, hy: 51,
+                hp: st === 'cower' ? 8 : 40, maxHp: 80, state: st, winding,
+                flash: winding ? performance.now() : 0, fx: winding ? -1 : 1, fy: 0,
+                dead: false, target: null, ph: 1 }, 1200);
+              n += 1;
+            }
+          }
+        }
+      }
+      void c2;
+    }
+    /* PART A: a world at its daily cap is a world with things MISSING from
+       it, which is a frame the boot above never draws. Force every Rare-and-up
+       species to its cap, rebuild, and pump real frames — then put it back. */
+    if (window.debugSetRareTakes && window.debugRareTakesInfo && window.buildFeatureList) {
+      const rt = window.debugRareTakesInfo();
+      const allTaken = {};
+      for (const sp of Object.keys(rt.PET_RARITY)) {
+        if (rt.CAPPED_RARITIES.indexOf(rt.PET_RARITY[sp]) >= 0) allTaken[sp] = rt.caps[sp];
+      }
+      window.debugSetRareTakes({ takes: allTaken, day: rt.day });
+      window.buildFeatureList();
+      for (let f = 560; f < 568; f++) {
+        const q = rafQ; rafQ = [];
+        for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+        n += 1;
+      }
+      const capped = window.debugRareTakesInfo();
+      console.log('capped world rendered — rare+ wilds left:',
+        Object.keys(capped.wildSpeciesInWorld)
+              .filter(s => capped.CAPPED_RARITIES.indexOf(capped.PET_RARITY[s]) >= 0).length);
+      window.debugSetRareTakes({ takes: {}, day: window.debugRareTakesInfo().day });
+      window.buildFeatureList();
+    }
+    /* PART D: the Elder cue is a branch of the per-frame music check that no
+       ordinary frame reaches. Drive it through real frames, both ways. */
+    if (window.debugSetMusicState && window.debugMusicInfo) {
+      window.fetch = async () => ({ arrayBuffer: async () => new ArrayBuffer(8) });
+      for (const state of [{ elderMusicUntil: performance.now() + 6000, combatMusicUntil: performance.now() + 6000 },
+                           { elderMusicUntil: 0, combatMusicUntil: performance.now() + 6000 },
+                           { elderMusicUntil: 0, combatMusicUntil: 0 }]) {
+        window.debugSetMusicState(Object.assign({ musicCheckAt: 0 }, state));
+        try { window.update(0.016, 900000); } catch (e) { if (!caught) caught = e; }
+        n += 1;
+      }
+      window.debugSetMusicState({ elderMusicUntil: 0, combatMusicUntil: 0,
+                                  inCombatMusic: false, musicCheckAt: 0 });
+      console.log('music states swept — Elder cue, combat track, rotation');
+    }
+    /* PART E: the credits panel gained a MUSIC block. */
+    if (window.renderCredits) {
+      window.renderCredits();
+      const mcl = window.document.getElementById('musicCreditsList');
+      if (!mcl || mcl.children.length < 2) {
+        console.log('COVERAGE GAP: the MUSIC credits block did not render');
+        process.exit(1);
+      }
+      console.log('credits rendered — RUNEHAVEN, MUSIC (' + mcl.children.length + '), COLLABORATIONS');
+      n += 1;
+    }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {
