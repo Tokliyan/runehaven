@@ -53,6 +53,130 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-22 (PIN Fixes — the login card finally says when the PIN system is off, and an old account can opt in)
+
+**Not a rendering build either.** Same scope as the entry below it: the login
+card and the Supabase calls behind it. Two new DOM elements, no new table, no
+canvas call read or written. Not a palette entry, biome, cliff-face ratio,
+`SPECIES_K`, `MOB_K`, silhouette or shadow was touched, and `run5`'s coverage
+sweep is byte-identical at **1,055 draws** — which is the point: the world
+draws exactly as it did this morning.
+
+- **Both fixes close holes the entry below flagged in its own daylight.** Its
+  judgment call 7 said in as many words that "a pre-existing account stays
+  unprotected forever ... nothing in the game will ever offer them one" — PART B
+  is that offer. And its three-state design meant a world whose SQL had not
+  been run showed *nothing at all*, new account or not; PART A gives that
+  silence a voice. **Judgment call 7 below is now closed** — left in place, as
+  the running list requires, because it is the regression check for it.
+- **Neither element invents a component.** The notice is the `.panel` card
+  language at aside scale — same `var(--panel)` fill, same `--panel-edge`
+  hairline, same dim body text — with an `✕` that goes gold on hover, and the
+  same `-12px` pull inside the login card's 22px gap that ties the PIN field to
+  the name field. The offer is `#settingsBtn`'s bordered text-button idiom, one
+  step quieter in `--text-dim` on a bare background: it is an offer, and an
+  offer must never look like the thing you came here to press.
+- **They are mutually exclusive by design, and that is the one real design
+  decision in this build.** Mode `"none"` means two different things — "this
+  name has no PIN" and "this world has no PIN system" — and the offer is only
+  ever made for the first. Offering to protect a name in a world with nowhere
+  to store the PIN would be a promise the code cannot keep, so that case gets
+  the notice instead. `pinProtectOffered()` is the single predicate both the
+  link and the submit-time gate read, so the two can never disagree.
+- **The notice is one-time in the strong sense.** The latch is set the first
+  time it goes up and never cleared, so a dismissal is permanent for the
+  session and — the thing actually worth pinning — the debounced probe that
+  fires on every keystroke cannot re-raise it. `run4` proves it with a mutation
+  the harness would otherwise have missed: remove the latch and three gates go
+  red.
+- **The opt-in raises the exact field a new account gets**, worded "Create a
+  PIN", and `checkReady()` needed no change at all — it already waits on the
+  PIN field whenever the field is showing, so the button arms and disarms
+  correctly for free. **NOT NOW** puts the card back exactly as it was, cleared
+  field included, which is what keeps "always available" from quietly becoming
+  "now required".
+- **Verified by eye in real Chromium at 1280x900**, both states: the notice
+  under the name field with the offer beneath it, and the opted-in state with
+  the PIN field raised and the label flipped to NOT NOW. No page errors, and
+  the class cards, connect box and ENTER button all sit where they always did —
+  the card grows by one row and nothing reflows past it.
+- **⚠️ The offer is only reachable from the login screen, like everything else
+  on that card.** A player already in the world who decides they want a PIN has
+  to log out to get one. Same standing limit v23 recorded for the settings
+  panel, and the same fix if it is ever wanted.
+- **⚠️ The notice is a statement, not an instruction.** It says PIN protection
+  is not active; it does not say that running one line of SQL turns it on,
+  because a login screen is the wrong place to talk to whoever administers the
+  world. If the world's owner is also its only player, that line is in the
+  entry below and in this build's commit message.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent or where following its wording
+literally would have shipped something that contradicts its own other half. All
+shipped through the full gate (parse clean, `run2` and `run3` `CAUGHT ERROR:
+none`, `run4` **955/955 with zero FAIL** over three consecutive runs, `run5`
+1,055 coverage draws clean, 39/39 grep checks including the preservation half,
+plus a real-Chromium pass) — refinements to consider, not unfinished work.
+
+1. **⚠️ PART B says the offer appears "whenever `mode === "none"`", and it does
+   not appear when that mode came from a missing table.** Taken literally, the
+   two parts of this spec contradict each other on exactly one state: PART A
+   says tell the player the PIN system is not active, PART B says offer to use
+   it. Only one reading is sensible, so the offer additionally requires
+   `system === true` and `exists === true`. Pinned in `run4` from both
+   directions — the offer is made for an old unprotected name and is never made
+   with the table gone.
+2. **The offer is a toggle, and the second label is "NOT NOW — ENTER WITHOUT A
+   PIN".** The spec says the link reveals the field and never says how a player
+   who changes their mind gets out. Without a way back, clicking once would
+   make a PIN mandatory for that submit — `checkReady()` waits on a shown field
+   — which is the exact opposite of "never required, always available".
+3. **A retroactive PIN is refused below `PIN_MIN`, exactly as a new one is.**
+   The spec says the submit "writes `account_pins` exactly like a new account
+   does", and a two-character PIN is not something the create path would have
+   stored. The refusal names the way out ("or press NOT NOW to enter without
+   one"), so it can never be a dead end.
+4. **`requirePinForLogin()` answers with a fourth mode, `"protect"`, rather
+   than reusing `"create"`.** The two write to the same table with the same
+   never-throws discipline, but they are reached from opposite branches of
+   `loginPlayer()` — the returning-player branch and the new-account one — and
+   a `"create"` arriving at a name that already has a players row would have
+   been genuinely ambiguous to read six months from now.
+5. **The write is not an upsert.** `"protect"` is only ever returned when the
+   fresh lookup says there is no row, so an insert is the honest statement of
+   that; an upsert would silently overwrite a PIN set by someone else in the
+   seconds in between, which is the one outcome this whole feature exists to
+   prevent.
+6. **Two toasts on the retroactive write, one for each direction.** The spec
+   names no feedback. A player who just chose to protect their name and gets
+   nothing back has no way to know whether it took — and the failure direction
+   matters more than the success one, since it is the case where they walk away
+   believing something that is not true.
+7. **The notice fires from the probe and from the submit, and never from
+   `accountPinLookup()` itself.** The lookup is called by both and by the
+   harness directly; putting the notice inside it would make a pure question
+   have a side effect on the screen. Pinned by a gate asserting a bare lookup
+   raises nothing.
+8. **`run5` was not extended, deliberately.** Step 7 of the standard process
+   asks for coverage of any new species, mob, weapon kind or class — this build
+   adds none, and adds no canvas draw of any kind, so its lists are already
+   complete. The unchanged 1,055 is itself the assertion that no render branch
+   moved.
+9. **`run4` grew 30 gates and re-uses GATE 4's own table-missing window for
+   PART A**, then runs PART B after it, because every assertion above counts
+   `account_pins` rows and PART B writes the second one. Each new gate was
+   mutation-tested: four deliberate breakages (the notice silenced, the offer
+   never made, the write removed, the one-time latch removed) each turned the
+   relevant gates red, so none of them is a test that passes by accident.
+10. **The spec's third proof gate is a source grep, and it is now permanent.**
+    "Nothing related to guilds or a new admin table was added anywhere" is
+    checked as: zero occurrences of *guild* or *clan* in the entire file, the
+    complete set of tables the script talks to still being exactly the eight
+    that existed this morning, and `players.role` still being read by the one
+    line the corrected spec quotes. A future version cannot quietly add either
+    without failing.
+
 ### 2026-08-22 (Account PIN Protection — one new field on the login card, and no canvas at all)
 
 **Not a rendering build.** The whole change is the login screen and the

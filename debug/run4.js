@@ -4659,18 +4659,47 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         dpi().value === '']);
 
       /* ---- GATE 4: no account_pins table at all — never throws ----------- */
+      /* PIN Fixes PART A: captured BEFORE the table is taken away, because
+         "shows exactly once" is only half the claim — the other half is that
+         a world whose PIN system is live never sees it at all, and everything
+         above this line ran against a live one. */
+      const noticeBefore = dpi().noticeShown === false && dpi().noticeVisible === false;
       pinTableMissing = true;
       const gone = await look('BootTest');
+      const goneLookupOnly = dpi().noticeShown;      // PIN Fixes PART A, see below
       results.push(['PIN: with the table missing the lookup answers instead of throwing',
         gone.system === false && gone.mode === 'none' && gone.stored === null]);
       setFields('BootTest', '');
       const goneOld = await allowed('BootTest');
       results.push(['PIN: a name that IS protected still gets in — no table, no PIN system',
         !!goneOld && goneOld.mode === 'none' && !goneOld.threw]);
+      /* ---- PIN Fixes PART A: the silence finally says something ---------- */
+      results.push(['PIN Fixes A: the notice never fired while the PIN system was live', noticeBefore]);
+      results.push(['PIN Fixes A: a bare lookup still says nothing — telling the player is the login screen\'s job',
+        goneLookupOnly === false]);
+      const noticeUp = dpi();
+      results.push(['PIN Fixes A: the first submit against a world with no account_pins table raises the notice',
+        noticeUp.noticeShown === true && noticeUp.noticeVisible === true &&
+        /PIN protection isn't active on this world yet/.test(noticeUp.noticeText || '')]);
+      results.push(['PIN Fixes A: and it is a notice, not a gate — that login was still allowed through',
+        !!goneOld && goneOld.mode === 'none' && !goneOld.threw]);
+      doc.getElementById('pinNoticeX').click();
+      results.push(['PIN Fixes A: it is dismissible, and dismissing it is the end of it',
+        dpi().noticeVisible === false && dpi().noticeShown === true]);
       setFields('PinlessNew', '');
+      const noticeDismissedAt = dpi().noticeVisible;
       const goneNew = await allowed('PinlessNew');
       results.push(['PIN: and a brand new name is not blocked either — never lock the door with no key',
         !!goneNew && goneNew.mode === 'none' && !goneNew.threw]);
+      /* Two more submits against the same dead table, one of them a brand new
+         name — the state that would have re-raised it if the latch were per
+         answer rather than per session. */
+      results.push(['PIN Fixes A: a second submit does not raise it again — once a session means once',
+        noticeDismissedAt === false && dpi().noticeVisible === false && dpi().noticeShown === true]);
+      nameEl.value = 'TypingAway'; nameEl.dispatchEvent(new window.Event('input'));
+      await new Promise(r => setTimeout(r, 500));
+      results.push(['PIN Fixes A: and typing does not raise it either — not once per keystroke',
+        dpi().noticeVisible === false && dpi().probe.mode === 'none']);
       let insertThrew = null;
       try {
         await window.loginPlayer('PinlessNew', 'Beastmaster', { mode: 'create', pin: '1234' });
@@ -4685,6 +4714,125 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['PIN: the table coming back changes nothing that already happened',
         (await look('BootTest')).mode === 'verify' &&
         tableData.account_pins[0].pin === '2468']);
+
+      /* =================================================================
+         PIN Fixes PART B — the retroactive route. Run after GATE 4 has put
+         the table back and the client back on BootTest, because this block
+         writes a SECOND account_pins row and every assertion above counts
+         them. It ends by re-logging in as BootTest, exactly as GATE 4 does,
+         so the frame pump below still runs on the account it always did.
+         ================================================================= */
+      const probeFor = async (n) => {
+        nameEl.value = n;
+        nameEl.dispatchEvent(new window.Event('input'));
+        await new Promise(r => setTimeout(r, 500));
+        return dpi();
+      };
+      tableData.players.push({ username: 'OldTimer2', class: 'Ranger', x: 12, y: 12,
+                               level: 1, hp: 100, max_hp: 100, inventory: {} });
+      const offerOld = await probeFor('OldTimer');
+      results.push(['PIN Fixes B: an account made before PINs existed is finally offered one',
+        offerOld.protectShown === true && offerOld.optIn === false &&
+        offerOld.protectLabel === 'PROTECT THIS NAME WITH A PIN' && offerOld.shown === false]);
+      const offerProtected = await probeFor('BootTest');
+      results.push(['PIN Fixes B: a name that already has a PIN is not offered one',
+        offerProtected.protectShown === false && offerProtected.placeholder === 'Enter your PIN']);
+      const offerNew = await probeFor('NobodyHasThisName');
+      results.push(['PIN Fixes B: a brand new name is not offered one either — it is required one',
+        offerNew.protectShown === false && offerNew.placeholder === 'Create a PIN']);
+      const offerShort = await probeFor('Ol');
+      results.push(['PIN Fixes B: and a half-typed name is asked nothing at all',
+        offerShort.protectShown === false && offerShort.shown === false]);
+
+      await probeFor('OldTimer');
+      const protectBtn = doc.getElementById('pinProtect');
+      protectBtn.click();
+      const opened = dpi();
+      results.push(['PIN Fixes B: taking the offer reveals the same create-PIN field a new account gets',
+        opened.optIn === true && opened.shown === true && opened.placeholder === 'Create a PIN' &&
+        opened.protectLabel === 'NOT NOW — ENTER WITHOUT A PIN']);
+      results.push(['PIN Fixes B: and the ENTER button waits for it, exactly as it does for a new name',
+        opened.ready === false]);
+      pinIn.value = '7531'; window.checkReady();
+      results.push(['PIN Fixes B: filling it arms the button', dpi().ready === true]);
+      protectBtn.click();
+      const closed = dpi();
+      results.push(['PIN Fixes B: it is an offer and never a requirement — NOT NOW puts the screen back',
+        closed.optIn === false && closed.shown === false && closed.value === '' &&
+        closed.protectShown === true && closed.protectLabel === 'PROTECT THIS NAME WITH A PIN']);
+      setFields('OldTimer', '');
+      const declined = await allowed('OldTimer');
+      results.push(['PIN Fixes B: declining logs in exactly as this account always has',
+        !!declined && declined.mode === 'none' && !declined.threw &&
+        tableData.account_pins.length === 1]);
+
+      protectBtn.click();
+      setFields('OldTimer', '12');
+      const tooShort = await refused('OldTimer');
+      results.push(['PIN Fixes B: a PIN too short to be one is refused rather than quietly stored',
+        typeof tooShort === 'string' && /at least 4/.test(tooShort) &&
+        tableData.account_pins.length === 1]);
+      setFields('OldTimer', '7531');
+      const prot = await allowed('OldTimer');
+      results.push(['PIN Fixes B: the submit answers "protect" — create, for an account that already exists',
+        !!prot && prot.mode === 'protect' && prot.pin === '7531']);
+      await window.loginPlayer('OldTimer', 'Knight', prot);
+      results.push(['PIN Fixes B: and the returning-player login wrote the account_pins row itself',
+        tableData.account_pins.length === 2 &&
+        tableData.account_pins.some(r => r.username === 'OldTimer' && r.pin === '7531') &&
+        tableData.players.filter(r => r.username === 'OldTimer').length === 1]);
+      results.push(['PIN Fixes B: the name that was unprotected all build is protected from now on',
+        (await look('OldTimer')).mode === 'verify']);
+      setFields('OldTimer', '0000');
+      const nowWrong = await refused('OldTimer');
+      results.push(['PIN Fixes B: it refuses a wrong PIN on the very next submit',
+        typeof nowWrong === 'string' && /Incorrect/i.test(nowWrong)]);
+      setFields('OldTimer', '7531');
+      const nowRight = await allowed('OldTimer');
+      results.push(['PIN Fixes B: while the real one gets in and stores nothing further',
+        !!nowRight && nowRight.mode === 'verify' && tableData.account_pins.length === 2]);
+      const offerGone = await probeFor('OldTimer');
+      results.push(['PIN Fixes B: and the offer is gone the moment the name has a PIN',
+        offerGone.protectShown === false && offerGone.placeholder === 'Enter your PIN']);
+
+      /* The offer must never be made where PART A speaks instead: mode "none"
+         also means "no account_pins table", and a PIN this world cannot store
+         is a promise the login screen must not make. */
+      pinTableMissing = true;
+      const offerDead = await probeFor('OldTimer2');
+      results.push(['PIN Fixes B: with no account_pins table the offer is never made — PART A speaks instead',
+        offerDead.protectShown === false && offerDead.probe.mode === 'none']);
+      results.push(['PIN Fixes A: and the notice still does not come back a third time',
+        offerDead.noticeVisible === false && offerDead.noticeShown === true]);
+      pinTableMissing = false;
+
+      const midOptIn = await probeFor('OldTimer2');
+      protectBtn.click();
+      pinIn.value = '2222'; window.checkReady();
+      const armed = dpi();
+      nameEl.value = 'OldTimer2x'; nameEl.dispatchEvent(new window.Event('input'));
+      const swapped = dpi();
+      await new Promise(r => setTimeout(r, 500));
+      results.push(['PIN Fixes B: editing the name drops the offer and the PIN typed under it',
+        midOptIn.protectShown === true && armed.optIn === true && armed.value === '2222' &&
+        swapped.optIn === false && swapped.value === '' && swapped.protectShown === false &&
+        swapped.protectLabel === 'PROTECT THIS NAME WITH A PIN']);
+      results.push(['PIN Fixes B: nothing was written for the name that was abandoned mid-offer',
+        tableData.account_pins.length === 2 &&
+        !tableData.account_pins.some(r => r.username === 'OldTimer2')]);
+
+      /* ---- the two things the corrected spec DROPPED, pinned as absent ---- */
+      results.push(['PIN Fixes: no guild or clan system was added — the bible rules one out explicitly',
+        html.toLowerCase().indexOf('guild') < 0 && html.toLowerCase().indexOf('clan') < 0]);
+      const TABLES = [...new Set([...gameScript.matchAll(/from\("([a-z_]+)"\)/g)].map(m => m[1]))].sort();
+      results.push(['PIN Fixes: no new table of any kind — admin bootstrap included — was added',
+        TABLES.join(',') === 'account_pins,base_pieces,ground_items,mined_nodes,pets,players,rare_takes,world']);
+      results.push(['PIN Fixes: admin is still read straight off the real players row, as it already was',
+        gameScript.indexOf('role: p.role === "admin" ? "admin" : "player"') > 0 &&
+        gameScript.split('role: p.role === "admin"').length === 2]);
+
+      /* back onto the account the rest of this file logged in as */
+      await window.loginPlayer('BootTest', 'Beastmaster');
       pumpPin(1000, 6);
       results.push(['PIN: and the world still runs frames cleanly afterwards', !caught]);
     } else {

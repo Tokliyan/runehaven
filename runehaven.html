@@ -65,6 +65,33 @@
     margin-top: -12px;
   }
   #pinInput:focus { border-color: var(--gold-dim); box-shadow: 0 0 14px rgba(232,182,76,0.15); }
+  /* PIN Fixes PART A: the "no PIN system on this world" notice. The panel
+     language again — same card, same hairline, same dim body text — sized down
+     so it reads as an aside beside the name field rather than as a second
+     question. Never blocking: it is a line of text and an X. */
+  #pinNotice {
+    display: none; align-items: center; gap: 10px;
+    background: var(--panel); border: 1px solid var(--panel-edge);
+    color: var(--text-dim); font-size: 12px; letter-spacing: 0.6px;
+    padding: 7px 8px 7px 14px; border-radius: 3px; margin-top: -12px;
+    max-width: 340px; text-align: left; line-height: 1.35;
+  }
+  #pinNoticeX {
+    background: none; border: none; color: var(--text-dim);
+    font-family: inherit; font-size: 13px; line-height: 1;
+    padding: 3px 6px; cursor: pointer; border-radius: 3px;
+  }
+  #pinNoticeX:hover { color: var(--gold); }
+  /* PIN Fixes PART B: the retroactive opt-in. The login card's own bordered
+     text-button idiom (#settingsBtn), one step quieter — it is an offer, and
+     an offer must never look like the thing you came here to press. */
+  #pinProtect {
+    display: none; background: none; border: 1px solid var(--panel-edge);
+    color: var(--text-dim); font-family: inherit; font-size: 12px;
+    letter-spacing: 1.2px; padding: 5px 14px; cursor: pointer;
+    border-radius: 3px; margin-top: -12px;
+  }
+  #pinProtect:hover { border-color: var(--gold-dim); color: var(--gold); }
   .class-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; max-width: 960px; }
   .class-card {
     background: var(--panel); border: 1px solid var(--panel-edge);
@@ -389,6 +416,12 @@
   <!-- Account PIN Protection: directly below the name field, and only ever
        visible once the typed name has been looked up. -->
   <input id="pinInput" type="password" maxlength="12" inputmode="numeric" placeholder="Create a PIN" autocomplete="off" spellcheck="false" style="display:none">
+  <!-- PIN Fixes PART A: shown at most once a session, and only when the world
+       answers that it has no account_pins table to protect anything with. -->
+  <div id="pinNotice" style="display:none"><span id="pinNoticeText">PIN protection isn't active on this world yet.</span><button id="pinNoticeX" title="Dismiss">&#10005;</button></div>
+  <!-- PIN Fixes PART B: the offer an account made before PINs existed never
+       had. Only ever visible for a name the world knows and has no PIN for. -->
+  <button id="pinProtect" style="display:none">PROTECT THIS NAME WITH A PIN</button>
   <div class="class-row" id="classRow"></div>
 
   <details id="connectBox">
@@ -4156,12 +4189,35 @@ loadSavedCreds();
    Same fallback discipline as every prior new table (v33 `base_pieces`,
    Mob Rarity `rare_takes`): a failed query means "no PIN system active" —
    never a throw, and never a player locked out of their own account.
+   PIN Fixes adds the two things that state left invisible or unreachable:
+     PART A — "no PIN system active" now SAYS so, once, near the name field,
+              instead of silently showing nothing at all.
+     PART B — mode "none" gained an opt-in route. requirePinForLogin() can now
+              answer with a fourth gate mode, "protect", which is "create" for
+              an account that already exists: the same field, the same
+              account_pins insert, written by loginPlayer()'s returning-player
+              branch instead of its new-account one. Never required.
    ========================================================= */
 const pinEl = document.getElementById("pinInput");
 const PIN_MIN = 4;                 // tunable: the shortest PIN accepted
 let pinProbeTimer = null;
 let pinProbeSeq = 0;
 let pinProbeState = { name: "", mode: "unknown" };
+/* PIN Fixes: the two pieces of state the login card gained.
+   `pinNoticeShown` latches the first time PART A's notice goes up and is never
+   cleared — that is what makes it one-time rather than once per keystroke, and
+   dismissing it only takes it off a screen it was already leaving.
+   `pinOptIn` is PART B's answer to "protect this name": the only thing in the
+   file that can raise the PIN field for a name the world does not require one
+   for, and cleared the moment the typed name changes, exactly as the field's
+   own value is. */
+const pinNoticeEl = document.getElementById("pinNotice");
+const pinNoticeXEl = document.getElementById("pinNoticeX");
+const pinProtectEl = document.getElementById("pinProtect");
+const PIN_PROTECT_OFFER = "PROTECT THIS NAME WITH A PIN";
+const PIN_PROTECT_CANCEL = "NOT NOW — ENTER WITHOUT A PIN";
+let pinNoticeShown = false;
+let pinOptIn = false;
 
 /* Both lookups, one answer, and it can never throw. "unknown" means the
    question could not be asked at all (no credentials yet, or the players
@@ -4193,6 +4249,12 @@ function showPinField(mode) {
   if (mode === "create" || mode === "verify") {
     pinEl.placeholder = mode === "create" ? "Create a PIN" : "Enter your PIN";
     pinEl.style.display = "block";
+  } else if (mode === "none" && pinOptIn) {
+    /* PIN Fixes PART B: the one case where a mode that requires nothing still
+       shows the field — the player asked for it themselves. Worded as a
+       creation, because that is exactly what it is. */
+    pinEl.placeholder = "Create a PIN";
+    pinEl.style.display = "block";
   } else {
     pinEl.style.display = "none";
     pinEl.value = "";
@@ -4200,12 +4262,52 @@ function showPinField(mode) {
   checkReady();
 }
 
+/* PIN Fixes PART A: the world answered that it has no `account_pins` table, so
+   nothing on this login screen can protect anything. Said once, quietly, and
+   never again this session — the probe asks on every keystroke and this must
+   not answer on every keystroke. The latch is set before the element is
+   touched, so even a missing node cannot make it repeat. */
+function notePinSystemState(res) {
+  if (!res || res.system !== false || pinNoticeShown) return;
+  pinNoticeShown = true;
+  if (pinNoticeEl) pinNoticeEl.style.display = "flex";
+}
+function dismissPinNotice() { if (pinNoticeEl) pinNoticeEl.style.display = "none"; }
+if (pinNoticeXEl) pinNoticeXEl.onclick = dismissPinNotice;
+
+/* PIN Fixes PART B: the offer is made for exactly one answer — the name exists,
+   the PIN system is live, and there is no row for it. A missing table is NOT
+   that answer even though it reads as mode "none" too: offering to protect a
+   name the world has nowhere to store a PIN for would be a promise this code
+   cannot keep, and that case is PART A's notice instead. */
+function pinProtectOffered(res) {
+  return !!res && res.mode === "none" && res.system === true && res.exists === true;
+}
+function showPinProtectLink(res) {
+  if (!pinProtectEl) return;
+  pinProtectEl.style.display = pinProtectOffered(res) ? "block" : "none";
+}
+/* Opting in raises the same create-PIN field a new account gets; opting back
+   out puts the login screen back exactly as it was, cleared field included, so
+   the offer can never become a requirement. The link is only ever on screen for
+   mode "none", which is why that is the mode re-applied here. */
+function setPinOptIn(on) {
+  pinOptIn = !!on;
+  if (pinProtectEl) pinProtectEl.textContent = pinOptIn ? PIN_PROTECT_CANCEL : PIN_PROTECT_OFFER;
+  showPinField("none");
+}
+if (pinProtectEl) pinProtectEl.onclick = () => setPinOptIn(!pinOptIn);
+
 /* Debounced, and stamped with a sequence number so a slow answer about an
    older name can never overwrite the answer about what is typed now. */
 function schedulePinProbe() {
   const name = nameInput.value.trim();
   if (name !== pinProbeState.name) {
     pinProbeState = { name, mode: "unknown" };
+    /* PIN Fixes PART B: the offer was about the name that was there a moment
+       ago. It goes with the PIN typed under it. */
+    setPinOptIn(false);
+    showPinProtectLink(null);
     showPinField("unknown");
   }
   if (pinProbeTimer) clearTimeout(pinProbeTimer);
@@ -4215,6 +4317,8 @@ function schedulePinProbe() {
     const res = await accountPinLookup(name);
     if (seq !== pinProbeSeq || nameInput.value.trim() !== name) return;
     pinProbeState = { name, mode: res.mode };
+    notePinSystemState(res);       // PIN Fixes PART A
+    showPinProtectLink(res);       // PIN Fixes PART B
     showPinField(res.mode);
   }, 350);
 }
@@ -4227,8 +4331,21 @@ if (pinEl) pinEl.oninput = checkReady;
    when (and only when) this submit is creating the account. */
 async function requirePinForLogin(username) {
   const res = await accountPinLookup(username);
+  notePinSystemState(res);                        // PIN Fixes PART A
   const typed = pinEl ? pinEl.value.trim() : "";
-  if (res.mode === "none" || res.mode === "unknown") { showPinField("none"); return { mode: "none", pin: null }; }
+  if (res.mode === "none" || res.mode === "unknown") {
+    /* PIN Fixes PART B: the retroactive route, and it is the same discipline
+       as every other decision here — the submit re-runs the lookup and asks
+       the fresh answer whether the offer still stands, never the probe. */
+    if (pinOptIn && pinProtectOffered(res)) {
+      showPinField("none");                       // stays up: pinOptIn holds it there
+      if (typed.length < PIN_MIN)
+        throw new Error(`Choose a PIN of at least ${PIN_MIN} characters, or press NOT NOW to enter without one.`);
+      return { mode: "protect", pin: typed };
+    }
+    if (pinOptIn) { setPinOptIn(false); showPinProtectLink(res); }
+    showPinField("none"); return { mode: "none", pin: null };
+  }
   if (res.mode === "verify") {
     showPinField("verify");                       // reveal it, so a refusal is actionable
     if (!typed) throw new Error("That name is protected — enter its PIN.");
@@ -4246,7 +4363,16 @@ async function requirePinForLogin(username) {
 function debugPinInfo() {
   return { PIN_MIN, probe: Object.assign({}, pinProbeState), shown: pinFieldShown(),
            placeholder: pinEl ? pinEl.placeholder : null, value: pinEl ? pinEl.value : null,
-           ready: enterBtn.classList.contains("ready") };
+           ready: enterBtn.classList.contains("ready"),
+           /* PIN Fixes: the login card's two new pieces of state, exported for
+              the same reason as everything else here — both are top-level and
+              a harness has no other way to see either. */
+           noticeShown: pinNoticeShown,
+           noticeVisible: !!pinNoticeEl && pinNoticeEl.style.display !== "none",
+           noticeText: pinNoticeEl ? pinNoticeEl.textContent : null,
+           optIn: pinOptIn,
+           protectShown: !!pinProtectEl && pinProtectEl.style.display !== "none",
+           protectLabel: pinProtectEl ? pinProtectEl.textContent : null };
 }
 
 enterBtn.onclick = async () => {
@@ -4362,6 +4488,19 @@ async function loginPlayer(username, cls, pinCheck) {
       me.x = s.x; me.y = s.y;
     }
     if (p.class !== cls) toast(`Welcome back — you are still a ${p.class}`);
+    /* PIN Fixes PART B: the retroactive write. Same submit, same order and the
+       same never-throws discipline as the create path below — the only
+       difference is that the players row was already there, which is the whole
+       point: an account made before PINs existed can finally have one. Reached
+       only for a {mode:"protect"} from requirePinForLogin(), which it returns
+       only when the PIN system is live and has no row for this name. */
+    if (pinCheck && pinCheck.mode === "protect" && pinCheck.pin) {
+      try {
+        const { error: pinErr } = await sb.from("account_pins").insert({ username, pin: pinCheck.pin });
+        if (pinErr) { console.warn("PIN not stored:", pinErr.message || pinErr); toast("Could not store that PIN — this name is still unprotected."); }
+        else toast("This name is protected by a PIN from now on.");
+      } catch (e) { console.warn("PIN not stored:", e); toast("Could not store that PIN — this name is still unprotected."); }
+    }
   } else {
     const s = findSpawn();
     const { error } = await sb.from("players").insert({
