@@ -35,11 +35,17 @@ window.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () =
 const tableData = {
   world: { seed: 123456789, created_at: new Date(Date.now() - 86400000 * 3).toISOString() },
   mined_nodes: [],
-  players: null,          // null = new-player path
+  /* Account PIN Protection: `players` is a row LIST now rather than the single
+     null it was. Empty still means "no such name" — the boot login below is
+     still the new-player path, byte for byte — but the PIN gate asks about one
+     specific username, so the stub has to be able to answer for one specific
+     username. */
+  players: [],            // eq-filtered rows; no match = new-player path
   ground_items: [],
   pets: [],
   base_pieces: [],        // v33
   rare_takes: [],         // Mob Rarity PART A
+  account_pins: [],       // Account PIN Protection
 };
 /* v33: a real round trip is needed for exactly one table. PART D has to prove
    a placed piece survives a reload — insert, then re-select, same data back —
@@ -60,8 +66,20 @@ const tableData = {
    did: `.eq('day_num', n)` has to actually filter, or "the take was recorded
    for TODAY" and "the day rolled over" would be the same query. Scoped to
    this table by name, so no existing assertion shifts underneath it. */
-const INSERT_RECORDING = new Set(['base_pieces', 'pets', 'rare_takes']);
+/* Account PIN Protection: `players` and `account_pins` join the recording set
+   for the same reason `pets` did — the whole claim is that the PIN is written
+   by the same submit that creates the account and holds afterwards, which a
+   dropped insert cannot show. They also need two things no earlier table did:
+   `.eq('username', n)` has to really filter, and `.maybeSingle()` has to hand
+   back ONE row (or null) rather than the list, which is what both the game's
+   login select and the PIN lookup use. */
+const INSERT_RECORDING = new Set(['base_pieces', 'pets', 'rare_takes', 'players', 'account_pins']);
 const EQ_FILTERING = new Set(['rare_takes']);
+const MAYBE_TABLES = new Set(['players', 'account_pins']);
+/* Flipped by the PIN section to simulate the one specified failure mode the
+   spec names: the account_pins table not existing yet. */
+let pinTableMissing = false;
+const PIN_MISSING_ERR = { code: '42P01', message: 'relation "public.account_pins" does not exist' };
 let insertSeq = 0;
 function chain(table) {
   let pending = null;
@@ -73,9 +91,17 @@ function chain(table) {
       pending = null; singled = false;
       return { data: r, error: null };
     }
+    if (table === 'account_pins' && pinTableMissing) {
+      singled = false;
+      return { data: null, error: PIN_MISSING_ERR };
+    }
     let d = tableData[table];
-    if (EQ_FILTERING.has(table) && Array.isArray(d) && eqs.length) {
+    if ((EQ_FILTERING.has(table) || MAYBE_TABLES.has(table)) && Array.isArray(d) && eqs.length) {
       d = d.filter(row => eqs.every(([col, val]) => row[col] === val));
+    }
+    if (singled && Array.isArray(d)) {
+      singled = false;
+      return { data: d[0] || null, error: null };
     }
     return { data: d === undefined ? null : d, error: null };
   };
@@ -86,11 +112,16 @@ function chain(table) {
         return (res) => res(r);
       }
       if (prop === 'single') { return (...a) => { singled = true; return c; }; }
-      if (prop === 'eq' && EQ_FILTERING.has(table)) {
+      if (prop === 'maybeSingle' && MAYBE_TABLES.has(table)) {
+        return (...a) => { singled = true; return c; };
+      }
+      if (prop === 'eq' && (EQ_FILTERING.has(table) || MAYBE_TABLES.has(table))) {
         return (col, val) => { eqs.push([col, val]); return c; };
       }
       if (prop === 'insert' && INSERT_RECORDING.has(table)) {
         return (rows) => {
+          // a table that does not exist does not accept rows either
+          if (table === 'account_pins' && pinTableMissing) return c;
           const arr = Array.isArray(rows) ? rows : [rows];
           // the insert is what mints the id, exactly as the real table does
           const stamped = arr.map(r => Object.assign({ id: table + ':' + (++insertSeq) }, r));
@@ -144,12 +175,27 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
   console.log('login cards:', doc.getElementById('classRow')?.children.length);
 
   // drive the real login: pick a class, set creds + name, click ENTER
+  /* Account PIN Protection: the boot login is now the spec's first proof gate
+     as well. 'BootTest' matches no players row, so the FIRST click goes in
+     with the PIN field empty and must be refused outright — no world loaded,
+     no players row written — and only the second click, with both fields
+     filled, is allowed to enter. Recorded here and asserted with the rest of
+     the gate further down, since `results` does not exist yet. */
+  const pinBoot = {};
   try {
     doc.querySelectorAll('.class-card')[3].click();      // Beastmaster
     doc.getElementById('username').value = 'BootTest';
     const urlEl = doc.getElementById('sbUrl'), keyEl = doc.getElementById('sbKey');
     if (urlEl) urlEl.value = 'https://stub.supabase.co';
     if (keyEl) keyEl.value = 'stub-key';
+    doc.getElementById('pinInput').value = '';
+    await doc.getElementById('enterBtn').onclick();
+    pinBoot.refusedHidden = doc.getElementById('login').style.display === 'none';
+    pinBoot.refusedErr = doc.getElementById('loginError').textContent || '';
+    pinBoot.refusedRows = tableData.players.length;
+    pinBoot.refusedShown = window.debugPinInfo().shown;
+    pinBoot.refusedPlaceholder = window.debugPinInfo().placeholder;
+    doc.getElementById('pinInput').value = '2468';
     doc.getElementById('enterBtn').onclick();
     /* v19: the world is 240x240 (9x the old area), so worldgen + bakeTerrain
        now take ~300ms — a fixed 200ms sleep expired BEFORE login finished and
@@ -4516,6 +4562,133 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['the world still runs frames cleanly on the far side of a reset', !caught]);
     } else {
       results.push(['v39 hooks are reachable', false]);
+    }
+
+    /* =====================================================================
+       Account PIN Protection — the locked spec's four proof gates, in its
+       own order. Run LAST because the fourth one genuinely re-logs the
+       client in, the same way the world-reset block above is run last.
+       ===================================================================== */
+    const dpi = window.debugPinInfo;
+    if (dpi && window.accountPinLookup && window.requirePinForLogin) {
+      const gate = window.requirePinForLogin, look = window.accountPinLookup;
+      const nameEl = doc.getElementById('username'), pinIn = doc.getElementById('pinInput');
+      const setFields = (n, p) => { nameEl.value = n; pinIn.value = p; };
+      /* returns the refusal message, or null if it was allowed through */
+      const refused = async (n) => { try { await gate(n); return null; } catch (e) { return e.message || String(e); } };
+      const pumpPin = (from, n) => {
+        for (let f = from; f < from + (n || 6); f++) {
+          const q = rafQ; rafQ = [];
+          for (const cb of q) { try { cb(f * 50); } catch (e) { if (!caught) caught = e; } }
+        }
+      };
+      const allowed = async (n) => { try { return await gate(n); } catch (e) { return { threw: e.message || String(e) }; } };
+
+      /* ---- GATE 1: a new username cannot be created without a PIN -------- */
+      results.push(['PIN: the no-PIN submit for a brand new name was refused — the login screen stayed up',
+        pinBoot.refusedHidden === false && /PIN/.test(pinBoot.refusedErr)]);
+      results.push(['PIN: and it was refused BEFORE any account existed — no players row was written',
+        pinBoot.refusedRows === 0]);
+      results.push(['PIN: the refusal reveals the field it is asking for, worded for a new name',
+        pinBoot.refusedShown === true && pinBoot.refusedPlaceholder === 'Create a PIN']);
+      results.push(['PIN: the second submit, with both fields, entered the world',
+        doc.getElementById('login').style.display === 'none']);
+      results.push(['PIN: and that ONE submit wrote both rows — the player and its PIN',
+        tableData.players.some(r => r.username === 'BootTest') &&
+        tableData.account_pins.length === 1 &&
+        tableData.account_pins[0].username === 'BootTest' &&
+        tableData.account_pins[0].pin === '2468']);
+
+      /* ---- GATE 2: an existing protected username rejects a wrong PIN ---- */
+      setFields('BootTest', '9999');
+      const wrong = await refused('BootTest');
+      results.push(['PIN: the account just created now rejects a WRONG PIN',
+        typeof wrong === 'string' && /Incorrect/i.test(wrong)]);
+      setFields('BootTest', '');
+      const blank = await refused('BootTest');
+      results.push(['PIN: and rejects an empty one — a protected name is never a free pass',
+        typeof blank === 'string' && /protected/i.test(blank)]);
+      results.push(['PIN: a refused verify leaves the field showing, worded for a return visit',
+        dpi().shown === true && dpi().placeholder === 'Enter your PIN']);
+      setFields('BootTest', '2468');
+      const right = await allowed('BootTest');
+      results.push(['PIN: the RIGHT PIN is let through, and stores nothing new',
+        !!right && right.mode === 'verify' && right.pin === null &&
+        tableData.account_pins.length === 1]);
+      results.push(['PIN: the lookup calls that name protected',
+        (await look('BootTest')).mode === 'verify']);
+
+      /* ---- GATE 3: a pre-existing unprotected name logs in as before ----- */
+      tableData.players.push({ username: 'OldTimer', class: 'Knight', x: 12, y: 12,
+                               level: 1, hp: 100, max_hp: 100, inventory: {} });
+      setFields('OldTimer', '');
+      const old1 = await allowed('OldTimer');
+      results.push(['PIN: an account made before this shipped still logs straight in',
+        !!old1 && old1.mode === 'none' && !old1.threw]);
+      results.push(['PIN: and is not even asked for one — the field stays hidden',
+        dpi().shown === false && dpi().value === '']);
+      setFields('OldTimer', '0000');
+      const old2 = await allowed('OldTimer');
+      results.push(['PIN: a PIN typed at an unprotected name changes nothing either way',
+        !!old2 && old2.mode === 'none' && tableData.account_pins.length === 1]);
+      results.push(['PIN: the two names really are in different states',
+        (await look('OldTimer')).mode === 'none' && (await look('BootTest')).mode === 'verify']);
+
+      /* ---- the typing-time probe: the field appears on its own ----------- */
+      setFields('Ne', '');
+      nameEl.dispatchEvent(new window.Event('input'));
+      await new Promise(r => setTimeout(r, 500));
+      results.push(['PIN: a half-typed name asks nothing at all', dpi().shown === false]);
+      nameEl.value = 'NeverSeenName';
+      nameEl.dispatchEvent(new window.Event('input'));
+      await new Promise(r => setTimeout(r, 500));
+      results.push(['PIN: typing a name nobody has raises "Create a PIN" by itself',
+        dpi().shown === true && dpi().placeholder === 'Create a PIN' &&
+        dpi().probe.mode === 'create']);
+      results.push(['PIN: and the ENTER button waits for that second field',
+        dpi().ready === false]);
+      pinIn.value = '1234'; window.checkReady();
+      results.push(['PIN: filling it arms the button', dpi().ready === true]);
+      nameEl.value = 'BootTest';
+      nameEl.dispatchEvent(new window.Event('input'));
+      await new Promise(r => setTimeout(r, 500));
+      results.push(['PIN: typing a name that DOES exist asks to confirm instead',
+        dpi().shown === true && dpi().placeholder === 'Enter your PIN' &&
+        dpi().probe.mode === 'verify']);
+      results.push(['PIN: and editing the name cleared the PIN typed for the other one',
+        dpi().value === '']);
+
+      /* ---- GATE 4: no account_pins table at all — never throws ----------- */
+      pinTableMissing = true;
+      const gone = await look('BootTest');
+      results.push(['PIN: with the table missing the lookup answers instead of throwing',
+        gone.system === false && gone.mode === 'none' && gone.stored === null]);
+      setFields('BootTest', '');
+      const goneOld = await allowed('BootTest');
+      results.push(['PIN: a name that IS protected still gets in — no table, no PIN system',
+        !!goneOld && goneOld.mode === 'none' && !goneOld.threw]);
+      setFields('PinlessNew', '');
+      const goneNew = await allowed('PinlessNew');
+      results.push(['PIN: and a brand new name is not blocked either — never lock the door with no key',
+        !!goneNew && goneNew.mode === 'none' && !goneNew.threw]);
+      let insertThrew = null;
+      try {
+        await window.loginPlayer('PinlessNew', 'Beastmaster', { mode: 'create', pin: '1234' });
+      } catch (e) { insertThrew = e.message || String(e); }
+      results.push(['PIN: writing the PIN row into a table that does not exist never throws',
+        insertThrew === null && window.debugWorldInfo().player !== null &&
+        tableData.players.some(r => r.username === 'PinlessNew') &&
+        tableData.account_pins.length === 1]);
+      pinTableMissing = false;
+      /* put the client back on the account the rest of this file logged in as */
+      await window.loginPlayer('BootTest', 'Beastmaster');
+      results.push(['PIN: the table coming back changes nothing that already happened',
+        (await look('BootTest')).mode === 'verify' &&
+        tableData.account_pins[0].pin === '2468']);
+      pumpPin(1000, 6);
+      results.push(['PIN: and the world still runs frames cleanly afterwards', !caught]);
+    } else {
+      results.push(['Account PIN Protection hooks are reachable', false]);
     }
 
     let allOk = true;

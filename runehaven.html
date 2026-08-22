@@ -54,6 +54,17 @@
     text-align: center; outline: none; border-radius: 3px;
   }
   #username:focus { border-color: var(--gold-dim); box-shadow: 0 0 14px rgba(232,182,76,0.15); }
+  /* Account PIN Protection: the PIN field is the name field's twin — the same
+     box, one step narrower, sitting directly under it. Hidden until the typed
+     name needs one; the inline display:none in the markup is the initial
+     state, and JS toggles that same inline value from then on. */
+  #pinInput {
+    background: var(--panel); border: 1px solid var(--panel-edge); color: var(--text);
+    font-family: inherit; font-size: 18px; padding: 12px 18px; width: 220px;
+    text-align: center; outline: none; border-radius: 3px; letter-spacing: 4px;
+    margin-top: -12px;
+  }
+  #pinInput:focus { border-color: var(--gold-dim); box-shadow: 0 0 14px rgba(232,182,76,0.15); }
   .class-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; max-width: 960px; }
   .class-card {
     background: var(--panel); border: 1px solid var(--panel-edge);
@@ -375,6 +386,9 @@
   <div class="tagline">ONE WORLD &nbsp;•&nbsp; ONE HISTORY &nbsp;•&nbsp; SHARED BY ALL</div>
   <button id="settingsBtn">&#9881; SETTINGS</button>
   <input id="username" maxlength="16" placeholder="Choose your name" autocomplete="off" spellcheck="false">
+  <!-- Account PIN Protection: directly below the name field, and only ever
+       visible once the typed name has been looked up. -->
+  <input id="pinInput" type="password" maxlength="12" inputmode="numeric" placeholder="Create a PIN" autocomplete="off" spellcheck="false" style="display:none">
   <div class="class-row" id="classRow"></div>
 
   <details id="connectBox">
@@ -4110,13 +4124,130 @@ function animatePreviews(t) {
   requestAnimationFrame(animatePreviews);
 }
 requestAnimationFrame(animatePreviews);
-nameInput.oninput = checkReady;
+/* Account PIN Protection: typing a name is what asks the question "is this a
+   name that already exists?", so the probe hangs off the same handler the
+   ready-check always did. */
+nameInput.oninput = () => { checkReady(); schedulePinProbe(); };
 function checkReady() {
-  enterBtn.classList.toggle("ready", nameInput.value.trim().length >= 3 && !!chosenClass);
+  const nameOk = nameInput.value.trim().length >= 3;
+  /* Account PIN Protection: while the PIN field is showing it is part of the
+     same submit, so the button waits for both fields, not just the name. */
+  const pinOk = !pinFieldShown() || pinEl.value.trim().length >= PIN_MIN;
+  enterBtn.classList.toggle("ready", nameOk && !!chosenClass && pinOk);
 }
 document.getElementById("sbUrl").addEventListener("input", updateConnDot);
 document.getElementById("sbKey").addEventListener("input", updateConnDot);
 loadSavedCreds();
+
+/* =========================================================
+   ACCOUNT PIN PROTECTION
+   Until now any existing username could be typed by anyone to load straight
+   into that account. One new table closes that door:
+     create table account_pins (username text primary key, pin text);
+   Three modes, decided by the two lookups accountPinLookup() makes:
+     "create" — the typed name matches no players row, so it is genuinely
+                new: a PIN must be set, and the account_pins row is written
+                by the SAME submit that writes the players row.
+     "verify" — the name exists AND has a PIN on file: it must match, or
+                login does not proceed.
+     "none"   — the name exists with no PIN on file (every account made
+                before this shipped), or the account_pins table is not
+                there at all. Login proceeds exactly as it always did.
+   Same fallback discipline as every prior new table (v33 `base_pieces`,
+   Mob Rarity `rare_takes`): a failed query means "no PIN system active" —
+   never a throw, and never a player locked out of their own account.
+   ========================================================= */
+const pinEl = document.getElementById("pinInput");
+const PIN_MIN = 4;                 // tunable: the shortest PIN accepted
+let pinProbeTimer = null;
+let pinProbeSeq = 0;
+let pinProbeState = { name: "", mode: "unknown" };
+
+/* Both lookups, one answer, and it can never throw. "unknown" means the
+   question could not be asked at all (no credentials yet, or the players
+   select itself failed) — deliberately distinct from "none", which is a real
+   answer meaning no PIN is required. */
+async function accountPinLookup(username) {
+  const out = { name: username, exists: false, system: true, stored: null, mode: "none" };
+  if (!sb) { try { connectSupabase(); } catch (e) { out.mode = "unknown"; return out; } }
+  try {
+    const { data: p, error } = await sb.from("players").select("username").eq("username", username).maybeSingle();
+    if (error) { out.mode = "unknown"; return out; }
+    out.exists = !!p;
+  } catch (e) { out.mode = "unknown"; return out; }
+  try {
+    const { data: r, error } = await sb.from("account_pins").select("pin").eq("username", username).maybeSingle();
+    if (error) { out.system = false; return out; }      // no table -> no PIN system
+    out.stored = (r && typeof r.pin === "string" && r.pin.length) ? r.pin : null;
+  } catch (e) { out.system = false; return out; }
+  out.mode = out.exists ? (out.stored ? "verify" : "none") : "create";
+  return out;
+}
+
+function pinFieldShown() { return !!pinEl && pinEl.style.display !== "none"; }
+
+/* The field is shown for exactly the two modes that need one, and clearing it
+   on the way out is what stops a PIN typed for one name reaching another. */
+function showPinField(mode) {
+  if (!pinEl) return;
+  if (mode === "create" || mode === "verify") {
+    pinEl.placeholder = mode === "create" ? "Create a PIN" : "Enter your PIN";
+    pinEl.style.display = "block";
+  } else {
+    pinEl.style.display = "none";
+    pinEl.value = "";
+  }
+  checkReady();
+}
+
+/* Debounced, and stamped with a sequence number so a slow answer about an
+   older name can never overwrite the answer about what is typed now. */
+function schedulePinProbe() {
+  const name = nameInput.value.trim();
+  if (name !== pinProbeState.name) {
+    pinProbeState = { name, mode: "unknown" };
+    showPinField("unknown");
+  }
+  if (pinProbeTimer) clearTimeout(pinProbeTimer);
+  if (name.length < 3) return;
+  const seq = ++pinProbeSeq;
+  pinProbeTimer = setTimeout(async () => {
+    const res = await accountPinLookup(name);
+    if (seq !== pinProbeSeq || nameInput.value.trim() !== name) return;
+    pinProbeState = { name, mode: res.mode };
+    showPinField(res.mode);
+  }, 350);
+}
+if (pinEl) pinEl.oninput = checkReady;
+
+/* The gate itself. Deliberately re-runs the lookup instead of trusting what
+   the typing-time probe decided — a probe that never ran, or that answered
+   about a name since edited, must never be the thing that lets someone in.
+   Throws the message the login screen shows; returns the PIN to be stored
+   when (and only when) this submit is creating the account. */
+async function requirePinForLogin(username) {
+  const res = await accountPinLookup(username);
+  const typed = pinEl ? pinEl.value.trim() : "";
+  if (res.mode === "none" || res.mode === "unknown") { showPinField("none"); return { mode: "none", pin: null }; }
+  if (res.mode === "verify") {
+    showPinField("verify");                       // reveal it, so a refusal is actionable
+    if (!typed) throw new Error("That name is protected — enter its PIN.");
+    if (typed !== res.stored) throw new Error("Incorrect PIN for that name.");
+    return { mode: "verify", pin: null };
+  }
+  showPinField("create");
+  if (typed.length < PIN_MIN)
+    throw new Error(`New name — choose a PIN of at least ${PIN_MIN} characters to protect it.`);
+  return { mode: "create", pin: typed };
+}
+
+/* Harness hook, same shape and the same reason as debugWorldInfo(): the field's
+   state and the probe's decision are top-level and otherwise unobservable. */
+function debugPinInfo() {
+  return { PIN_MIN, probe: Object.assign({}, pinProbeState), shown: pinFieldShown(),
+           placeholder: pinEl ? pinEl.placeholder : null, value: pinEl ? pinEl.value : null,
+           ready: enterBtn.classList.contains("ready") };
+}
 
 enterBtn.onclick = async () => {
   const username = nameInput.value.trim();
@@ -4127,6 +4258,12 @@ enterBtn.onclick = async () => {
        is allowed to be called from. v24: the same gesture starts the rotation. */
     if (AudioEngine.init()) playNextBgTrack();
     connectSupabase();
+    /* Account PIN Protection: the gate runs FIRST, before a single world query
+       — a refused login must cost nothing, and nothing after this line should
+       run for a name whose PIN did not check out. Throws on refusal; the
+       catch below puts the message on the login screen exactly as it does for
+       every other login failure. */
+    const pinCheck = await requirePinForLogin(username);
     await loadWorld();
     placeLandmarks();
     tileCache.clear();
@@ -4142,7 +4279,7 @@ enterBtn.onclick = async () => {
        (both were re-checked for it): loginPlayer needs only the terrain grid
        placeLandmarks() and the cache clears above have already settled, and
        loadPets is one select. Nothing else moved. */
-    await loginPlayer(username, chosenClass);
+    await loginPlayer(username, chosenClass, pinCheck);
     await loadPets();
     /* Mob Rarity PART A: the day's takes are read BEFORE worldgen, for the
        same reason v39 moved loadPets() ahead of it — buildFeatureList() is
@@ -4188,7 +4325,11 @@ async function loadMinedNodes() {
   (data || []).forEach(r => minedNodes.add(r.tile_key));
 }
 
-async function loginPlayer(username, cls) {
+/* Account PIN Protection: `pinCheck` is what requirePinForLogin() returned for
+   this submit — {mode:"create", pin} only when this call is the one creating
+   the account. Optional on purpose: a caller without it behaves exactly as
+   this function did before, since the gate lives at the login gesture. */
+async function loginPlayer(username, cls, pinCheck) {
   const { data: p } = await sb.from("players").select("*").eq("username", username).maybeSingle();
   if (p) {
     me = {
@@ -4230,6 +4371,17 @@ async function loginPlayer(username, cls) {
       if (error.code === "23505") throw new Error("That name was just taken — try another.");
       if (String(error.message || "").includes("hp")) throw new Error("Your database is missing the new columns — run the Stage 1-3 SQL.");
       throw error;
+    }
+    /* Account PIN Protection: the players row and the account_pins row are
+       written by the same submit, in that order — a PIN row that outlived a
+       failed insert would protect a name nobody owns. Never throws: if the
+       table is missing the account is still made, exactly as it was before
+       this shipped, and the name is simply unprotected. */
+    if (pinCheck && pinCheck.mode === "create" && pinCheck.pin) {
+      try {
+        const { error: pinErr } = await sb.from("account_pins").insert({ username, pin: pinCheck.pin });
+        if (pinErr) console.warn("PIN not stored:", pinErr.message || pinErr);
+      } catch (e) { console.warn("PIN not stored:", e); }
     }
     me = { username, cls, x: s.x, y: s.y, level: 1, hp: 100, maxHp: 100, inv: {}, equipped: null, armor: null, lastKillAt: null, shrineCdUntil: null, deadUntil: null, cos: emptyCosmetics(), role: "player" };
     tutorialDone = false;    // v35: a brand new row has never seen it

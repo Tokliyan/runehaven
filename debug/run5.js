@@ -39,6 +39,7 @@ const tableData = {
   ground_items: [],
   base_pieces: [],       // v33
   pets: [],
+  account_pins: [],      // Account PIN Protection: present, and empty
 };
 /* v33: base pieces are minted by their insert, so a stub that never records
    one means placeBasePiece() always refunds and the whole render branch for
@@ -109,6 +110,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
   try {
     doc.querySelectorAll('.class-card')[3].click();      // Beastmaster
     doc.getElementById('username').value = 'BootTest';
+    /* Account PIN Protection: a genuinely new name cannot be created without
+       a PIN, so the sweep's own login supplies one — same submit, both
+       fields. The gate's four proofs live in run4. */
+    doc.getElementById('pinInput').value = '2468';
     const urlEl = doc.getElementById('sbUrl'), keyEl = doc.getElementById('sbKey');
     if (urlEl) urlEl.value = 'https://stub.supabase.co';
     if (keyEl) keyEl.value = 'stub-key';

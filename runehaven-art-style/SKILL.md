@@ -53,6 +53,116 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-22 (Account PIN Protection — one new field on the login card, and no canvas at all)
+
+**Not a rendering build.** The whole change is the login screen and the
+Supabase calls behind it: one new DOM input, one new table, one gate in front
+of the enter click. Not a palette entry, biome, cliff-face ratio, `MOB_K`,
+`MOB_TALL`, silhouette or shadow was read, let alone touched, and the canvas
+draws exactly as it did in the Mob Rarity build below. It is logged here
+because the login card is the one screen a player sees before any of that, and
+because the entry above is where the next morning looks first.
+
+- **The gap it closes is real and it was one line wide.** Any existing username
+  could be typed by anyone and loaded straight into that account. From this
+  version a name that has a PIN on file must produce it, and a name that has
+  never existed must set one in the same submit that creates it.
+- **The field is the name field's twin, deliberately.** Same `var(--panel)`
+  box, same border, same focus glow, 220px against the name's 300px and pulled
+  up `-12px` inside the login card's 22px gap so the two read as one pair
+  rather than two questions. `type="password"` with `inputmode="numeric"`, so
+  a phone offers the keypad and a shoulder never reads the PIN. No new
+  component language: the whole rule set is a copy of `#username`'s.
+- **It is invisible until it has a reason to exist.** The initial state is an
+  inline `display:none` in the markup (so the JS check and the DOM agree from
+  the first frame), and a debounced lookup on the name field is the only thing
+  that ever raises it — as **"Create a PIN"** for a name nobody has, or
+  **"Enter your PIN"** for one that is protected. An unprotected old account
+  never sees it at all.
+- **⚠️ The button now waits for two fields, not one.** `checkReady()` gained a
+  second condition and it only applies while the PIN field is showing, so the
+  login screen a pre-existing player sees behaves exactly as it always has.
+  The refusal path is a real gate underneath that, not the button state: the
+  harness clicks the handler directly, past the disabled button, and is still
+  refused.
+- **Three states, and "no PIN system" is one of them.** A missing
+  `account_pins` table reads as "no PIN system active" everywhere — lookup,
+  gate and insert — so a world whose SQL has not been run logs in precisely as
+  it did yesterday. Same fallback discipline as v33's `base_pieces` and Mob
+  Rarity's `rare_takes`, and `run4` drives the table's absence for real rather
+  than asserting the branch exists.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus two limits of the mechanism
+that are worth seeing in daylight. All shipped through the full gate (parse
+clean, `run2` and `run3` `CAUGHT ERROR: none`, `run4` **925/925 with zero
+FAIL** over four consecutive runs, `run5` 1,055 coverage draws clean, 50/50
+grep checks including the preservation half) — refinements to consider, not
+unfinished work.
+
+1. **⚠️ A small SQL update is needed before any of this does anything**, and it
+   is the spec's own statement verbatim: `create table account_pins (username
+   text primary key, pin text);`. Both directions are asserted by real gates:
+   with the table absent every lookup reads as "no PIN system active", every
+   login proceeds exactly as it did before this version, and writing a PIN row
+   into the missing table never throws. Same shape of note as v25, v33, v34,
+   v38 and Mob Rarity.
+2. **⚠️ The PIN is stored as typed, in the `text` column the spec locks, and
+   that column is readable by anyone holding the anon key.** This is a client
+   gate: it closes the gap the spec actually names — someone typing another
+   player's name into the login screen — and nothing wider. Hashing it, or
+   moving the comparison server-side behind RLS, is the real lock and is a
+   design decision rather than a tunable, so it is flagged here instead of
+   invented. **`accountPinLookup()` is the one function to change** if the
+   comparison ever moves off the client.
+3. **`PIN_MIN = 4` and `maxlength="12"`, and the spec names no length.** Four
+   is the shortest thing anybody calls a PIN; the field accepts any characters
+   rather than digits only, because "PIN" is what the spec calls it but
+   nothing in it says a passphrase must be refused. One named constant.
+4. **A lookup that cannot be made at all degrades to no gate, exactly like a
+   missing table.** No credentials entered yet, or a `players` select that
+   errors, resolves to mode `"unknown"`, and `"unknown"` lets the login
+   through. The alternative — refusing to log anyone in when the database is
+   unreachable — fails in the direction the spec explicitly rules out ("never
+   block login"), and every path behind it fails on its own anyway.
+5. **The typing-time probe is advisory; the submit-time check is the gate.**
+   `requirePinForLogin()` re-runs both lookups on the real click and never
+   reads what the probe decided, so a probe that never ran (a pasted name, a
+   harness setting `.value` directly, a slow network) can never be the thing
+   that lets someone in. The probe is debounced 350ms and sequence-stamped so
+   a late answer about an older name cannot overwrite the current one.
+6. **⚠️ There is no PIN recovery, and the spec describes none.** A player who
+   forgets theirs is locked out until someone edits the `account_pins` row in
+   Supabase. That is the honest cost of the feature as specified, and the
+   first thing to design if it bites.
+7. **⚠️ A pre-existing account stays unprotected forever.** The spec's flow
+   raises the field in exactly two cases — a new name, or a name with a PIN on
+   file — so there is deliberately no "add a PIN to my old account" path. Every
+   account created from now on is protected; the ones that predate this build
+   are not, and nothing in the game will ever offer them one.
+8. **The gate runs before `loadWorld()`, not after.** A refused login costs a
+   single select and leaves the login card exactly as it was, rather than
+   generating a world for someone who is about to be turned away. The audio
+   unlock still runs first, because it has to happen inside the user gesture
+   itself.
+9. **All three harnesses had to be told about the PIN, and `run4`'s stub grew
+   two capabilities.** `BootTest` is a genuinely new name, so `run3`/`run5`
+   now submit a PIN with it — without that they would have sat on the login
+   screen for their whole timeout and every later assertion would have run
+   against a world nobody entered. `run4`'s `players` went from a single
+   `null` to a row list (empty still means "no such name", so its boot login is
+   the same new-player path byte for byte), `.eq()` and `.maybeSingle()` now
+   really filter for both new tables, and a `pinTableMissing` switch simulates
+   the one failure mode the spec names. No new species, mob, weapon or class
+   shipped, so `run5`'s coverage lists are unchanged.
+10. **`run4`'s boot login is now the first proof gate itself.** It clicks ENTER
+    once with the PIN field empty and asserts the refusal — login card still
+    up, message shown, **no `players` row written** — then clicks again with
+    both fields and enters. That is stronger than a unit call, because it
+    proves the account genuinely cannot come into existence without the PIN,
+    which is the exact thing the spec asks to be shown.
+
 ### 2026-08-22 (Mob Rarity + Music — rarity-banded pet scale, the Elder band, the boss cue)
 
 Five parts, and only two of them are rendering: PART C resizes the entire

@@ -39,6 +39,7 @@ const tableData = {
   ground_items: [],
   base_pieces: [],       // v33
   pets: [],
+  account_pins: [],      // Account PIN Protection: present, and empty
 };
 function chain(table) {
   const result = () => {
@@ -93,6 +94,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
   try {
     doc.querySelectorAll('.class-card')[3].click();      // Beastmaster
     doc.getElementById('username').value = 'BootTest';
+    /* Account PIN Protection: 'BootTest' matches no players row, so it is a
+       genuinely new name — and a new name can no longer be created without a
+       PIN. Both fields go in on the same submit, exactly as a player does it.
+       run4 is where the refusal itself is proven. */
+    doc.getElementById('pinInput').value = '2468';
     const urlEl = doc.getElementById('sbUrl'), keyEl = doc.getElementById('sbKey');
     if (urlEl) urlEl.value = 'https://stub.supabase.co';
     if (keyEl) keyEl.value = 'stub-key';
