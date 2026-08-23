@@ -333,9 +333,16 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // v39: all three Elders have left this list — they SHIPPED this
       // version, and their real stats are asserted in the v39 block below
       // instead. Same move v21 made for water_dragon and v25 for its three.
-      for (const s of ['basilisk', 'duskfox_elder']) {
+      // Mount/Bazaar Polish PART D: duskfox_elder has left this list — it
+      // SHIPPED this version, and its real stats are asserted in the PART D
+      // block below instead. Basilisk stays: still Dungeons, still unbuilt.
+      for (const s of ['basilisk']) {
         results.push([`${s} not pre-built`, pcd(s, 'Beastmaster') === null]);
       }
+      results.push(['PART D: the Duskfox Elder IS built now, and carries a real combat role',
+        pcd('duskfox_elder', 'Ranger') !== null &&
+        pcd('duskfox_elder', 'Ranger').hp === 100 &&
+        pcd('duskfox_elder', 'Ranger').dmg === 14]);
     } else {
       results.push(['petCombatDef exists', false]);
     }
@@ -2288,11 +2295,17 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          so both literals here move with it — 1.05 -> 1.86 (Lightfox, Epic)
          and 1.66 -> 2.95 (Shadowfox, Epic). Updated, not relaxed: the
          ORDERING assertion beside them is the part that must survive every
-         scale pass, and shadowfox > griffin > lightfox still holds. */
+         scale pass, and shadowfox > griffin > lightfox still holds.
+         Mount/Bazaar Polish PART A: recalibrated. The offset is SCREEN PIXELS
+         now (the call site no longer multiplies by the rider's own S) and
+         each mount carries its own measured back in MOUNT_SEAT_UNITS on top
+         of SPECIES_K, because one base constant cannot span an 8.4-unit
+         golem back and a 14.6-unit dragon one. Both literals move with that;
+         the ordering beside them is untouched and still holds. */
       results.push(['seat height scales with each species\' own art ratio',
         so.shadowfox < so.griffin && so.griffin < so.lightfox &&
-        Math.abs(so.lightfox - (-(2.2 * 1.86))) < 1e-9 &&
-        Math.abs(so.shadowfox - (-(2.2 * 2.95))) < 1e-9]);
+        Math.abs(so.lightfox - (-(8.4 * 1.86))) < 1e-9 &&
+        Math.abs(so.shadowfox - (-(8.4 * 2.95))) < 1e-9]);
 
       // every one of the nine mounts without error — not a sample
       let allNineOk = true, failedOn = null;
@@ -4182,15 +4195,24 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         shadowfox: 'epic', lightfox: 'epic', krakenling: 'epic',
         salamander_king: 'epic',
         golem_elder: 'elder', dragon_elder: 'elder', unicorn_elder: 'elder',
+        /* Mount/Bazaar Polish PART D: the bible's rarity table has an "Admin
+           Only" heading of its own, between Epic and Elder, with exactly one
+           row under it. The Duskfox Elder shipped this version, so it takes
+           that tier — a transcription like every other value in this table,
+           and deliberately NOT filed as "elder". */
+        duskfox_elder: 'admin',
       };
       const PR = R0.PET_RARITY;
       results.push([`PART A: every pet carries its BIBLE rarity and nothing else does (${Object.keys(PR).length})`,
         Object.keys(BIBLE_RARITY).every(k => PR[k] === BIBLE_RARITY[k]) &&
         Object.keys(PR).length === Object.keys(BIBLE_RARITY).length]);
-      results.push(['PART A: and it invents nothing — no Basilisk, no Duskfox Elder, both genuinely unbuilt',
-        PR.basilisk === undefined && PR.duskfox_elder === undefined]);
-      results.push(['PART A: the cap is Rare-and-up, exactly as the spec words it',
-        R0.CAPPED_RARITIES.slice().sort().join('|') === 'elder|epic|rare']);
+      results.push(['PART A: and it still invents nothing — no Basilisk, genuinely unbuilt',
+        PR.basilisk === undefined]);
+      results.push(['PART D: the Duskfox Elder is the ONLY admin-tier row, and is not an Elder-tier one',
+        Object.entries(PR).filter(([, v]) => v === 'admin').map(([k]) => k).join('|') === 'duskfox_elder' &&
+        PR.duskfox_elder !== 'elder']);
+      results.push(['PART A: the cap is Rare-and-up, and PART D adds the one tier above it',
+        R0.CAPPED_RARITIES.slice().sort().join('|') === 'admin|elder|epic|rare']);
       results.push(['PART A: so dragons, Crystal Golem and everything above them are capped...',
         ['fire_dragon', 'water_dragon', 'storm_dragon', 'shadow_dragon', 'crystal_golem',
          'unicorn', 'phoenix', 'shadowfox', 'lightfox', 'krakenling', 'salamander_king',
@@ -4538,6 +4560,284 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['Mob Rarity PART A hooks are reachable', false]);
     }
 
+    /* ===== Mount/Bazaar Polish + TP Consent + Duskfox Elder ================
+       PART A — the seat, recalibrated and verified PER SPECIES rather than on
+       the one in the screenshot. The back heights below are an INDEPENDENT
+       copy, read off the drawing code by hand (the torso top of each body in
+       its own art's native coordinates), so this gate fails if the game's own
+       table is edited to something the art does not support. ============== */
+    {
+      const BIBLE_NINE_A = ['stag', 'griffin', 'crystal_golem', 'water_dragon', 'fire_dragon',
+                            'storm_dragon', 'shadow_dragon', 'shadowfox', 'lightfox'];
+      /* torso tops, native art units — griffin's lion body at sy-11, the four
+         dragons' dragonV2 torso at Y(-14.6), the fox body at sy-8.4, the stag
+         at sy-13, the crystal golem's body + top facet at sy-9.8/-8.4. */
+      const BACK_A = { stag: 13.0, griffin: 11.0, crystal_golem: 9.0,
+        water_dragon: 14.6, fire_dragon: 14.6, storm_dragon: 14.6, shadow_dragon: 14.6,
+        shadowfox: 8.4, lightfox: 8.4 };
+      const mA = window.debugMountInfo();
+      const soA = mA.seatOffsets, skA = window.debugScaleInfo().SPECIES_K;
+
+      results.push(['PART A: the seat table covers exactly the bible\'s nine mountable species',
+        BIBLE_NINE_A.slice().sort().join('|') === Object.keys(soA).sort().join('|') &&
+        gameScript.indexOf('const MOUNT_SEAT_UNITS = {') > 0]);
+
+      let seatOk = true, seatWhy = null;
+      for (const sp of BIBLE_NINE_A) {
+        const want = -(BACK_A[sp] * skA[sp]);
+        if (Math.abs(soA[sp] - want) > 1e-9) { seatOk = false; seatWhy = sp; break; }
+      }
+      results.push(['PART A: every one of the nine seats on its OWN measured back' +
+        (seatWhy ? ` (${seatWhy} is wrong)` : ''), seatOk]);
+
+      /* The thing one base constant could not do. If the seat were still
+         `base * SPECIES_K`, seat/K would be the SAME number for all nine. */
+      const ratios = BIBLE_NINE_A.map(sp => +(-soA[sp] / skA[sp]).toFixed(4));
+      results.push([`PART A: and the nine do NOT share one ratio — ${new Set(ratios).size} distinct backs, not 1`,
+        new Set(ratios).size >= 3]);
+
+      /* Every rider is now genuinely higher than the old 2.2 base put them —
+         that base, scaled by the rider's own S of 2.1, is what read as
+         "floating beside the mount" in the screenshot. */
+      let lifted = true, lowest = 99;
+      for (const sp of BIBLE_NINE_A) {
+        const old = 2.2 * skA[sp] * 2.1;
+        const now = -soA[sp];
+        lowest = Math.min(lowest, now / old);
+        if (now <= old * 1.5) lifted = false;
+      }
+      results.push([`PART A: and every one of the nine sits at least 1.5x higher than the old base (worst ${lowest.toFixed(2)}x)`,
+        lifted]);
+
+      results.push(['PART A: the render site no longer scales the seat by the rider\'s own S',
+        gameScript.indexOf('mountSeatOffsetY(mountSp) * S') < 0 &&
+        gameScript.indexOf('mountSeatOffsetY(mountSp) - petDrawAlt(mountSp, t, mountDowned)') > 0]);
+
+      /* The Griffin is the one flier among the nine, and drawPet lifts a
+         flying pet to its own alt before drawing it — so its rider has to be
+         lifted by the same amount, from the same expression. */
+      const flyG = window.petDrawAlt('griffin', 0, false);
+      results.push([`PART A: the Griffin's rider is carried up to its flight altitude too (${flyG.toFixed(1)}px)`,
+        flyG > 24 && flyG < 32 &&
+        BIBLE_NINE_A.filter(s => s !== 'griffin').every(s => window.petDrawAlt(s, 0, false) === 0)]);
+      results.push(['PART A: and the mount and its rider read that altitude from ONE shared helper',
+        gameScript.indexOf('const alt = petDrawAlt(species, t, downed);') > 0 &&
+        (gameScript.match(/function petDrawAlt\(/g) || []).length === 1]);
+      results.push(['PART A: a downed flier agrees between the two, rather than leaving its rider in the air',
+        window.petDrawAlt('griffin', 0, true) === 2]);
+      results.push(['PART A: the recalibrated base constant is still there for anything unlisted',
+        gameScript.indexOf('const MOUNT_SEAT_BASE = ') > 0 &&
+        Math.abs(window.mountSeatOffsetY('__nobody__') - (-(11.5 * 1.2))) < 1e-9]);
+    }
+
+    /* ===== PART B — the Grand Bazaar's clearance ======================== */
+    {
+      const v37b = window.debugV37Info();
+      const bc = v37b.bazaarClear;
+      const infoB = window.debugWorldInfo();
+      results.push([`PART B: nothing grows on the Bazaar's ground any more (${bc.features} features, ${bc.trees} trees on ${v37b.BAZAAR_R} tiles of clearing)`,
+        bc.features === 0 && bc.trees === 0]);
+      /* A feature is painted at its tile centre plus jitter, so one generated
+         on a tile just outside the radius can be drawn just inside it. That
+         is a rim effect and must stay one — nothing may drift anywhere near
+         the stall ring. */
+      results.push([`PART B: and anything drifting over the rim stays on the rim (${bc.drifted} item(s), nearest ${bc.driftMinD === null ? 'n/a' : bc.driftMinD.toFixed(2)} from centre)`,
+        bc.driftMinD === null || bc.driftMinD > v37b.BAZAAR_RING + 2.5]);
+      results.push([`PART B: and the forest is CLEARED, not deleted — ${bc.ringFeatures} features (${bc.ringTrees} trees) still stand in the ring just outside`,
+        bc.ringFeatures > 0]);
+      /* Not "everything is PLAINS": the clearing exempts DEEP, LAVA and WATER
+         exactly as the scattered-safe-zone line it reuses does, so a coastal
+         Bazaar keeps its shoreline. What must be gone is every biome that
+         GROWS something — that is the crowding the report is about. */
+      {
+        const GROWS = [infoB.B.FOREST, infoB.B.DARKFOREST, infoB.B.ENCHFOREST,
+                       infoB.B.SACMEADOW, infoB.B.MEADOW, infoB.B.ROCK, infoB.B.VOLROCK];
+        const inside = Object.keys(bc.biomes).map(Number);
+        const total = Object.values(bc.biomes).reduce((a, b) => a + b, 0);
+        results.push([`PART B: no biome that grows anything is left on the Bazaar's ground (${inside.length} biome(s))`,
+          inside.every(b => GROWS.indexOf(b) < 0) && (bc.biomes[infoB.B.PLAINS] || 0) > total * 0.6]);
+        results.push([`PART B: and the trading floor is level ground, never a stepped cliff (heights ${bc.heights.join(',')})`,
+          bc.heights.every(h => h <= 0) && bc.heights.indexOf(0) >= 0]);
+      }
+      results.push(['PART B: the clearing REUSES the scattered-safe-zone pattern rather than inventing one',
+        gameScript.indexOf('Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) b = B.PLAINS;') > 0 &&
+        gameScript.indexOf('if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) h = 0;') > 0 &&
+        gameScript.indexOf('if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) continue;') > 0]);
+      results.push(['PART B: and it can no more paint grass over open water than a scattered zone can',
+        gameScript.indexOf('if (b !== B.PLAINS && b !== B.DEEP && b !== B.LAVA && b !== B.WATER &&\n      Math.hypot(tx - BAZAAR.x') > 0]);
+      // preservation: nothing about the Bazaar ITSELF moved
+      results.push([`PART B: the Bazaar is unchanged otherwise — still a safe zone, still ${v37b.BAZAAR_STALLS} stalls on a ${v37b.BAZAAR_RING} ring inside ${v37b.BAZAAR_R}`,
+        v37b.bazaarIsSafe === true && v37b.BAZAAR_STALLS === 9 &&
+        v37b.BAZAAR_RING === 5.5 && v37b.BAZAAR_R === 10]);
+      results.push(['PART B: and the clearing is comfortably wider than the stall ring it has to hold',
+        v37b.BAZAAR_R - v37b.BAZAAR_RING >= 4]);
+    }
+
+    /* ===== PART C — teleport consent ==================================== */
+    if (typeof window.debugSetTravel === 'function' && window.debugCombatHandles) {
+      const dtvC = window.debugSetTravel, tviC = window.debugTravelInfo;
+      const hC = window.debugCombatHandles();
+      const posC = window.debugWorldInfo().player;
+
+      dtvC({ tpUnset: true });
+      const unset = tviC();
+      results.push(['PART C: the flag is UNSET by default, and unset means accepting — nothing breaks for anyone',
+        unset.tpClosedRaw === undefined && unset.tpAccepting === true && unset.tpBroadcast === 0]);
+
+      /* Two ghosts at the same spot: one accepting, one not. Only the shape of
+         the `tc` field separates them. */
+      const gx = posC.x + 4, gy = posC.y + 4;
+      const ghost = (name, tc) => hC.others.set(name, {
+        x: gx, y: gy, tx: gx, ty: gy, space: 'main', dead: false,
+        lastHeard: window.performance.now(), hp: 100, maxHp: 100, cls: 'Ranger', level: 1,
+        ...(tc === undefined ? {} : { tc }),
+      });
+      ghost('ConsentOn', false);
+      ghost('ConsentOff', true);
+      ghost('ConsentOld', undefined);   // a client that predates this version
+      const namesC = tviC().players.map(p => p.name);
+      results.push(['PART C: a player who is not accepting teleports is genuinely off the Players list',
+        namesC.indexOf('ConsentOff') < 0]);
+      results.push(['PART C: while one who is accepting is still on it',
+        namesC.indexOf('ConsentOn') >= 0]);
+      results.push(['PART C: and a client that never sends the field at all is treated as accepting — additive, not breaking',
+        namesC.indexOf('ConsentOld') >= 0]);
+
+      // and the travel itself is refused, not merely hidden
+      if (window.debugGrantPet) window.debugGrantPet('unicorn_elder');
+      const beforeC = window.debugWorldInfo().player;
+      const refusedC = dtvC({ clearCooldown: true, to: 'ConsentOff' });
+      const afterC = window.debugWorldInfo().player;
+      results.push(['PART C: travelling to them is refused outright, and moves nobody',
+        refusedC.travelled === false &&
+        Math.abs(afterC.x - beforeC.x) < 1e-9 && Math.abs(afterC.y - beforeC.y) < 1e-9]);
+
+      // the local player's own switch
+      const on0 = dtvC({ tpToggle: true });
+      results.push(['PART C: the toggle turns consent off, and the broadcast says so',
+        on0.tpAccepting === false && on0.tpBroadcast === 1 && on0.tpClosedRaw === true]);
+      const on1 = dtvC({ tpToggle: true });
+      results.push(['PART C: and back on again — it is a toggle, never a one-way door',
+        on1.tpAccepting === true && on1.tpBroadcast === 0]);
+      results.push(['PART C: the flag rides the ONE existing move broadcast, like mo/pe/sp/cs/cb',
+        gameScript.indexOf('tc: acceptsTeleports(me) ? 0 : 1,') > 0 &&
+        gameScript.indexOf('o.tc = !!p.tc;') > 0 &&
+        (gameScript.match(/channel\.on\("broadcast", \{ event: "move" \}/g) || []).length === 1]);
+      results.push(['PART C: it stores no new table and no new column',
+        gameScript.indexOf('tp_consent') < 0 && gameScript.indexOf('tpClosed:') < 0]);
+      results.push(['PART C: every read of it goes through the one predicate, so "unset" can only mean one thing',
+        gameScript.indexOf('function acceptsTeleports(host) { return !(host && host.tpClosed); }') > 0 &&
+        gameScript.indexOf('function acceptsTeleportsRemote(o) { return !(o && o.tc); }') > 0 &&
+        gameScript.indexOf('if (!acceptsTeleportsRemote(o)) continue;') > 0 &&
+        /* Nothing anywhere compares the flag to undefined or to false: the
+           predicate is the only thing that decides what "unset" means, so a
+           consumer cannot disagree with it about the default. */
+        gameScript.indexOf('tpClosed === undefined') < 0 &&
+        gameScript.indexOf('tpClosed === false') < 0 &&
+        gameScript.indexOf('tpClosed !== true') < 0]);
+      results.push(['PART C: the panel row is the existing .craft-row language, not a new component',
+        gameScript.indexOf('row.className = "craft-row";\n    const label = document.createElement("div");') > 0 &&
+        gameScript.indexOf('travelConsentBtn') > 0]);
+      // and the rest of the tab is untouched
+      hC.others.delete('ConsentOff'); hC.others.delete('ConsentOn'); hC.others.delete('ConsentOld');
+      dtvC({ tpUnset: true });
+    }
+
+    /* ===== PART D — the Duskfox Elder, and the two admin cosmetics ====== */
+    if (typeof window.debugDuskfoxInfo === 'function') {
+      const dfi = window.debugDuskfoxInfo, dfp = window.debugDuskfoxProbe;
+      const d0 = dfi();
+      results.push(['PART D: the Duskfox Elder exists, and carries the bible\'s own two rules as flags',
+        !!d0.def && d0.def.name === 'Duskfox Elder' &&
+        d0.def.adminOnly === true && d0.def.duskOnly === true &&
+        Array.isArray(d0.def.biomes) && d0.def.biomes.length === 0]);
+      results.push([`PART D: exactly ONE exists in the entire world (${d0.wildCount})`,
+        d0.wildCount === 1 && !!d0.wild]);
+      results.push([`PART D: and it stands in a Sacred Meadow — the bible's own sacred ground (biome ${d0.tileBiome})`,
+        d0.tileBiome === d0.SACMEADOW]);
+      results.push([`PART D: its daily cap is 1, so a taken one does not come back today (cap ${d0.dailyCap})`,
+        d0.capped === true && d0.dailyCap === 1 && d0.rarity === 'admin']);
+      results.push(['PART D: the placement is the Unicorn Elder\'s own single-tile technique, not a new system',
+        gameScript.indexOf('function duskfoxElderTile(seed) {') > 0 &&
+        gameScript.indexOf('function unicornElderTile(seed) {') > 0 &&
+        gameScript.indexOf('if (speciesSpawnBudget("duskfox_elder") > 0) {') > 0]);
+
+      /* THE ACCESS GATE. Swept over the whole day cycle as a non-admin: there
+         must not be a single moment at which it is visible or tameable. */
+      let seenAsPlayer = 0;
+      for (let i = 0; i <= 100; i++) if (dfp({ visibleAt: i / 100 }).visible) seenAsPlayer++;
+      results.push([`PART D: a non-admin never sees it — not at any point in the day (${seenAsPlayer}/101 frames)`,
+        d0.isAdmin === false && seenAsPlayer === 0]);
+      results.push(['PART D: and the tame channel refuses to even begin for them',
+        dfp({ tryTame: true }).tamingStarted === false]);
+      results.push(['PART D: the refusal is structural — isWildVisible() AND startTaming(), both on isAdmin()',
+        gameScript.indexOf('if (sp.adminOnly && !isAdmin()) return false;') > 0 &&
+        gameScript.indexOf('if (wsp && wsp.adminOnly && !isAdmin()) return;') > 0]);
+
+      const wasRole = window.debugV39Info().role;
+      window.debugSetV39({ role: 'admin' });
+      const dawnV = dfp({ visibleAt: 0.02 }).visible;
+      const noonV = dfp({ visibleAt: 0.30 }).visible;
+      const duskV = dfp({ visibleAt: d0.DUSK_PEAK }).visible;
+      const nightV = dfp({ visibleAt: 0.80 }).visible;
+      results.push(['PART D: an admin sees it at twilight and at NO other hour — dawn, noon and night all refuse',
+        duskV === true && dawnV === false && noonV === false && nightV === false]);
+      results.push([`PART D: and the twilight window is the sky's own dusk lobe (${d0.DUSK_PEAK} +/- ${d0.DUSK_HALF})`,
+        d0.DUSK_PEAK === 0.55 && d0.DUSK_HALF === 0.07 &&
+        gameScript.indexOf('const nearDusk = Math.max(0, 1 - Math.abs(dt2 - 0.55) / 0.07);') > 0]);
+      results.push(['PART D: an admin CAN begin the tame, inside the window',
+        (() => {
+          const real = window.getDayT;
+          window.getDayT = () => 0.55;
+          const got = dfp({ tryTame: true }).tamingStarted;
+          window.getDayT = real;
+          return got === true;
+        })()]);
+      // the two admin cosmetics
+      const g1 = dfp({ grantAdminCos: true });
+      results.push([`PART D: an admin is handed the bible's unique crown and cloak (${g1.granted} granted)`,
+        g1.granted === 2 && g1.heldAdminCos.every(n => n === 1)]);
+      results.push(['PART D: and handed them once, not once per login',
+        dfp({ grantAdminCos: true }).granted === 0]);
+      window.debugSetV39({ role: wasRole === 'admin' ? 'admin' : 'player' });
+      results.push(['PART D: a non-admin is handed nothing, ever',
+        dfp({ grantAdminCos: true }).granted === 0]);
+      results.push([`PART D: neither is in the drop pool — 4000 rolls off the Elder Drake produced ${dfp({ rollDrops: 4000 }).rolled.length} kinds, none admin`,
+        dfp({ rollDrops: 4000 }).rolled.every(c => c.indexOf('cos_admin') !== 0) &&
+        d0.COSMETIC_DROP_IDS.every(c => c.indexOf('cos_admin') !== 0) &&
+        d0.ADMIN_COSMETIC_IDS.length === 2]);
+      results.push(['PART D: they are cosmetics like every other — a name, a slot and a colour, and no stat',
+        (() => {
+          const C = window.debugV35Info().COSMETICS || null;
+          if (!C) return gameScript.indexOf('cos_admin_crown:   { name: "Duskcrown",      slot: "hat",   color: "#e8b64c", admin: true }') > 0;
+          return d0.ADMIN_COSMETIC_IDS.every(id => C[id] && C[id].slot && C[id].color &&
+            C[id].dmg === undefined && C[id].reduce === undefined && C[id].tier === undefined);
+        })()]);
+      results.push(['PART D: the crown has its own silhouette rather than falling through to the Cap',
+        gameScript.indexOf('} else if (id === "cos_admin_crown") {') > 0]);
+
+      // THE ORACLE — already true, and it must never stop being true
+      results.push(['PART D: the Oracle still cannot name it, and never could',
+        d0.oracleForbidden.indexOf('duskfox_elder') >= 0 &&
+        d0.oracleHintSpecies.indexOf('duskfox_elder') < 0 &&
+        gameScript.indexOf('const ORACLE_HINTS_ALL = [') > 0]);
+      results.push(['PART D: nor does anything about it reach the world-ending trio',
+        window.debugV39Info().ELDER_SPECIES.indexOf('duskfox_elder') < 0 &&
+        d0.def.elder === undefined &&
+        window.isElderCombatant('duskfox_elder') === false]);
+
+      // scale: the largest of its own line, and not the largest creature alive
+      const skD = window.debugScaleInfo().SPECIES_K;
+      results.push([`PART D: it is the biggest fox in the world (${skD.duskfox_elder} vs shadowfox ${skD.shadowfox}) and not the biggest creature`,
+        skD.duskfox_elder > skD.shadowfox && skD.shadowfox > skD.lightfox &&
+        skD.duskfox_elder / skD.shadowfox > 1.3 &&
+        skD.duskfox_elder < skD.golem_elder]);
+      results.push(['PART D: and it is NOT mountable — the bible names exactly nine, and this is not one',
+        window.debugMountInfo().MOUNTABLE.indexOf('duskfox_elder') < 0 &&
+        window.debugMountInfo().MOUNTABLE.length === 9]);
+    }
+
+
     /* The admin half, run LAST because it genuinely rewrites the world. */
       set39({ clearEvent: true, role: 'admin' });
       set39({ armed: true });
@@ -4884,6 +5184,30 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
 
       results.push(['the safe-zone PvP gate checks both the attacker and the target',
         gameScript.indexOf('inSafeZone(me.x, me.y) || inSafeZone(o.x, o.y)') > 0]);
+    }
+
+    /* ===================== hotfix: cave exit re-entry loop ================ */
+    {
+      const info = window.debugWorldInfo(), N2 = info.N, B2 = info.B;
+      let spot = null;
+      for (let y = 0; y < N2 && !spot; y++) for (let x = 0; x < N2; x++) {
+        if (window.biomeAt(x, y) === B2.UWCAVE) { spot = [x, y]; break; }
+      }
+      if (spot) {
+        window.debugSetPlayer({ x: spot[0] + 0.5, y: spot[1] + 0.5, diving: true, hp: 100, breath: 30 });
+        window.enterInterior(spot[0], spot[1], B2.UWCAVE);
+        const enteredOk = window.debugSpaceInfo().space !== 'main';
+        window.exitInterior();
+        const exitedOk = window.debugSpaceInfo().space === 'main';
+        for (let f = 0; f < 30; f++) window.render(f * 16);
+        const stayedOut = window.debugSpaceInfo().space === 'main';
+        results.push(['cave entry works', enteredOk]);
+        results.push(['exitInterior() genuinely returns to the surface', exitedOk]);
+        results.push(['surfacing does not silently pull the player back in — the reported bug',
+          stayedOut]);
+      } else {
+        results.push(['cave exit re-entry test had a UWCAVE tile to use', false]);
+      }
     }
 
     let allOk = true;
