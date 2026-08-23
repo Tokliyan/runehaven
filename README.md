@@ -102,68 +102,68 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (Pre-Launch QA Pass)
+## Confirmed, locked spec for the next build (Mount/Bazaar Polish + TP Consent + Duskfox Elder)
 
-PIN Fixes shipped successfully — every roadmap item is now complete. This
-is a genuine audit, not new content. Real bugs across this whole project
-have consistently appeared at the SEAMS between systems, not inside any
-one system in isolation — a new landmark that an older placement loop
-never learned to avoid, a new item missing its counterpart in a sibling
-table, a safe-zone override that never anticipated a specific biome. This
-spec is structured around that actual pattern, not a generic sweep.
+**Two items need your call before this can be built as-is — flagged here,
+not decided silently, the same way Guilds was handled earlier.**
 
-**PART A — cross-table completeness, checked programmatically, not by
-eye.** For every entry in `WEAPONS`, confirm a matching `ITEM_META` entry
-exists and a `RECIPES` entry can produce it (unless explicitly a
-world-drop-only item — flag those separately, don't assume). For every
-entry in `ARMORS`, confirm the reverse: every item with `armor: true` in
-`ITEM_META` has a matching `ARMORS` entry (this exact class of bug shipped
-once already — `dragonsteel_shield` — confirm nothing else has the same
-gap). For every `MOBS`/`WILD_SPECIES` entry, confirm a drawing function
-is actually reachable for its `kind`/`species` — a mob with stats but no
-matching art branch would fail silently, not throw.
+- **"Make Places fast travel accessible to all mountable things"** — the
+  bible ties fast travel specifically and exclusively to the Unicorn
+  Elder ("Grants fast travel across the entire world" — one of exactly
+  three things that make it unique). Extending it to any mount would
+  remove that exclusivity. If this is what you want, confirm it plainly;
+  I won't build a bible deviation without that.
+- **"Give more mobs mounting specs"** — the bible names exactly nine
+  mountable species by name, no more. Same situation — confirm if this
+  means genuinely adding species beyond that list, or if it meant
+  something narrower (e.g., every one of the nine actually working
+  correctly, which is worth confirming as its own check regardless).
 
-**PART B — every placement/exclusion loop, checked against every
-landmark that exists now, not the landmark list at the time it was
-written.** Ruin placement, Zone placement, Elder Drake's search, base
-placement, and any other loop that excludes proximity to named landmarks
-— confirm each one checks against the FULL current landmark set (Tower,
-Volcano, Mount, Spawn, Bazaar, Ancient Forge, Colosseum, Dragon Altar,
-Shrine), not whichever subset existed when that loop was first written.
-This exact class of bug shipped twice already (Ruins missing the
-Volcano/Mount exclusion at the new scale, Zones never checking the three
-v37 landmarks at all) — treat finding a third instance as likely, not
-unlikely.
+**Everything below is buildable as specified, no bible conflict.**
 
-**PART C — every biome-override guard, checked against what it actually
-excludes.** The Safe Zone clearing bug (excluding PEAK via `BLOCKED.has`)
-was a real, shipped bug for a long time before anything exposed it —
-confirm every other biome-override check (Ruin carve, cliff-face
-selection, any terrain force-override) makes the same distinction between
-"genuinely impassable" (DEEP, LAVA) and "just a different, walkable
-terrain type" (PEAK, ROCK) rather than treating them as one category by
-habit.
+**PART A — mount seat recalibration.** Confirmed directly: `mountSeatOffsetY()`
+scales by `SPECIES_K` correctly in formula, but its base constant (2.2)
+was set before Tuning/Polish's Elder size pass and Mob Rarity's tiered
+size pass both increased dragon sizes substantially. Screenshot shows the
+rider reading as floating beside the mount rather than seated on its
+back. Recalibrate the base constant against the mounts' CURRENT
+`SPECIES_K` values, verified per-species, not just Fire Dragon — confirm
+all nine mountable species visually seat correctly, not just the one in
+the screenshot.
 
-**PART D — a real end-to-end new-player walkthrough**, run once fully
-rather than tested system-by-system: create an account with a PIN, land
-at spawn, complete or skip the tutorial, gather a resource, craft a basic
-tool, tame a common species, build a Foundation and one other piece,
-survive a day/night cycle, and confirm nothing in that ordinary sequence
-throws or silently does nothing. This is the sequence an actual new
-player takes Monday — confirm it as a whole, not as isolated features.
+**PART B — Grand Bazaar surroundings.** Confirmed no tree-clearance exists
+around it at all, unlike other landmarks. Add the same kind of clearance
+radius already used elsewhere (reuse the pattern, don't invent a new
+one) so the stalls and trading floor read clearly instead of crowded by
+forest right up to the edge.
 
-**PART E — a real stability check at N=1000, not the automated tests'
-stubbed environment.** Confirm the viewport ground renderer (Expansion
-2a) holds its per-frame tile-count bound at multiple camera positions
-across the now much-larger map, not just the position it was originally
-verified at.
+**PART C — player-to-player teleport consent.** Real gap: right now
+anyone can teleport to anyone, with no way to opt out. Add a genuine
+consent toggle — a player can mark themselves as "not accepting
+teleports" (default: accepting, matching current behavior, so this is
+additive not a breaking change), and the Players tab in Fast Travel
+simply excludes anyone with it off. Store the flag the same lightweight
+way `me.mounted` and similar session flags already work; must degrade
+sensibly if unset (treated as accepting, the current default behavior).
 
-**Proof gates:** every gap found in Parts A-C gets fixed with the same
-"invariant survives, specific number/reference updates" discipline used
-all session — not silently patched, not left as a note. Part D's
-walkthrough is itself a proof gate: it either completes clean or the
-build stops and reports exactly where it didn't. Standard gauntlet
-throughout.
+**PART D — the Duskfox Elder, finally built.** Confirmed: currently
+exists only as a name in the Oracle's forbidden-hint list, never actually
+implemented. Per the bible exactly: one exists in the entire world,
+spawns in a twilight sacred grove, admin-account exclusive — reuse the
+Unicorn Elder's "single random world tile" placement technique for a
+true one-of-one, but gate taming behind `isAdmin()` specifically, not
+just rarity. Comes with the bible's other two admin-exclusive cosmetics
+mentioned alongside it — a unique crown and cloak — added to the
+cosmetics system the same way every other cosmetic already works (earned,
+never purchased; here, "earned" means being the admin).
+
+**Proof gates:** standard gauntlet plus confirm all nine mounts seat
+visually correctly post-recalibration, confirm the Bazaar's clearance
+radius actually removes tree crowding, confirm a teleport-consent-off
+player is genuinely excluded from the Players list, confirm the Duskfox
+Elder's tame path is unreachable without `isAdmin()`, confirm nothing
+related to it ever appears in the Oracle's hints (already true, must not
+regress).
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
