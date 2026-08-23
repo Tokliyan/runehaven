@@ -4861,6 +4861,31 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         gameScript.indexOf('if (isAdmin()) ents.push({ s: DEV_CHEST') > 0]);
     }
 
+    /* ===================== QA PASS 2: player-experience audit ================ */
+    {
+      results.push(['closeAllPanels() exists and covers every real panel',
+        gameScript.indexOf('function closeAllPanels(exceptEl)') > 0 &&
+        gameScript.indexOf('[invPanel, craftPanel, petPanel, buildPanel, charPanel, travelPanel, chestPanel]') > 0]);
+      results.push(['opening Inventory now closes the others first',
+        gameScript.indexOf('const now2 = invPanel.style.display !== "block"; closeAllPanels();') > 0]);
+      results.push(['opening Build now closes the others first',
+        gameScript.indexOf('const now2 = buildPanel.style.display !== "block"; closeAllPanels();') > 0]);
+      results.push(['opening Character now closes the others first',
+        gameScript.indexOf('const now2 = charPanel.style.display !== "block"; closeAllPanels();') > 0]);
+
+      results.push(['base placement keeps clear of the Ancient Forge',
+        gameScript.indexOf('[ANCIENT.x, ANCIENT.y, ANCIENT_R + 3]') > 0]);
+      results.push(['and the Dragon Altar',
+        gameScript.indexOf('[DRAGON_ALTAR.x, DRAGON_ALTAR.y, DRAGON_ALTAR_R + 3]') > 0]);
+      results.push(['and the Beastmaster Shrine',
+        gameScript.indexOf('[SHRINE.x, SHRINE.y, 1.7 + 3]') > 0]);
+      results.push(['and the Colosseum, so it stays a real open arena',
+        gameScript.indexOf('[COLOSSEUM.x, COLOSSEUM.y, COLOSSEUM_R + 2]') > 0]);
+
+      results.push(['the safe-zone PvP gate checks both the attacker and the target',
+        gameScript.indexOf('inSafeZone(me.x, me.y) || inSafeZone(o.x, o.y)') > 0]);
+    }
+
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
     process.exit(allOk && !caught ? 0 : 1);
