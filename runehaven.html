@@ -526,6 +526,13 @@
     <div id="travelList"></div>
   </div>
   <div class="set-sec" id="travelSecPlayers">
+    <!-- Mount/Bazaar Polish PART C: the consent toggle. It is a .craft-row,
+         the same row treatment the list under it and the PLACES tab already
+         use, so this adds no new component style either. -->
+    <div class="craft-row" id="travelConsentRow">
+      <div id="travelConsentLabel"></div>
+      <button id="travelConsentBtn"></button>
+    </div>
     <div class="sub" id="travelPlayerNote"></div>
     <div id="travelPlayerList"></div>
   </div>
@@ -840,8 +847,29 @@ const COSMETICS = {
   cos_skin_obsidian: { name: "Obsidian Finish",slot: "skin",  color: "#4a4458" },
   cos_pet_collar:    { name: "Pet Collar",     slot: "pet",   color: "#b0603c" },
   cos_pet_ribbon:    { name: "Pet Ribbon",     slot: "pet",   color: "#e07aa8" },
+  /* Mount/Bazaar Polish PART D: the bible's other two admin-exclusive
+     cosmetics, named in the same breath as the Duskfox Elder — "Exclusive
+     cosmetics: Duskfox Elder pet (one of a kind, admin exclusive), unique
+     crown and cloak". They are ordinary cosmetics in every mechanical
+     respect: a name, a slot and a colour, no stat field, worn and drawn and
+     dropped by exactly the code every row above uses.
+
+     `admin: true` is the ONE thing that differs, and it does exactly two
+     things: it keeps them out of the mob-drop pool (they cannot be earned by
+     killing something) and it puts them in the admin's pack at login. That
+     is what "earned, never purchased" means for a cosmetic whose earning
+     condition is being the admin — there is still no shop, no currency and
+     no purchase path anywhere in this file. Their gold is the Elder gold the
+     Duskfox and the trio already wear, so the set reads as one thing. */
+  cos_crown_admin:   { name: "Elder Crown",    slot: "hat",   color: "#f2cf6b", admin: true },
+  cos_cloak_admin:   { name: "Elder Cloak",    slot: "cloak", color: "#4a4270", admin: true },
 };
 const COSMETIC_IDS = Object.keys(COSMETICS);
+/* PART D: the pool a mob kill can ever roll from. The two admin cosmetics are
+   deliberately not in it — a drop table that could hand out a one-of-a-kind
+   admin item is not admin-exclusive, whatever the table beside it says. */
+const COSMETIC_DROP_IDS = COSMETIC_IDS.filter(id => !COSMETICS[id].admin);
+const ADMIN_COSMETIC_IDS = COSMETIC_IDS.filter(id => COSMETICS[id].admin);
 /* A cosmetic is an ITEM like any other — it lives in the inventory, drops
    where you fall exactly as the bible says every item does, and is picked up
    through the same path. Injected rather than hand-copied so the two tables
@@ -877,7 +905,8 @@ function wornCosmetic(host, slot) {
 function rollCosmeticDrop(kind) {
   const chance = COSMETIC_DROP[kind];
   if (!chance || Math.random() >= chance) return null;
-  return COSMETIC_IDS[Math.floor(Math.random() * COSMETIC_IDS.length)];
+  /* PART D: rolls from COSMETIC_DROP_IDS, never COSMETIC_IDS. */
+  return COSMETIC_DROP_IDS[Math.floor(Math.random() * COSMETIC_DROP_IDS.length)];
 }
 
 /* v9: per-weapon cooldown (cd, ms) — dagger fast, axe/crossbow slow */
@@ -1573,6 +1602,15 @@ function debugTravelInfo() {
     PLAYER_TP_COOLDOWN_MS, PLAYER_TP_MIN, PLAYER_TP_MAX,
     readyIn: playerTpReadyIn(),
     players: travelablePlayers(),
+    /* Mount/Bazaar Polish PART C: my own consent, and what every player this
+       client can currently hear has broadcast about theirs — so a gate can
+       show the same person present in `others` and absent from `players`,
+       which is the whole assertion. */
+    myConsent: acceptsTeleports(me),
+    tpClosedRaw: me ? me.tpClosed : undefined,
+    heard: Array.from(others.keys()).map(n => ({
+      name: n, accepts: acceptsTeleports(others.get(n)),
+    })),
   };
 }
 function debugSetTravel(patch) {
@@ -1580,6 +1618,12 @@ function debugSetTravel(patch) {
   if (patch.clearCooldown) playerTpAt = -PLAYER_TP_COOLDOWN_MS;
   if ("tab" in patch) travelTab = patch.tab;
   const out = {};
+  /* PART C: both directions. `consentToggle` drives the real toggle the
+     button calls; `consent` sets the flag outright so a gate can arrange a
+     state without depending on what it started as. */
+  if ("consent" in patch) me.tpClosed = !patch.consent;
+  if (patch.consentToggle) out.toggled = toggleTeleportConsent();
+  if ("refreshPanel" in patch) refreshTravelPanel();
   if ("landingFor" in patch) out.landing = playerLandingSpot(patch.landingFor[0], patch.landingFor[1]);
   if ("to" in patch) out.travelled = travelToPlayer(patch.to);
   return Object.assign(debugTravelInfo(), out);
@@ -1647,6 +1691,74 @@ function debugV37Info() {
     inColosseumAtCentre: inColosseum(COLOSSEUM.x, COLOSSEUM.y),
     ancientRecipes: RECIPES.filter(r => r.where === "ancient").map(r => r.out),
   };
+}
+/* ============ Mount/Bazaar Polish hooks ================================
+   PART B and PART D both live in top-level `const`s and worldgen output that
+   never land on `window`, the same reason every hook above exists. Copies,
+   plus the two setters PARTs C and D's gates need — `role` so the admin gate
+   can be driven from both sides without a second account, and the grant so
+   its idempotence can be proved rather than asserted. */
+function debugDuskfoxInfo() {
+  const dw = wilds.find(w => w.species === "duskfox_elder") || null;
+  return {
+    tile: duskfoxElderTile(worldSeed),
+    unicornTile: unicornElderTile(worldSeed),
+    wild: dw ? { x: dw.x, y: dw.y, id: dw.id } : null,
+    countInWorld: wilds.filter(w => w.species === "duskfox_elder").length,
+    species: Object.assign({}, WILD_SPECIES.duskfox_elder),
+    combat: Object.assign({}, PET_COMBAT.duskfox_elder || {}),
+    rarity: PET_RARITY.duskfox_elder,
+    capped: speciesIsCapped("duskfox_elder"),
+    cap: speciesDailyCap("duskfox_elder"),
+    isAdmin: isAdmin(), role: (me && me.role) || null,
+    adminOnly: adminOnlySpecies("duskfox_elder"),
+    canTame: canTameSpecies("duskfox_elder"),
+    canTameOrdinary: canTameSpecies("shadowfox"),
+    ADMIN_COSMETIC_IDS: ADMIN_COSMETIC_IDS.slice(),
+    COSMETIC_DROP_IDS: COSMETIC_DROP_IDS.slice(),
+    COSMETIC_IDS: COSMETIC_IDS.slice(),
+    held: ADMIN_COSMETIC_IDS.map(id => (me && me.inv && me.inv[id]) || 0),
+    oracleForbidden: Array.from(ORACLE_FORBIDDEN),
+    ELDER_SPECIES: ELDER_SPECIES.slice(),
+  };
+}
+function debugSetDuskfox(patch) {
+  if (!patch) return debugDuskfoxInfo();
+  const out = {};
+  if ("role" in patch && me) me.role = patch.role === "admin" ? "admin" : "player";
+  if (patch.grant) out.granted = grantAdminCosmetics();
+  if (patch.clearHeld && me) for (const id of ADMIN_COSMETIC_IDS) delete me.inv[id];
+  if (patch.tameAttempt) {
+    const before = taming;
+    startTaming({ id: "duskfox_elder:test", species: patch.tameAttempt, x: me.x, y: me.y });
+    out.tamingStarted = taming !== null && taming !== before;
+    taming = null;
+  }
+  return Object.assign(debugDuskfoxInfo(), out);
+}
+/* PART B: the Bazaar's clearance, counted from the game's own generators
+   rather than re-derived — featureTypeAt and biomeAt are the exact functions
+   worldgen calls, so a gate reading them is reading the world. */
+function debugBazaarInfo(radius) {
+  const r = radius === undefined ? BAZAAR_R : radius;
+  let trees = 0, tiles = 0, grass = 0, level = 0, water = 0;
+  const R = Math.ceil(r) + 1;
+  for (let ty = Math.floor(BAZAAR.y) - R; ty <= Math.floor(BAZAAR.y) + R; ty++) {
+    for (let tx = Math.floor(BAZAAR.x) - R; tx <= Math.floor(BAZAAR.x) + R; tx++) {
+      if (tx < 0 || ty < 0 || tx >= N || ty >= N) continue;
+      if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) >= r) continue;
+      tiles++;
+      const b = biomeAt(tx, ty);
+      if (b === B.DEEP || b === B.WATER || b === B.SHALLOW) { water++; continue; }
+      if (b === B.PLAINS) grass++;
+      if (heightAt(tx, ty) === 0) level++;
+      if (featureTypeAt(tx, ty) === "tree") trees++;
+    }
+  }
+  return { BAZAAR: { x: BAZAAR.x, y: BAZAAR.y }, BAZAAR_R, BAZAAR_RING, BAZAAR_STALLS,
+           radius: r, tiles, trees, grass, level, water,
+           centreBiome: biomeAt(Math.floor(BAZAAR.x), Math.floor(BAZAAR.y)),
+           centreHeight: heightAt(Math.floor(BAZAAR.x), Math.floor(BAZAAR.y)) };
 }
 function debugV37Probe(patch) {
   const out = {};
@@ -1866,6 +1978,19 @@ function debugMountInfo() {
     canMount: canMountActivePet(),
     seatOffsets: Array.from(MOUNTABLE_SPECIES).reduce((o, s) => {
       o[s] = mountSeatOffsetY(s); return o;
+    }, {}),
+    /* Mount/Bazaar Polish PART A: the measured table, the fallback and the
+       rider scale, so a gate can prove the seat really is each mount's own
+       back rather than re-deriving the arithmetic from a literal. */
+    MOUNT_SEAT_BACK: Object.assign({}, MOUNT_SEAT_BACK),
+    MOUNT_SEAT_BACK_FALLBACK, RIDER_S,
+    SPECIES_K_snapshot: Array.from(MOUNTABLE_SPECIES).reduce((o, s) => {
+      o[s] = SPECIES_K[s]; return o;
+    }, {}),
+    /* the rider's feet in real screen pixels above the mount's own baseline,
+       which is the thing the screenshot was actually about */
+    seatPx: Array.from(MOUNTABLE_SPECIES).reduce((o, s) => {
+      o[s] = -mountSeatOffsetY(s) * RIDER_S; return o;
     }, {}),
     petPos: (me && me.pet) ? { x: me.pet.x, y: me.pet.y } : null,
     playerPos: me ? { x: me.x, y: me.y } : null,
@@ -2178,6 +2303,31 @@ const WILD_SPECIES = {
   golem_elder:     { name: "Golem Elder",     base: 0.15, flier: false, biomes: [], fightToTame: true, elder: true, bloodFavored: false, shunnedByBlood: false },
   dragon_elder:    { name: "Dragon Elder",    base: 0.15, flier: false, biomes: [], elder: true, altarOnly: true, bloodFavored: false, shunnedByBlood: false },
   unicorn_elder:   { name: "Unicorn Elder",   base: 0.15, flier: false, biomes: [], elder: true, bloodFavored: false, shunnedByBlood: false },
+  /* ============ Mount/Bazaar Polish PART D — THE DUSKFOX ELDER =======
+     Bible (PETS — FULL RARITY TABLE, "Admin Only"): "Duskfox Elder — One
+     exists in the entire world, twilight sacred grove, admin account
+     exclusive", and (ADMIN — FULL DETAILS): "Exclusive cosmetics: Duskfox
+     Elder pet (one of a kind, admin exclusive), unique crown and cloak".
+     Until now it existed in this file as one string in ORACLE_FORBIDDEN and
+     nowhere else — a name the Oracle was forbidden to say about a creature
+     that was not there to be found.
+
+     Placed by unicornElderTile()'s own technique on its own salt: ONE tile,
+     one hash draw, flat across all N*N tiles, no biome test and no pattern —
+     which is the spec's instruction and is also what makes it a true
+     one-of-one rather than a population of one.
+     ⚠️ FLAGGED: the bible says "twilight sacred grove" and there is no grove
+     in this world — the nearest thing is B.SACMEADOW, the Sacred Meadow,
+     which is a different name in the same bible. Building a Twilight Sacred
+     Grove would be inventing a location, which the standard process forbids
+     outright, so nothing was invented: the spec's own placement instruction
+     was followed instead, and this note is here rather than a new biome.
+
+     admin: true is the flag, and it gates the TAME, not the creature. It
+     stands in the world where the draw put it and anyone may walk up to it;
+     only an admin account can take it. base 0.15 is the Elder-tier baseline
+     the trio above already uses. */
+  duskfox_elder:   { name: "Duskfox Elder",   base: 0.15, flier: false, biomes: [], elder: true, admin: true, bloodFavored: false, shunnedByBlood: false },
 };
 /* ============ Mob Rarity: THE BIBLE'S RARITY TABLE, TRANSCRIBED =========
    Nothing here is invented — every entry is the tier the bible's "PETS — FULL
@@ -2192,7 +2342,12 @@ const WILD_SPECIES = {
    Basilisk is deliberately absent: the bible lists it as Rare, it needs
    Dungeons, and it is genuinely unbuilt — an entry here for a species that
    does not exist would be the first invented thing in this table.
-   Duskfox Elder is absent for the same reason (admin-only, never built). */
+   Duskfox Elder is absent for the same reason (admin-only, never built).
+   Mount/Bazaar Polish PART D: the Duskfox Elder is BUILT now, so it takes the
+   tier the bible's own table gives it — "Admin Only", which is a heading in
+   that table exactly as "Elder" and "Epic" are, and is therefore still
+   transcription rather than a tier invented here. Basilisk stays absent: it
+   needs Dungeons and is still genuinely unbuilt. */
 const PET_RARITY = {
   tree_sprite: "common", water_sprite: "common", stone_sprite: "common",
   wind_sprite: "common", glow_moth: "common",
@@ -2204,11 +2359,17 @@ const PET_RARITY = {
   shadowfox: "epic", lightfox: "epic", krakenling: "epic",
   salamander_king: "epic",
   golem_elder: "elder", dragon_elder: "elder", unicorn_elder: "elder",
+  duskfox_elder: "admin",
 };
 /* PART A's own line: "a wild Rare-tier-and-up species (dragons, Crystal
    Golem, and above)". Anything with no rarity at all — the Elder Drake, every
    hostile mob — is not a pet and is never capped. */
-const CAPPED_RARITIES = new Set(["rare", "epic", "elder"]);
+/* PART D: "admin" joins the capped set. A creature the bible says there is
+   exactly one of in the entire world is the strongest possible case for the
+   cap — once it is taken it must not simply be there again at the next
+   login — and speciesDailyCap() already answers 1 for anything with no
+   `count`, so no number is invented for it either. */
+const CAPPED_RARITIES = new Set(["rare", "epic", "elder", "admin"]);
 function speciesIsCapped(sp) { return CAPPED_RARITIES.has(PET_RARITY[sp]); }
 /* v16: PET COMBAT — the locked spec table (see README "v16"). The bible gives
    pet rarity, taming method and flavour but ZERO combat numbers, so every
@@ -2263,6 +2424,13 @@ const PET_COMBAT = {
   golem_elder:     { hp: 120, dmg: 16, cdMs: 2400, pvp: true },
   dragon_elder:    { hp: 130, dmg: 20, cdMs: 1500, pvp: true },
   unicorn_elder:   { hp: 90,  dmg: 12, cdMs: 1600, pvp: true },
+  /* Mount/Bazaar Polish PART D — the Duskfox Elder. The bible gives it no
+     numbers at all, so these are TUNABLES like every row above. It heads the
+     fox line (Shadowfox and Lightfox, both 50/10/1300) and is deliberately
+     the fast one of the Elder tier rather than the strongest of it: the
+     Dragon Elder keeps "Most powerful combat companion", which is the one
+     line the bible does state. */
+  duskfox_elder:   { hp: 100, dmg: 18, cdMs: 1200, pvp: true },
 };
 const PET_ATK_RADIUS = 2.6;    // tunable: the spec's "short radius"
 const PET_DOWNED_MS = 75000;   // spec: ~75s recovery — pets are never lost
@@ -3010,6 +3178,18 @@ function biomeAt(tx, ty) {
      everything unconditionally. */
   if (b !== B.PLAINS && b !== B.DEEP && b !== B.LAVA && b !== B.WATER &&
       OTHER_SAFE_ZONES.some(z => Math.hypot(tx - z.x, ty - z.y) < ZONE_R)) b = B.PLAINS;
+  /* Mount/Bazaar Polish PART B: the Grand Bazaar is a safe zone by
+     inSafeZone() and always has been, but it was the only one in the world
+     that never got the clearing that goes with being one — forest generated
+     right up to and through the stall ring. This is the line above with
+     BAZAAR in place of the zone list: the same guards, the same B.PLAINS,
+     the same one radius doing both jobs that v20 chose deliberately so the
+     visible green circle IS the protected circle. Nothing new was invented
+     for it, and the DEEP/WATER/LAVA guards mean it can never paint grass
+     out over the sea (the shallow halo is computed further down, so `b` can
+     only be DEEP or WATER here). */
+  if (b !== B.PLAINS && b !== B.DEEP && b !== B.LAVA && b !== B.WATER &&
+      Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) b = B.PLAINS;
   if (dTower < 4.5 && (BLOCKED.has(b) || b === B.WATER || b === B.ROCK || b === B.VOLROCK)) b = B.PLAINS;
 
   // Shallow-water halo where sea touches land (Islanders coastline glow)
@@ -3083,6 +3263,11 @@ function rawHeight(tx, ty) {
        h = 0 here also puts the whole clearing below the h >= 1 edge-erosion
        branch in heightAt(), so no exemption is needed there. */
     if (OTHER_SAFE_ZONES.some(z => Math.hypot(tx - z.x, ty - z.y) < ZONE_R)) h = 0;
+    /* PART B, the other half of the same pattern, for the same reason v20
+       gives one line up: nine stalls on a 5.5 ring straddling a stepped
+       cliff face do not read as a trading floor. This branch only ever runs
+       for non-water tiles, so it can never raise a sea tile into an island. */
+    if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) h = 0;
     if (Math.hypot(tx - TOWER.x, ty - TOWER.y) < 4.5) h = Math.min(h, 1);
   }
   rawHCache.set(key, h);
@@ -3242,6 +3427,26 @@ function unicornElderTile(seed) {
   const idx = Math.min(N * N - 1, Math.floor(r * N * N));
   return [idx % N, Math.floor(idx / N)];
 }
+
+/* Mount/Bazaar Polish PART D: the Duskfox Elder's tile, and it is the
+   function above with one different salt — deliberately, because the spec
+   asks for that technique reused rather than a second placement idea. Same
+   single draw, same flat spread over every tile in the world, same absence
+   of any biome, walkability or distance test. The two salts are independent,
+   so the two one-of-ones cannot land on the same tile except by the same
+   coincidence any two random tiles could. */
+function duskfoxElderTile(seed) {
+  const r = hash2(seed, 0, 99989);
+  const idx = Math.min(N * N - 1, Math.floor(r * N * N));
+  return [idx % N, Math.floor(idx / N)];
+}
+/* PART D: the whole admin gate, in one predicate both the tame path and the
+   HUD prompt read, so the two can never disagree about whether something is
+   takeable. It is `isAdmin()` specifically and NOT a rarity check — the
+   bible's word is "admin account exclusive", and rarity is a different
+   statement that a hard enough player could eventually beat. */
+function adminOnlySpecies(sp) { return !!(WILD_SPECIES[sp] && WILD_SPECIES[sp].admin); }
+function canTameSpecies(sp) { return !adminOnlySpecies(sp) || isAdmin(); }
 
 /* The Unicorn Elder's passive half — bible: "plus a passive luck buff for
    rare pet spawns". It is deliberately the SAME SHAPE as the Blood Moon's
@@ -3512,6 +3717,18 @@ function buildFeatureList() {
     const [ux, uy] = unicornElderTile(worldSeed);
     wilds.push({ id: "unicorn_elder:" + ux + "," + uy, species: "unicorn_elder",
                  x: ux + 0.5, y: uy + 0.5, ph: 3.1 });
+  }
+  /* Mount/Bazaar Polish PART D: the Duskfox Elder, placed the same way and on
+     the same line as the Unicorn Elder — one tile, straight into `wilds`,
+     biomes:[] keeping the spawn loop away from it, and the same daily budget
+     in front of it so a taken one-of-one is genuinely gone. It is placed for
+     EVERY player, not only the admin: the bible makes it admin-exclusive to
+     TAME, and a creature that vanishes when an ordinary player looks at it
+     would be a different rule. */
+  if (speciesSpawnBudget("duskfox_elder") > 0) {
+    const [dx, dy] = duskfoxElderTile(worldSeed);
+    wilds.push({ id: "duskfox_elder:" + dx + "," + dy, species: "duskfox_elder",
+                 x: dx + 0.5, y: dy + 0.5, ph: 2.2 });
   }
   /* v20: one shared ruinPieces array, one cluster appended per Ruin centre. */
   ruinPieces = [];
@@ -4571,7 +4788,25 @@ async function loginPlayer(username, cls, pinCheck) {
     const hereB = biomeAt(Math.floor(me.x), Math.floor(me.y));
     if (hereB === B.UWCAVE || hereB === B.ABYSSAL) me.diving = true;
   }
+  grantAdminCosmetics();
   cam.x = me.x; cam.y = me.y;
+}
+
+/* Mount/Bazaar Polish PART D: the admin's two exclusive cosmetics arrive the
+   way every cosmetic arrives — as ITEMS in the inventory, which is the one
+   place cosmetics have ever lived, persisted by savePlayer()'s existing
+   `inventory` column with no schema change. Idempotent: an admin who already
+   has one is given nothing, so this never stacks across logins. An ordinary
+   account is given nothing at all, and the role it checks is the bible's own
+   `players.role`, read here exactly as the world-reset gate reads it. */
+function grantAdminCosmetics() {
+  if (!isAdmin()) return;
+  let given = 0;
+  for (const id of ADMIN_COSMETIC_IDS) {
+    if (!me.inv[id]) { me.inv[id] = 1; given++; }
+  }
+  if (given) toast("The Elder regalia is yours — it belongs to no one else.");
+  return given;
 }
 
 function findSpawn() {
@@ -4858,6 +5093,16 @@ async function setActivePet(row) {
 }
 
 function startTaming(w) {
+  /* Mount/Bazaar Polish PART D: the admin gate, and it sits HERE because
+     this is the one choke point both taming paths pass through — the wild
+     press and the weakened-mob press alike — so there is no second door to
+     forget. It refuses before the bait is spent, which matters: a refusal
+     that still ate a Trail Bait would be a worse bug than the gate is a
+     feature. */
+  if (!canTameSpecies(w.species)) {
+    toast(`The ${WILD_SPECIES[w.species].name} will not be taken. It answers to one hand, and it is not yours.`);
+    return;
+  }
   // v12: bait is consumed the moment the channel begins, success or fail
   const baited = (me.inv.trail_bait || 0) > 0;
   if (baited) {
@@ -5316,6 +5561,12 @@ async function joinRealtime() {
     o.wk = p.wk || null; o.at = p.at || null; o.ps = !!p.ps; o.bl = !!p.bl;
     o.pe = p.pe || null; o.mo = !!p.mo;
     o.cb = !!p.cb;              // v39: is this player in combat right now
+    /* Mount/Bazaar Polish PART C: teleport consent, and the ONE comparison
+       that makes this additive. Only an explicit 0 closes someone off; a
+       missing field — an older client, a replayed packet, anything at all —
+       reads as accepting, which is exactly how the world behaved before this
+       version. */
+    o.tpClosed = p.tp === 0;
     /* v35: a remote player's worn cosmetics. Normalised on arrival, so a
        malformed or hostile payload can only ever resolve to real cosmetic
        ids in their own slots — and never to anything with a stat. */
@@ -5473,6 +5724,11 @@ function sendMove(force) {
          sp/cs already use; nothing else reads or writes it. */
       cb: performance.now() < combatMusicUntil ? 1 : 0,
       sp: me.space || "main",   // v29: which space we are in — the whole filter
+      /* Mount/Bazaar Polish PART C: teleport consent. 1 = accepting, which is
+         what an untouched session sends, so nothing changes for anyone who
+         never opens the toggle. One more field on the one broadcast, exactly
+         the shape pe/mo/sp/cs/cb already use. */
+      tp: me.tpClosed ? 0 : 1,
       ps: myPoison ? 1 : 0, bl: isBlocking() ? 1 : 0,
       fx: +facing.x.toFixed(2), fy: +facing.y.toFixed(2),
     },
@@ -7001,6 +7257,32 @@ function playerTpReadyIn() {
    is not a place this could ever put you. The 30s window is the same one
    update() already prunes `others` by, so the list can never offer somebody
    who has actually gone. */
+/* ============ Mount/Bazaar Polish PART C — TELEPORT CONSENT ============
+   Until now anybody could fold the world and appear beside anybody, with no
+   way at all to say no. This is that no, and it is deliberately the smallest
+   thing that could be: ONE session flag on `me`, the exact shape `me.mounted`
+   already has, carried on the one existing move broadcast beside `mo`/`pe`/
+   `sp`/`cs`, and read by the Players list as a filter.
+
+   UNSET MEANS ACCEPTING, everywhere and in both directions. A player who
+   never touches the toggle behaves precisely as they did before this shipped,
+   and a packet from a client that predates the field (`p.tp === undefined`)
+   resolves to accepting too — so this is additive, never a breaking change.
+   The flag is deliberately NOT persisted, for the same reason the charm slot
+   and the dive state are not: savePlayer() writes a fixed column list and the
+   players table has no column for it. It is a session choice, like being
+   mounted. */
+function acceptsTeleports(h) { return !(h && h.tpClosed); }
+function toggleTeleportConsent() {
+  if (!me) return false;
+  me.tpClosed = !me.tpClosed;
+  toast(me.tpClosed
+    ? "Nobody can fold the world to reach you now."
+    : "The world may fold to bring others to you again.");
+  sendMove(true);
+  refreshTravelPanel();
+  return !me.tpClosed;
+}
 function travelablePlayers() {
   if (!me) return [];
   const mySpace = me.space || "main";
@@ -7010,6 +7292,10 @@ function travelablePlayers() {
     if (name === me.username) continue;
     if ((o.space || "main") !== mySpace) continue;
     if (now - (o.lastHeard || 0) > 30000) continue;
+    /* PART C: someone who has closed themselves to teleports is simply not
+       in this list. Not greyed out, not listed with a reason — an opt-out
+       that still advertises that you exist and where you are is not one. */
+    if (!acceptsTeleports(o)) continue;
     const px = o.tx !== undefined ? o.tx : o.x, py = o.ty !== undefined ? o.ty : o.y;
     if (px === undefined || py === undefined) continue;
     out.push({ name, x: px, y: py, dead: !!o.dead });
@@ -7045,6 +7331,15 @@ function travelToPlayer(name) {
   if (inInterior()) { toast("Not from down here — find the way out first."); return false; }
   const left = playerTpReadyIn();
   if (left > 0) { toast(`The world will not fold again for ${Math.ceil(left / 1000)}s.`); return false; }
+  /* PART C: the gate, not the list. The Players tab already excludes anyone
+     who has closed themselves off, but this is the path a stale panel, a
+     debug call or any future caller reaches — so the refusal lives here as
+     well, and says something different from "they have gone". */
+  const raw = others.get(name);
+  if (raw && !acceptsTeleports(raw)) {
+    toast("They are not accepting travellers. Walk, or do not arrive.");
+    return false;
+  }
   const target = travelablePlayers().find(p => p.name === name);
   if (!target) { toast("They are not out there any more."); return false; }
   if (target.dead) { toast("They have fallen. Wait for them to wake."); return false; }
@@ -7102,6 +7397,18 @@ function refreshTravelPanel() {
       refreshPanels();
     }
   });
+  /* PART C: the consent toggle, rebuilt with the rest of the tab so its
+     label can never disagree with the flag it is reporting. */
+  const cLabel = document.getElementById("travelConsentLabel");
+  const cBtn = document.getElementById("travelConsentBtn");
+  if (cLabel && cBtn) {
+    const open = acceptsTeleports(me);
+    cLabel.textContent = open
+      ? "Others may travel to you"
+      : "Nobody may travel to you";
+    cBtn.textContent = open ? "TURN OFF" : "TURN ON";
+    cBtn.onclick = () => toggleTeleportConsent();
+  }
   const plist = document.getElementById("travelPlayerList");
   const pnote = document.getElementById("travelPlayerNote");
   if (!plist) return;
@@ -7171,6 +7478,9 @@ function refreshPetPanel() {
        already stands in — the roster should say "these three are one tier"
        at a glance, the way the tier colours do everywhere else. */
     golem_elder: "#e8b64c", dragon_elder: "#f2cf6b", unicorn_elder: "#f6e4b0",
+    /* PART D: the same Elder gold as the trio — it belongs to that tier in
+       the roster at a glance, exactly as they belong to each other. */
+    duskfox_elder: "#f2cf6b",
   };
   list.innerHTML = myPets.map(pt => {
     const spName = WILD_SPECIES[pt.species]?.name || pt.species + " (retired)";
@@ -8881,8 +9191,63 @@ const MOUNT_SPEED_MULT = 1.6;   // TUNABLE
 /* Seat height scales with the mount's own art ratio rather than one flat
    number — a lightfox (1.05) and a shadowfox (1.66) genuinely do not sit
    the same height off the ground. */
-function mountSeatOffsetY(species) {
-  return -(2.2 * (SPECIES_K[species] || 1.2));   // TUNABLE base of 2.2
+/* ============ Mount/Bazaar Polish PART A — SEAT RECALIBRATION ==========
+   v28's base of 2.2 was set when the largest mount was SPECIES_K 1.66. Since
+   then Tuning/Polish's Elder pass and Mob Rarity's tiered pass have both
+   grown this roster — the four dragons went 1.30 -> 1.55 -> 2.44 — and the
+   rider stayed where it was: 2.2 x 2.44 x 2.1 is an 11px lift on a body that
+   paints 76px tall. That is not a saddle, it is a person standing beside the
+   animal's foot, which is exactly what the screenshot shows.
+
+   Recalibrating the constant alone cannot fix it, and that is the finding
+   here rather than an opinion: a mount's back height is its own SHEET-NATIVE
+   body height times SPECIES_K, and those natives run 8.4 (the two foxes and
+   the Crystal Golem) to 14.6 (the shared dragon body). Any single constant
+   times SPECIES_K is therefore wrong by up to 2.7x somewhere on the roster
+   whatever value it takes — measured, not assumed. So the base becomes the
+   thing it was always standing in for: each mount's own torso top, read
+   straight off its art below and scaled by its live SPECIES_K, exactly the
+   way MOB_TALL is a measured per-creature pixel offset beside MOB_K.
+
+   Every value is the highest point of that species' own BODY polygon in
+   drawSpecies — never the head, horn, ear, crest or wing above it, because a
+   rider sits on the back — with dragonV2's one torso serving all four
+   dragons. TUNABLE per species. MOUNT_SEAT_BACK_FALLBACK is the roster mean
+   and is what a tenth mount would ride at until its own body is measured. */
+const MOUNT_SEAT_BACK = {
+  stag: 13.0,            // torso top, drawSpecies "stag"
+  griffin: 11.0,         // lion body top, drawSpecies "griffin"
+  /* ⚠️ The Crystal Golem is the one exception to the rule above, and it was
+     found by eye rather than by arithmetic. Its body slab tops out at 8.4,
+     but a golem's HEAD slab sits directly on top of that slab at the centre
+     of the silhouette — there is no back behind it — so a rider seated at
+     8.4 disappears behind the head and reads as a shield floating over a
+     statue. 12.6 is the head slab's own top: the rider stands ON the
+     construct, fully visible, which is the only place a person can ride one
+     of these. Confirmed in real Chromium at both values. */
+  crystal_golem: 12.6,   // head slab top, drawSpecies "crystal_golem"
+  water_dragon: 14.6, fire_dragon: 14.6,       // dragonV2's torso, all four
+  storm_dragon: 14.6, shadow_dragon: 14.6,
+  shadowfox: 8.4,        // body top, drawSpecies "shadowfox"
+  lightfox: 8.4,         // the same body, drawSpecies "lightfox"
+};
+const MOUNT_SEAT_BACK_FALLBACK = 11.8;   // TUNABLE — the roster mean
+/* drawPlayerEntity draws the rider at scale 2.1 and multiplies this
+   function's answer by it, so the answer is in RIDER units — this constant is
+   the one place that conversion is named instead of being a loose 2.1. */
+const RIDER_S = 2.1;
+function mountSeatOffsetY(species, t = 0) {
+  const sp = WILD_SPECIES[species];
+  const back = (MOUNT_SEAT_BACK[species] || MOUNT_SEAT_BACK_FALLBACK) *
+               (SPECIES_K[species] || 1.2);
+  /* A flying mount carries its rider at ITS altitude. drawPet puts a flier's
+     whole body `alt` px above the ground and bobs it on the same clock, so
+     without this the Griffin — the one flier among the bible's nine — flies
+     off and leaves its rider standing on the grass underneath it. Both
+     functions are handed the same frame `t`, so the seat and the hover can
+     never drift apart. */
+  const alt = (sp && sp.flier) ? ((sp.alt || 32) + Math.sin(t / 700) * 3) : 0;
+  return -(back + alt) / RIDER_S;
 }
 
 function canMountActivePet() {
@@ -8983,6 +9348,15 @@ const SPECIES_K = {
      pass that sizes up a base tier still cannot leave an Elder level with it.
      Pinned in run4 as that RELATIONSHIP, never as a literal. */
   golem_elder: 4.05, dragon_elder: 3.60, unicorn_elder: 2.78,
+  /* Mount/Bazaar Polish PART D: the Duskfox Elder takes the same treatment
+     the trio above got — an ABSOLUTE value, not a band multiplier — for the
+     same reason. It heads the fox line, whose largest member is the Epic
+     Shadowfox at 2.95, and 4.00 puts it +36% over that: the Unicorn Elder's
+     own margin, the most conservative of the three, chosen because the
+     Duskfox is a fox rather than a dragon or a golem and should read as the
+     biggest of ITS line and not as the biggest thing in the world. Pinned in
+     run4 as that relationship, never as the literal. */
+  duskfox_elder: 4.00,
 };
 /* Tuning/Polish PART G: a differentiated sizing pass, deliberately NOT a flat
    multiplier. A flat one moves every silhouette and tells a player nothing
@@ -10779,6 +11153,58 @@ function drawSpecies(species, sx, sy, t, moving) {
     }
     P(ctx, [sx - 5.2, sy - 11.4, sx - 9.8, sy - 15.4 + Math.sin(t / 420) * 1.2, sx - 4, sy - 13], "#f6e4b0"); // tail
 
+  } else if (species === "duskfox_elder") {
+
+    /* Mount/Bazaar Polish PART D. The v39 Elder rule, a fourth time: the
+       SAME SILHOUETTE as the line it heads, re-cut in a different material.
+       Every coordinate below is the Shadowfox's, unchanged — this is that
+       body in twilight indigo instead of near-black violet, so "that is a
+       fox — but not one of those" reads at distance with no label, exactly
+       as Golem Elder / Dragon Elder / Unicorn Elder do for theirs.
+
+       Its tells are the trio's own language and nothing new: the gold
+       Elder aura underneath it (gold on the ground means Elder and has
+       meant only that since v39), a gold ruff where the Shadowfox has a
+       violet-grey one, gold eyes where the Shadowfox has its violet glow —
+       the one thing the two foxes must never share — and three heavy rings
+       along the tail, which is the Unicorn Elder's horn tell moved to the
+       part of a fox that carries one. The trail is the Dragon Elder's slow
+       gold motes rather than the Shadowfox's dark wisps. */
+    aura(sx, sy, "244,207,107", 11, t, { motes: 3, riseMs: 1300, lw: 1 });
+    for (let i = 0; i < 3; i++) {                                                     // slow gold motes off the tail
+      const ph = (t / 1100 + i * 0.34) % 1;
+      ctx.fillStyle = `rgba(244,207,107,${0.7 * (1 - ph)})`;
+      ctx.fillRect(sx - 12 - ph * 6, sy - 6 + Math.sin(t / 470 + i * 2) * 1.8, 1.6, 1.6);
+    }
+    P(ctx, [sx - 7.4, sy, sx - 5.4, sy - 8.4, sx + 3.4, sy - 8, sx + 5.4, sy], "#2e2a4c");            // body
+    P(ctx, [sx + 3.4, sy - 8, sx + 5.4, sy, sx - 7.4, sy, sx - 0.6, sy - 2.6], "#191630");
+    P(ctx, [sx - 5.2, sy - 8, sx - 2.6, sy - 10.4, sx + 0.4, sy - 6.6, sx - 5.6, sy - 4.6], "#f6e4b0"); // gold ruff
+    P(ctx, [sx - 4.6, sy - 8.2, sx - 2.8, sy - 9.8, sx - 1.2, sy - 7.2, sx - 4.8, sy - 5.8], "#e8c878");
+    ctx.fillStyle = "#c8a34c";                                                                        // gold paws
+    ctx.fillRect(sx - 5, sy - 1.4, 2, 1.4); ctx.fillRect(sx + 1.6, sy - 1.4, 2, 1.4);
+    P(ctx, [sx + 3.2, sy - 10.6, sx + 8.6, sy - 10.2, sx + 8.4, sy - 5, sx + 3, sy - 5.4], "#3a3560");  // head
+    P(ctx, [sx + 8.6, sy - 10.2, sx + 8.4, sy - 5, sx + 5.6, sy - 5.2], "#1d1a34");
+    P(ctx, [sx + 8.4, sy - 8, sx + 11.4, sy - 7.2, sx + 8.4, sy - 5.6], "#4a4270");                     // snout
+    ctx.fillStyle = "#0c0a16"; ctx.fillRect(sx + 10.8, sy - 7.4, 1, 0.9);
+    P(ctx, [sx + 3.4, sy - 10.6, sx + 4, sy - 14.6, sx + 5.6, sy - 10.4], "#4a4270");                   // ears
+    P(ctx, [sx + 6.2, sy - 10.4, sx + 7.6, sy - 14.2, sx + 8.4, sy - 10.2], "#4a4270");
+    P(ctx, [sx + 3.8, sy - 11, sx + 4.2, sy - 13.4, sx + 5, sy - 11], "#f2cf6b");                       // gold ear inners
+    P(ctx, [sx + 6.6, sy - 10.8, sx + 7.4, sy - 13.2, sx + 7.9, sy - 10.6], "#f2cf6b");
+    ctx.fillStyle = "rgba(244,207,107,0.35)";                                                          // gold eye glow
+    ctx.beginPath(); ctx.arc(sx + 6.4, sy - 8.2, 2.4, 0, Math.PI * 2); ctx.fill();
+    EY(ctx, sx + 6.4, sy - 8.2, 1.2, "#f6e4b0", "#1a1226");
+    P(ctx, [sx - 7.4, sy - 1.2, sx - 13.4, sy - 6.6 + Math.sin(t / 260) * 1.4, sx - 11.4, sy - 8.4 + Math.sin(t / 260) * 1.4, sx - 6.2, sy - 4.4], "#2e2a4c"); // tail
+    ctx.strokeStyle = "#f2cf6b"; ctx.lineWidth = 0.9;                                                  // three heavy tail rings
+    for (let i = 0; i < 3; i++) {
+      const f = i / 3, sw = Math.sin(t / 260) * 1.4;
+      ctx.beginPath();
+      ctx.moveTo(sx - 7.6 - f * 5.2, sy - 2.2 - f * 3.6 + sw * f);
+      ctx.lineTo(sx - 7 - f * 5.2, sy - 5 - f * 3.6 + sw * f);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#f6e4b0";
+    ctx.fillRect(sx - 13.8, sy - 8.6 + Math.sin(t / 260) * 1.4, 2, 2);                                 // gold brush tip
+
   }
   ctx.restore();
 }
@@ -10965,7 +11391,20 @@ function drawPlayerEntity(p, name, t, isMe) {
      with the mount's art ratio, not a flat number. */
   const mountedNow = isMe ? !!me.mounted : !!p.mo;
   const mountSp = isMe ? ((activePet && activePet.species) || null) : (p.pe || null);
-  const seatLift = (mountedNow && mountSp) ? mountSeatOffsetY(mountSp) * S : 0;
+  /* PART A: `t` is passed so a flying mount's hover bob carries its rider
+     with it rather than sliding out from under them. */
+  const seatLift = (mountedNow && mountSp) ? mountSeatOffsetY(mountSp, t) * S : 0;
+  /* PART A, and this is the same trap MOB_TALL is: every overlay that belongs
+     to the RIDER — the name plate, the HP bar, the swing arc, the cast pulse,
+     the hit flash, the poison motes — was drawn at a fixed pixel offset from
+     the ground, which was close enough while the seat was 11px and is
+     nowhere near it now that a dragon seats at 36. Verified by eye in real
+     Chromium: at the old lift a stag's rider wore its own name plate across
+     its chest. `ry0` is the rider's real baseline once seated, and the six of
+     them read it instead of `sy`. Ground-anchored effects deliberately do
+     NOT: the tier aura rings, the sun shadow and the dive cue all belong to
+     the tile, not to the person, and must stay on it. */
+  const ry0 = sy + seatLift;
   /* v35 PART D: the local player reads its own worn slots; a remote player's
      come off the `cs` field on the move broadcast, the same shape `pe` and
      `mo` already use. Purely visual either way. */
@@ -10978,7 +11417,7 @@ function drawPlayerEntity(p, name, t, isMe) {
     for (let i = 0; i < 2; i++) {
       const ph = (t / 500 + i * 1.4) % 1;
       ctx.fillStyle = `rgba(127,212,90,${0.7 * (1 - ph)})`;
-      ctx.fillRect(sx - 5 + i * 9 + Math.sin(t / 250 + i * 3) * 2, sy - 8 - ph * 12, 2.4, 2.4);
+      ctx.fillRect(sx - 5 + i * 9 + Math.sin(t / 250 + i * 3) * 2, ry0 - 8 - ph * 12, 2.4, 2.4);
     }
   }
 
@@ -11017,7 +11456,7 @@ function drawPlayerEntity(p, name, t, isMe) {
 
   /* v9: melee swing sweeps the actual weapon silhouette, per-weapon motion */
   if (isMe && swingKind && performance.now() - swingT < swingDur(swingKind)) {
-    drawSwing(sx, sy - 7, t);
+    drawSwing(sx, ry0 - 7, t);
   }
   /* v9: staff cast pulse */
   if (isMe && performance.now() - pulseT < 260) {
@@ -11028,13 +11467,13 @@ function drawPlayerEntity(p, name, t, isMe) {
       : col;
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.ellipse(sx, sy - 6, 6 + prog * 13, (6 + prog * 13) * 0.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(sx, ry0 - 6, 6 + prog * 13, (6 + prog * 13) * 0.5, 0, 0, Math.PI * 2);
     ctx.stroke();
   }
   if (p.flash && performance.now() - p.flash < 180) {
     ctx.fillStyle = "rgba(220,60,40,0.42)";
     ctx.beginPath();
-    ctx.arc(sx, sy - 7, 11, 0, Math.PI * 2);
+    ctx.arc(sx, ry0 - 7, 11, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -11043,17 +11482,17 @@ function drawPlayerEntity(p, name, t, isMe) {
   const label = `${name}  Lv ${p.level || 1}`;
   const tw = ctx.measureText(label).width;
   ctx.fillStyle = "rgba(6,9,14,0.62)";
-  ctx.fillRect(sx - tw / 2 - 4, sy - 38, tw + 8, 13);
+  ctx.fillRect(sx - tw / 2 - 4, ry0 - 38, tw + 8, 13);
   ctx.fillStyle = isMe ? "#e8b64c" : "#dde4ec";
-  ctx.fillText(label, sx, sy - 28);
+  ctx.fillText(label, sx, ry0 - 28);
 
   const hp = isMe ? me.hp : (p.hp ?? 100);
   const maxHp = isMe ? me.maxHp : (p.maxHp || 100);
   const frac = Math.max(0, hp / maxHp);
   ctx.fillStyle = "rgba(6,9,14,0.62)";
-  ctx.fillRect(sx - 14, sy - 24, 28, 4);
+  ctx.fillRect(sx - 14, ry0 - 24, 28, 4);
   ctx.fillStyle = frac > 0.35 ? "#7fce5a" : "#d0604c";
-  ctx.fillRect(sx - 13, sy - 23, 26 * frac, 2);
+  ctx.fillRect(sx - 13, ry0 - 23, 26 * frac, 2);
 }
 
 function drawItemEntity(it, t) {
@@ -12009,8 +12448,16 @@ function updateHUD(dayT) {
     hudPrompt.style.display = "block";
   }
   else if (wldNear) {
-    const pct = Math.round(tameChanceFor(wldNear, (me.inv.trail_bait || 0) > 0) * 100);
-    hudPrompt.textContent = `[Hold E] Tame ${WILD_SPECIES[wldNear.species].name} (${pct}%)`;
+    /* PART D: an admin-only creature never advertises a percentage, because
+       there is no roll behind it for anyone else — the same predicate the
+       tame path itself reads, so the prompt cannot promise what the gate
+       will then refuse. */
+    if (!canTameSpecies(wldNear.species)) {
+      hudPrompt.textContent = `${WILD_SPECIES[wldNear.species].name} — it answers to one hand, and it is not yours`;
+    } else {
+      const pct = Math.round(tameChanceFor(wldNear, (me.inv.trail_bait || 0) > 0) * 100);
+      hudPrompt.textContent = `[Hold E] Tame ${WILD_SPECIES[wldNear.species].name} (${pct}%)`;
+    }
     hudPrompt.style.display = "block";
   }
   else if (nearShrine()) { hudPrompt.textContent = "[E] Beastmaster Shrine — 3 Runic Stone for a taming blessing"; hudPrompt.style.display = "block"; }

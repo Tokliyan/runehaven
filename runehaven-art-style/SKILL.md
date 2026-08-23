@@ -53,6 +53,242 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-23 (Mount/Bazaar Polish + TP Consent + Duskfox Elder — the rider finally sits on the animal)
+
+Four parts and three of them are rendering: PART A puts the rider on the
+mount's actual back, PART B gives the Grand Bazaar the clearing every other
+safe zone in the world already had, and PART D is the first new creature body
+since v39. PART C's teleport consent is one session flag and one panel row and
+lives in the README + commit message. Not one palette entry, cliff-face ratio,
+`MOB_K` or `MOB_TALL` value was touched.
+
+- **The seat was never a stale constant — it was a formula that could not be
+  right at any constant, and that was measured before a value was moved.**
+  v28's `2.2 * SPECIES_K` was set when the largest mount was 1.66; the dragons
+  have since gone 1.30 → 1.55 → **2.44**, so the rider was being lifted 11px
+  onto a body that paints **76.6px** tall. But a mount's back height is its own
+  SHEET-NATIVE body height times `SPECIES_K`, and across the bible's nine those
+  natives run **8.4 to 14.6** — a 1.7x spread that no single base can absorb.
+  Measured with a transform-tracking canvas recorder that maps every path
+  coordinate through the live CTM: at any base that seats a dragon, the two
+  foxes float ~10px clear of their own heads. So `MOUNT_SEAT_BACK` is now nine
+  measured values beside `SPECIES_K`, **exactly the way `MOB_TALL` is a measured
+  per-creature offset beside `MOB_K`**, and every one of them is the top of
+  that species' own body polygon in `drawSpecies` — never the head, horn, ear,
+  crest or wing above it, because a rider sits on the back.
+- **Realised seat, in real screen pixels above each mount's own baseline:**
+  stag **20.2**, griffin **52.1**, crystal golem **33.8**, all four dragons
+  **35.6**, shadowfox **24.8**, lightfox **15.6** — against a rider sprite that
+  is 20.6–24.3px tall depending on class. Rider feet land on the measured back
+  to within 1e-6px for all nine, which is what `run4` pins, as a relationship
+  against an independent copy of the art's numbers rather than as a literal.
+  The dragons moved **3.15x**.
+- **⚠️ The Griffin could never have been fixed by a constant at all, and it is
+  the find of this part.** `drawPet` holds a flier's whole body `alt` px in the
+  air — 28 for a Griffin — so a rider lifted by body height alone was left
+  standing on the grass under a flying mount. The seat now adds the flier's
+  altitude *and its hover bob*, off the same frame `t` both functions get, so
+  the two cannot drift apart. It is the only one of the nine that flies.
+- **⚠️ `MOUNT_SEAT_BACK` has one exception and it was found by eye, not by
+  arithmetic: the Crystal Golem is seated on its HEAD slab (12.6), not its body
+  slab (8.4).** A golem's head sits dead centre on top of its shoulders with no
+  back behind it, so at the geometrically-correct 8.4 the rider disappears
+  behind the head and the whole thing reads as a shield floating over a statue.
+  Confirmed in real Chromium at both values. It is the one mount where the
+  rider stands *on* rather than *astride*, and that is the only place a person
+  can ride one of these.
+- **⚠️ Six rider overlays had to move with the seat, and this is the `MOB_TALL`
+  trap entered through a third door.** The name plate, the HP bar, the swing
+  arc, the cast pulse, the hit flash and the poison motes were all drawn at
+  fixed pixel offsets from the GROUND. That was close enough at an 11px seat
+  and is nowhere near it at 36: caught by eye in Chromium, where a stag's rider
+  wore its own name plate across its chest. They read `ry0` (the rider's real
+  seated baseline) now. Ground-anchored effects deliberately do NOT — the tier
+  aura rings, the sun shadow and the dive cue belong to the tile, not the
+  person, and must stay on it. Unmounted, `ry0 === sy` and every one of them is
+  pixel-identical to yesterday.
+- **All nine were confirmed by eye in real Chromium at 1280x900**, mounted for
+  real through the game's own keybind path, plus the dismounted frame to prove
+  nothing moved when the seat is zero. The dragons read as a rider at the base
+  of the neck; the Griffin carries its rider aloft; the two foxes and the stag
+  are astride; the golem stands on it.
+- **⚠️ On the dragons the near wing partially occludes the rider, and that is
+  the art working.** `dragonV2` paints the near wing last and its root is
+  exactly where a rider has to sit. The rider reads clearly on all four — pack,
+  shield and helm above the wing line — but if it is ever wanted fully clear,
+  the fix is the wing's draw order inside `dragonV2`, not another seat pass.
+- **The Grand Bazaar's clearing is the scattered-zone pattern, reused, not a
+  new one.** It has been a safe zone by `inSafeZone()` since v37 and was the
+  only one in the world that never got the clearing that goes with being one —
+  forest generated through the stall ring. It now takes both halves of v20's
+  own treatment with `BAZAAR` in place of the zone list: the guarded
+  `B.PLAINS` override in `biomeAt` and the `h = 0` flatten in `rawHeight`, at
+  `BAZAAR_R` for both, because v20's rule is one radius doing both jobs so the
+  visible green circle IS the protected circle. Two lines, no new constant.
+- **Measured across six seeds, biome histogram inside r=10 before → after:**
+  seed 42424242 went **229 dark forest + 44 forest + 32 rock and zero plains**
+  → all plains; 20260821 **148 forest + 98 dark forest + 51 rock, 8 plains** →
+  all plains. Trees inside the disc: **19→16, 40→13, 9→9, 110→12, 54→9,
+  55→6**. On the harness seed the Bazaar was already mostly open, which is why
+  its own drop is the small one — the seeds where it was buried are the ones
+  the report was about. Level ground went **250→305, 154→305, 29→247,
+  282→305, 136→305, 209→300** of 305 tiles.
+- **The sea is genuinely untouched by it.** Water tile counts inside the disc
+  are identical before and after on every seed that has any (15/28/15 on
+  777777, 1/4 on 31415926), because the override carries v20's own
+  DEEP/WATER/LAVA guards and the flatten sits inside `rawHeight`'s non-water
+  branch. **⚠️ SAND does become grass**, exactly as it does inside a scattered
+  Safe Zone — same pattern, same consequence, flagged rather than special-cased.
+- **The Duskfox Elder is the v39 Elder rule a fourth time: the same silhouette
+  as the line it heads, re-cut in a different material.** Every coordinate in
+  its body is the Shadowfox's, unchanged, in twilight indigo (`#2e2a4c` /
+  `#191630` / `#4a4270`) instead of near-black violet — so "that is a fox, but
+  not one of those" lands at distance with no label. Its tells are the trio's
+  own language and nothing new: the gold Elder aura underneath (gold pooled on
+  the ground has meant Elder and only Elder since v39), a **gold ruff** where
+  the Shadowfox has a violet-grey one, **gold eyes** where the Shadowfox has
+  its violet glow — the one thing the two foxes must never share — and **three
+  heavy rings along the tail**, which is the Unicorn Elder's horn tell moved to
+  the part of a fox that carries one. Its trail is the Dragon Elder's slow gold
+  motes rather than the Shadowfox's dark wisps.
+- **`SPECIES_K` 4.00, an absolute value and not a band**, for the reason the
+  trio's three are absolutes: it is **+36% over the Shadowfox's 2.95**, which
+  is the Unicorn Elder's own margin and the most conservative of the three —
+  chosen because a Duskfox is a fox, and should read as the biggest of ITS line
+  rather than as the biggest thing in the world. It stays under the Golem
+  Elder's 4.05, and `run4` pins that as a relationship.
+- **⚠️ It can land somewhere you cannot walk, and that is the Unicorn Elder's
+  own documented cost inherited exactly.** Same uniform single-tile draw, same
+  absence of any biome test, so the same distribution: over 200 seeds
+  **96 walkable, 101 reachable only by diving, 3 genuinely unreachable** (peak
+  or lava), against the Unicorn Elder's 97/101/2. Printed by `run4` on every
+  run. The harness seed puts it at sea, and the screenshot of it standing in
+  open water is this note in picture form.
+- **⚠️ Nothing about the world says it is admin-only.** It stands where the
+  draw put it, anyone may walk up to it, and the only thing that differs for a
+  non-admin is that the HUD prompt says it answers to one hand rather than
+  offering a percentage. No aura change, no lock icon, no absence — which is
+  correct for a creature the Oracle is forbidden to mention, but it means an
+  ordinary player who finds it learns only that they cannot have it.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus one place where its stated
+diagnosis turned out to be half the problem and one where the bible names a
+place this world does not have. All shipped through the full gate (parse
+clean, `run2` and `run3` `CAUGHT ERROR: none`, `run4` **1,027/1,027 with zero
+FAIL** over three consecutive runs, `run5` 1,147 coverage draws clean, 56/56
+grep checks including the preservation half, eleven mutation tests, plus a
+real-Chromium pass over all nine mounts, the Bazaar and the Duskfox Elder) —
+refinements to consider, not unfinished work.
+
+1. **⚠️ PART A says recalibrate the base constant, and the base constant is
+   not the whole bug.** Its diagnosis is exactly right that 2.2 is stale, and
+   exactly right that the formula "scales by `SPECIES_K` correctly" — but
+   `SPECIES_K` is only half of a back height, the other half being each
+   species' own native body, and those differ by 1.7x. A recalibrated constant
+   seats the dragons and floats the foxes; there is no third value. Its own
+   acceptance criterion ("confirm all nine seat correctly") is what forces the
+   per-species table, so the table is following the spec rather than widening
+   it. **`MOUNT_SEAT_BACK_FALLBACK` keeps the single-number behaviour** for any
+   future mount that has not been measured.
+2. **⚠️ The two flagged questions at the top of the spec were NOT built, and
+   deliberately.** "Fast travel for all mountable things" and "more mobs with
+   mounting specs" are both marked in the spec itself as needing a decision
+   because both are bible deviations — fast travel is one of exactly three
+   things that make the Unicorn Elder unique, and the bible names exactly nine
+   mountable species. The spec's own words are "I won't build a bible deviation
+   without that", and no confirmation exists. `MOUNTABLE_SPECIES` is untouched
+   and asserted still to be the bible's nine. The narrower reading the spec
+   offers for the second one — "every one of the nine actually working
+   correctly" — **is** built, and is PART A.
+3. **⚠️ The bible puts the Duskfox Elder in a "twilight sacred grove" and
+   there is no grove in this world.** The nearest thing is `B.SACMEADOW`, the
+   Sacred Meadow, which is a different name in the same bible. Building a
+   Twilight Sacred Grove would be inventing a location, which the standard
+   process forbids outright, so nothing was invented: the spec's own placement
+   instruction — the Unicorn Elder's single-random-world-tile technique — was
+   followed instead, on its own hash salt. This is the single call here most
+   worth revisiting, and it is one function to change.
+4. **`PET_RARITY` gains `duskfox_elder: "admin"`, and that is still
+   transcription.** "Admin Only" is a heading in the bible's own rarity table
+   exactly as "Elder" and "Epic" are. Basilisk stays absent — it needs
+   Dungeons and is still genuinely unbuilt — and `run4`'s independent copy of
+   that table was **updated, not relaxed**, along with the assertion that the
+   table invents nothing.
+5. **`"admin"` joins `CAPPED_RARITIES`.** A creature the bible says there is
+   exactly one of in the entire world is the strongest possible case for the
+   daily cap; `speciesDailyCap()` already answers 1 for anything with no
+   `count`, so no number was invented for it either.
+6. **⚠️ The Duskfox Elder carries `elder: true` but is NOT in
+   `ELDER_SPECIES`, and those two sets were identical until today.**
+   `ELDER_SPECIES` is the world-reset WIPE list and the bible's world-ending
+   event says "all three Elders lost" — three, by name. `elder: true` is the
+   TIER marker that drives the Elder combat cue, and the Duskfox genuinely is
+   of that tier. Each half is now asserted separately so neither can drift, and
+   the divergence is stated rather than smoothed over.
+7. **Stats 100hp/18dmg/1200ms, tame base 0.15, `SPECIES_K` 4.00, aura radius
+   11.** All unstated; all tunables in the same shape as the trio's. It is
+   deliberately the FAST one of the Elder tier and not the strongest — the
+   Dragon Elder keeps "Most powerful combat companion", which is the one line
+   the bible does state, and `run4` pins that ordering.
+8. **The tame gate lives in `startTaming()`, and it refuses before the bait is
+   spent.** That is the one door both taming paths pass through — the wild
+   press and the weakened-mob press — so there is no second door to forget, and
+   a refusal that still ate a Trail Bait would be a worse bug than the gate is
+   a feature. The HUD prompt reads the same predicate, so it can never promise
+   a percentage the gate will then refuse.
+9. **The Duskfox is placed for EVERY player, not only the admin.** The bible
+   makes it admin-exclusive to TAME; a creature that vanishes when an ordinary
+   player looks at it would be a different rule, and would make the world
+   different for different people for the first time.
+10. **The two admin cosmetics are `admin: true` rows in `COSMETICS`, and that
+    flag does exactly two things** — it keeps them out of `COSMETIC_DROP_IDS`
+    (so no kill can ever roll one; driven for real by 4,000 Elder Drake rolls,
+    not asserted off the list) and it puts them in the admin's pack at login,
+    idempotently, as ordinary inventory items persisted by the existing
+    `inventory` column. No schema change, no shop, no currency. "Earned, never
+    purchased" is pinned structurally: each id is written **exactly once** in
+    the whole file, its own table row.
+11. **Names: "Elder Crown" and "Elder Cloak", in the Elder gold and the
+    Duskfox's own indigo.** The bible says "unique crown and cloak" and names
+    neither, the same gap v35 filled for the three cloak colours.
+12. **PART C's flag is `me.tpClosed`, unset means accepting, and it is not
+    persisted.** The spec asks for the shape `me.mounted` already has, and that
+    is a session flag with no column — same call v21 made for the charm slot.
+    Both directions are asserted: an untouched account behaves exactly as it
+    did before this version, and a move packet with no `tp` field at all reads
+    as accepting, so a client that predates this build is never locked out of
+    anybody's list.
+13. **An opted-out player is simply absent from the Players tab — not greyed
+    out, not listed with a reason.** An opt-out that still advertises that you
+    exist and roughly where you are is not one. The refusal in
+    `travelToPlayer()` is kept anyway as the real gate, and `run4` tells the
+    two apart by the toast, since "travelled === false" alone cannot.
+14. **The toggle lives in the Players tab, as a `.craft-row`.** No new keybind
+    (which would have moved three count assertions for a two-state switch) and
+    no new component style — that is the sixth version running that has added
+    to a panel without inventing one.
+15. **`run4` gained 60 gates and `run5` a Mount/Bazaar sweep** (1,055 →
+    **1,147** draws): all nine mounts ridden for real with frames pumped, which
+    is the only way the seated branch of `drawPlayerEntity` and the suspended
+    branch of `updatePet` run in the same frame; the admin regalia on all five
+    class bodies; the Duskfox Elder walked to in the live world; and the
+    Bazaar's cleared ground drawn where it stands. `duskfox_elder` joins both
+    `SPECIES` and `RESIZED`, per step 7 of the standard process.
+16. **Eleven deliberate breakages were each confirmed to turn the relevant
+    gates red** — the old flat seat formula, the flier altitude removed, both
+    Bazaar lines disabled, the consent filter removed, the consent gate
+    removed, the broadcast field renamed, the receive comparison inverted, the
+    admin tame gate opened, the Duskfox never placed, the admin cosmetics put
+    back in the drop pool, and the grant ungated — so none of the new gates is
+    one that passes by accident.
+17. **The push to `main` that the README's step 8 invites was deliberately not
+    attempted.** This session is instructed to develop and push only on its
+    designated branch. The README calls a blocked push to `main` a
+    nice-to-have and explicitly not a failure, so the build lands on the branch
+    as usual and a human can sync it. Same call the last four versions made.
+
 ### 2026-08-22 (PIN Fixes — the login card finally says when the PIN system is off, and an old account can opt in)
 
 **Not a rendering build either.** Same scope as the entry below it: the login

@@ -333,7 +333,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // v39: all three Elders have left this list — they SHIPPED this
       // version, and their real stats are asserted in the v39 block below
       // instead. Same move v21 made for water_dragon and v25 for its three.
-      for (const s of ['basilisk', 'duskfox_elder']) {
+      /* Mount/Bazaar Polish PART D: duskfox_elder has LEFT this list — it
+         shipped this version, and its real stats are asserted in the PART D
+         block below instead. Same move v21 made for water_dragon, v25 for
+         its three and v39 for the Elder trio. Basilisk stays: it needs
+         Dungeons and is still genuinely unbuilt. */
+      for (const s of ['basilisk']) {
         results.push([`${s} not pre-built`, pcd(s, 'Beastmaster') === null]);
       }
     } else {
@@ -2284,15 +2289,68 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
 
       // seat height genuinely scales per species, not one flat number
       const so = m0.seatOffsets;
-      /* Mob Rarity PART C resized the whole tameable roster by bible rarity,
-         so both literals here move with it — 1.05 -> 1.86 (Lightfox, Epic)
-         and 1.66 -> 2.95 (Shadowfox, Epic). Updated, not relaxed: the
-         ORDERING assertion beside them is the part that must survive every
-         scale pass, and shadowfox > griffin > lightfox still holds. */
-      results.push(['seat height scales with each species\' own art ratio',
-        so.shadowfox < so.griffin && so.griffin < so.lightfox &&
-        Math.abs(so.lightfox - (-(2.2 * 1.86))) < 1e-9 &&
-        Math.abs(so.shadowfox - (-(2.2 * 2.95))) < 1e-9]);
+      /* ===== Mount/Bazaar Polish PART A — the seat recalibration ==========
+         The old gate pinned two literals off the flat `2.2 * SPECIES_K`
+         formula and the ordering shadowfox > griffin > lightfox. Both are
+         replaced rather than relaxed, because that formula was the bug: a
+         mount's back height is its own SHEET-NATIVE body height times
+         SPECIES_K, and one constant times SPECIES_K cannot be right for a
+         roster whose natives run 8.4 to 14.6.
+
+         BACK_NATIVE below is an INDEPENDENT copy — read off each species'
+         own body polygon in drawSpecies, not off the game's table — the same
+         way the PET_RARITY gate keeps its own copy of the bible's list. The
+         relationship asserted is the one that has to survive every future
+         scale pass: the rider's feet land on that mount's own back, in real
+         screen pixels, whatever SPECIES_K becomes. */
+      const BACK_NATIVE = {
+        stag: 13.0,          // P([... sy - 12.4, ... sy - 13 ...]) torso top
+        griffin: 11.0,       // lion body P([... sy - 11 ...])
+        /* the one eye-found exception: a golem has no back behind its head
+           slab, so the seat is that slab's own top (sy - 12.6), not the body
+           slab's 8.4 — at 8.4 the rider vanishes behind the head. */
+        crystal_golem: 12.6, // head slab P([... sy - 12.6 ...])
+        water_dragon: 14.6, fire_dragon: 14.6,   // dragonV2 torso Y(-14.6)
+        storm_dragon: 14.6, shadow_dragon: 14.6,
+        shadowfox: 8.4, lightfox: 8.4,           // the shared fox body
+      };
+      const S_RIDER = m0.RIDER_S;
+      results.push(['PART A: the rider scale the seat converts through is drawPlayerEntity\'s own 2.1',
+        Math.abs(S_RIDER - 2.1) < 1e-9 &&
+        gameScript.indexOf('mountSeatOffsetY(mountSp, t) * S') > 0]);
+      results.push(['PART A: the game\'s back table is the art\'s own body tops, independently read',
+        BIBLE_NINE.every(s => Math.abs(m0.MOUNT_SEAT_BACK[s] - BACK_NATIVE[s]) < 1e-9) &&
+        Object.keys(m0.MOUNT_SEAT_BACK).length === 9]);
+      {
+        // the rider's FEET, in screen px above the mount's baseline
+        let seatedOk = true, seatFail = null;
+        for (const s of BIBLE_NINE) {
+          const back = BACK_NATIVE[s] * m0.SPECIES_K_snapshot[s];
+          const flierAlt = s === 'griffin' ? 28 : 0;   // WILD_SPECIES.griffin.alt
+          if (Math.abs(m0.seatPx[s] - (back + flierAlt)) > 1e-6) {
+            seatedOk = false; seatFail = s + ' ' + m0.seatPx[s].toFixed(2) + ' vs ' + (back + flierAlt).toFixed(2);
+            break;
+          }
+        }
+        results.push(['PART A: all nine riders seat on their own mount\'s back' +
+          (seatFail ? ' (failed on ' + seatFail + ')' : ''), seatedOk]);
+      }
+      /* The dragons grew most and were the screenshot, so they are pinned
+         hardest: the seat must have gone UP by roughly the factor SPECIES_K
+         moved by since v28 set 2.2 against 1.30. */
+      results.push(['PART A: a dragon rider sits more than three times higher than v28 put them',
+        m0.seatPx.fire_dragon > 3 * (2.2 * m0.SPECIES_K_snapshot.fire_dragon * S_RIDER) * 0.99 &&
+        m0.seatPx.fire_dragon > 30]);
+      /* The flying mount is the one the old formula could never have got
+         right at any constant: drawPet holds a Griffin 28px in the air. */
+      results.push(['PART A: the Griffin\'s rider is carried at its flight altitude, not left on the grass',
+        m0.seatPx.griffin > m0.seatPx.shadowfox + 20 &&
+        m0.seatPx.griffin > 28]);
+      /* ...and the seat is still genuinely per-species, which is what the
+         retired ordering assertion was really protecting. */
+      results.push(['PART A: the nine seats are not one number wearing nine names',
+        new Set(BIBLE_NINE.map(s => m0.seatPx[s].toFixed(3))).size >= 5 &&
+        so.crystal_golem < 0 && so.stag < 0]);
 
       // every one of the nine mounts without error — not a sample
       let allNineOk = true, failedOn = null;
@@ -3411,9 +3469,24 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['and every site that sets a respawn deadline reads that one rule',
         (gameScript.match(/Date\.now\(\) \+ MOB_RESPAWN_MS/g) || []).length === 0 &&
         (gameScript.match(/mobRespawnMs\(/g) || []).length >= 5]);
-      results.push(['the three Elder ids are exactly the three species flagged elder',
+      /* Mount/Bazaar Polish PART D: these two sets were identical until this
+         version and now deliberately are not, which is worth stating rather
+         than loosening. ELDER_SPECIES is the WORLD-RESET wipe list and the
+         bible's world-ending event says "all three Elders lost" — three, by
+         name. `elder: true` is the TIER marker that drives the Elder combat
+         cue, and the Duskfox Elder genuinely is of that tier. So: the reset
+         list is still exactly the trio, every one of the trio still carries
+         the flag, and the Duskfox carries the flag while staying out of the
+         wipe. Each half is asserted separately so neither can drift. */
+      results.push(['the world-reset list is still exactly the bible\'s three Elders',
+        a0.ELDER_SPECIES.slice().sort().join('|') === 'dragon_elder|golem_elder|unicorn_elder']);
+      results.push(['and every one of the three carries the elder tier flag',
+        a0.ELDER_SPECIES.every(s => dwi39().WILD_SPECIES[s].elder === true)]);
+      results.push(['PART D: the Duskfox Elder is Elder-tier but is NOT wiped by a world reset',
+        dwi39().WILD_SPECIES.duskfox_elder.elder === true &&
+        a0.ELDER_SPECIES.indexOf('duskfox_elder') === -1 &&
         Object.entries(dwi39().WILD_SPECIES).filter(([, d]) => d.elder).map(([k]) => k).sort()
-          .join('|') === a0.ELDER_SPECIES.slice().sort().join('|')]);
+          .join('|') === 'dragon_elder|duskfox_elder|golem_elder|unicorn_elder']);
       results.push(['it drops no dragonsteel — the bible names four sources and this is not one',
         a0.golemElderDef.loot.every(l => l.type !== 'dragonsteel')]);
       /* The whole point of the revised spec: NO guardian/offline layer. */
@@ -4182,15 +4255,23 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         shadowfox: 'epic', lightfox: 'epic', krakenling: 'epic',
         salamander_king: 'epic',
         golem_elder: 'elder', dragon_elder: 'elder', unicorn_elder: 'elder',
+        /* Mount/Bazaar Polish PART D: the bible's own "Admin Only" heading,
+           which is a row in that table exactly as Elder and Epic are — so
+           this is still the bible transcribed, not a tier invented here. */
+        duskfox_elder: 'admin',
       };
       const PR = R0.PET_RARITY;
       results.push([`PART A: every pet carries its BIBLE rarity and nothing else does (${Object.keys(PR).length})`,
         Object.keys(BIBLE_RARITY).every(k => PR[k] === BIBLE_RARITY[k]) &&
         Object.keys(PR).length === Object.keys(BIBLE_RARITY).length]);
-      results.push(['PART A: and it invents nothing — no Basilisk, no Duskfox Elder, both genuinely unbuilt',
-        PR.basilisk === undefined && PR.duskfox_elder === undefined]);
-      results.push(['PART A: the cap is Rare-and-up, exactly as the spec words it',
-        R0.CAPPED_RARITIES.slice().sort().join('|') === 'elder|epic|rare']);
+      /* Mount/Bazaar Polish PART D: the Duskfox Elder has left this
+         assertion because it is BUILT — updated, not relaxed. Basilisk is
+         still the proof that the table invents nothing, and the Duskfox is
+         now additionally asserted to carry the bible's own heading. */
+      results.push(['PART A: and it invents nothing — no Basilisk, still genuinely unbuilt',
+        PR.basilisk === undefined && PR.duskfox_elder === 'admin']);
+      results.push(['PART A: the cap is Rare-and-up, and PART D\'s one-of-one joins it',
+        R0.CAPPED_RARITIES.slice().sort().join('|') === 'admin|elder|epic|rare']);
       results.push(['PART A: so dragons, Crystal Golem and everything above them are capped...',
         ['fire_dragon', 'water_dragon', 'storm_dragon', 'shadow_dragon', 'crystal_golem',
          'unicorn', 'phoenix', 'shadowfox', 'lightfox', 'krakenling', 'salamander_king',
@@ -4884,6 +4965,282 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
 
       results.push(['the safe-zone PvP gate checks both the attacker and the target',
         gameScript.indexOf('inSafeZone(me.x, me.y) || inSafeZone(o.x, o.y)') > 0]);
+    }
+
+    /* ============ MOUNT / BAZAAR POLISH — PARTS B, C and D ==============
+       PART A's gates live up in the v28 mounting block, beside the ones they
+       replace. These three are new systems and get their own block at the
+       end of the file, the same way every version since v33 has. ========= */
+    {
+      /* ---------- PART B: the Grand Bazaar's clearance ----------------- */
+      const dbz = window.debugBazaarInfo;
+      if (typeof dbz === 'function') {
+        const bz = dbz();
+        const wideBz = dbz(bz.BAZAAR_R * 3);
+        const land = bz.tiles - bz.water;
+        results.push([`PART B: the Bazaar has a real clearance now — every tile of it inside ${bz.BAZAAR_R} that is not sea is plain grass (${bz.grass}/${land})`,
+          land > 0 && bz.grass === land]);
+        results.push([`PART B: and all of it is level ground, so nine stalls do not straddle a cliff step (${bz.level}/${land})`,
+          bz.level === land]);
+        results.push([`PART B: the sea is untouched — the clearing never paints grass out over water (${bz.water} water tiles kept)`,
+          bz.centreBiome !== undefined && bz.water >= 0 &&
+          // if the disc holds water at all, it is still water
+          (bz.water === 0 || bz.grass + bz.water === bz.tiles)]);
+        results.push([`PART B: so what is left inside it is the plains scatter, not forest (${bz.trees} trees over ${land} tiles)`,
+          land > 0 && bz.trees / land < 0.10]);
+        results.push([`PART B: the stall ring (${bz.BAZAAR_RING}) and all ${bz.BAZAAR_STALLS} stalls stand inside the cleared radius`,
+          bz.BAZAAR_RING < bz.BAZAAR_R && bz.BAZAAR_STALLS === 9 && bz.BAZAAR_R === 10]);
+        /* The pattern was REUSED, not invented: both new lines are the
+           OTHER_SAFE_ZONES lines with BAZAAR in place of the zone list, with
+           the same guards and in the same two functions. */
+        results.push(['PART B: the grass override is the scattered-zone pattern, guards and all',
+          gameScript.indexOf('if (b !== B.PLAINS && b !== B.DEEP && b !== B.LAVA && b !== B.WATER &&\n      Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) b = B.PLAINS;') > 0]);
+        results.push(['PART B: and the level-ground flatten is the other half of that same pattern',
+          gameScript.indexOf('if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) h = 0;') > 0]);
+        results.push(['PART B: one radius still does both jobs — the green circle IS the protected circle',
+          (gameScript.match(/BAZAAR_R/g) || []).length >= 6 &&
+          window.debugV37Info().bazaarIsSafe === true]);
+        /* Printed, not asserted: the surrounding land is whatever this seed
+           made it, so the contrast is a measurement rather than a rule. */
+        console.log(`  [PART B] inside r=${bz.BAZAAR_R}: ${bz.trees} trees / ${land} land tiles; ` +
+          `out to r=${wideBz.radius}: ${wideBz.trees} trees / ${wideBz.tiles - wideBz.water} land tiles`);
+      } else {
+        results.push(['PART B: debugBazaarInfo hook is reachable', false]);
+      }
+
+      /* ---------- PART C: player-to-player teleport consent ------------- */
+      const dtv2 = window.debugSetTravel, tvi2 = window.debugTravelInfo;
+      if (typeof dtv2 === 'function' && window.debugCombatHandles) {
+        const H2 = window.debugCombatHandles();
+        // default state: nobody has ever touched it, so everybody accepts
+        dtv2({ consent: true });
+        results.push(['PART C: accepting is the default, matching every account that existed before this version',
+          tvi2().myConsent === true]);
+        H2.others.set('ConsentGhostA', {
+          x: 40, y: 40, tx: 40, ty: 40, space: 'main', dead: false,
+          lastHeard: window.performance.now(), hp: 100, maxHp: 100, cls: 'Ranger', level: 1,
+        });
+        results.push(['PART C: a player whose broadcast carries no consent field at all is listed — unset means accepting',
+          tvi2().players.some(p => p.name === 'ConsentGhostA') &&
+          tvi2().heard.some(h => h.name === 'ConsentGhostA' && h.accepts === true)]);
+        // now they opt out
+        H2.others.get('ConsentGhostA').tpClosed = true;
+        results.push(['PART C: with it off they are simply not in the Players list any more',
+          !tvi2().players.some(p => p.name === 'ConsentGhostA')]);
+        /* The list already excludes them, so "travelled === false" alone
+           cannot tell the consent gate apart from "they have gone" — the
+           TOAST is what distinguishes the two, and it is the reason the gate
+           in travelToPlayer() exists at all rather than being redundant. */
+        {
+          /* travelToPlayer() refuses without the Unicorn Elder before it ever
+             reaches the consent check, and the account was rebuilt by the PIN
+             block above — so give it back the companion the earlier PART C
+             block gave it, or this gate reads the wrong refusal. */
+          if (window.debugGrantPet) window.debugGrantPet('unicorn_elder');
+          const toastEl = doc.getElementById('toast');
+          toastEl.textContent = '';
+          const refused = dtv2({ clearCooldown: true, to: 'ConsentGhostA' });
+          results.push(['PART C: and the refusal is the consent gate itself, not merely a missing row',
+            refused.travelled === false &&
+            /not accepting travellers/i.test(toastEl.textContent)]);
+        }
+        H2.others.get('ConsentGhostA').tpClosed = false;
+        results.push(['PART C: turning it back on puts them straight back in the list',
+          tvi2().players.some(p => p.name === 'ConsentGhostA')]);
+        H2.others.delete('ConsentGhostA');
+
+        // my own toggle, through the real function the button calls
+        const t1 = dtv2({ consentToggle: true });
+        results.push(['PART C: the toggle really flips my own flag',
+          t1.myConsent === false && t1.tpClosedRaw === true]);
+        const t2 = dtv2({ consentToggle: true, refreshPanel: true });
+        results.push(['PART C: and flips it back — it is a toggle, never a one-way door',
+          t2.myConsent === true]);
+        // the panel says what the flag says, in both states
+        const cLabel = doc.getElementById('travelConsentLabel');
+        const cBtn = doc.getElementById('travelConsentBtn');
+        dtv2({ consent: true, refreshPanel: true });
+        const onLabel = cLabel && cLabel.textContent, onBtn = cBtn && cBtn.textContent;
+        dtv2({ consent: false, refreshPanel: true });
+        const offLabel = cLabel && cLabel.textContent, offBtn = cBtn && cBtn.textContent;
+        results.push(['PART C: the panel row reports the flag it is reporting, in both states',
+          onLabel === 'Others may travel to you' && onBtn === 'TURN OFF' &&
+          offLabel === 'Nobody may travel to you' && offBtn === 'TURN ON']);
+        results.push(['PART C: the toggle is a .craft-row, not a new component style',
+          html.indexOf('<div class="craft-row" id="travelConsentRow">') > 0]);
+        dtv2({ consent: true, refreshPanel: true });
+
+        // it rides the one existing broadcast, in the shape the others use
+        results.push(['PART C: consent goes out on the one move broadcast, beside pe/mo/sp/cs',
+          gameScript.indexOf('tp: me.tpClosed ? 0 : 1,') > 0]);
+        results.push(['PART C: and only an explicit 0 closes someone — an older client reads as accepting',
+          gameScript.indexOf('o.tpClosed = p.tp === 0;') > 0]);
+        results.push(['PART C: no new table, no new channel and no new column were added for it',
+          gameScript.indexOf('tpClosed') > 0 &&
+          gameScript.indexOf('tp_closed') < 0 &&
+          [...new Set([...gameScript.matchAll(/from\("([a-z_]+)"\)/g)].map(m => m[1]))].sort().join(',') ===
+            'account_pins,base_pieces,ground_items,mined_nodes,pets,players,rare_takes,world']);
+      } else {
+        results.push(['PART C: travel hooks are reachable', false]);
+      }
+
+      /* ---------- PART D: the Duskfox Elder ---------------------------- */
+      const ddf = window.debugDuskfoxInfo, sdf = window.debugSetDuskfox;
+      if (typeof ddf === 'function' && typeof sdf === 'function') {
+        sdf({ role: 'player', clearHeld: true });
+        const d0 = ddf();
+        results.push([`PART D: there is exactly one Duskfox Elder in the entire world (${d0.countInWorld})`,
+          d0.countInWorld === 1 && !!d0.wild]);
+        results.push([`PART D: it stands on its own single uniformly-drawn tile (${d0.tile[0]},${d0.tile[1]})`,
+          !!d0.wild &&
+          Math.abs(d0.wild.x - (d0.tile[0] + 0.5)) < 1e-9 &&
+          Math.abs(d0.wild.y - (d0.tile[1] + 0.5)) < 1e-9]);
+        results.push(['PART D: placed by the Unicorn Elder\'s own technique on its own salt, so the two are independent',
+          gameScript.indexOf('function duskfoxElderTile(seed) {') > 0 &&
+          gameScript.indexOf('const idx = Math.min(N * N - 1, Math.floor(r * N * N));') > 0 &&
+          (d0.tile[0] !== d0.unicornTile[0] || d0.tile[1] !== d0.unicornTile[1])]);
+        results.push(['PART D: and that draw has no biome, walkability or distance test in it — no pattern, no hint',
+          (() => {
+            const s = gameScript.indexOf('function duskfoxElderTile(seed) {');
+            const body = gameScript.slice(s, gameScript.indexOf('}', s));
+            return body.indexOf('biomeAt') < 0 && body.indexOf('BLOCKED') < 0 &&
+                   body.indexOf('SPAWN') < 0 && body.indexOf('hypot') < 0;
+          })()]);
+        results.push([`PART D: a one-of-one is capped at one a day, so a taken one is genuinely gone (${d0.cap})`,
+          d0.capped === true && d0.cap === 1 && d0.rarity === 'admin']);
+        /* The same uniformity + reachability sweep v39 runs for the Unicorn
+           Elder, because it is the same draw with a different salt — and its
+           cost is the same cost, so it gets measured and printed here rather
+           than assumed to carry over. */
+        {
+          const WI = window.debugWorldInfo();
+          const Nd = WI.N, Bd = WI.B;
+          const quadD = [0, 0, 0, 0];
+          const distinctD = new Set();
+          for (let s = 1; s <= 900; s++) {
+            const [tx, ty] = window.duskfoxElderTile(s);
+            quadD[(tx < Nd / 2 ? 0 : 1) + (ty < Nd / 2 ? 0 : 2)]++;
+            distinctD.add(tx + ',' + ty);
+          }
+          results.push(['PART D: its tile is a flat draw over the whole map — every quadrant gets its share',
+            quadD.every(q => q > 900 * 0.15) && distinctD.size > 900 * 0.9]);
+          results.push(['PART D: and the same seed always gives the same tile, so every client agrees',
+            window.duskfoxElderTile(4242).join() === window.duskfoxElderTile(4242).join() &&
+            window.duskfoxElderTile(4242).join() !== window.unicornElderTile(4242).join()]);
+          let standD = 0, diveD = 0, unreachD = 0;
+          for (let s = 1; s <= 200; s++) {
+            const [tx, ty] = window.duskfoxElderTile(s);
+            const b = window.biomeAt(tx, ty);
+            if (b === Bd.PEAK || b === Bd.LAVA) unreachD++;
+            else if (b === Bd.DEEP) diveD++;
+            else standD++;
+          }
+          console.log('  [PART D] duskfox elder tile over 200 seeds — walkable:', standD,
+                      'reachable only by diving:', diveD,
+                      'genuinely unreachable (peak/lava):', unreachD);
+          results.push(['PART D: most seeds put it somewhere the admin can actually get to',
+            (standD + diveD) > 200 * 0.8]);
+        }
+
+        // the gate: isAdmin(), specifically, and not rarity
+        results.push(['PART D: an ordinary player cannot tame it',
+          d0.isAdmin === false && d0.adminOnly === true && d0.canTame === false]);
+        const attemptAsPlayer = sdf({ tameAttempt: 'duskfox_elder' });
+        results.push(['PART D: pressing the tame key on it does nothing at all — the channel never even starts',
+          attemptAsPlayer.tamingStarted === false]);
+        const ordinary = sdf({ tameAttempt: 'shadowfox' });
+        results.push(['PART D: while the gate is isAdmin() and NOT rarity — an Epic Shadowfox is still tameable by anyone',
+          d0.canTameOrdinary === true && ordinary.tamingStarted === true]);
+        sdf({ role: 'admin' });
+        const dAdmin = ddf();
+        const attemptAsAdmin = sdf({ tameAttempt: 'duskfox_elder' });
+        results.push(['PART D: and the admin account genuinely can',
+          dAdmin.isAdmin === true && dAdmin.canTame === true &&
+          attemptAsAdmin.tamingStarted === true]);
+        results.push(['PART D: the gate sits at startTaming(), the one door both tame paths pass through',
+          gameScript.indexOf('if (!canTameSpecies(w.species)) {') > 0 &&
+          gameScript.indexOf('function canTameSpecies(sp) { return !adminOnlySpecies(sp) || isAdmin(); }') > 0]);
+        results.push(['PART D: and it refuses BEFORE the bait is spent',
+          gameScript.indexOf('if (!canTameSpecies(w.species)) {') <
+          gameScript.indexOf('const baited = (me.inv.trail_bait || 0) > 0;')]);
+
+        // the Oracle must never have heard of it — already true, must not regress
+        results.push(['PART D: the Oracle still cannot name it, and never could',
+          d0.oracleForbidden.indexOf('duskfox_elder') >= 0 &&
+          window.debugV35Info().oraclePool.indexOf('duskfox_elder') < 0 &&
+          gameScript.indexOf('["duskfox_elder"') < 0]);
+
+        // size: the biggest of its own line, the trio's own rule
+        const skD = window.debugScaleInfo().SPECIES_K;
+        results.push([`PART D: it is the largest of the fox line, so scale alone says Elder (${skD.duskfox_elder} vs Shadowfox ${skD.shadowfox})`,
+          skD.duskfox_elder > skD.shadowfox * 1.25 &&
+          skD.duskfox_elder > skD.lightfox * 1.25]);
+        results.push(['PART D: and it is still not the largest thing in the world — the Golem Elder is',
+          skD.duskfox_elder < skD.golem_elder]);
+        const pcD = window.petCombatDef ? window.petCombatDef('duskfox_elder', 'Ranger') : null;
+        const pcDragon = window.petCombatDef ? window.petCombatDef('dragon_elder', 'Ranger') : null;
+        results.push(['PART D: it has a real companion stat line, and the Dragon Elder is still the strongest',
+          !!pcD && pcD.hp > 0 && pcD.dmg > 0 && pcD.pvp === true &&
+          !!pcDragon && pcDragon.dmg > pcD.dmg]);
+
+        // the two admin cosmetics
+        results.push([`PART D: the bible's other two admin cosmetics exist — a unique crown and cloak (${d0.ADMIN_COSMETIC_IDS.join(', ')})`,
+          d0.ADMIN_COSMETIC_IDS.length === 2 &&
+          d0.ADMIN_COSMETIC_IDS.indexOf('cos_crown_admin') >= 0 &&
+          d0.ADMIN_COSMETIC_IDS.indexOf('cos_cloak_admin') >= 0]);
+        results.push(['PART D: they are cosmetics like every other — a name, a slot and a colour, and no stat of any kind',
+          ['cos_crown_admin', 'cos_cloak_admin'].every(id => {
+            const c = window.debugV35Info().COSMETICS[id];
+            return c && c.slot && c.color && c.dmg === undefined &&
+                   c.reduce === undefined && c.tier === undefined;
+          })]);
+        results.push(['PART D: and they can never be earned by killing something — the drop pool excludes them',
+          d0.COSMETIC_DROP_IDS.length === d0.COSMETIC_IDS.length - 2 &&
+          d0.ADMIN_COSMETIC_IDS.every(id => d0.COSMETIC_DROP_IDS.indexOf(id) < 0)]);
+        {
+          // driven for real, not asserted off the list
+          let rolledAdmin = false;
+          for (let i = 0; i < 4000; i++) {
+            const got = window.rollCosmeticDrop('elder_drake');
+            if (got && d0.ADMIN_COSMETIC_IDS.indexOf(got) >= 0) { rolledAdmin = true; break; }
+          }
+          results.push(['PART D: 4000 Elder Drake drop rolls never once produced one',
+            rolledAdmin === false]);
+        }
+        // granting: nothing for a player, both for an admin, and never twice
+        sdf({ role: 'player', clearHeld: true });
+        sdf({ grant: true });
+        results.push(['PART D: an ordinary account is given nothing',
+          ddf().held.every(n => n === 0)]);
+        sdf({ role: 'admin' });
+        const g1 = sdf({ grant: true });
+        results.push(['PART D: the admin account is given both, as items in the pack like every other cosmetic',
+          g1.granted === 2 && ddf().held.every(n => n === 1)]);
+        const g2 = sdf({ grant: true });
+        results.push(['PART D: and never again — logging in twice does not stack them',
+          g2.granted === 0 && ddf().held.every(n => n === 1)]);
+        results.push(['PART D: the grant reads the bible\'s own players.role, through the same isAdmin() everything else uses',
+          gameScript.indexOf('function grantAdminCosmetics() {\n  if (!isAdmin()) return;') > 0]);
+        /* "Earned, never purchased" is structural here, not a word search:
+           each admin id is written exactly ONCE in the whole file — its own
+           COSMETICS row — so no drop table, recipe, shop or any other path
+           can be naming one. Everything that touches them goes through the
+           derived ADMIN_COSMETIC_IDS list this gate can see. */
+        results.push(['PART D: each admin cosmetic id is written exactly once in the file — its own table row',
+          (gameScript.match(/cos_crown_admin/g) || []).length === 1 &&
+          (gameScript.match(/cos_cloak_admin/g) || []).length === 1]);
+        results.push(['PART D: and no recipe, shop or crafting path can produce one',
+          window.debugWorldInfo() && !gameScript.match(/out: "cos_/) &&
+          d0.ADMIN_COSMETIC_IDS.every(id =>
+            !(window.RECIPES || []).some(r => r.out === id))]);
+
+        // put the account back exactly as the rest of this run left it
+        sdf({ role: 'player', clearHeld: true });
+        results.push(['PART D: and the harness account is a plain player again afterwards',
+          ddf().isAdmin === false && ddf().held.every(n => n === 0)]);
+      } else {
+        results.push(['PART D: Duskfox Elder hooks are reachable', false]);
+      }
     }
 
     let allOk = true;

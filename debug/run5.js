@@ -160,7 +160,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                       // v39: the Elder trio. All three are drawn through the
                       // same chain — the Golem Elder as a wild mob AND as a
                       // companion, the other two as companions.
-                      "golem_elder", "dragon_elder", "unicorn_elder"];
+                      "golem_elder", "dragon_elder", "unicorn_elder",
+                      /* Mount/Bazaar Polish PART D: the Duskfox Elder is the
+                         first genuinely new species since v39, so it joins
+                         every list a species belongs in — here it is drawn
+                         through drawSpecies AND through drawPet's four
+                         combat states below, exactly as the trio is. */
+                      "duskfox_elder"];
     const MOBK = ["goblin", "bandit", "troll", "boar", "bear", "griffin", "phoenix",
                   "dark_wraith",                                          // v18
                   "sea_serpent",                                          // v21
@@ -600,7 +606,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                      'unicorn', 'crystal_golem', 'phoenix', 'fire_dragon',
                      'water_dragon', 'storm_dragon', 'shadow_dragon',
                      'shadowfox', 'lightfox', 'krakenling', 'salamander_king',
-                     'golem_elder', 'dragon_elder', 'unicorn_elder'];
+                     'golem_elder', 'dragon_elder', 'unicorn_elder',
+                     'duskfox_elder'];   // PART D: new body, new scale
     if (window.drawSpecies) {
       const c2 = window.document.createElement('canvas').getContext('2d');
       for (const sp of RESIZED) {
@@ -670,6 +677,84 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       console.log('credits rendered — RUNEHAVEN, MUSIC (' + mcl.children.length + '), COLLABORATIONS');
       n += 1;
+    }
+    /* ============ Mount/Bazaar Polish sweep ==============================
+       PART A moved a number that only shows up in a COMPOSED frame — the
+       rider and the mount are drawn by two different functions at two
+       different scales, and nothing above ever draws them together. So each
+       of the nine is mounted for real and given real frames, which is the
+       only way the seated branch of drawPlayerEntity and the suspended
+       branch of updatePet run at the same time.
+       PART D adds a species (already in SPECIES / RESIZED above) and two
+       cosmetics, whose draw paths are drawCosHat/drawCosCloak. */
+    if (window.debugSetMount && window.debugGrantPet && window.debugSetPlayer) {
+      const NINE = window.debugMountInfo().MOUNTABLE;
+      const beforeM = window.debugWorldInfo().player;
+      let mountedFrames = 0;
+      for (const sp of NINE) {
+        window.debugGrantPet(sp);
+        window.debugSetMount({ mounted: false });
+        window.debugSetMount({ toggle: true });
+        if (!window.debugMountInfo().mounted) {
+          console.log('COVERAGE GAP: could not mount ' + sp);
+          process.exit(1);
+        }
+        for (let f = 700; f < 706; f++) {
+          const q = rafQ; rafQ = [];
+          for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+          n += 1; mountedFrames += 1;
+        }
+        window.debugSetMount({ mounted: false });
+      }
+      console.log('mounted frames drawn across all ' + NINE.length + ' bible mounts:', mountedFrames);
+      if (beforeM) window.debugSetPlayer({ x: beforeM.x, y: beforeM.y });
+    }
+    if (window.drawUnit && window.debugDuskfoxInfo) {
+      const c3 = window.document.createElement('canvas').getContext('2d');
+      const ADMIN_COS = window.debugDuskfoxInfo().ADMIN_COSMETIC_IDS;
+      const cosSet = { hat: ADMIN_COS.find(i => i.indexOf('crown') >= 0),
+                       cloak: ADMIN_COS.find(i => i.indexOf('cloak') >= 0),
+                       skin: null, pet: null };
+      for (const cls of ["Ranger", "Knight", "Mystic", "Beastmaster", "Architect"]) {
+        for (const t of [400, 900]) {
+          window.drawUnit(c3, 50, 50, cls, 2.1, "runic", { x: 1, y: 0 }, t, true, "sword", "iron", false, cosSet);
+          n += 1;
+        }
+      }
+      console.log('admin regalia drawn on all five class bodies:', ADMIN_COS.join(', '));
+    }
+    /* PART D: the one-of-one standing in the real world, on camera. */
+    if (window.debugDuskfoxInfo && window.debugSetPlayer) {
+      const df = window.debugDuskfoxInfo();
+      if (!df.wild) {
+        console.log('COVERAGE GAP: no Duskfox Elder in the world to render');
+        process.exit(1);
+      }
+      const beforeD = window.debugWorldInfo().player;
+      window.debugSetPlayer({ x: df.wild.x, y: df.wild.y });
+      for (let f = 720; f < 728; f++) {
+        const q = rafQ; rafQ = [];
+        for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+        n += 1;
+      }
+      console.log('Duskfox Elder rendered in the world at', df.wild.x + ',' + df.wild.y);
+      if (beforeD) window.debugSetPlayer({ x: beforeD.x, y: beforeD.y });
+    }
+    /* PART B: the Bazaar's cleared ground, walked to and drawn for real —
+       the clearance is a worldgen change, so the only proof a render sweep
+       can add is that the place still draws. */
+    if (window.debugBazaarInfo && window.debugSetPlayer) {
+      const bz = window.debugBazaarInfo();
+      const beforeZ = window.debugWorldInfo().player;
+      window.debugSetPlayer({ x: bz.BAZAAR.x + 0.5, y: bz.BAZAAR.y + 0.5 });
+      for (let f = 740; f < 748; f++) {
+        const q = rafQ; rafQ = [];
+        for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+        n += 1;
+      }
+      console.log('Grand Bazaar rendered on its cleared ground — trees inside r=' +
+        bz.BAZAAR_R + ':', bz.trees, 'over', (bz.tiles - bz.water), 'land tiles');
+      if (beforeZ) window.debugSetPlayer({ x: beforeZ.x, y: beforeZ.y });
     }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
