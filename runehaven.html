@@ -4612,16 +4612,16 @@ async function mobKill(m, iKilled) {
   const drops = [];
   for (const l of def.loot) {
     if (Math.random() < l.chance) {
-      drops.push({ type: l.type, qty: l.qty, x: m.x + (Math.random() - 0.5) * 1.6, y: m.y + (Math.random() - 0.5) * 1.6 });
+      /* QA PASS: same missing space tag as dropAllItems() — a mob killed
+         inside a cave dropped loot that rendered on the surface, invisible
+         to whoever actually killed it there. Mobs carry their own real
+         `space` since the cave overhaul, so this is the correct source. */
+      drops.push({ type: l.type, qty: l.qty, x: m.x + (Math.random() - 0.5) * 1.6, y: m.y + (Math.random() - 0.5) * 1.6, space: m.space || "main" });
     }
   }
-  /* v35 PART D: the ONLY way a cosmetic enters the world — a rare roll on a
-     strong mob kill, riding the exact same loot -> ground_items -> pickup path
-     everything else already uses. No shop, no currency, no purchase, exactly
-     as the bible requires ("earned through gameplay only, never purchased"). */
   const cosDrop = rollCosmeticDrop(m.kind);
   if (cosDrop) {
-    drops.push({ type: cosDrop, qty: 1, x: m.x + (Math.random() - 0.5) * 1.6, y: m.y + (Math.random() - 0.5) * 1.6 });
+    drops.push({ type: cosDrop, qty: 1, x: m.x + (Math.random() - 0.5) * 1.6, y: m.y + (Math.random() - 0.5) * 1.6, space: m.space || "main" });
     toast(`${ITEM_META[cosDrop].name} — a rare find!`);
   }
   toast(`${def.name} slain!`);
@@ -5511,15 +5511,25 @@ function invSpend(mats) {
 }
 
 async function dropAllItems() {
+  /* QA PASS: ground_items never carried a space tag, and the render/pickup
+     paths never checked one either — dying inside a cave dropped items at
+     your interior-local x,y, which then rendered on the SURFACE map at
+     those same small coordinates, nowhere near you. Confirmed by reading
+     the render loop directly: it filters purely by world x/y in the
+     viewport, with no inInterior()/space check at all. Tagging every drop
+     with where it actually happened, and filtering both the render list
+     and the interaction finder to match — same discipline every other
+     space-aware system (mobs, wilds, gathering nodes) already follows. */
+  const dropSpace = me.space || "main";
   const drops = [];
   for (const [type, qty] of Object.entries(me.inv)) {
-    drops.push({ type, qty, x: me.x + (Math.random() - 0.5) * 2.4, y: me.y + (Math.random() - 0.5) * 2.4 });
+    drops.push({ type, qty, x: me.x + (Math.random() - 0.5) * 2.4, y: me.y + (Math.random() - 0.5) * 2.4, space: dropSpace });
   }
   if (me.equipped) {
-    drops.push({ type: me.equipped, qty: 1, x: me.x + (Math.random() - 0.5) * 2.4, y: me.y + (Math.random() - 0.5) * 2.4 });
+    drops.push({ type: me.equipped, qty: 1, x: me.x + (Math.random() - 0.5) * 2.4, y: me.y + (Math.random() - 0.5) * 2.4, space: dropSpace });
   }
   if (me.armor) {
-    drops.push({ type: me.armor, qty: 1, x: me.x + (Math.random() - 0.5) * 2.4, y: me.y + (Math.random() - 0.5) * 2.4 });
+    drops.push({ type: me.armor, qty: 1, x: me.x + (Math.random() - 0.5) * 2.4, y: me.y + (Math.random() - 0.5) * 2.4, space: dropSpace });
   }
   me.inv = {};
   me.equipped = null;
@@ -6048,13 +6058,21 @@ function nearestGatherable() {
 function nearestGroundItem() {
   let best = null, bestD = GATHER_RANGE;
   for (const it of groundItems.values()) {
+    if ((it.space || "main") !== (me.space || "main")) continue;
     const d = Math.hypot(it.x - me.x, it.y - me.y);
     if (d < bestD) { best = it; bestD = d; }
   }
   return best;
 }
 
-function nearChest() { return Math.hypot(me.x - DEV_CHEST.x, me.y - DEV_CHEST.y) < 1.6; }   // ⚠️ DEV-ONLY
+/* QA PASS: this granted 20 of every material — including dragonsteel —
+   to any player who simply walked up to it, sitting a few tiles from
+   spawn where every new player starts. Confirmed no gate of any kind
+   existed. Launch-blocking: this breaks the entire "dragonsteel is
+   earned by killing the Elder Drake" economy on day one. Gated behind
+   the same isAdmin() the world-reset safeguard already uses, rather
+   than deleted outright, so it stays available for legitimate testing. */
+function nearChest() { return isAdmin() && Math.hypot(me.x - DEV_CHEST.x, me.y - DEV_CHEST.y) < 1.6; }   // ⚠️ DEV-ONLY, admin-gated
 function nearShrine() { return Math.hypot(me.x - SHRINE.x, me.y - SHRINE.y) < 1.7; }
 
 /* v12: shrine activation — 3 Runic Stone for a private +20% tame buff, 20min,
@@ -6441,8 +6459,13 @@ async function baseDestroy(p) {
   if (def.store && contents) {
     const drops = [];
     for (const [type, qty] of Object.entries(contents)) {
+      /* QA PASS: made explicit rather than implicit — bases cannot exist
+         inside an interior, so this was always "main" in practice, but
+         every other ground_items insert now tags space explicitly and
+         this one silently relying on an untagged default was the odd one
+         out. */
       if (qty > 0) drops.push({ type, qty,
-        x: p.x + (Math.random() - 0.5) * 1.2, y: p.y + (Math.random() - 0.5) * 1.2 });
+        x: p.x + (Math.random() - 0.5) * 1.2, y: p.y + (Math.random() - 0.5) * 1.2, space: "main" });
     }
     chestContents.delete(p.id);
     if (drops.length) {
@@ -11387,7 +11410,10 @@ function render(t) {
   }
   ents.push({ s: TOWER.x + TOWER.y + 1.6, kind: "tower" });
   ents.push({ s: SPAWN_FORGE.x + SPAWN_FORGE.y + 0.8, kind: "forge" });
-  ents.push({ s: DEV_CHEST.x + DEV_CHEST.y + 0.3, kind: "chest" });   // ⚠️ DEV-ONLY
+  /* QA PASS: only rendered for the same admins who can now use it — a
+     visible chest that mysteriously does nothing for regular players
+     would be its own confusing bug. */
+  if (isAdmin()) ents.push({ s: DEV_CHEST.x + DEV_CHEST.y + 0.3, kind: "chest" });   // ⚠️ DEV-ONLY, admin-gated
   ents.push({ s: SHRINE.x + SHRINE.y + 0.3, kind: "shrine" });
   ents.push({ s: ORACLE.x + ORACLE.y + 0.3, kind: "oracle" });        // v35 PART E
   /* v35 PART B: the two tutorial props, which exist only while it runs. */
@@ -11413,6 +11439,7 @@ function render(t) {
     ents.push({ s: bp.x + bp.y, kind: "basepiece", bp });
   }
   for (const it of groundItems.values()) {
+    if ((it.space || "main") !== (me.space || "main")) continue;
     if (it.x < minX - 2 || it.x > maxX + 2 || it.y < minY - 2 || it.y > maxY + 2) continue;
     ents.push({ s: it.x + it.y, kind: "item", it });
   }
