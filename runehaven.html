@@ -6537,6 +6537,22 @@ function basePlaceCheck(kind, x, y) {
     return { ok: false, why: "Bases cannot be built inside a safe zone" };
   if (BLOCKED.has(biomeAt(tx, ty)))
     return { ok: false, why: "Nothing will stand on that ground" };
+  /* QA PASS: nothing previously stopped a base from walling off a shared,
+     one-of-a-kind landmark — the Ancient Forge, the Dragon Altar, the
+     Shrine, the Colosseum. The Bazaar is already inside a Safe Zone and
+     covered by the check above; these four are not. Buffer is each
+     landmark's own interaction radius plus real clearance, not the bare
+     minimum. */
+  const LANDMARK_KEEPOUT = [
+    [ANCIENT.x, ANCIENT.y, ANCIENT_R + 3],
+    [DRAGON_ALTAR.x, DRAGON_ALTAR.y, DRAGON_ALTAR_R + 3],
+    [SHRINE.x, SHRINE.y, 1.7 + 3],
+    [COLOSSEUM.x, COLOSSEUM.y, COLOSSEUM_R + 2],
+  ];
+  for (const [lx, ly, r] of LANDMARK_KEEPOUT) {
+    if (Math.hypot(cx - lx, cy - ly) < r)
+      return { ok: false, why: "Too close to a landmark everyone needs to reach" };
+  }
   /* Minimum spacing, measured against every piece already in the world —
      anyone's, not only your own — so bases cannot be crammed edge to edge. */
   for (const p of basePieces.values()) {
@@ -7267,6 +7283,17 @@ function refreshPanels() {
 /* =========================================================
    INPUT
    ========================================================= */
+/* QA PASS: every one of the six panels toggled completely independently —
+   nothing stopped Inventory, Craft, Pets, Build, Character and Fast Travel
+   all being open and stacked at once. Confirmed against the real CSS: the
+   centred Character panel directly overlaps Build's right half, and three
+   or more open at once meaningfully covers the screen, worse on smaller
+   viewports. Standard fix: opening any one of these closes the rest. */
+function closeAllPanels(exceptEl) {
+  for (const p of [invPanel, craftPanel, petPanel, buildPanel, charPanel, travelPanel, chestPanel]) {
+    if (p && p !== exceptEl) p.style.display = "none";
+  }
+}
 addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
   keys[k] = true;
@@ -7279,20 +7306,20 @@ addEventListener("keydown", e => {
     else doInteract();
   }
   if (k === KEYBINDS.attack) { e.preventDefault(); tryAttack(); }
-  if (k === KEYBINDS.inventory) { invPanel.style.display = invPanel.style.display === "block" ? "none" : "block"; refreshPanels(); }
-  if (k === KEYBINDS.craft) { craftPanel.style.display = craftPanel.style.display === "block" ? "none" : "block"; refreshPanels(); }
-  if (k === KEYBINDS.pets) { petPanel.style.display = petPanel.style.display === "block" ? "none" : "block"; refreshPetPanel(); }
-  if (k === KEYBINDS.build) { buildPanel.style.display = buildPanel.style.display === "block" ? "none" : "block"; refreshBuildPanel(); }   // v33
+  if (k === KEYBINDS.inventory) { const now2 = invPanel.style.display !== "block"; closeAllPanels(); invPanel.style.display = now2 ? "block" : "none"; refreshPanels(); }
+  if (k === KEYBINDS.craft) { const now2 = craftPanel.style.display !== "block"; closeAllPanels(); craftPanel.style.display = now2 ? "block" : "none"; refreshPanels(); }
+  if (k === KEYBINDS.pets) { const now2 = petPanel.style.display !== "block"; closeAllPanels(); petPanel.style.display = now2 ? "block" : "none"; refreshPetPanel(); }
+  if (k === KEYBINDS.build) { const now2 = buildPanel.style.display !== "block"; closeAllPanels(); buildPanel.style.display = now2 ? "block" : "none"; refreshBuildPanel(); }   // v33
   /* v35 PART C: the CHARACTER panel, where reclassing lives. Joins
      KEYBIND_DEFAULTS rather than being hardcoded, so it is remappable,
      conflict-checked and persisted by the v23 machinery with no new code. */
-  if (k === KEYBINDS.character) { reclassArmed = null; charPanel.style.display = charPanel.style.display === "block" ? "none" : "block"; refreshCharPanel(); }
+  if (k === KEYBINDS.character) { reclassArmed = null; const now2 = charPanel.style.display !== "block"; closeAllPanels(); charPanel.style.display = now2 ? "block" : "none"; refreshCharPanel(); }
   /* v39 PART C: the FAST TRAVEL panel. Joins KEYBIND_DEFAULTS the same way,
      so it is remappable, conflict-checked and persisted with no new code.
      The panel OPENS for anyone — it is the travel itself that is gated on
      owning the Unicorn Elder, and a panel that says why is better than a
      key that silently does nothing. */
-  if (k === KEYBINDS.travel) { travelPanel.style.display = travelPanel.style.display === "block" ? "none" : "block"; refreshTravelPanel(); }
+  if (k === KEYBINDS.travel) { const now2 = travelPanel.style.display !== "block"; closeAllPanels(); travelPanel.style.display = now2 ? "block" : "none"; refreshTravelPanel(); }
   /* v35 PART B: "Skippable at any point." ESCAPE is deliberately NOT a
      KEYBINDS action — it is the one key v23 made unbindable, so it can never
      be remapped out from under a player who wants out of the tutorial. */
