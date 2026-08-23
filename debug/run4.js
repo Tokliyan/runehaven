@@ -4839,6 +4839,28 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['Account PIN Protection hooks are reachable', false]);
     }
 
+    /* ===================== QA PASS: real bugs found and fixed ================ */
+    {
+      // ground-item space bug — the item render loop and finder now filter by space
+      results.push(['ground item render loop filters by space',
+        gameScript.indexOf('if ((it.space || "main") !== (me.space || "main")) continue;') > 0]);
+      results.push(['nearestGroundItem() filters by space too',
+        (gameScript.match(/if \(\(it\.space \|\| "main"\) !== \(me\.space \|\| "main"\)\) continue;/g) || []).length >= 2]);
+      results.push(['dropAllItems() tags every drop with the real space it happened in',
+        gameScript.indexOf('const dropSpace = me.space || "main";') > 0 &&
+        gameScript.indexOf('space: dropSpace') > 0]);
+      results.push(['mob loot drops carry the mob\'s own real space, not an assumption',
+        gameScript.indexOf('space: m.space || "main"') > 0]);
+      results.push(['chest-destroy drops are explicit about their space, not implicit',
+        gameScript.indexOf('space: "main"') > 0]);
+
+      // dev supply chest — gated, not deleted
+      results.push(['the Dev Supply Chest requires isAdmin() to use',
+        gameScript.indexOf('function nearChest() { return isAdmin() &&') > 0]);
+      results.push(['and requires isAdmin() to even see',
+        gameScript.indexOf('if (isAdmin()) ents.push({ s: DEV_CHEST') > 0]);
+    }
+
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
     process.exit(allOk && !caught ? 0 : 1);
