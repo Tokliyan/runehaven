@@ -160,7 +160,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                       // v39: the Elder trio. All three are drawn through the
                       // same chain — the Golem Elder as a wild mob AND as a
                       // companion, the other two as companions.
-                      "golem_elder", "dragon_elder", "unicorn_elder"];
+                      "golem_elder", "dragon_elder", "unicorn_elder",
+                      // Mount/Bazaar Polish PART D: the bible's admin-only
+                      // one-of-one. It is a wild like any other as far as the
+                      // art chain is concerned — what makes it exclusive is
+                      // isWildVisible(), not a separate draw path.
+                      "duskfox_elder"];
     const MOBK = ["goblin", "bandit", "troll", "boar", "bear", "griffin", "phoenix",
                   "dark_wraith",                                          // v18
                   "sea_serpent",                                          // v21
@@ -600,7 +605,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                      'unicorn', 'crystal_golem', 'phoenix', 'fire_dragon',
                      'water_dragon', 'storm_dragon', 'shadow_dragon',
                      'shadowfox', 'lightfox', 'krakenling', 'salamander_king',
-                     'golem_elder', 'dragon_elder', 'unicorn_elder'];
+                     'golem_elder', 'dragon_elder', 'unicorn_elder',
+                     'duskfox_elder'];
     if (window.drawSpecies) {
       const c2 = window.document.createElement('canvas').getContext('2d');
       for (const sp of RESIZED) {
@@ -670,6 +676,116 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       console.log('credits rendered — RUNEHAVEN, MUSIC (' + mcl.children.length + '), COLLABORATIONS');
       n += 1;
+    }
+    /* ============ Mount/Bazaar Polish + TP Consent + Duskfox Elder =======
+       Three render paths this version adds or changes, none of which the
+       5-frame boot can reach on its own.
+
+       PART A — the mounted rider. The seat branch in drawPlayerEntity only
+       runs while somebody is actually riding, and the Griffin's half of it
+       (the flight lift) only runs for the one flier among the nine. Ride
+       every one of them for real, with frames pumped, so the branch executes
+       at each mount's own scale rather than at the one in the screenshot.
+       EXTEND MOUNT_LIST if the bible's mountable line ever grows. */
+    if (window.debugSetMount && window.debugGrantPet && window.debugSetPlayer) {
+      const MOUNT_LIST = window.debugMountInfo().MOUNTABLE;
+      const beforeM = window.debugWorldInfo().player;
+      let ridden = 0;
+      for (const sp of MOUNT_LIST) {
+        window.debugSetMount({ mounted: false });
+        await window.debugGrantPet(sp);
+        window.debugSetMount({ mounted: true });
+        if (window.debugMountInfo().mounted) ridden++;
+        window.debugSetMount({ tickPet: true });
+        for (let f = 600; f < 604; f++) {
+          const q = rafQ; rafQ = [];
+          for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+          n += 1;
+        }
+      }
+      window.debugSetMount({ mounted: false });
+      if (ridden !== MOUNT_LIST.length) {
+        console.log(`COVERAGE GAP: only ${ridden}/${MOUNT_LIST.length} mounts were ridden`);
+        process.exit(1);
+      }
+      console.log('mounted rider swept —', ridden, 'of the bible\'s nine, seat + flight lift');
+      if (beforeM) window.debugSetPlayer({ x: beforeM.x, y: beforeM.y });
+    }
+    /* PART D — the two admin cosmetics. They are the first cosmetics in the
+       file that no drop can ever produce, so nothing in an ordinary session
+       reaches their draw branches. Wear each on all five class bodies.
+       EXTEND ADMIN_COS if another admin exclusive ever ships. */
+    if (window.drawUnit && window.debugDuskfoxInfo) {
+      const ADMIN_COS = window.debugDuskfoxInfo().ADMIN_COSMETIC_IDS;
+      const c3 = window.document.createElement('canvas').getContext('2d');
+      for (const cls of CLS) {
+        for (const hat of [null, ADMIN_COS[0]]) {
+          for (const cloak of [null, ADMIN_COS[1]]) {
+            window.drawUnit(c3, 50, 50, cls, 2.1, 'runic', { x: 1, y: 0 }, 900, true,
+                            'sword', 'iron', false, { hat, cloak, skin: null, pet: null });
+            n += 1;
+          }
+        }
+      }
+      if (ADMIN_COS.length !== 2) {
+        console.log('COVERAGE GAP: the two admin cosmetics are not both present');
+        process.exit(1);
+      }
+    }
+    /* PART D — the Duskfox Elder standing in the real world. It is invisible
+       to everyone but an admin, and only across the dusk window, so BOTH
+       have to be true before the entity pass will draw it at all. */
+    if (window.debugDuskfoxInfo && window.debugSetV39 && window.debugSetPlayer) {
+      const beforeD = window.debugWorldInfo().player;
+      const roleD = window.debugV39Info().role;
+      const realDay = window.getDayT;
+      window.debugSetV39({ role: 'admin' });
+      /* read the window BEFORE stubbing the clock — a stub that calls back
+         into the hook it was read from is an infinite recursion. */
+      const duskT = window.debugDuskfoxInfo().DUSK_PEAK;
+      window.getDayT = () => duskT;
+      const d5 = window.debugDuskfoxInfo();
+      if (!d5.wild) {
+        console.log('COVERAGE GAP: no Duskfox Elder in the world to render');
+        window.getDayT = realDay;
+        process.exit(1);
+      }
+      if (!d5.visible) {
+        console.log('COVERAGE GAP: the Duskfox Elder is not visible even to an admin at dusk');
+        window.getDayT = realDay;
+        process.exit(1);
+      }
+      window.debugSetPlayer({ x: d5.wild.x, y: d5.wild.y });
+      for (let f = 620; f < 630; f++) {
+        const q = rafQ; rafQ = [];
+        for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+        n += 1;
+      }
+      console.log('duskfox elder rendered at', d5.wild.x.toFixed(1) + ',' + d5.wild.y.toFixed(1),
+                  '— sacred meadow tile, admin + twilight');
+      window.getDayT = realDay;
+      window.debugSetV39({ role: roleD === 'admin' ? 'admin' : 'player' });
+      if (beforeD) window.debugSetPlayer({ x: beforeD.x, y: beforeD.y });
+    }
+    /* PART B — the Bazaar's ground changed this version (grass clearing,
+       level ground, nothing growing on it), so stand in it and draw it. */
+    if (window.debugV37Info && window.debugSetPlayer) {
+      const bz = window.debugV37Info();
+      const beforeZ = window.debugWorldInfo().player;
+      window.debugSetPlayer({ x: bz.BAZAAR.x + 0.5, y: bz.BAZAAR.y + 0.5 });
+      for (let f = 640; f < 650; f++) {
+        const q = rafQ; rafQ = [];
+        for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+        n += 1;
+      }
+      const bc5 = window.debugV37Info().bazaarClear;
+      if (bc5.features !== 0) {
+        console.log(`COVERAGE GAP: ${bc5.features} features still stand on the Bazaar's clearing`);
+        process.exit(1);
+      }
+      console.log('bazaar clearing rendered — 0 features on', bz.BAZAAR_R,
+                  'tiles,', bc5.ringFeatures, 'still in the ring outside');
+      if (beforeZ) window.debugSetPlayer({ x: beforeZ.x, y: beforeZ.y });
     }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
