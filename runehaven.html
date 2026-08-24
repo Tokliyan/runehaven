@@ -1407,7 +1407,18 @@ const B = { DEEP:0, WATER:1, SHALLOW:2, SAND:3, PLAINS:4, MEADOW:5, FOREST:6, DA
    walkable region instead of the same small patch repeated more often. The
    thresholds here are untouched, so each variant's share of its parent biome
    is unchanged — only the size and count of the pockets moved. */
-const ENCH_RARITY = 0.78;      // Forest -> Enchanted Forest
+/* Caves & Enchanted Forest Expansion PART B: 0.78 -> 0.68. The Enchanted
+   Forest read as scattered pockets rather than a forest you walk through;
+   measured over a real six-seed sweep the change takes it from 52,753 tiles
+   in 1,179 pockets (mean 44.7, 46 of them 200 tiles or larger) to 109,724
+   tiles in 1,925 pockets (mean 57.0, 141 of them 200+) — bigger AND more
+   contiguous, not just more numerous. It is still a minority of its parent
+   biome on every seed swept. This threshold is this pocket's alone: the same
+   sweep confirms Sacred Meadow, Underground Cave, Underwater Cave, Abyssal
+   Hollow and Sunforge Caldera tile counts are byte-identical across all six
+   seeds, because each reads its own single-octave field on its own seed
+   offset. */
+const ENCH_RARITY = 0.68;      // Forest -> Enchanted Forest
 const SACRED_RARITY = 0.74;    // Meadow -> Sacred Meadow
 /* v18: same mechanism a third time — Underground Caves are a rare pocket
    variant of ROCK/PEAK, on their OWN independent field and seed offset (not
@@ -1496,6 +1507,13 @@ function debugWorldInfo() {
            /* v22: both new pocket thresholds, same reason as UWCAVE_RARITY —
               lexically scoped consts a harness cannot otherwise assert. */
            ABYSSAL_RARITY, CALDERA_RARITY,
+           /* Caves & Enchanted Forest Expansion PART B: the three remaining
+              pocket thresholds, for exactly the reason v21 and v22 added
+              theirs. PART B's real claim is that these six are INDEPENDENT —
+              that moving one cannot move another — and a gate cannot check
+              a threshold it has no way to read. Same copy-out, no new
+              mechanism. */
+           ENCH_RARITY, SACRED_RARITY, UNDERCAVE_RARITY,
            /* Expansion 2a: last frame's ground pass — how many tiles the
               rectangle held, how many actually drew, and the rectangle
               itself. `groundStats` and the three constants are top-level,
@@ -2804,7 +2822,16 @@ function elevRaw(tx, ty) {
    is in the same space together, matching the bible's one-world rule.
    The mechanism is one extra field on the move broadcast plus a filter
    on the receiving end. No new channel, no new sync system. */
-const INTERIOR_N = 50;           // interior grid is 50x50 tiles
+const INTERIOR_N = 80;           // interior grid is 80x80 tiles
+/* Caves & Enchanted Forest Expansion PART A: 50 -> 80, which is 2.56x the
+   grid and — because the two-tile wall border is a smaller fraction of a
+   bigger grid, exactly as Tuning/Polish measured going 26 -> 50 — rather
+   more than that in real walkable floor. Nothing below needed a new factor:
+   INTERIOR_AREA_K is derived from INTERIOR_N and the content counts are
+   keyed to each interior's OWN floor count, so both halves of the density
+   carried themselves. The two things that DID need moving are the flood-fill
+   guards, below — they were the one place a raw 50x50 number was written
+   as a literal. */
 /* Expansion 2b PART C: the interior grid grew 26 -> 50 and everything inside
    it was tuned as an ABSOLUTE count against 26x26. Left alone, a cave 3.7x
    the area would hold exactly as many nodes, ore veins and hostiles as the
@@ -2907,11 +2934,19 @@ function buildInterior(spaceId, anchor) {
      carve a corridor to the centre of any orphaned region rather than
      deleting it: the extra chambers are worth keeping, they just have to
      be connectable. */
+  /* Caves & Enchanted Forest Expansion PART A: the guard was a bare 20000,
+     and 20000 is exactly 8 * 50 * 50 — one pop per cell plus the four pushes
+     each of its neighbours can make, with room to spare. Written as the
+     expression it always was, it follows the grid instead of silently
+     truncating the flood at the new size, which would have handed the pass
+     below a false orphan region on every single pass and quietly broken the
+     "every floor tile is reachable" guarantee the cave overhaul exists for. */
+  const INTERIOR_FLOOD_GUARD = 8 * INTERIOR_N * INTERIOR_N;
   const connectFrom = (startX, startY) => {
     const seen = new Uint8Array(INTERIOR_N * INTERIOR_N);
     const stack = [[startX, startY]];
     let guard = 0;
-    while (stack.length && guard++ < 20000) {
+    while (stack.length && guard++ < INTERIOR_FLOOD_GUARD) {
       const [cx, cy] = stack.pop();
       if (cx < 0 || cy < 0 || cx >= INTERIOR_N || cy >= INTERIOR_N) continue;
       const k = cy * INTERIOR_N + cx;
@@ -2955,7 +2990,7 @@ function buildInterior(spaceId, anchor) {
         if (grid[k] === IN_WALL || reach[k] || visited[k]) continue;
         const region = [], st2 = [[x, y]];
         let g2 = 0;
-        while (st2.length && g2++ < 20000) {
+        while (st2.length && g2++ < INTERIOR_FLOOD_GUARD) {
           const [cx, cy] = st2.pop();
           if (cx < 0 || cy < 0 || cx >= INTERIOR_N || cy >= INTERIOR_N) continue;
           const kk = cy * INTERIOR_N + cx;
@@ -3010,6 +3045,20 @@ function populateInterior(spaceId, rec) {
      the loop fix above that meant a permanently frozen game. Clamped. */
   const pick = (i) => floors[Math.min(floors.length - 1,
     Math.floor(hash2(i, 7, seed) * floors.length))];
+  /* Caves & Enchanted Forest Expansion PART A: every content stream below is
+     an arithmetic progression through `pick`, and two streams that land on
+     the SAME index land on the SAME tile — every cave, deterministically.
+     The v29 dragon already hit this once (its index moved 41 -> 907 when the
+     node count first grew past it) and the same thing happens again at 80x80,
+     an order of magnitude wider: the node run reaches ~209 while the trolls
+     start at 91 and the ore at 131, so 3a - 7b = 80 and 3a - 5b = 120 have
+     real solutions inside the new counts. Measured before the fix: 12 stacked
+     tiles per cave against 0.75 at 50x50, mostly node-under-troll.
+     Each stream now sits in its own 10,000-wide block, which no interior
+     size this generator could plausibly reach can cross. Chance collisions
+     WITHIN a stream are untouched and still happen — they always have, at
+     both sizes — this only removes the ones that were certain. */
+  const S_NODE = 11, S_SERPENT = 10007, S_TROLL = 20011, S_ORE = 30011;
 
   /* Tuning/Polish PART D: this interior's OWN walkable area against the mean
      a 26x26 interior actually produced — see INTERIOR_FLOOR_26. Every content
@@ -3032,13 +3081,14 @@ function populateInterior(spaceId, rec) {
      3-5 per 26x26 worth of cave rather than 3-5 per cave. */
   const nNodes = Math.round((3 + Math.floor(hash2(1, 1, seed) * 3)) * areaK);
   for (let i = 0; i < nNodes; i++) {
-    const [x, y] = pick(i * 3 + 11);
+    const [x, y] = pick(S_NODE + i * 3);
     rec.nodes.push({ x: x + 0.5, y: y + 0.5, type: nodeType, taken: false });
   }
   rec.wilds = [];
-  /* 41 -> 907: the node stream below is `i * 3 + 11`, which now runs to 62
-     at the scaled node count and would have started landing on 41 — the
-     dragon's own tile. Its own index, clear of every other stream. */
+  /* 41 -> 907: the node stream above is `S_NODE + i * 3`, which now runs to
+     ~209 at the scaled node count and would have started landing on 41 — the
+     dragon's own tile. Its own index, clear of every other stream: 907 - 11
+     is not a multiple of 3, and every other stream starts past 10,000. */
   const [wx, wy] = pick(907);
   rec.wilds.push({ id: spaceId + ":" + dragonSp, species: dragonSp,
                    x: wx + 0.5, y: wy + 0.5, ph: hash2(2, 2, seed) * 6 });
@@ -3076,7 +3126,7 @@ function populateInterior(spaceId, rec) {
   if (!isAbyss) {
     const serpents = Math.round(1 * areaK);
     for (let i = 0; i < serpents; i++) {
-      const [sx2, sy2] = pick(73 + i * 3);
+      const [sx2, sy2] = pick(S_SERPENT + i * 3);
       rec.mobs.push(mkInteriorMob("sea_serpent", sx2 + 0.5, sy2 + 0.5,
         hash2(3 + i, 3, seed) * 6, i));
     }
@@ -3085,7 +3135,7 @@ function populateInterior(spaceId, rec) {
      Glow Moths already belong in caves per the bible, and a couple of
      Golems give the deeper chambers real teeth. */
   for (let i = 0; i < Math.round(2 * areaK); i++) {
-    const [gx, gy] = pick(91 + i * 7);
+    const [gx, gy] = pick(S_TROLL + i * 7);
     rec.mobs.push(mkInteriorMob(isAbyss ? "dark_wraith" : "troll",
       gx + 0.5, gy + 0.5, hash2(4 + i, 4, seed) * 6, i));
   }
@@ -3098,7 +3148,7 @@ function populateInterior(spaceId, rec) {
   // 2b PART C: 4-7 per 26x26 worth of cave, scaled with the grid like the nodes
   const oreCount = Math.round((4 + Math.floor(hash2(9, 9, seed) * 4)) * areaK);
   for (let i = 0; i < oreCount; i++) {
-    const [ox, oy] = pick(131 + i * 5);
+    const [ox, oy] = pick(S_ORE + i * 5);
     const kind = hash2(i, 17, seed) > 0.55 ? "runic" : "iron";
     rec.ore.push({ x: ox + 0.5, y: oy + 0.5, type: kind, taken: false });
   }
@@ -12618,7 +12668,19 @@ function updateHUD(dayT) {
   else if (item) { hudPrompt.textContent = `[E] Pick up ${ITEM_META[item.type]?.name || item.type}`; hudPrompt.style.display = "block"; }
   else if (g) {
     const verb = (FINITE.has(g.type) && !PICKED.has(g.type)) ? "Mine" : "Gather";
-    hudPrompt.textContent = `[E] ${verb} ${ITEM_META[FEATURE_GIVES[g.type]].name}`;
+    /* Caves & Enchanted Forest Expansion PART A, found by this build's new
+       run5 interior sweep: an interior essence node carries its OWN item type
+       ("aquatic_essence" / "void_shard") and is deliberately NOT in
+       FEATURE_GIVES, which maps surface FEATURE types. So this line read
+       ITEM_META[undefined].name and threw, every frame, for anyone standing
+       within gather range of one — latent since v29, and the game's own
+       one-bad-frame guard turned it into a HUD prompt that simply never
+       appeared rather than a crash. doInteract()'s `g._node` branch has
+       always had this right; this is that same expression, and nothing more.
+       PART A tripled the nodes in a cave, which is what finally made it
+       reproducible. */
+    const gives = g._node ? (g._node.type || "aquatic_essence") : FEATURE_GIVES[g.type];
+    hudPrompt.textContent = `[E] ${verb} ${(ITEM_META[gives] || {}).name || g.type}`;
     hudPrompt.style.display = "block";
   }
   else if (nearForge()) {

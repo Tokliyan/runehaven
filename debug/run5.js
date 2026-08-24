@@ -671,6 +671,52 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('credits rendered — RUNEHAVEN, MUSIC (' + mcl.children.length + '), COLLABORATIONS');
       n += 1;
     }
+    /* ===== Caves & Enchanted Forest Expansion PART A ======================
+       renderInteriorGround() was never covered by this sweep at all — every
+       frame it has ever pumped was on the surface, so the one render path
+       this build makes 2.56x bigger was also the one it could not see. Enter
+       a real cave and a real Abyssal Hollow (different wall, floor and exit
+       colours, and its own wall-height branch) and pump real frames through
+       the whole render, with the camera walked across the interior so tiles
+       far from the arrival corner get their turn through the cull too. */
+    if (window.debugSetSpace && window.debugSpaceInfo && window.debugWorldInfo) {
+      const { N, B } = window.debugWorldInfo();
+      const dssp5 = window.debugSetSpace, dspc5 = window.debugSpaceInfo;
+      let drewInteriors = 0, gridN = null;
+      for (const target of [B.UWCAVE, B.ABYSSAL]) {
+        let hit = null;
+        for (let y = 0; y < N && !hit; y++) for (let x = 0; x < N; x++) {
+          if (window.biomeAt(x, y) === target) { hit = [x, y]; break; }
+        }
+        if (!hit) continue;
+        dssp5({ clearCache: true });
+        const si5 = dssp5({ enterAt: hit, biome: target });
+        if (!si5.grid) { dssp5({ exit: true }); continue; }
+        gridN = si5.INTERIOR_N;
+        drewInteriors++;
+        /* the arrival corner, the middle, and the far corner — three camera
+           positions, so the tile cull inside the interior loop is exercised
+           from both ends of the grid rather than only where you land */
+        for (const p of [[si5.exit.x + 1.5, si5.exit.y + 1.5],
+                         [gridN / 2, gridN / 2],
+                         [gridN - 6.5, gridN - 6.5]]) {
+          dssp5({ pos: p });
+          for (let f = 200; f < 203; f++) {
+            const q = rafQ; rafQ = [];
+            for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+            n += 1;
+          }
+        }
+        dssp5({ exit: true });
+      }
+      dssp5({ clearCache: true });
+      if (drewInteriors < 2) {
+        console.log('COVERAGE GAP: fewer than two interior kinds rendered (' + drewInteriors + ')');
+        process.exit(1);
+      }
+      console.log('interiors rendered through real frames:', drewInteriors,
+                  'kinds at ' + gridN + 'x' + gridN);
+    }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {

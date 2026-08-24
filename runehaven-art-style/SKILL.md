@@ -53,6 +53,180 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-24 (Caves & Enchanted Forest Expansion — INTERIOR_N 50 -> 80, ENCH_RARITY 0.78 -> 0.68)
+
+Two numbers, and everything else in this entry is what had to be measured
+around them. No palette entry, biome id, cliff-face ratio, `SPECIES_K`,
+`MOB_K`, `MOB_TALL`, silhouette or shadow was touched, and no species, mob,
+weapon kind or class was added. What changed visually is scale: a cave is now
+roughly three times the floor you walk, and the Enchanted Forest is a forest
+rather than a scatter of clearings.
+
+- **The caves are genuinely bigger, and the density came with them for free.**
+  The grid went 50x50 -> 80x80 (2.56x), and real walkable floor went further
+  than that for the reason Tuning/Polish measured going 26 -> 50: the two-tile
+  wall border is 15% of a 50x50 grid and only 9.4% of an 80x80 one. Measured
+  across **48 real interiors on six seeds**, floor per cave went **1,323 ->
+  3,682 mean (2.78x)**, and the *smallest* interior at the new size (3,274)
+  is nearly twice the *largest* the old size ever produced (1,718). Nothing
+  needed a new density factor: `INTERIOR_AREA_K` is derived from `INTERIOR_N`,
+  and Tuning/Polish's fix already keys the contents to each interior's OWN
+  floor count. Measured per 100 floor tiles, before -> after, same seeds:
+  **nodes 1.48 -> 1.47, ore 1.73 -> 1.72, hostiles 1.00 -> 1.00.** Proportional,
+  not flat — there is simply 2.8x more cave to walk, holding the same 54 nodes,
+  63 ore veins and 37 hostiles per cave on the harness seed.
+- **⚠️ The connectivity guarantee was one bare literal away from silently
+  breaking, and that literal was the whole PART A risk.** The two flood fills
+  inside `buildInterior` were guarded at `20000` pops — which is *exactly*
+  `8 * 50 * 50`, one pop per cell plus the four its neighbours can push. At
+  80x80 that truncates the fill, so every pass would have handed the carve a
+  false orphan region and the "every floor tile is reachable from the arrival
+  point" guarantee would have rotted quietly while still looking fine. Written
+  as the expression it always was — `INTERIOR_FLOOD_GUARD = 8 * INTERIOR_N *
+  INTERIOR_N` — it is byte-identical at 50 and correct at 80, and the next
+  grid change carries it automatically, exactly like `INTERIOR_AREA_K`.
+  **Verified rather than assumed: 48 interiors flood-filled from the real
+  exit tile, worst sealed-off count 0.**
+- **⚠️ Scaling the counts collided the content streams, which is the v29
+  dragon's own bug arriving a second time an order of magnitude wider.** Every
+  content stream is an arithmetic progression through `pick`, and two streams
+  landing on the same index land on the same TILE, in every cave,
+  deterministically. At 80x80 the node run reaches ~209 while the trolls start
+  at 91 and the ore at 131, so `3a - 7b = 80` and `3a - 5b = 120` both have
+  real solutions inside the new counts. **Measured: 12.0 multi-occupied tiles
+  per cave across eight real interiors — 12.3 through `run4`'s own six —
+  against 0.75 at 50x50** — a node buried under a troll, over and
+  over. Each stream now sits in its own 10,000-wide index block, which takes
+  it to **3.5 per cave**, and that is the *chance* rate the birthday model
+  predicts for this many items on this much floor (3.4). Chance collisions
+  within a stream are untouched and always have happened; only the certain
+  ones are gone.
+- **The Enchanted Forest doubles, and — the part that actually matters — its
+  pockets get bigger rather than just more numerous.** Over a real six-seed
+  sweep, aggregate: **52,753 tiles in 1,179 pockets -> 109,724 in 1,925**;
+  mean pocket **44.7 -> 57.0**; mean largest pocket **693 -> 1,004**; and
+  pockets of 200+ tiles — the ones you can actually walk around inside —
+  **46 -> 141, a 3.07x**. Every one of the six seeds moved the same way on
+  every one of those measures. It is still a minority of its parent Forest on
+  every seed (19.5%–25.9%, from 8.8%–12.8%), so it stays a rare variant rather
+  than becoming the default forest.
+- **Nothing else moved, and that is a measurement, not an argument from code
+  structure.** The same six-seed sweep reports Sacred Meadow, Meadow, Dark
+  Forest, Underground Cave, Underwater Cave, Abyssal Hollow and Sunforge
+  Caldera **byte-identical on all six seeds** — same tile counts, same pocket
+  counts, same largest pocket. Each pocket reads its own single-octave field on
+  its own seed offset (613 / 877 / 1091 / 1447 / 1783 / 1913, six distinct
+  offsets, asserted as distinct), so the thresholds genuinely cannot move each
+  other. Meadow is in that list deliberately: "does this silently shrink Sacred
+  Meadow" is PART B's own question, and a shrunk *parent* would show there
+  first.
+- **⚠️ A real bug fixed in passing, and it is the one thing here worth looking
+  at in a browser.** `updateHUD` builds the gather prompt as
+  `ITEM_META[FEATURE_GIVES[g.type]].name` — but an interior essence node
+  carries its OWN item type (`aquatic_essence` / `void_shard`), deliberately
+  not in `FEATURE_GIVES`, which maps surface FEATURE types. So standing within
+  gather range of one threw **every frame**, and because the game's own
+  one-bad-frame guard swallows it, the symptom was not a crash: it was a
+  prompt that simply never appeared, so a cave node looked like scenery. Latent
+  since v29; PART A tripling the nodes in a cave is what finally made it
+  reproducible, and this build's new `run5` interior sweep is what caught it.
+  `doInteract()`'s own `g._node` branch has always had this right — the fix is
+  that same expression and nothing more.
+- **`run5` renders a cave interior for the first time.** Every frame it had
+  ever pumped was on the surface, so `renderInteriorGround` — the one render
+  path this build makes 2.56x bigger — was also the one it could not see. It
+  now enters a real Underwater Cave and a real Abyssal Hollow (different wall,
+  floor and exit colours) and pumps real frames from three camera positions
+  each, so the in-loop tile cull is exercised from both ends of the grid.
+  **1,055 -> 1,073 coverage draws.** No species, mob, weapon kind or class was
+  added, so the existing `*_LIST` arrays needed nothing.
+- **Noted, no action taken (pre-existing, outside this build):**
+  `clusterAnchor()` — which resolves which physical cave you are standing on,
+  and therefore which shared space you enter — carries a `guard++ < 6000` pop
+  limit, and a UWCAVE pocket of ~2,000 tiles needs about 8,000. Demonstrated,
+  not theorised: on seeds 777777 and 90210 two *adjacent* tiles of the single
+  largest pocket resolve to **different anchors**, so two players standing side
+  by side would enter two different caves. It reproduces byte-identically on
+  the pre-change file, and UWCAVE geometry is untouched by both parts of this
+  spec, so nothing here made it worse — but it is the same class of bug as the
+  flood guard above, one function away, and it is the first thing to put in a
+  spec. `clusterAnchor`'s guard is the one line to change.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus one bug it could not have
+known about. All shipped through the full gate (parse clean, `run2` and `run3`
+`CAUGHT ERROR: none`, `run4` **1,050/1,050 with zero FAIL** over five
+consecutive runs, `run5` 1,073 coverage draws clean with zero thrown frames,
+70/70 grep checks including the preservation half, plus a real six-seed
+worldgen sweep and a 48-interior cave census on both the pre- and post-change
+files) — refinements to consider, not unfinished work.
+
+1. **⚠️ `INTERIOR_FLOOD_GUARD` was added, which PART A does not mention.** PART
+   A asks that the connectivity guarantee "must hold at the new size, not
+   assumed", and holding it at 80x80 is impossible with a 50x50-sized literal
+   in front of it. `8 * INTERIOR_N * INTERIOR_N` reproduces the old 20000
+   exactly at 50, so this is the number the file always had, written as what it
+   always meant. **This is the single most important thing to check on this
+   build**, because a wrong guard here fails silently and looks fine.
+2. **⚠️ The four content streams were re-based, which PART A does not mention
+   either, and it changes where things sit inside a cave.** Deterministic
+   same-tile spawns are not a tunable and not a matter of taste; the file's own
+   v29 comment (`41 -> 907`) already establishes that this is a defect to fix
+   at the line the count change touches. The 10,000 spacing is the arbitrary
+   part: any spacing wider than the largest plausible stream works equally
+   well. **`S_NODE` / `S_SERPENT` / `S_TROLL` / `S_ORE` are the four lines to
+   revert** if the old layout was wanted.
+3. **⚠️ `updateHUD`'s interior-node crash was fixed, and it is genuinely
+   outside both PARTs.** The alternative was shipping a version whose own new
+   proof gate prints a stack trace five times a run while claiming zero errors.
+   The fix is `doInteract()`'s existing expression, so it invents nothing; the
+   `|| {}` fallback beside it is belt-and-braces for any future feature type,
+   and `run4` deliberately pins the ITEM_META *display name* rather than the
+   fallback, so a regression cannot hide behind the guard.
+4. **0.68 is taken exactly as PART B proposes, not tuned further.** It was
+   measured before it was accepted, and it lands the Enchanted Forest at
+   roughly a fifth to a quarter of its parent Forest — clearly a real forest,
+   clearly still a variant. Anything lower starts competing with Forest itself
+   for what the map's green reads as, which is a design decision rather than a
+   tunable.
+5. **`ENCH_RARITY`, `SACRED_RARITY` and `UNDERCAVE_RARITY` joined
+   `debugWorldInfo()`.** Same reason and same copy-out shape v21 and v22 used
+   for the other three: PART B's real claim is that the six thresholds are
+   independent, and a gate cannot check a threshold it has no way to read.
+6. **`run4`'s PART B block sits with the v17 worldgen check, not at the end of
+   the file where it was written.** `run4` mutates the world as it goes — it
+   builds bases, drops meteors and resets the world onto a fresh seed — so
+   exact tile counts are only meaningful at the pristine-world point. Found the
+   honest way: the block failed all seven independence gates at the end of the
+   run and passed all seven at the top, on the same build.
+7. **`run4`'s "genuinely bigger inside" bar moved 430 -> 1,718.** Same kind of
+   bar it has always been — the smallest interior at the new size must beat the
+   largest one the OLD size ever produced — recomputed rather than relaxed.
+   Every other interior gate was already derived from the grid or from each
+   interior's own floor count and needed no change at all, which is the earlier
+   versions' derivation discipline paying off.
+8. **Six new gates were mutation-tested, individually.** The guard put back to
+   a literal, the streams put back to their colliding bases, `ENCH_RARITY` put
+   back to 0.78, `INTERIOR_N` put back to 50, and the HUD fix reverted both
+   with and without its fallback — each turned exactly the intended gates red
+   and nothing else. The stream mutant is where the 12.3-per-cave stacking
+   figure comes from — measured through the shipped gate on the mutant, not a
+   scratch script, which is why it is the number the gate prints as its
+   baseline.
+9. **⚠️ The interior render loop still walks the whole grid — 6,400 iterations
+   a frame now, against 2,500.** The viewport cull is the first thing in the
+   loop body, before any drawing, so the per-frame *drawing* cost still follows
+   the viewport exactly as it did; what grew is 6,400 cheap `worldToScreen`
+   calls and a bounds test. Left alone deliberately: turning it into a
+   viewport rectangle is the Expansion 2a treatment applied to a second pass,
+   which is a change worth its own spec, not a line to slip into this one.
+10. **The push to `main` that the README's step 8 invites was deliberately not
+    attempted.** This session is instructed to develop and push only on its
+    designated branch. The README calls a blocked push to `main` a nice-to-have
+    and explicitly not a failure, so the build lands on the branch as usual and
+    a human can sync it. Same call every version since Expansion 2b has made.
+
 ### 2026-08-22 (PIN Fixes — the login card finally says when the PIN system is off, and an old account can opt in)
 
 **Not a rendering build either.** Same scope as the entry below it: the login

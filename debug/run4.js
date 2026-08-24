@@ -454,6 +454,97 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['debugWorldInfo/biomeAt exist', false]);
     }
 
+    /* ===== Caves & Enchanted Forest Expansion PART B — the forest ==========
+       PART B's claim has two halves and they need different proofs. The first
+       is that the Enchanted Forest now reads as a real forest: not just more
+       tiles, but LARGER and MORE CONTIGUOUS pockets, which is a connected-
+       component census rather than a tile count. The second is that lowering
+       one threshold moved nothing else — every other pocket biome reads its
+       own single-octave field on its own seed offset, and this pins that as a
+       property rather than as a claim, against the exact counts the seed
+       produced before the change. ==================================== */
+    {
+      const infoB2 = window.debugWorldInfo(), NB = infoB2.N, BB = infoB2.B;
+      results.push(['PART B: ENCH_RARITY is 0.68', infoB2.ENCH_RARITY === 0.68]);
+      /* the five thresholds that must NOT have moved — each on its own field
+         and its own seed offset, which is what makes them independent */
+      results.push(['PART B: SACRED_RARITY untouched at 0.74', infoB2.SACRED_RARITY === 0.74]);
+      results.push(['PART B: UNDERCAVE_RARITY untouched at 0.80', infoB2.UNDERCAVE_RARITY === 0.80]);
+      results.push(['PART B: UWCAVE_RARITY untouched at 0.82', infoB2.UWCAVE_RARITY === 0.82]);
+      results.push(['PART B: ABYSSAL_RARITY untouched at 0.90', infoB2.ABYSSAL_RARITY === 0.90]);
+      results.push(['PART B: CALDERA_RARITY untouched at 0.85', infoB2.CALDERA_RARITY === 0.85]);
+      /* and structurally: six pockets, six distinct seed offsets, none shared */
+      const offsets = (gameScript.match(/valueNoise\(tx \/ 20, ty \/ 20, worldSeed \+ (\d+)\)/g) || [])
+        .map(s => Number(s.match(/(\d+)\)$/)[1]));
+      results.push([`PART B: every pocket field has its own seed offset (${offsets.join(',')})`,
+        offsets.length === 6 && new Set(offsets).size === 6]);
+
+      const map = new Uint8Array(NB * NB);
+      for (let y = 0; y < NB; y++) for (let x = 0; x < NB; x++) map[y * NB + x] = window.biomeAt(x, y);
+      const census = (id) => {
+        const seen = new Uint8Array(NB * NB), sizes = [], stack = new Int32Array(NB * NB);
+        for (let k = 0; k < NB * NB; k++) {
+          if (map[k] !== id || seen[k]) continue;
+          let sp = 0, size = 0; stack[sp++] = k; seen[k] = 1;
+          while (sp) {
+            const c = stack[--sp]; size++;
+            const cx = c % NB, cy = (c - cx) / NB;
+            if (cx > 0)      { const n = c - 1;  if (map[n] === id && !seen[n]) { seen[n] = 1; stack[sp++] = n; } }
+            if (cx < NB - 1) { const n = c + 1;  if (map[n] === id && !seen[n]) { seen[n] = 1; stack[sp++] = n; } }
+            if (cy > 0)      { const n = c - NB; if (map[n] === id && !seen[n]) { seen[n] = 1; stack[sp++] = n; } }
+            if (cy < NB - 1) { const n = c + NB; if (map[n] === id && !seen[n]) { seen[n] = 1; stack[sp++] = n; } }
+          }
+          sizes.push(size);
+        }
+        sizes.sort((a, b) => b - a);
+        const tiles = sizes.reduce((a, b) => a + b, 0);
+        return { tiles, count: sizes.length, mean: sizes.length ? tiles / sizes.length : 0,
+                 largest: sizes[0] || 0, big: sizes.filter(s => s >= 200).length };
+      };
+      const ef = census(BB.ENCHFOREST), fo = census(BB.FOREST);
+      console.log(`PART B (seed 123456789): ENCHFOREST ${ef.tiles} tiles / ${ef.count} pockets / ` +
+        `mean ${ef.mean.toFixed(1)} / largest ${ef.largest} / ${ef.big} pockets >= 200 tiles ` +
+        `(before the change: 9345 / 193 / 48.4 / 546 / 12)`);
+      /* Measured on this seed before the change: 9,345 tiles in 193 pockets,
+         mean 48.4, largest 546, 12 pockets of 200+ tiles. The bars below are
+         those numbers, so a future change that quietly walks the threshold
+         back cannot pass. Bigger AND more contiguous, both required. */
+      results.push([`PART B: the Enchanted Forest genuinely grew (${ef.tiles} tiles, was 9345)`,
+        ef.tiles > 9345 * 1.5]);
+      /* 48.4 before, 62.5 after — the bar sits in the gap rather than a
+         hair above the old value, so a threshold walked most of the way
+         back cannot squeak past it on rounding */
+      results.push([`PART B: its pockets are genuinely larger, not just more numerous (mean ${ef.mean.toFixed(1)}, was 48.4)`,
+        ef.mean > 55]);
+      results.push([`PART B: and the biggest one is a forest you walk through (largest ${ef.largest}, was 546)`,
+        ef.largest > 546]);
+      results.push([`PART B: pockets big enough to read as forest, not patches (${ef.big} of 200+ tiles, was 12)`,
+        ef.big >= 20]);
+      /* it is still a rare VARIANT of Forest, not a takeover of it — the same
+         invariant the v17 block above asserts, restated at the new threshold */
+      results.push([`PART B: still a minority of its parent biome (${(100 * ef.tiles / (ef.tiles + fo.tiles)).toFixed(1)}% of forest)`,
+        ef.tiles < fo.tiles]);
+      /* THE INDEPENDENCE HALF. Every one of these was measured on this seed
+         before the change and must be unmoved by it — including MEADOW, since
+         "does this silently shrink Sacred Meadow" is PART B's own question and
+         a shrunk parent would show here first. */
+      const UNMOVED = [
+        ['Sacred Meadow', BB.SACMEADOW, 3058, 92, 274],
+        ['Meadow',        BB.MEADOW,   17068, 324, 780],
+        ['Dark Forest',   BB.DARKFOREST, 12687, 260, 1587],
+        ['Underground Cave', BB.UNDERCAVE, 4863, 82, 417],
+        ['Underwater Cave',  BB.UWCAVE,  37283, 205, 1663],
+        ['Abyssal Hollow',   BB.ABYSSAL, 12939, 131, 917],
+        ['Sunforge Caldera', BB.CALDERA,  1819,  13, 370],
+      ];
+      for (const [name, id, tiles, count, largest] of UNMOVED) {
+        const c = census(id);
+        results.push([`PART B: ${name} is untouched by the Enchanted Forest change (${c.tiles} tiles / ${c.count} pockets / largest ${c.largest})`,
+          c.tiles === tiles && c.count === count && c.largest === largest]);
+      }
+    }
+
+
     // ===== v18 PART A: the density pass, exactly the locked table =====
     const dwi2 = window.debugWorldInfo;
     if (dwi2 && dwi2().MOBS) {
@@ -2434,7 +2525,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         dssp({ enterAt: uw });
         const s1 = dspc();
         results.push(['entering a cave leaves space "main"', s1.inInterior === true]);
-        results.push(['the interior grid is Expansion 2b\'s 50x50', s1.INTERIOR_N === 50]);
+        /* Caves & Enchanted Forest Expansion PART A: 50 -> 80. Updated, not
+           relaxed — still an exact literal, and every gate below it that was
+           derived from the grid stays derived. */
+        results.push(['the interior grid is the Expansion\'s 80x80', s1.INTERIOR_N === 80]);
 
         // ---- determinism: leaving and re-entering the SAME cave gives the
         //      identical grid, generated fresh from the seed, not reused by
@@ -2519,8 +2613,66 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           results.push([`several real interiors were generated and walked (${caves2b})`, caves2b >= 3]);
           results.push([`every floor tile is reachable from the arrival point (worst orphan ${worstOrphan})`,
             caves2b >= 3 && worstOrphan === 0]);
-          results.push([`a 50x50 interior is genuinely bigger inside (smallest ${smallest} floor tiles)`,
-            smallest > 430]);
+          /* Caves & Enchanted Forest Expansion PART A: the bar moves with the
+             grid, and it is the same KIND of bar it always was — the smallest
+             interior at the new size must beat the LARGEST one the old size
+             ever produced, so "genuinely bigger" is pinned rather than
+             claimed. 430 was the largest 26x26; 1,718 is the largest 50x50
+             measured across the same eight real interiors this seed walks. */
+          results.push([`an 80x80 interior is genuinely bigger inside (smallest ${smallest} floor tiles)`,
+            smallest > 1718]);
+          /* PART A: the flood-fill guard was a bare 20000, which is exactly
+             8 * 50 * 50 — at 80x80 that truncates the fill and hands the
+             connectivity pass a false orphan on every pass. It must follow
+             the grid, not a literal. */
+          results.push(['PART A: the interior flood-fill guard scales with the grid',
+            gameScript.indexOf('const INTERIOR_FLOOD_GUARD = 8 * INTERIOR_N * INTERIOR_N;') > 0 &&
+            gameScript.indexOf('guard++ < INTERIOR_FLOOD_GUARD') > 0 &&
+            gameScript.indexOf('g2++ < INTERIOR_FLOOD_GUARD') > 0 &&
+            gameScript.indexOf('< 20000') < 0]);
+          /* PART A: two content streams that share a `pick` index share a
+             TILE, in every cave, deterministically. The v29 dragon already
+             hit this once (41 -> 907); at 80x80 the node run reaches ~209
+             and the troll and ore runs start at 91 and 131, so the streams
+             have to be genuinely disjoint rather than accidentally so. */
+          results.push(['PART A: each interior content stream has its own index block',
+            gameScript.indexOf('const S_NODE = 11, S_SERPENT = 10007, S_TROLL = 20011, S_ORE = 30011;') > 0 &&
+            gameScript.indexOf('pick(S_NODE + i * 3)') > 0 &&
+            gameScript.indexOf('pick(S_SERPENT + i * 3)') > 0 &&
+            gameScript.indexOf('pick(S_TROLL + i * 7)') > 0 &&
+            gameScript.indexOf('pick(S_ORE + i * 5)') > 0]);
+          {
+            /* and the same thing measured rather than grepped: how many tiles
+               in a real interior carry more than one piece of content. Chance
+               collisions within a stream have always happened and still do
+               (~3-4 per cave at this size, ~1 at 50x50, both matching
+               n^2/2F); the deterministic cross-stream ones were 12 per cave
+               before this fix. */
+            let stackedTotal = 0, cavesChecked = 0;
+            for (const t of uwList2b) {
+              dssp({ clearCache: true });
+              const si2 = dssp({ enterAt: t });
+              if (!si2.grid) { dssp({ exit: true }); continue; }
+              cavesChecked++;
+              const sd2 = dspc(), occ = new Map();
+              const put = (x, y) => {
+                const k = Math.round(x - 0.5) + ',' + Math.round(y - 0.5);
+                occ.set(k, (occ.get(k) || 0) + 1);
+              };
+              (sd2.nodes || []).forEach(n => put(n.x, n.y));
+              (sd2.ore || []).forEach(o => put(o.x, o.y));
+              (sd2.mobs || []).forEach(m => put(m.x, m.y));
+              (sd2.wilds || []).forEach(w => put(w.x, w.y));
+              for (const v of occ.values()) if (v > 1) stackedTotal++;
+              dssp({ exit: true });
+            }
+            const perCave = stackedTotal / (cavesChecked || 1);
+            console.log(`interior content stacking: ${stackedTotal} multi-occupied tiles ` +
+              `across ${cavesChecked} caves (${perCave.toFixed(1)} per cave; ` +
+              `12.3 through this same gate with the streams put back)`);
+            results.push([`PART A: content is not deterministically stacked (${perCave.toFixed(1)} tiles per cave)`,
+              cavesChecked >= 3 && perCave < 6]);
+          }
           {
             const per = v => (v / dFloor * 100);
             console.log(`interior density across ${caves2b} caves: ${dFloor} floor tiles, ` +
@@ -2577,6 +2729,28 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           oreCount >= oreLo && oreCount <= oreHi]);
         results.push(['ore veins are iron and runic stone, nothing invented',
           oreCount > 0 && (dspc().ore || []).every(o => o.type === 'iron' || o.type === 'runic')]);
+        /* Caves & Enchanted Forest Expansion PART A: standing next to an
+           interior essence node threw in updateHUD every frame, because the
+           node's item type is not in FEATURE_GIVES — latent since v29, and
+           made reproducible by this build tripling the nodes in a cave.
+           Behavioural, not a grep: stand on a real node, run a real frame,
+           and read the prompt the player would actually see. */
+        {
+          const nd0 = dspc().nodes.find(nn => !nn.taken) || dspc().nodes[0];
+          dssp({ pos: [nd0.x, nd0.y] });
+          let hudThrew = null;
+          try { window.render(900016); } catch (e) { hudThrew = e; }
+          const prompt = window.document.getElementById('hudPrompt');
+          const txt = (prompt && prompt.textContent) || '';
+          console.log(`interior node prompt: ${JSON.stringify(txt)}`);
+          results.push(['PART A: a frame next to an interior essence node does not throw',
+            !hudThrew]);
+          /* the ITEM_META display name, not the raw type string — a fallback
+             that printed "aquatic_essence" would be a prompt no other node in
+             the game shows, so this pins the fix rather than the guard */
+          results.push([`PART A: and the prompt names what the node gives (${JSON.stringify(txt)})`,
+            txt === '[E] Gather Aquatic Essence']);
+        }
         const invBefore = (window.debugWorldInfo().player.inv || {}).aquatic_essence || 0;
         dssp({ pos: [(dspc().nodes[0]).x, (dspc().nodes[0]).y] });
         dssp({ gather: true });
