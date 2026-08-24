@@ -373,13 +373,13 @@
      correct, real atan2 trig) — now presented as an actual dial with the
      eight real compass points marked around the rim, which is what "a
      real 8-way compass" means to a player looking at it. */
-  #hudMinimap { bottom: 52px; left: 12px; display: none; width: 108px; height: 108px; padding: 0; }
+  #hudMinimap { bottom: 52px; left: 12px; display: none; width: 148px; height: 148px; padding: 0; }
   #hudMinimap .mm-title {
     position: absolute; top: -18px; left: 0; color: var(--gold);
     font-size: 11px; letter-spacing: 2px;
   }
   #mmDial {
-    position: relative; width: 100px; height: 100px; margin: 4px;
+    position: relative; width: 140px; height: 140px; margin: 4px;
     border: 1px solid var(--panel-edge); border-radius: 50%;
     background: rgba(8,10,16,0.55);
   }
@@ -12474,10 +12474,19 @@ const hpBar = document.getElementById("hpBar");
    The bearing is the ON-SCREEN one — the world is isometric, so a compass
    computed in raw world axes would point somewhere the player is not looking.
    Same conversion drawTowerArrow() has used since v8. */
+/* hotfix: this list was written for v35 and never grew as later versions
+   added real landmarks — Bazaar, Ancient Forge, Colosseum, Dragon Altar,
+   Shrine and the Oracle all existed and were simply never added here. */
 const MINIMAP_MARKS = [
-  ["TOWER",   () => TOWER],
-  ["VOLCANO", () => VOLCANO],
-  ["SPAWN",   () => SPAWN],
+  ["TOWER",    () => TOWER],
+  ["VOLCANO",  () => VOLCANO],
+  ["SPAWN",    () => SPAWN],
+  ["BAZAAR",   () => BAZAAR],
+  ["FORGE",    () => ANCIENT],
+  ["ARENA",    () => COLOSSEUM],
+  ["ALTAR",    () => DRAGON_ALTAR],
+  ["SHRINE",   () => SHRINE],
+  ["ORACLE",   () => ORACLE],
 ];
 function minimapBearings() {
   const out = [];
@@ -12502,7 +12511,13 @@ function updateMinimap() {
   if (!me || inInterior()) { el.style.display = "none"; return; }
   const dial = document.getElementById("mmDial");
   if (dial) {
-    const R_TICK = 46, R_MARK = 36, CX = 50, CY = 50;
+    /* hotfix: R_TICK and R_MARK used to be 46/36 — only 10px apart, which
+       is why a landmark near the same bearing as a tick (Tower sitting
+       close to due north) collided with it and read as "TOWEN". Ticks
+       now sit at the dial's outer rim and landmarks at a clearly
+       separate inner ring with real gap between them, on the bigger
+       140px dial so nine real landmarks have room to breathe. */
+    const R_TICK = 64, R_MARK = 42, CX = 70, CY = 70;
     /* Same bearing convention minimapBearings() already used — 0 is not
        "true north" in any real-world sense, this game has no such thing,
        it is this dial's own fixed reference, consistent every time. Ticks
