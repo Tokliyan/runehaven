@@ -102,39 +102,68 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (Death Timer + Session Resume + Expansion 3 + Real Minimap)
+## Confirmed, locked spec for the next build (Death Timer + Session Resume + Expansion 3 + Real Minimap + Block/Credits)
 
 **PART A — death timer.** 10 minutes -> 30 seconds. One constant.
 
-**PART B — reload resumes your session.** Confirmed: `localStorage` only
-stores Supabase credentials/settings, no login token. On successful login,
-store username in `localStorage`. On page load, if found, auto-fill and
-auto-submit login instead of showing the empty form. PIN still required
-if the account has one set.
+**PART B — reload resumes your session.** Store username in `localStorage`
+on successful login; auto-fill and auto-submit on page load if found. PIN
+still required if the account has one. **This does NOT fix the online
+count issue in Part F below — different mechanisms, confirmed by reading
+both, do not conflate them in QA.**
 
-**PART C — Expansion 3, the map doubles again.** `N: 1000 -> 2000`. Full
-constant audit repeated the same careful way as both prior expansions —
-every landmark-relative distance re-derived, not guessed; biome rarity
-thresholds and noise wavelengths confirmed untouched (still correct,
-proven twice already); real six-seed sweep required before/after, same
-rigor as last time. `bakeTerrain()` is already gone (Expansion 2a), so
-memory is not the blocker this time — confirm the viewport tile-count
-bound still holds at the new scale regardless.
+**PART C — Expansion 3.** `N: 1000 -> 2000`. Full constant audit repeated,
+same rigor as both prior expansions, real six-seed sweep required.
 
-**PART D — a real rendered minimap.** New, separate from the compass
-dial (which stays as-is). A small top-down canvas, bottom corner,
-showing roughly a 10x10 tile area centered on the player — actual
-terrain colors, actual nearby players as dots, reusing the existing
-tile-color and entity-position data, not a new data source. Landmarks
-and other players' bases must NOT be revealed beyond this small radius —
-matches the bible's "does not reveal exact base locations," so this is a
-close-range view only, not a bigger version of the compass.
+**PART D — real rendered minimap.** Separate from the compass dial (stays
+as-is). Small top-down canvas, ~10x10 tiles centered on the player, real
+terrain colors and nearby player dots, close-range only per the bible's
+"does not reveal exact base locations."
 
-**Proof gates:** standard gauntlet plus confirm respawn timer is
-genuinely 30s, confirm reload with a stored username skips the login
-form, confirm N=2000 with a real six-seed sweep, confirm the minimap
-renders real terrain within its radius and never shows anything beyond
-it.
+**PART E — block available to every class.** Confirmed live: currently
+gated to Knight and Architect only (`canBlock()`, matches "shield
+classes" in the HUD hint text). Remove the class restriction entirely —
+every class can hold the block key. Update the HUD hint text to match
+("SHIFT block" without the "(shield classes)" qualifier, since it is no
+longer true).
+
+**PART F — the online count. Confirmed, not guessed: this reads
+`others.size + 1` off Supabase's live presence channel — a real-time
+network sync mechanism, not app logic.** No code bug found on inspection.
+Cannot be fixed with certainty without live multi-client testing, which
+the automated harness cannot do. If reproducible, the most useful next
+step is confirming whether it recovers on its own after a short delay
+(a presence sync lag) or stays wrong indefinitely (a real leak/bug) —
+build should add a periodic force-resync as a safety net regardless,
+even if the root cause can't be nailed down blind.
+
+**PART G — credits.** Add "Sam Hicks" as a named dev, same "Dev Team"
+role shown alongside Skeptik and Advay.
+
+**PART H — music, investigated, likely not a code bug.** Confirmed the
+playlist and file paths are correct and use relative paths, which should
+resolve correctly on Netlify. The most likely real cause: testing was
+done by opening a local downloaded file directly rather than the actual
+hosted Netlify URL — local `file://` origins have different, often
+stricter media/network loading rules in some browsers than a real hosted
+site does. **No code change proposed here** — flag this clearly in the
+notification and ask directly whether the report was from the live
+Netlify site or a local file, since that changes where to look entirely.
+
+**PART I — admin access, documentation only, no code change.** There is
+deliberately no in-game way to self-promote to admin — by design, the
+same two-key safety principle as the world-reset safeguard. To become
+admin: open the Supabase dashboard, `players` table, find your row, set
+`role` to `admin`. Next login reads it and grants admin, including
+Duskfox Elder access. Add this exact instruction to SKILL.md's notes so
+it's not lost.
+
+**Proof gates:** standard gauntlet plus confirm block works for all five
+classes, confirm the HUD hint text no longer says "(shield classes)",
+confirm Sam Hicks appears in credits, confirm the presence-resync safety
+net exists (even without proof it fixes the underlying issue), confirm
+everything from the prior spec version (death timer, session resume,
+Expansion 3, real minimap) still holds.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
