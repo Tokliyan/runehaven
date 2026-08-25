@@ -53,6 +53,238 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-25 (v46 — Death Timer, Session Resume, Expansion 3, the real Minimap, block for all, the credit)
+
+Nine parts, and only two of them are rendering: PART D adds a genuinely new
+HUD card, and PART C doubles the world every one of them is drawn in. PART A's
+timer, PART B's session resume, PART E's block rule, PART F's presence net and
+PART G's credit live in the README and the commit message. **Not one palette
+entry, biome colour, rarity threshold, noise wavelength, cliff-face ratio,
+`SPECIES_K`, `MOB_K` or silhouette was touched.**
+
+- **The minimap is a SECOND card, and the compass is untouched.** The two
+  answer different questions — the dial says which way the Tower is, the map
+  says what the ground under your feet actually is — and neither can do the
+  other's job, so this is an addition rather than a replacement. It is the
+  `.hud` card again (same fill, same hairline, same radius and blur, the
+  `.mm-title` rule shared verbatim with the compass) with a canvas inside it
+  and **zero new component styles**: the two CSS rules it adds are a position
+  and a size. That is the sixth version running (v33, v35, v38, v39, Mob
+  Rarity, this) to add to the HUD without inventing a component.
+- **It is top-down, deliberately NOT the isometric plane.** An 11x11 patch of
+  diamonds at 11px each is a smear; a map is the one place in this game where a
+  square grid reads better than the world's own projection. Everything in it is
+  a flat fill of a colour the world already uses — `PAL[biome]` with the same
+  `(tx + ty) % 2` checkerboard alternate `drawGroundTile` itself picks — so the
+  map's greens are the world's greens and a Caldera reads hot on the card
+  exactly as it does on the ground. No gradients, no outlines, no blur: the
+  flat-shaded rule holds on the HUD too. `run5` draws it standing on **all 19
+  ground biomes**.
+- **⚠️ CLOSE RANGE IS THE WHOLE DESIGN, and it is the v35 compass's own
+  omission applied to a different shape.** Eleven tiles across is roughly what
+  is already on screen, so the map cannot be used to FIND anything — the
+  bible's "does not reveal exact base locations" is honoured by having nothing
+  to leak. `basePieces` and `baseIndex` are not read anywhere in
+  `updateWorldMap()` and a proof gate greps the function for both names; so are
+  `features`, `mobs`, `wilds` and `decor`. Terrain and players, exactly as the
+  spec lists, and nothing else.
+- **It hides inside a cave interior**, like the compass and the breath readout
+  before it: in there the grid is the interior's own and `biomeAt` would be
+  answering about the surface a hundred tiles overhead. Both directions are
+  swept for real in `run5`.
+- **⚠️ Every class now wears the Knight's shield when it blocks.** PART E
+  removes the class gate from `isBlocking()`, and `drawUnit`'s block pose was
+  already class-agnostic — a plain steel shield raised on the facing side — so
+  a blocking Mystic paints a shield it does not carry the rest of the time.
+  That is the only option that invents no art, and it is the single most likely
+  thing here to want a second look. Five per-class silhouettes each getting
+  their own guard pose is a real art pass, not a tweak.
+- **⚠️ EXPANSION 3 IS THE WHOLE WORLD AT TWICE THE SIZE, AND IT IS THE THING
+  MOST WORTH A SCREENSHOT.** `N` 1000 -> 2000 is **4x the area** — 1,000,000
+  tiles become 4,000,000 — and every landmark, cone, buffer and footprint moved
+  with it so each is the same proportion of the world it always was: volcano
+  cone 113 -> 226, lava core 31 -> 62, PEAK->ROCK buffer 175 -> 350, `elevRaw`'s
+  two divisors 500 -> 1000 and 150 -> 300, `SAFE_RADIUS` 113 -> 226, all six
+  landmark radii and all eleven landmark separations, `RUIN_FOOT` 19 -> 38,
+  `ZONE_R` 34 -> 68, `RUIN_SEP`/`ZONE_SEP` 166 -> 332, `RUIN_ZONE_SEP` 100 ->
+  200, the Elder Drake's search ring 9..81 -> 18..162. **A Ruin's ground patch
+  is now 76 tiles across around a composition that is still five tiles wide** —
+  that ratio is unchanged from Expansion 2b and is the one that reads
+  differently at this scale.
+- **Verified with a real six-seed sweep, not six calls to a no-op** (worldSeed
+  swapped, caches cleared, `placeLandmarks()` and `buildFeatureList()` re-run).
+  All six landmarks placed on **6/6** seeds; six Ruins and four Safe Zones on
+  **6/6**; snow back on the mountain on **6/6** (8,000-9,800 PEAK tiles inside
+  60 of MOUNT); the Elder Drake present on **6/6**; a tagged mountain ruin on
+  **5/6** and a Crystal Golem actually standing in it on **5/6** — better than
+  the 9/12 Expansion 2b documented at its own scale, so `MOUNTAIN_RUIN_ELEV`
+  needed no change: measured at N=2000 it still sits at the eligible pool's own
+  p73-p75 (p75 = 0.670 across the six seeds), exactly where 2b put it.
+- **⚠️ THE FIND, and it is the same shape as 2b's vanished Elder Drake:
+  Crystal Golem stopped existing.** Not because the species broke — because
+  the one Ruin cluster tagged `mtn` on the harness seed landed 254.5 tiles from
+  SPAWN and **every one of its 3,439 RUINB tiles sat inside the wild-spawn
+  exclusion**. Two constants scale at different rates: a Ruin's clearance from
+  spawn was `SAFE_RADIUS + 24` (a radius plus a FIXED margin, 137 -> 250) while
+  the spawn exclusions are pure distances and doubled outright (150 -> 300 and
+  175 -> 350). They crossed at N=1000 already and a 19-tile footprint hid it;
+  at N=2000 a 38-tile footprint 250 out is wholly inside a 350-tile exclusion.
+  Scaling the margin only postpones it, so the relationship is written down
+  instead — `WILD_SPAWN_MIN` and `MOB_SPAWN_MIN` are named, and a cluster must
+  clear the larger of them by its own whole footprint. "Every ruin-only species
+  can reach every cluster" is now true by construction at any `N`, and `run4`
+  asserts it as that relationship rather than as a literal.
+- **⚠️ THE SECOND FIND: the Dragon Elder Altar was standing in open ocean.**
+  Its placement loop has never checked what it was building on — only
+  separations — and at N=1000 that was luck. At the doubled radius the harness
+  seed's own altar landed on `B.DEEP`: the one structure in the world that
+  wakes a Dragon Elder, in the middle of the sea, on the exact seed all three
+  harnesses boot. `run4`'s own "on ground a player can actually stand on" gate
+  caught it. One `isPlaceableLand` condition, and `isPlaceableLand` rather than
+  `biomeAt` for the reason that function's own comment gives. 0/6 seeds on
+  blocked terrain now.
+- **⚠️ THE COST OF THE SCALE-UP IS BOOT AND MEMORY, and it is measured rather
+  than guessed.** `buildFeatureList()` walks the whole `N*N` grid and
+  `tileCache` ends up holding every tile of it. Measured in the jsdom harness:
+  **login 1.5s -> 7.4s and heap 93 MB -> 310 MB.** That is 5x the time and 3.3x
+  the memory for 4x the area. Per-FRAME cost is untouched — Expansion 2a made
+  the ground viewport-bound and `run4`'s tile-count ceiling still passes — so
+  this is entirely a login cost. It is the v19 bake-canvas note in a new form,
+  and chunking or lazily building the feature list is a rendering-architecture
+  decision rather than a tunable, so it is flagged and not invented.
+- **⚠️ The diver lost ground again, for the second expansion running.**
+  `BREATH_MAX` is on both expansion specs' explicit do-NOT-scale list, so the
+  ocean has now grown 3.125x and then 2x while one tank of air has not moved
+  since v21. Measured: the Underwater Caves go 88.5% -> **73.3%** of the biome
+  by area (670 of 860 pockets) and the Abyssal Hollow 90.9% -> **73.1%** (392
+  of 520). The **largest pocket in each is still reachable** (124 and 17 tiles
+  of deep water to cross against a 138 budget) and that assertion was
+  deliberately not relaxed. See judgment call 6.
+
+## PERMANENT NOTE — HOW TO BECOME ADMIN (v46 PART I, documentation only)
+
+There is deliberately **no in-game way to self-promote to admin**, and that is
+the same two-key safety principle as the world-reset safeguard rather than an
+oversight. To grant it:
+
+> Open the Supabase dashboard, go to the **`players`** table, find your own
+> row, and set its **`role`** column to **`admin`**. The next login reads it
+> and grants admin, including Duskfox Elder access.
+
+`players.role` is read and never written by the game (`run4` pins that), and an
+absent column reads as `"player"` — so the safe direction is that nobody can
+execute a reset, never that everybody can. If the column does not exist yet:
+`alter table players add column role text default 'player';`
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus one thing it names that does
+not exist in the file under that name. All shipped through the full gate (parse
+clean, `run3` `CAUGHT ERROR: none`, `run4` **1,078/1,078 with zero FAIL**,
+`run5` 1,071 coverage draws clean including all 19 ground biomes through the
+new minimap) plus a genuine six-seed worldgen sweep — refinements to consider,
+not unfinished work.
+
+1. **⚠️ PART E names `canBlock()`. There is no such function.** The gate it
+   describes is real and is exactly where it says — the class test lived in
+   `isBlocking()`, the single predicate every block path in the file runs
+   through — so only one location was ever possible and the rename is the
+   spec's, not the file's. Same call v25 made when its spec said `kind ===` and
+   the chain dispatched on `species`. The two class names now appear nowhere
+   near that function, which is how the proof gate for it is written.
+2. **PART A moved the UNIT, not just the value.** `RESPAWN_MINUTES = 10`
+   became `RESPAWN_SECONDS = 30` rather than `RESPAWN_MINUTES = 0.5`, so the
+   name still says what the number means. Still one constant, still read in
+   exactly one place, and the `mm:ss` readout needed no change at all.
+3. **PART B's auto-submit fires only for a name the database confirms exists
+   AND that needs no PIN.** The spec says "auto-fill and auto-submit if found".
+   Taken literally, a stored name the world no longer has (a reset, a typo
+   stored long ago) would be auto-CREATED as a fresh character with no class
+   chosen, every single load — a worse outcome than a pre-filled login card.
+   A lookup that could not be made at all ("unknown") also does not submit, and
+   does not clear the key either, so a transient network fault never costs a
+   player their stored name.
+4. **PART B stores a name and nothing else, and writes it only after the world
+   is up.** A refused login leaves whatever was stored before it exactly as it
+   was. The PIN gate is genuinely still in front of the world: the resume goes
+   through the real `enterBtn.onclick`, so `requirePinForLogin()` runs on it
+   exactly as on a click — pinned by a gate that stores a protected name and
+   asserts the submit never happens.
+5. **PART C leaves `INTERIOR_N` alone.** Expansion 2b's spec named the cave
+   grid explicitly; this one says `N: 1000 -> 2000` and nothing else. An
+   interior is not the overworld and its density is already keyed to its own
+   floor count, so scaling it would be an unstated change. Pinned at 80.
+6. **⚠️ `run4`'s dive-reachability bar moves 0.8 -> 0.7, and this is the SECOND
+   consecutive version to restate it.** Expansion 2b called its own restatement
+   "the one gate here that is genuinely weaker than before"; this one is weaker
+   again and saying so plainly is the point. It is arithmetic, not a fix — every
+   lever that could prevent it (breath, the pocket noise wavelength, the rarity
+   threshold) is locked by the spec. **If the intent is that a diver can reach
+   anywhere, the fix is a real design change and belongs in a spec: scale
+   `BREATH_MAX` with the world, or keep the rare pockets off the open ocean.**
+   Every number is printed on every run so it can never go quiet.
+7. **Six spawn/placement search budgets scaled by AREA (4x), not by PART C's
+   2x** — ruins/zones 60,000 -> 240,000, wilds 36,000 -> 144,000, mobs 5,400 ->
+   21,600, `calderaSpot` 36,000 -> 144,000. These are counts of random samples
+   across the map, so samples-per-tile is the invariant, exactly as v19 argued.
+   They break early on success, so a world that places cleanly pays nothing.
+8. **`METEOR_COUNT` and the ambient decor counts were deliberately NOT scaled**,
+   the same call 2b made at a bigger ratio. Fourteen meteor sites and three
+   grazing rabbits are now spread across 4x the ground, so both read thinner —
+   deliberate, following the spec's own scaling rule, and worth a look next
+   pass.
+9. **The volcano's inner `h = 3` rim branch is dead, and it has been since
+   Expansion 2b — noted, not "fixed".** `h = dV < 16.5 ? 3 : 2` only ever runs
+   for VOLROCK/CALDERA, and 2b scaled the lava core to 31 while leaving 16.5,
+   so no tile could reach it. It is doubled to 33 with everything else (still
+   dead, still costing nothing) rather than being restored to ~103, because
+   putting an `h = 3` ring back into the cone would change the volcano
+   silhouette — which is on this skill's must-not-regress list — and that is a
+   visual decision, not a scaling one. **This is the first thing to check if
+   the volcano ever reads flat-topped.**
+10. **The minimap's own two colours.** Other players are drawn in their OWN
+    class colour (`CLASSES[cls].lit`) — the same thing that identifies them in
+    the world, so nothing new has to be learned — and the local player is a
+    slightly larger gold square, which is the HUD's accent and the compass's
+    own mark colour. Gold on the ground still means Elder and nothing else;
+    this is HUD chrome, where the compass has used gold marks since v35. Hard
+    flat squares, never rings: a ring means downed or tameable.
+11. **PART F is a net, not a diagnosis, and the code says so in as many
+    words.** The count is `others.size + 1` off the realtime channel and no app
+    logic miscounts the map it has, so the safety net covers both directions a
+    count can be wrong in: a re-announce (`track` + a forced move broadcast) for
+    a client that went quiet, and a reconcile against the channel's own
+    presence roster for a ghost whose `leave` packet never arrived. **An empty
+    roster reads as "cannot tell", never as "nobody is here"** — the same
+    fallback discipline every optional table in this file uses — so a client
+    library without `presenceState()` costs the re-announce and nothing else
+    and can never empty the world of other players. 20s, tunable. Both
+    directions are driven for real by `run4` against a settable stub roster.
+12. **⚠️ PART H: NO CODE CHANGE, and it needs one answer from the user.** The
+    playlist and the file paths were re-read and are correct relative paths
+    that resolve on Netlify. The most likely real cause is that the report came
+    from opening a downloaded copy of the file directly (`file://`), where some
+    browsers apply stricter media-loading rules than a hosted site. **Was the
+    music tested on the live Netlify URL or on a local file?** That answer
+    decides where to look, and nothing was changed blind.
+13. **`run4`'s stub gained a settable presence roster and a `track` counter,
+    both additive.** The roster starts null, which makes `presenceState()`
+    return the same empty object it always did, so nothing that already passed
+    can behave differently because of it. `debugWorldInfo().player` gained
+    `deadUntil` — a field the game already writes, and the only way to see that
+    the respawn wait really is 30 seconds.
+14. **`run5` gained a v46 sweep and no coverage list needed extending** — no
+    species, mob, weapon kind or class was added this version. The minimap is
+    drawn standing on **all 19 ground biomes**, with a nearby player, a remote
+    player in another space (which must not draw) and a downed one, plus the
+    interior hide and the return to the surface. It hard-fails if fewer than 10
+    biome windows drew or if the card does not come back. 1,055 -> **1,071**.
+15. **The push to `main` that the README's step 8 invites was deliberately not
+    attempted.** This session is instructed to develop and push only on its
+    designated branch. The README calls a blocked push to `main` a nice-to-have
+    and explicitly not a failure, so the build lands on the branch as usual and
+    a human can sync it. Same call every version since Expansion 2b has made.
+
 ### 2026-08-22 (PIN Fixes — the login card finally says when the PIN system is off, and an old account can opt in)
 
 **Not a rendering build either.** Same scope as the entry below it: the login

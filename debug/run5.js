@@ -671,6 +671,67 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('credits rendered — RUNEHAVEN, MUSIC (' + mcl.children.length + '), COLLABORATIONS');
       n += 1;
     }
+    /* v46 PART D: the real minimap. Its whole render body is unreachable from
+       the plain boot unless the card is actually up and something is standing
+       on it, so this sweeps the branches by hand: a terrain window over every
+       ground biome the seed can reach, a nearby player dot, a remote player in
+       another space (which must NOT draw), and the interior hide. */
+    if (window.debugMapInfo && window.updateWorldMap) {
+      const wi = window.debugWorldInfo(), Bm = wi.B;
+      const seen = {}, want = Object.keys(Bm).map(k => Bm[k]);
+      // find one tile of each biome the seed holds, and draw the map standing on it
+      const step = Math.max(1, Math.floor(wi.N / 260));
+      for (let ty = 2; ty < wi.N - 2; ty += step)
+        for (let tx = 2; tx < wi.N - 2; tx += step) {
+          const b = window.biomeAt(tx, ty);
+          if (seen[b] !== undefined) continue;
+          seen[b] = [tx, ty];
+        }
+      let drawn = 0;
+      const oth5 = window.debugCombatHandles ? window.debugCombatHandles().others : null;
+      for (const b of want) {
+        const spot = seen[b];
+        if (!spot) continue;
+        window.debugSetPlayer({ x: spot[0] + 0.5, y: spot[1] + 0.5, hp: 100 });
+        if (oth5) {
+          oth5.set('MapDot', { x: spot[0] + 2.5, y: spot[1] + 1.5, cls: 'Mystic',
+                               hp: 100, maxHp: 100, lastHeard: 1e15, space: 'main' });
+          oth5.set('MapElsewhere', { x: spot[0] + 1.5, y: spot[1] + 1.5, cls: 'Knight',
+                                     hp: 100, maxHp: 100, lastHeard: 1e15, space: 'cave:x' });
+          oth5.set('MapDown', { x: spot[0] + 1.5, y: spot[1] + 2.5, cls: 'Ranger',
+                                hp: 0, maxHp: 100, dead: true, lastHeard: 1e15, space: 'main' });
+        }
+        window.updateWorldMap();
+        if (window.debugMapInfo().visible) drawn++;
+        n += 1;
+      }
+      if (oth5) { oth5.delete('MapDot'); oth5.delete('MapElsewhere'); oth5.delete('MapDown'); }
+      if (drawn < 10) {
+        console.log('COVERAGE GAP: the minimap drew only ' + drawn + ' biome windows');
+        process.exit(1);
+      }
+      console.log('minimap windows drawn over distinct biomes:', drawn);
+      // the hide branch: inside an interior the card must go away
+      let cave = null;
+      for (let y = 0; y < wi.N && !cave; y++) for (let x = 0; x < wi.N; x++) {
+        if (window.biomeAt(x, y) === Bm.UWCAVE) { cave = [x, y]; break; }
+      }
+      if (cave) {
+        window.debugSetPlayer({ x: cave[0] + 0.5, y: cave[1] + 0.5, diving: true, hp: 100, breath: 30 });
+        window.enterInterior(cave[0], cave[1], Bm.UWCAVE);
+        window.updateWorldMap();
+        const hidden = window.debugMapInfo().visible === false;
+        window.exitInterior();
+        window.debugSetPlayer({ x: wi.SPAWN.x, y: wi.SPAWN.y, diving: false, hp: 100 });
+        window.updateWorldMap();
+        n += 2;
+        if (!hidden || window.debugMapInfo().visible !== true) {
+          console.log('COVERAGE GAP: the minimap did not hide inside an interior and come back');
+          process.exit(1);
+        }
+        console.log('minimap hide/show swept — interior and surface');
+      }
+    }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {
