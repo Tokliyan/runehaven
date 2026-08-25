@@ -102,29 +102,39 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (Caves & Enchanted Forest Expansion)
+## Confirmed, locked spec for the next build (Death Timer + Session Resume + Expansion 3 + Real Minimap)
 
-Confirmed live: `INTERIOR_N = 50`, `ENCH_RARITY = 0.78`.
+**PART A — death timer.** 10 minutes -> 30 seconds. One constant.
 
-**PART A — caves genuinely bigger.** `INTERIOR_N: 50 -> 80`. Reuse the
-exact connectivity guarantee already proven (flood-fill from arrival,
-carve to any orphaned region) — must hold at the new size, not assumed.
-Ore/mob/node density scales with the new area, not left at 50x50-tuned
-counts. Exit re-entry fix from tonight's hotfix is untouched by this —
-confirm it still holds at the new interior size.
+**PART B — reload resumes your session.** Confirmed: `localStorage` only
+stores Supabase credentials/settings, no login token. On successful login,
+store username in `localStorage`. On page load, if found, auto-fill and
+auto-submit login instead of showing the empty form. PIN still required
+if the account has one set.
 
-**PART B — Enchanted Forest reads as real forest, not scattered pockets.**
-Lower `ENCH_RARITY` (propose 0.78 -> 0.68) so a real six-seed sweep shows
-meaningfully larger, more contiguous pockets — measure before and after,
-not just lower the number and assume. Confirm this does not silently
-shrink Sacred Meadow or any other pocket sharing the same noise
-technique — each pocket's own threshold is independent, verify that stays
-true.
+**PART C — Expansion 3, the map doubles again.** `N: 1000 -> 2000`. Full
+constant audit repeated the same careful way as both prior expansions —
+every landmark-relative distance re-derived, not guessed; biome rarity
+thresholds and noise wavelengths confirmed untouched (still correct,
+proven twice already); real six-seed sweep required before/after, same
+rigor as last time. `bakeTerrain()` is already gone (Expansion 2a), so
+memory is not the blocker this time — confirm the viewport tile-count
+bound still holds at the new scale regardless.
 
-**Proof gates:** standard gauntlet plus real six-seed sweep for both
-changes with actual before/after tile counts, cave connectivity
-re-confirmed at the new size, ore/mob density scaling confirmed
-proportional not flat.
+**PART D — a real rendered minimap.** New, separate from the compass
+dial (which stays as-is). A small top-down canvas, bottom corner,
+showing roughly a 10x10 tile area centered on the player — actual
+terrain colors, actual nearby players as dots, reusing the existing
+tile-color and entity-position data, not a new data source. Landmarks
+and other players' bases must NOT be revealed beyond this small radius —
+matches the bible's "does not reveal exact base locations," so this is a
+close-range view only, not a bigger version of the compass.
+
+**Proof gates:** standard gauntlet plus confirm respawn timer is
+genuinely 30s, confirm reload with a stored username skips the login
+form, confirm N=2000 with a real six-seed sweep, confirm the minimap
+renders real terrain within its radius and never shows anything beyond
+it.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
