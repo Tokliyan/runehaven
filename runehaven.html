@@ -7617,7 +7617,14 @@ function refreshTravelPanel() {
     nm.textContent = p.dead ? `${p.name} — fallen` : p.name;
     const btn = document.createElement("button");
     btn.textContent = "TRAVEL";
-    btn.disabled = !owned || p.dead || cdLeft > 0;
+    /* CRITICAL FIX: the button itself still checked !owned (Unicorn Elder
+       ownership) even after the descriptive text above it was already
+       fixed to not require one. Player-to-player teleport was never
+       supposed to need an Elder at all — this left the UI reading as
+       correct while the actual button stayed silently unusable for
+       anyone without one, which is exactly "fast travel still isn't
+       working" with no visible explanation why. */
+    btn.disabled = p.dead || cdLeft > 0;
     btn.onclick = () => {
       if (travelToPlayer(p.name)) {
         travelPanel.style.display = "none";
