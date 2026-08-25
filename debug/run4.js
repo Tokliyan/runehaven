@@ -2434,7 +2434,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         dssp({ enterAt: uw });
         const s1 = dspc();
         results.push(['entering a cave leaves space "main"', s1.inInterior === true]);
-        results.push(['the interior grid is Expansion 2b\'s 50x50', s1.INTERIOR_N === 50]);
+        results.push(['the interior grid is the current 80x80', s1.INTERIOR_N === 80]);
 
         // ---- determinism: leaving and re-entering the SAME cave gives the
         //      identical grid, generated fresh from the seed, not reused by
