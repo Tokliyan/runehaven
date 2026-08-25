@@ -8150,11 +8150,14 @@ function loop(t) {
 function update(dt, t) {
   iAmMoving = false;
   if (!dead) {
-    let dx = 0, dy = 0;
-    if (keys[KEYBINDS.up] || keys["arrowup"]) dy -= 1;
-    if (keys[KEYBINDS.down] || keys["arrowdown"]) dy += 1;
-    if (keys[KEYBINDS.left] || keys["arrowleft"]) dx -= 1;
-    if (keys[KEYBINDS.right] || keys["arrowright"]) dx += 1;
+    let rawX = 0, rawY = 0;
+    if (keys[KEYBINDS.up] || keys["arrowup"]) rawY -= 1;
+    if (keys[KEYBINDS.down] || keys["arrowdown"]) rawY += 1;
+    if (keys[KEYBINDS.left] || keys["arrowleft"]) rawX -= 1;
+    if (keys[KEYBINDS.right] || keys["arrowright"]) rawX += 1;
+    /* rotated so "up" reads as up on SCREEN, not along the world's own
+       diagonal axes — the world grid is isometric, the keys shouldn't be. */
+    let dx = rawX + rawY, dy = rawY - rawX;
     if (dx || dy) {
       iAmMoving = true;
       const len = Math.hypot(dx, dy);
