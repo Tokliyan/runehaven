@@ -53,6 +53,257 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-27 (v47 — Balance, Anti-Exploit & Economy)
+
+Eight parts, and only two of them are rendering: PART C adds **the first new
+creature since the Duskfox Elder** and PART G hangs a label on a base. PART F
+adds a panel and PART H a login field, both with **zero new component styles**.
+PART A's counts, PART B's and PART D's numbers and PART E's logout window live
+in the README and the commit message. **Not one palette entry, biome colour,
+rarity threshold, noise wavelength, cliff-face ratio, `SPECIES_K`, existing
+`MOB_K` or existing silhouette was touched.**
+
+- **⚠️ THE ADULT GOLEM IS THE SAME BODY AS THE YOUNG ONE, GROWN AND GONE
+  COLD — and it is the thing here most worth a screenshot.** The bible frames
+  it as one creature at two ages ("Found young in ruins only, adults are
+  hostile enemies"), so its art is `drawSpecies`' own `golem` branch ported
+  coordinate for coordinate into `drawMob`'s in-transform chain (`sx`/`sy` ->
+  `(0)`, the v15 convention goblin/troll/bandit/wraith already use). **No new
+  geometry was invented.** That is the v25 Crystal Golem rule — same
+  silhouette, re-cut — applied along the AGE axis instead of the material one,
+  and it is what lets "that is a Golem, but not one of those" land at distance
+  with no label.
+- **Two colour changes carry the whole read, and one of them is an
+  omission.** The stone is the young Golem's palette darkened one consistent
+  step and pulled cold (`#9c9282` -> `#6e6a60` and so on down the face list),
+  and where a young Golem has a runic-cyan eye and **moss**, this has a molten
+  ember core, two ember seams on a slow heavy pulse, and **no moss at all**.
+  Moss is the young Golem's signature (the v25 rule the Golem Elder already
+  follows) and must never spread up the line. The ember is **`#ff7a3c`, the
+  locked Lava palette entry** — already this file's "dangerous" colour since
+  the v30 drake hotfix — and deliberately **never gold**: gold on the ground
+  means Elder and nothing else. A proof gate greps the branch for the two moss
+  hexes and for gold, and fails on either.
+- **`MOB_K` 3.10 and `MOB_TALL` 24, both derived rather than picked.** 3.10 is
+  +24% on the young Golem's `SPECIES_K` 2.50 (grown, not a different
+  creature), and it also has to sit where its threat does: `hp x dmg` puts the
+  Adult Golem between the Troll (748) and the Sea Serpent (2,970), and 3.10
+  sits between their 2.33 and 3.42 — so the file's "size sorts exactly as
+  threat does" rule holds with one more creature in it, unchanged. The overlay
+  offset is the v13 fairness rule done at arrival rather than a version late:
+  the golem body's topmost paint is its head slab at -12.6 local units, which
+  is 39.1px at this scale, and `20 + 24 = 44` clears it by ~5px — the Troll's
+  own margin. **The Elder Drake shipped without an entry for a whole version
+  and drew its tell 30px inside its own chest; nothing new is allowed to do
+  that again.**
+- **PART B moved the Troll and the Dark Wraith DOWN and PART C moved the Sea
+  Serpent UP, and no silhouette moved with any of them.** Size says threat in
+  this file, and after PART B the Troll's threat (748) drops below the Bear's
+  (1,040) — but the Bear has no `MOB_K` entry (it is a fight-to-tame beast
+  drawn through `drawSpecies`), so the ordering gate over the six bodies that
+  do — goblin, bandit, troll, adult golem, sea serpent, drake — still sorts
+  identically. **If a future pass gives the beasts `MOB_K` entries, that gate
+  is the first thing to re-derive.**
+- **The base sign is the PLAYER NAMEPLATE, reused.** Same 11px Barlow, same
+  centred text, same `rgba(6,9,14,0.62)` plate at the same `sy - 38` /
+  `sy - 28` offsets `drawPlayerEntity()` has drawn names at since v8 — not a
+  second label component, and deliberately not a new prop. The thing you read
+  above a base should look like the thing you read above a person.
+  **⚠️ It is drawn in the other-player white `#dde4ec`, never the local
+  player's gold**, for the same reason the golem's ember is not gold.
+- **It draws only where one is set**, and that is checked by rendering rather
+  than by grep: `run5`'s canvas stub now RECORDS `fillText`, and the sweep
+  paints an unsigned Foundation, a whitespace-only one and a real one, failing
+  if either of the first two puts a single glyph on the canvas.
+- **Neither new panel invents a component.** The GIVE panel is `.inv-row`
+  rows with the v23 settings card's `.set-tabs` / `.set-tab` strip for the
+  quantity — the same verbatim reuse the FAST TRAVEL panel made — and its one
+  CSS rule is a position, on the Storage Chest's own slot (the two can never
+  be open together). The redeem row extends `#sbUrl`'s rule and `#pinProtect`'s
+  button idiom **by one selector each** rather than copying them, and the base
+  sign's text box does the same. That is the **seventh** version running (v33,
+  v35, v38, v39, Mob Rarity, v46, this) to add to the UI without inventing a
+  component.
+- **⚠️ THE WORLD IS FOUR TIMES FULLER, and that is PART A working rather than
+  a side effect.** Measured in the jsdom harness on the same seed: **132 live
+  wilds and mobs -> 551**. Per-frame cost is essentially unmoved — `update()`
+  0.038 -> 0.047 ms/frame over 1,000 frames, `render()` 20.3 -> 20.2 ms/frame
+  (harness-stubbed, viewport-bound) — and login time and heap are unchanged,
+  because the ground pass has been viewport-bound since Expansion 2a and the
+  entity pass draws what is on screen. **What this does change is how the
+  world READS**: nine Tree Sprites across 4,000,000 tiles was an absent
+  species, and seventy is a common one. This is the first version since
+  Expansion 3 that will look different at a glance, and it wants eyes on it.
+- **⚠️ Every Storm Dragon still has to be reachable, and all twelve are.**
+  `reachOnFoot` is the one spawn filter that could have quietly failed at 4x
+  the count (B.PEAK is BLOCKED, so each one needs a standable neighbour);
+  `run4` still places its full population and every one of them still stands
+  on a real PEAK tile.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus one place where it
+contradicts itself and one thing it says about this file that is not true.
+All shipped through the full gate (parse clean, `run2` and `run3` `CAUGHT
+ERROR: none`, `run4` **1,160/1,160 with zero FAIL over four consecutive
+runs**, `run5` **1,100** coverage draws clean, 52/52 grep checks including the
+preservation half) — refinements to consider, not unfinished work.
+
+1. **⚠️ PART A CONTRADICTS ITSELF ON ONE TIER, AND THIS IS THE CALL MOST
+   WORTH A SECOND LOOK.** Its locked block says "Rare (currently 2-4): ->
+   roughly 4x each"; its next paragraph says "any daily-capped species from
+   Mob Rarity + Music are explicitly untouched" — and `CAPPED_RARITIES` is
+   `rare, epic, elder, admin`, so the Rare tier is daily-capped and the two
+   halves cannot both hold. The explicit tier block won, because the other
+   reading leaves the spec's own Rare line with nothing at all to apply to.
+   **The consequence is real and is not what the spec claims:** its
+   parenthetical says raising `count` "does not bypass or weaken the cap
+   itself", but in this file `speciesDailyCap()` RETURNS `count`, so a
+   Unicorn's daily world cap went 4 -> 16 with its density. Written into the
+   table's own comment rather than shipped quietly. **`speciesDailyCap()` is
+   the one function to change** if the caps were meant to hold.
+2. **The spec's Proof-gates line still says "increased ~25-30%" and that is
+   its own pre-revision text.** PART A is headed "REVISED AGAIN, more
+   aggressively" and says in as many words that a flat 25-30% "does not come
+   close"; the stale sentence was read as the leftover it is, and what
+   shipped is the tier block. The other half of that gate — relative tier
+   ordering held — is asserted for real (70 > 36 > 16, and the spread inside
+   each tier preserved exactly: golem is still half of wolf, crystal_golem
+   still half of unicorn).
+3. **⚠️ Water Dragon and Shadow Dragon took the Rare x4 as a CAP change, not
+   a density one.** Both carry `biomes: []` — they live one-per-interior,
+   placed by `populateInterior()` — so their `count` drives the daily cap and
+   nothing else. Scaled with their tier anyway, because the spec enumerates
+   the live 2-4 values they are part of, and flagged here because it is the
+   one place the x4 buys no findability at all. Two one-line reverts.
+4. **Epic and above are untouched, and the Elders have no `count` to touch.**
+   Shadowfox / Lightfox / Krakenling / Salamander King keep 4/4/4/3 — the
+   spec names only three tiers, and scarcity is these four's whole design.
+5. **The Adult Golem's loot is `runic_stone` plus `stone`, which is the Golem
+   Elder's own shape.** The bible's line gives "Runic stone" and the spec
+   quotes it; the second entry is common rubble off a stone creature, exactly
+   as the Elder's row already reads, and dragonsteel is deliberately absent —
+   the bible names four sources for it and a Golem is not one.
+6. **Its timings are TUNABLES around the bible's own "Hard" tier.** `hp:130,
+   dmg:18, windupMs:700` are the Sea Serpent's pre-buff baseline, because the
+   bible files both creatures at the same difficulty; `atkRange 1.8`,
+   `atkCooldownMs 1900`, `aggroRadius 7`, `leashRadius 12` and `count: 3` are
+   designed. `moveSpeed` is deliberately the **Troll's** 1.3 rather than the
+   serpent's 1.5: a golem is a slab of walking stone, and being able to
+   outwalk one is how you survive it.
+7. **⚠️ PART F names `invAdd`/`invRemove`. There is no `invRemove` in this
+   file.** The removal function is `invSpend()`, which takes a materials map
+   and deletes a key that reaches zero — the same call every recipe already
+   makes — so only one location was ever possible and the rename is the
+   spec's, not the file's. Same call v46 made when its spec named
+   `canBlock()`, and v25 when its spec said `kind ===`.
+8. **Handing over the last of an equipped item unequips it.** The weapon,
+   armour, charm and cosmetic slots are POINTERS into the inventory (the v21
+   charm rule), so giving away your only sword has to put your fists back.
+   The spec does not mention it; the alternative is a player swinging a
+   weapon they no longer own.
+9. **The transfer is broadcast-addressed, and the RECIPIENT writes its own
+   row.** No client ever writes another player's `players` row — that is this
+   file's standing authority model, and it is what `kill` already does. The
+   payload is normalised on arrival: an item type this world does not have is
+   **dropped rather than minted**, and the quantity is clamped, so a
+   malformed or hostile packet can only ever add real items in a sane amount.
+   `run4` drives the sender's own payload through the game's real receive
+   handler, which is why the harness stub now records broadcast handlers
+   instead of throwing them away.
+10. **The give panel sits AFTER the ground-item pickup in the interact chain
+    and BEFORE the gatherables.** Dropping and picking up is how the Bazaar
+    has traded since v37 and a player standing over your dropped item must
+    never block it; a tree, on the other hand, is not what you aimed at when
+    you walked up to somebody. It closes itself when you walk away, the same
+    way the Storage Chest does, and every refusal is re-checked at click time
+    rather than trusted to the panel being open.
+11. **⚠️ A SMALL v47 SQL UPDATE IS NEEDED, and it is three statements.**
+    `alter table base_pieces add column sign text;` for PART G, and PART H's
+    two tables verbatim from the spec (`redeem_codes` / `redeem_claims`).
+    Every one degrades gracefully and both directions are asserted by real
+    gates: with no `sign` column a base is simply unnamed for the session,
+    and with either redeem table absent the login card says redeem codes are
+    not active on this world and every login proceeds exactly as it did
+    before. Same shape of note as v25, v33, v34, v38 and Mob Rarity.
+12. **⚠️ PART G says "dark rounded plate". The nameplate it names is a
+    square-cornered `fillRect`.** The spec's own instruction is to reuse the
+    exact technique already used for player names, and the technique won over
+    the description of it — a rounded plate would have been a second, subtly
+    different label component in a file that has exactly one. If the rounding
+    was genuinely wanted it belongs on BOTH, and it is one shared helper.
+13. **`BASE_SIGN_MAX = 24` and `BASE_SIGN_R = 2.2`, both unstated.** 24
+    characters is a name, not a message board; 2.2 tiles is the Generator's
+    own collection reach, reused rather than invented. The sign hangs on the
+    Foundation because that is the piece carrying `anchor: true` — the spec's
+    own choice, and it means a base has one name however many walls it grows.
+14. **PART H splits the flow, and nothing is spent until the items are
+    actually delivered.** REDEEM only ever CHECKS and arms; the claim row is
+    written by the login that follows, and it is written BEFORE anything is
+    granted — so the failure direction is always "you keep your code", never
+    "you got it twice". A player who types a code and closes the tab has lost
+    nothing. `run4` drives the race directly: a claim that lands in between
+    refuses the grant outright.
+15. **⚠️ A missing `redeem_claims` reads as "the system is off", not as
+    "nobody has claimed anything".** With nowhere to record a claim, a code
+    could be redeemed forever — so the safe direction is refusing, exactly as
+    `players.role` degrades toward nobody being admin rather than everybody.
+    Both halves are driven for real by a settable missing-table switch.
+16. **The `items` jsonb is normalised against `ITEM_META` before a single
+    thing is granted.** It is a free-form column an operator types by hand, so
+    an unknown key is dropped rather than minted into the world, quantities
+    are clamped to sane integers, and both `{"wood": 5}` and
+    `[{type,qty}]` are accepted. `uses_left` is decremented un-awaited and
+    error-swallowing: a decrement that fails costs the code one extra use,
+    where a claim that failed would have cost a player their items — which is
+    why only one of the two is allowed to block.
+17. **PART E's window opens on DAMAGE, at exactly three sites.**
+    `applyDamage` (taken), `dealHit` (dealt to a player) and `mobHit` (dealt
+    to a mob) — and deliberately **not** `tryAttack`, because a swing at empty
+    air is not a fight, and **not** `baseHit`: hitting a wall is raiding, and
+    the exploit this part exists to close is leaving a fight with a person.
+    Drowning routes through `applyDamage` and therefore counts, which is
+    correct — it is damage taken. A gate pins the census at three.
+18. **A dead player is never prompted.** `enterDeath` already took everything
+    they were carrying; a corpse has nothing to flee from, and a confirmation
+    dialog on the way out of a death screen would be friction with no exploit
+    behind it.
+19. **⚠️ `run4` had a real pre-existing flake, and it is corrected rather
+    than relaxed.** Its v46 block damaged the player at a FIXED offset from
+    SPAWN — but the admin world-reset gate above it genuinely re-seeds the
+    world, so every scattered Safe Zone is somewhere different on every run,
+    and on some runs that spot landed inside one, `applyDamage()` correctly
+    returned early, and all five classes recorded "took no damage". **The
+    game was right and the spot was wrong.** Both that gate and this
+    version's own damage gate now search for open ground instead of assuming
+    it. Same class of correction Expansion 2b made to its two `SAFE_RADIUS`-
+    bound spots.
+20. **`run5` gained a v47 sweep and `MOBK` gained one entry.** The Adult
+    Golem is `tameable: false`, so unlike the Golem Elder it renders through
+    `drawMob`'s own chain rather than `drawSpecies` — a different branch, and
+    one the 5-frame boot cannot reach (it stands in the Ruins). It is swept
+    through every mob state, then walked to in the live world with real
+    frames pumped, and the sweep hard-fails if none was placed at all. Plus
+    the sign's three render states and the give panel's three quantity strips
+    and its out-of-reach state. 1,071 -> **1,100** draws.
+21. **`run4`'s exact-value pins were UPDATED, not relaxed** — fourteen
+    species counts, the Troll's and the Wraith's stats, the Sea Serpent's HP,
+    the Storm Dragon's and the Golem's exact spawned populations, and the
+    permanent table census (eight -> **ten**, still an exact list, so a
+    future version still cannot quietly add an eleventh). The one gate that
+    changed SHAPE is v19's entity-total window, which was a literal
+    `72..160`: it is now computed from the live tables themselves — every
+    species that can spawn on the surface at its own count, plus the two
+    hand-placed Elder singletons — so it moves with any future count change
+    instead of going stale, and the world is asserted to fill at least 70% of
+    its own ceiling.
+22. **The push to `main` that the README's step 8 invites was deliberately
+    not attempted.** This session is instructed to develop and push only on
+    its designated branch. The README calls a blocked push to `main` a
+    nice-to-have and explicitly not a failure, so the build lands on the
+    branch as usual and a human can sync it. Same call every version since
+    Expansion 2b has made.
+
 ### 2026-08-25 (v46 — Death Timer, Session Resume, Expansion 3, the real Minimap, block for all, the credit)
 
 Nine parts, and only two of them are rendering: PART D adds a genuinely new

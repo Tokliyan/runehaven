@@ -17,12 +17,19 @@ const bodyHtml = html
 const dom = new JSDOM(bodyHtml, { runScripts: "outside-only", pretendToBeVisual: true, url: "https://example.com/" });
 const { window } = dom;
 
+const textDrawn = [];        // v47 PART G: every string the canvas paints
 const ctx2d = new Proxy({}, {
   get(t, prop) {
     if (prop === 'canvas') return { width: 1280, height: 720 };
     if (prop === 'createRadialGradient' || prop === 'createLinearGradient')
       return () => ({ addColorStop: () => {} });
     if (prop === 'measureText') return () => ({ width: 10 });
+    /* v47 PART G: fillText is RECORDED rather than dropped. "The sign renders
+       only where one is set" is a claim about a label actually being painted,
+       and a stub that swallows every call can only ever prove the branch was
+       entered. Additive — it still returns a function that does nothing
+       else, so no existing draw can behave differently. */
+    if (prop === 'fillText') return (txt) => { textDrawn.push(String(txt)); };
     if (typeof prop === 'string') return () => {};
     return undefined;
   },
@@ -171,7 +178,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                   // v39: the Golem Elder's hostile form is tameable:true, so
                   // it renders through drawSpecies exactly as the v14 beasts
                   // do — sweep every mob state over that path too.
-                  "golem_elder"];
+                  "golem_elder",
+                  /* v47 PART C: the Adult Golem. tameable:false, so unlike the
+                     Golem Elder it renders through drawMob's own in-transform
+                     chain — a different branch entirely, and one the 5-frame
+                     boot cannot reach (it spawns in the Ruins, far from
+                     spawn). Every state, winding and hurt, like the rest. */
+                  "adult_golem"];
     let n = 0;
     if (window.drawUnit) {
       for (const cls of CLS) {
@@ -731,6 +744,80 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         }
         console.log('minimap hide/show swept — interior and surface');
       }
+    }
+    /* ============ v47 SWEEP =========================================
+       Three render paths this version adds or changes, none of which the
+       5-frame boot can reach: the Adult Golem stands in the Ruins, a base
+       sign only exists once somebody sets one, and the give panel only
+       exists while another player is standing next to you. */
+    if (window.debugWorldInfo && window.debugSetPlayer) {
+      const wi47 = window.debugWorldInfo();
+      const before47 = wi47.player;
+      /* -- the Adult Golem, in the live world, through the entity pass -- */
+      const agSpot = wi47.mobSpots.filter(m => m.kind === 'adult_golem')[0];
+      if (!agSpot) {
+        console.log('COVERAGE GAP: no adult_golem was placed in the world at all');
+        process.exit(1);
+      }
+      window.debugSetPlayer({ x: agSpot.x, y: agSpot.y - 3, hp: 100 });
+      for (let f = 800; f < 812; f++) {
+        const q = rafQ; rafQ = [];
+        for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+        n += 1;
+      }
+      console.log('adult golems in the world this seed:',
+        wi47.mobSpots.filter(m => m.kind === 'adult_golem').length);
+
+      /* -- PART G: the sign draws where one is set, and nowhere else ---- */
+      if (window.drawBasePiece) {
+        const bare = { id: 'cov:sign:none', kind: 'foundation', tier: 'stone',
+                       x: 61.4, y: 61.4, owner: 'BootTest' };
+        textDrawn.length = 0;
+        window.drawBasePiece(bare, 900);
+        const quietPiece = textDrawn.slice();
+        window.drawBasePiece(Object.assign({}, bare, { id: 'cov:sign:blank', sign: '   ' }), 900);
+        const blankPiece = textDrawn.slice();
+        window.drawBasePiece(Object.assign({}, bare, { id: 'cov:sign:set', sign: 'The Long Watch' }), 900);
+        n += 3;
+        if (quietPiece.length !== 0 || blankPiece.length !== 0 ||
+            textDrawn.indexOf('The Long Watch') < 0) {
+          console.log('COVERAGE GAP: the base sign did not render only where it was set — ' +
+            JSON.stringify({ quietPiece, blankPiece, textDrawn }));
+          process.exit(1);
+        }
+        console.log('base sign swept — unsigned, whitespace-only and set');
+      }
+
+      /* -- PART F: the give panel, with a real neighbour and a real pack -- */
+      if (window.debugSetGive && window.debugCombatHandles) {
+        const oth47 = window.debugCombatHandles().others;
+        const doc47 = window.document;
+        window.debugSetPlayer({ x: 400.5, y: 400.5, hp: 100, inv: { wood: 7, iron_bar: 2 } });
+        oth47.set('Neighbour', { x: 401.1, y: 400.5, cls: 'Knight', hp: 100, maxHp: 100,
+                                 lastHeard: 1e15, space: 'main', level: 1 });
+        window.debugSetGive({ open: 'Neighbour' });
+        const rowsAll = [];
+        for (const q of ['1', '5', 'all']) {
+          window.debugSetGive({ qty: q });
+          window.refreshGivePanel();
+          rowsAll.push(doc47.getElementById('giveList').querySelectorAll('[data-give]').length);
+          n += 1;
+        }
+        /* and the out-of-reach state the panel has to be able to say */
+        oth47.get('Neighbour').x = 409;
+        window.refreshGivePanel();
+        const awayText = doc47.getElementById('giveWho').textContent;
+        window.debugSetGive({ close: true });
+        oth47.delete('Neighbour');
+        n += 1;
+        if (rowsAll.some(r => r !== 2) || awayText.indexOf('out of reach') < 0) {
+          console.log('COVERAGE GAP: the give panel did not build its rows — ' +
+            JSON.stringify({ rowsAll, awayText }));
+          process.exit(1);
+        }
+        console.log('give panel swept — three quantity strips and the out-of-reach state');
+      }
+      if (before47) window.debugSetPlayer({ x: before47.x, y: before47.y, hp: 100, inv: before47.inv });
     }
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
