@@ -109,18 +109,24 @@ both mine, caught by the build reading the actual file rather than
 trusting the spec's own claims. Everything else (Parts B, D-H) was
 independently verified clean and is unchanged.
 
-**PART A — CORRECTED: this is world density, not tame chance.** The
-original spec said "spawn rates" in prose but quoted `base` — the
-documented tame-success chance (`tameChanceFor()`), a completely
-different thing from how often a pet is encountered. Reread against the
-actual original ask ("increase pet rates all over the map"): this means
-`count`, not `base`. Confirmed live spread today: `count` values run
-1/2/3/4/6/9 across the roster. Increase every species' `count` by
-roughly +25-30%, rounded to a whole number, preserving relative rarity
-between tiers — a Common at count 9 should still clearly outnumber a
-Rare at count 3 after the change, not converge toward it. Do not touch
-`base` (tame chance) anywhere in this part — that system is correct as
-it stands and untouched by this request.
+**PART A — REVISED AGAIN, more aggressively: this map has outgrown its
+own pet counts.** Confirmed live: Common tier tops out at `count: 9` —
+five species, all sharing that exact number. The world is currently
+N=2000 (4,000,000 tiles), roughly 70x the area it was when these counts
+were likely first tuned. A flat +25-30% (9 -> ~11-12) does not come
+close to closing that gap — real, severe scarcity confirmed directly by
+report, not assumed. Scale by tier, not a flat percentage:
+```
+Common     (currently 9):      -> 70
+Uncommon   (currently 3-6):    -> roughly 6x each, keeping relative spread
+Rare       (currently 2-4):    -> roughly 4x each
+```
+Elders, Duskfox Elder, and any daily-capped species from Mob Rarity +
+Music are explicitly untouched — their scarcity is governed by a
+separate system (the daily world cap), and raising `count` for them only
+helps players physically find one within a day's allotment, it does not
+bypass or weaken the cap itself. Do not touch `base` (tame chance)
+anywhere in this part.
 
 **PART B — unchanged.** Troll `hp:90,dmg:14 -> hp:68,dmg:11`. Dark Wraith
 `hp:65,dmg:12 -> hp:49,dmg:9`. Both confirmed live and unique.
