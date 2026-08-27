@@ -102,68 +102,109 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (Death Timer + Session Resume + Expansion 3 + Real Minimap + Block/Credits)
+## Confirmed, locked spec for the next build (v47 — Balance, Anti-Exploit & Economy)
 
-**PART A — death timer.** 10 minutes -> 30 seconds. One constant.
+Everything on this version genuinely closes out the roadmap — no bible
+system remains unbuilt after this, only World Expansion 4 and Demon
+Knight (both deliberately deferred to their own version).
 
-**PART B — reload resumes your session.** Store username in `localStorage`
-on successful login; auto-fill and auto-submit on page load if found. PIN
-still required if the account has one. **This does NOT fix the online
-count issue in Part F below — different mechanisms, confirmed by reading
-both, do not conflate them in QA.**
+**PART A — pet spawn rates, increased across every tier.** Confirmed
+live: Common sits at `base: 0.65`, Uncommon `0.35-0.50`, Rare `0.20-0.30`,
+Epic `0.20-0.35`. Increase each tier by roughly +0.08-0.10, keeping the
+same relative ordering between tiers intact — Common should never become
+LESS common than Uncommon, etc. Elders and admin-exclusive species
+untouched; this is about ordinary world density, not the tightly-capped
+rare-pet daily system from Mob Rarity + Music, which stays exactly as
+built.
 
-**PART C — Expansion 3.** `N: 1000 -> 2000`. Full constant audit repeated,
-same rigor as both prior expansions, real six-seed sweep required.
+**PART B — cave mob difficulty reduced.** Confirmed live: Troll
+`hp:90, dmg:14`, Dark Wraith `hp:65, dmg:12` — both currently placed
+inside cave interiors. Reduce both roughly 25%: Troll to `hp:68, dmg:11`,
+Dark Wraith to `hp:49, dmg:9`. Sea Serpent (UWCAVE-specific, not a
+generic cave placement) is explicitly NOT part of this reduction — see
+Part C, it moves the opposite direction.
 
-**PART D — real rendered minimap.** Separate from the compass dial (stays
-as-is). Small top-down canvas, ~10x10 tiles centered on the player, real
-terrain colors and nearby player dots, close-range only per the bible's
-"does not reveal exact base locations."
+**PART C — some mob health increased, by judgment: the tougher
+overworld/underwater mobs, not the cave ones just made easier.**
+Confirmed live: Sea Serpent `hp:130`, Adult Golem (check live value at
+build time, not assumed). Increase Sea Serpent to `hp:165`, Adult Golem
+by a comparable ~25%. These are deliberately NOT the same creatures as
+Part B — the two changes must not cancel each other out on any shared
+species.
 
-**PART E — block available to every class.** Confirmed live: currently
-gated to Knight and Architect only (`canBlock()`, matches "shield
-classes" in the HUD hint text). Remove the class restriction entirely —
-every class can hold the block key. Update the HUD hint text to match
-("SHIFT block" without the "(shield classes)" qualifier, since it is no
-longer true).
+**PART D — base HP doubled per tier, and genuinely harder to
+penetrate.** Confirmed live: `BASE_TIER_HP = { wood:40, stone:90,
+iron:180, runic:350, dragonsteel:800 }`. Double every value:
+`{ wood:80, stone:180, iron:360, runic:700, dragonsteel:1600 }`. "Harder
+to penetrate" beyond raw HP: confirm attack cooldown/damage-per-hit
+against a piece hasn't silently made this a non-change in practice —
+the doubled HP should translate to roughly double the real time/hits
+needed to destroy something, verified with the math, not just the
+constant changed.
 
-**PART F — the online count. Confirmed, not guessed: this reads
-`others.size + 1` off Supabase's live presence channel — a real-time
-network sync mechanism, not app logic.** No code bug found on inspection.
-Cannot be fixed with certainty without live multi-client testing, which
-the automated harness cannot do. If reproducible, the most useful next
-step is confirming whether it recovers on its own after a short delay
-(a presence sync lag) or stays wrong indefinitely (a real leak/bug) —
-build should add a periodic force-resync as a safety net regardless,
-even if the root cause can't be nailed down blind.
+**PART E — combat-logout, honestly scoped to what a browser can actually
+enforce.** Confirmed live: `beforeunload` currently only calls
+`savePlayer()` — no warning, no friction, no penalty. A website cannot
+force a tab to stay open against the user's will; the real, available
+mechanism is the browser's native `beforeunload` confirmation prompt.
+If the player has dealt or taken damage within the last 30 seconds,
+attach a `beforeunload` handler that triggers this native prompt
+("changes you made may not be saved" is the browser's own wording, not
+customizable). This adds real friction and a moment's warning to an
+opponent, which is the honest ceiling of what's achievable — do not
+build anything that claims to fully prevent leaving, that would be a
+false promise no client-side code can keep.
 
-**PART G — credits.** Add "Sam Hicks" as a named dev, same "Dev Team"
-role shown alongside Skeptik and Advay.
+**PART F — drop items directly to another player.** New interaction:
+standing within gather range of another player, an interact option opens
+a give panel — pick an item and quantity from your own inventory,
+confirm, it transfers directly into their `inventory` field the same way
+`invAdd`/`invRemove` already work internally, broadcast so their client
+reflects it immediately. No approval step required, matching the bible's
+low-friction "trades happen at players' own risk" philosophy already
+used for ground trading at the Bazaar.
 
-**PART H — music, investigated, likely not a code bug.** Confirmed the
-playlist and file paths are correct and use relative paths, which should
-resolve correctly on Netlify. The most likely real cause: testing was
-done by opening a local downloaded file directly rather than the actual
-hosted Netlify URL — local `file://` origins have different, often
-stricter media/network loading rules in some browsers than a real hosted
-site does. **No code change proposed here** — flag this clearly in the
-notification and ask directly whether the report was from the live
-Netlify site or a local file, since that changes where to look entirely.
+**PART G — base signs.** A short text label, settable by the owner
+only, attached to a Foundation piece specifically (the anchor every
+other piece already requires) and rendered above the base the same way
+a player's own name already renders above their character. Reuse the
+existing name-rendering technique, don't invent a second one.
 
-**PART I — admin access, documentation only, no code change.** There is
-deliberately no in-game way to self-promote to admin — by design, the
-same two-key safety principle as the world-reset safeguard. To become
-admin: open the Supabase dashboard, `players` table, find your row, set
-`role` to `admin`. Next login reads it and grants admin, including
-Duskfox Elder access. Add this exact instruction to SKILL.md's notes so
-it's not lost.
+**PART H — redeem code system.** New Supabase table:
+```sql
+create table redeem_codes (
+  code text primary key,
+  items jsonb,
+  uses_left integer
+);
+create table redeem_claims (
+  code text,
+  username text,
+  primary key (code, username)
+);
+```
+A second field on the login screen, below the Enter The World button —
+enter a code, submit. Looks up the code, checks `redeem_claims` to
+confirm this username hasn't already claimed it, grants the items in
+`items` directly to inventory on next login, decrements `uses_left`,
+records the claim. Must degrade gracefully if either table doesn't
+exist yet — same fallback discipline as every other new table this
+project has ever added.
 
-**Proof gates:** standard gauntlet plus confirm block works for all five
-classes, confirm the HUD hint text no longer says "(shield classes)",
-confirm Sam Hicks appears in credits, confirm the presence-resync safety
-net exists (even without proof it fixes the underlying issue), confirm
-everything from the prior spec version (death timer, session resume,
-Expansion 3, real minimap) still holds.
+**Proof gates:** standard gauntlet plus confirm every tier's spawn rate
+increased while preserving relative tier ordering, confirm Troll/Dark
+Wraith are genuinely easier while Sea Serpent/Adult Golem are genuinely
+harder (not the same creatures moving both directions), confirm base HP
+doubled and the real time-to-destroy roughly doubled with it, confirm the
+beforeunload prompt only fires within the 30s combat window, confirm
+player-to-player item drop writes to the recipient's real inventory,
+confirm base signs render only for pieces that have one set, confirm
+redeem codes cannot be claimed twice by the same username and degrade
+gracefully with no tables present.
+
+**Explicitly not this version:** World Expansion 4, Demon Knight, the
+minimap 3x expansion, spawn safe zone resizing, and cave barrier
+changes — all either deferred to v48 or still waiting on clarification.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
