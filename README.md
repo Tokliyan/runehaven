@@ -131,14 +131,23 @@ anywhere in this part.
 **PART B — unchanged.** Troll `hp:90,dmg:14 -> hp:68,dmg:11`. Dark Wraith
 `hp:65,dmg:12 -> hp:49,dmg:9`. Both confirmed live and unique.
 
-**PART C — CORRECTED: Adult Golem does not exist and is dropped, not
-substituted.** Confirmed by direct search: no such creature exists in
-`MOBS` or `WILD_SPECIES` under any name — the bible's own line is flavor
-text describing what a young Golem becomes, never actually built as a
-distinct implemented mob. Rather than invent a whole new creature (real
-stat block, art, loot, spawn placement — a feature version, not a
-balance-pass line) under a balance spec, this part ships as Sea Serpent
-alone: `hp:130 -> hp:165`. No other creature substituted in its place.
+**PART C — Sea Serpent buffed, AND Adult Golem built for real this
+time.** Sea Serpent: `hp:130 -> hp:165`, unchanged from before.
+
+Adult Golem, genuinely built, not substituted or guessed: the bible's
+own mob table names it directly — "Ruins, Hard, Runic Stone" — placing
+it at the exact same difficulty tier as Sea Serpent. New `MOBS` entry,
+`biomes: [B.RUINB]` (already a real, used biome — Bandit spawns there
+too), stats matched to Sea Serpent's PRE-buff baseline since both are
+the bible's own "Hard" tier: `hp:130, dmg:18, atkRange:1.8,
+atkCooldownMs:1900, windupMs:700, aggroRadius:7, leashRadius:12,
+moveSpeed:1.3` (slower than Sea Serpent — a golem, not a serpent — but
+otherwise comparable threat), `count:3`, `loot: runic_stone`,
+`tameable: false`. Art: confirmed the young, tameable Golem's draw
+function already exists (`species === "golem"`) — Adult Golem reuses
+that same silhouette scaled up and recolored toward stone/hostile tones
+rather than inventing new geometry from nothing, matching the bible's
+own framing that this IS the same species, grown hostile.
 
 **PART D — unchanged.** `BASE_TIER_HP` doubled:
 `{wood:80, stone:180, iron:360, runic:700, dragonsteel:1600}`. Confirm
