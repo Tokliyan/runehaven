@@ -53,6 +53,298 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-28 (v48 — World Expansion 4, the Demon Knight, the minimap at 3x, and the Elder Drake finally drawing itself)
+
+Five parts, and two of them are rendering: PART C adds a creature with new art
+and PART D widens the HUD map. PART A's `N`, PART B's cave grid and PART E's
+re-check live in the README and the commit message. **Not one palette entry,
+biome colour, rarity threshold, noise wavelength, cliff-face ratio, `SPECIES_K`
+or silhouette that this version did not name was touched.**
+
+- **⚠️ THE FIND, AND IT CLOSES A USER REPORT THAT HAS BEEN OPEN SINCE v30: THE
+  ELDER DRAKE HAS NEVER ONCE DRAWN ITS OWN ART. IT HAS BEEN DRAWING THE
+  BANDIT.** `elder_drake` is `tameable:false`, so `drawMob` has always sent it
+  down the humanoid chain — where it has no branch of its own and therefore
+  fell through to the final `else`, which is the Bandit. Its real body has sat
+  in `drawSpecies` as unreachable dead code for eighteen versions, and no gate
+  ever noticed because `elder_drake` was never in `run5`'s `MOBK` list either.
+  **The 2026-08-18 entry below is the same bug**: the user reported that the
+  drake "looks like a normal goon", which is exactly, literally what a hooded
+  Bandit at `MOB_K` 4.35 looks like, and that hotfix recoloured the
+  `drawSpecies` branch — code that never ran. The report was right; the fix
+  landed in the wrong function. **That entry is marked FIXED below, here.**
+  Proved before anything was touched, by recording every `fillStyle` through a
+  real `drawMob` call: the drake painted `#7a5c40 / #5a4430 / #c8ad8a` — the
+  Bandit's leather, face and hood, byte for byte — and now paints `#14100d /
+  #ff7a3c / #ffb266`, its own near-black and ember.
+- **The correction is a route, not a redraw, and that is what makes it safe on
+  a night with no screenshot.** Measured with a transform-tracking canvas
+  recorder (calibrated first against this file's own published numbers — troll
+  49.9px vs its documented 50.4, bandit clearance −2.2 exactly, adult_golem
+  39.1 exactly): the drake's own art paints **14.28 local units** above its
+  baseline and the Bandit's paints **14.70**, so at `MOB_K` 4.35 the body goes
+  **63.9px -> 62.1px** and `MOB_TALL.elder_drake` of 46 puts the "!" tell and
+  the HP bar at 66 either way — clearance **2.1px -> 3.9px**, the same family
+  as the Troll's 1.1 and the Adult Golem's 4.9. **Not one overlay number had to
+  move.** The route sits above the humanoid chain, wrapping `drawSpecies` in
+  the `MOB_K` transform the tameable branch already uses for the same reason.
+- **⚠️ WIDTH IS WHERE YOU WILL SEE IT, AND IT IS THE THING IN THIS BUILD MOST
+  WORTH A SCREENSHOT.** The Bandit body at 4.35 paints **49.6px** wide; the
+  drake's own body paints **235.7px** — a low, long quadruped nearly five times
+  the width, where there has been an upright hooded figure. That is what 4.35
+  was always *for* (v30: "the largest and hardest thing in the world"), and it
+  is left exactly where v30 and Tuning/Polish set it rather than re-guessed —
+  but 4.35 was last tuned against the wrong silhouette, so **if the boss now
+  reads too wide, `MOB_K.elder_drake` is the number to move, not the route.**
+- **The Demon Knight is new art, and it is written against this skill's own
+  hardest lesson.** Three flat colour families and nothing between them: cold
+  black-violet plate (`#2b2238` / `#150f1e` / `#3e3150`), one bold structural
+  **crimson** (`#d8323c`), and a dragonsteel-violet blade (`#b06ce0`). Hard
+  edges, no gradients, no outlines, no desaturated middle tone anywhere — the
+  exact inverse of the drake's original five-shades-of-muddy-brown mistake.
+  Every colour is chosen against what the world already says: not the Knight
+  class's steel `#8d99a8` (a player must never be mistaken for this), not the
+  Dark Wraith's `#3c3058` (that one is incorporeal at 86% alpha; this is solid
+  plate), not the drake's warm near-black `#14100d`. The crimson is
+  **structure** — the cloak, the tabard down the centre line, the crest, the
+  eye slit — never decoration, which is the drake hotfix's own rule. The blade
+  is the exact `ITEM_META` colour of the material it drops, which is the bible's
+  own "dragonsteel gear emits a faint purple aura" and the one thing on it that
+  says what killing it is for. **Gold appears nowhere**: gold means Elder on the
+  ground and this is not one.
+- **It is sized by the same threat rule every other mob is.** `MOB_K` **3.80**:
+  hp x dmg = 7,280 sits between the Sea Serpent's 2,970 and the Golem Elder's
+  8,400, and 3.80 sits between their 3.42 and 4.05, so "size sorts exactly as
+  threat does" holds with one more creature in it. Measured, it paints
+  **58.9px** above its baseline against the drake's real 62.1 — a big armoured
+  figure that is unmistakably not the boss standing next to it. `MOB_TALL` 41
+  puts its "!" at 61, **2.1px clear of its own horns**, measured rather than
+  scaled from anything.
+- **⚠️ IT IS AT THE VOLCANO, NOT IN A DUNGEON, AND THAT IS A NAMED EXCEPTION TO
+  ITS BIBLE PLACEMENT.** The bible puts Demon Knights in "Deep Dungeons"; this
+  game has the v20 dungeon *entrance* set piece and nothing behind it, and
+  building Dungeons is a landmark-scale feature of its own. The locked spec
+  chose instead to station two of them as guardians of the Elder Drake at the
+  Volcano. Recorded here as the deliberate exception it is, not an oversight —
+  **when Dungeons are built, this is the creature that moves into them.**
+  Placed from the drake's OWN spot inside the drake's own block, so "they guard
+  it and are nowhere else" is true by construction: no drake, no knights.
+  Measured on the harness seed they stand **3.0 and 4.5 tiles** from it, both
+  on `VOLROCK`, 6 apart so they flank rather than stack, and both inside the
+  drake's own 14-tile aggro radius — open on the boss and you get all three.
+- **⚠️ EXPANSION 4 IS THE WHOLE WORLD AT TWICE THE SIZE AGAIN.** `N` 2000 ->
+  4000 is **4x the area** — 4,000,000 tiles become 16,000,000 — and the audit
+  is Expansion 3's own list re-run at exactly 2.0, rebuilt from the Expansion 3
+  diff rather than retyped from memory so nothing that scaled last time could
+  be silently skipped: `SAFE_RADIUS` 226 -> 452, volcano cone 226 -> 452, lava
+  core 62 -> 124, PEAK->ROCK buffer 350 -> 700, `elevRaw`'s two divisors 1000 ->
+  2000 and 300 -> 600, the mountain's own two height radii 30/54 -> 60/108, the
+  volcano rim 33 -> 66, all six landmark radii and all eleven landmark
+  separations, `DRAGON_ALTAR_DIST` 282 -> 564, the landmark clamp 72 -> 144,
+  `WILD_SPAWN_MIN` 300 -> 600, `MOB_SPAWN_MIN` 350 -> 700, `RUIN_FOOT` 38 ->
+  76, `ZONE_R` 68 -> 136, `RUIN_SEP`/`ZONE_SEP` 332 -> 664, `RUIN_ZONE_SEP` 200
+  -> 400, the ruin/zone in-bounds margin 300 -> 600, the Elder Drake's search
+  ring 18..162 -> 36..324, and four search budgets by AREA (4x). `run4` greps
+  the source for every new value **and for the absence of every old one**.
+- **Verified with a real six-seed sweep, not six calls to a no-op** (`worldSeed`
+  swapped, all three caches cleared, `placeLandmarks()` and `buildFeatureList()`
+  re-run), and against the same sweep on the pre-change build. All six landmarks
+  placed on **6/6** seeds, the Dragon Elder Altar on real land **6/6**, six
+  Ruins and four Safe Zones **6/6**, the Elder Drake present **6/6** (always at
+  124.5 from the volcano centre — the first `VOLROCK` ring outside the 124-tile
+  lava core, exactly the proportion it held at every prior scale), two Demon
+  Knights **6/6**, and snow still on the mountain **6/6** (26,961 -> **36,029**
+  PEAK tiles within 120 of MOUNT). Biome shares held: PEAK 1.57% -> 1.58%,
+  UWCAVE 3.93% -> 3.92%, RUINB 0.57% -> 0.57%. A tagged mountain ruin on
+  **5/6** and a Crystal Golem standing in one on **5/6** — identical to
+  Expansion 3's own 5/6, so `MOUNTAIN_RUIN_ELEV` needed no change at a third
+  scale.
+- **The per-frame cost did not move at all, and that is PART A's own required
+  re-confirmation.** `2,009 tiles/frame at 1024x768` across seven camera
+  positions — the identical number the pre-change build measures. The ground
+  pass has been viewport-bound since Expansion 2a and the world's size is
+  simply not in that arithmetic.
+- **⚠️ THE COST IS LOGIN AND MEMORY, AND IT IS NOW AT A LEVEL THAT NEEDS A
+  DECISION.** Measured in the jsdom harness: **login 5.9s -> 26.0s and heap 326
+  MB -> 988 MB** (RSS 1.1 GB). That is 4.4x the time and 3.0x the memory for 4x
+  the area — the same shape Expansion 3 measured, one doubling later.
+  `buildFeatureList()` walks the whole `N*N` grid and `tileCache` ends up
+  holding every one of the 16,000,000 tiles. **A gigabyte is past what a mobile
+  browser will give a tab**, and this is the third consecutive version to flag
+  it: chunking the walk, or building the feature list lazily around the camera,
+  is a rendering-architecture decision rather than a tunable, so it is flagged
+  and not invented. **It is the single most important thing to spec next.**
+- **⚠️ THE OTHER FIND, AND IT WOULD HAVE SHIPPED CAVES YOU COULD NOT WALK
+  THROUGH.** PART B doubles `INTERIOR_N` 80 -> 160, and the locked spec warned
+  in as many words about a guard sized for the old grid truncating at the new
+  one. The flood-fill guard was already written as `8 * INTERIOR_N * INTERIOR_N`
+  and needed nothing — but **`carve`'s own guard was still the literal 200**,
+  which covers an L-shaped tunnel across 80x80 (76 + 75 = 151 steps at worst)
+  and does not cover one across 160x160 (155 + 155 = 310). A truncated carve
+  stops digging half way and leaves the region it was joining still sealed.
+  Measured on a deliberate counterfactual build with the old literal restored:
+  across sixteen real interiors the worst one finished with **14,719 floor
+  tiles sealed off** — very nearly the entire cave unreachable. With
+  `INTERIOR_CARVE_GUARD = 2 * INTERIOR_N` it is **zero**, at both grid sizes.
+- **The caves are genuinely bigger and genuinely as full.** Sixteen real
+  interiors: floor area **3,455-4,128 (mean 3,726) -> 15,160-16,298 (mean
+  15,875)**, a 4.26x, and the density a player actually walks through is
+  **identical to two decimal places** — 1.36 nodes / 1.91 ore / 0.84 hostiles
+  per 100 floor tiles at both sizes, because every count is keyed to each
+  interior's own floor tally rather than to the grid. `run4` walks six real
+  interiors from six real cave mouths and still finds **zero** sealed tiles.
+- **The minimap window is 3x wider and the card is the same size.** The
+  confirmed current value was **11x11**, not the spec's remembered "roughly
+  10x10", so `MAP_R` 5 -> 15 measured off the real number: **121 tiles ->
+  961**, which is as close to "roughly 30x30" as an odd window centred on the
+  player gets. `MAP_CELL` 11 -> 4 keeps the canvas at **124px** against the old
+  121 — the spec asks for a bigger window on the same view, not for a HUD
+  element that takes a third of the screen. Everything else is untouched: the
+  same flat `PAL` fill, the same `(tx + ty) % 2` checkerboard, the same two dot
+  colours, the same two things drawn and no third. **Close range survives the
+  3x**: 31 tiles across is still inside what the camera itself shows, and the
+  proof is unchanged — `basePieces`, `baseIndex`, `features`, `mobs`, `wilds`
+  and `decor` are read nowhere in `updateWorldMap()` and a gate greps the
+  function for every one of those names. `run5` draws it standing on all **19**
+  ground biomes at the new radius.
+- **⚠️ PART E WAS NOT SUPPOSED TO FIND ANYTHING AND IT FOUND SOMETHING.** Music
+  and bases came back clean: `BG_PLAYLIST` is still exactly the five tracks in
+  order, `tension.mp3` is still the Elder track and is in neither the rotation
+  nor the ordinary combat slot, and the cue is raised by **exactly** the four
+  Elder-tier combatants and by nothing else (driven for real against ten
+  species, the new Demon Knight included, which correctly raises nothing);
+  `basePlaceCheck()` still finds legal ground in the expanded world,
+  `placeBasePiece()` still writes a real `base_pieces` row with the v33/v34
+  columns and no new one, and the safe zone still refuses one at the new
+  `SAFE_RADIUS`. **Fast travel is the find.** The button's `disabled` condition
+  is exactly what PART E asked to confirm — `p.dead || cdLeft > 0`, with no
+  ownership check anywhere in it. But `travelToPlayer()`, the function *behind*
+  that button, still opens with `if (!ownsUnicornElder()) { toast(...); return
+  false; }`. So today the button is enabled for everyone and the travel refuses
+  everyone without an Elder: **"fast travel still isn't working and nothing
+  says why", one layer further down than the last hotfix looked.** See judgment
+  call 9 — recorded and deliberately not changed.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus two things found by looking
+that it did not ask about. All shipped through the full gate (parse clean,
+`run3` `CAUGHT ERROR: none`, `run4` **1,194/1,194 with zero FAIL**, `run5`
+**1,104** coverage draws clean including all 19 ground biomes through the wider
+minimap, 54/54 grep checks including the preservation half) plus a genuine
+six-seed worldgen sweep measured against the same sweep on the pre-change build
+— refinements to consider, not unfinished work.
+
+1. **⚠️ THE ELDER DRAKE'S RENDER ROUTE WAS FIXED, WHICH THE SPEC DOES NOT ASK
+   FOR.** It is on this skill's own running list as a user report ("looks like
+   a normal goon"), the diagnosis it was given in 2026-08-18 was wrong, and
+   PART C put me directly in that code — a build that stations two brand-new
+   guardians around the world boss and leaves the boss drawing a bandit would
+   be a strange thing to ship. It invents nothing: the art is v30's own,
+   already approved and already recoloured. **One `if` block to revert**, and
+   the measurements above are what say no overlay number moves with it.
+2. **`MOB_K.elder_drake` is NOT re-tuned**, though 4.35 was tuned against the
+   wrong body. Changing the size of the world boss is a visual decision and
+   this build cannot see a screenshot; the honest thing is to put the right
+   body under the number that already exists and print what it measures. **The
+   first thing to check on this build.**
+3. **`DEMON_KNIGHT_RESPAWN_MS = 3 hours`, and it is the one number this
+   creature needed that the spec does not state.** Its drop is a guaranteed
+   dragonsteel — the rarest material in the world — so on the flat 60-second
+   `MOB_RESPAWN_MS` two of them standing together would be an unlimited
+   dragonsteel tap fifteen tiles from the Ancient Forge. Three hours is
+   deliberately half the Elder Drake's six: an expedition, not a rotation, and
+   the drake stays the bigger event. TUNABLE.
+4. **The Demon Knight's second loot row is designed; the first is the bible's.**
+   `dragonsteel x1 @ 100%` is the bible's own stated drop for this creature and
+   is already on dragonsteel's acquisition list. `runic_stone x2 @ 70%` is a
+   tunable in exactly the shape the Elder Drake's second row already has.
+5. **It is deliberately NOT in `COSMETIC_DROP`**, following the Adult Golem
+   precedent from v47 — a new mob does not get a cosmetic rate unless something
+   asks for one, and inventing a percentage for a creature the bible says
+   nothing about would be the first invented thing in that table.
+6. **The flank search is a ring sweep with a 6-tile minimum between the two,
+   and both numbers are mine.** The spec says "two, flanking the Elder Drake"
+   and nothing else. 3..14 tiles out keeps them inside the drake's own aggro
+   radius (so the fight is one fight) and 6 apart is what stops them standing
+   on the same shoulder. Both TUNABLE, both in one helper.
+7. **⚠️ THE SPECIES AND MOB COUNTS WERE NOT SCALED, AND THIS ONE MATTERS MORE
+   THAN IT LOOKS.** v47's PART A re-tuned every spawn count *specifically*
+   because Common pets were "severely, genuinely unfindable" on the 2000x2000
+   map — three weeks ago. This version quadruples the area and leaves every one
+   of those counts exactly where v47 put them, so all of them are now **4x
+   sparser per tile than the tuning that was done to fix findability**. That
+   follows the spec's own list (it names distances, not populations) and the
+   Expansion 3 precedent, and re-tuning them is a design decision rather than a
+   scaling one — but it is a one-line-per-species change and it is **the most
+   likely thing to want immediately.** `METEOR_COUNT` (14) and the ambient
+   decor counts are unscaled for the third expansion running, same call, same
+   reason.
+8. **⚠️ `run4`'s dive-reachability bar moves 0.7 -> 0.6, and this is the THIRD
+   consecutive expansion to restate it.** Measured: the Underwater Caves go
+   73.3% -> **63.4%** of the biome by area (2,401 of 3,438 pockets) and the
+   Abyssal Hollow 73.1% -> **65.4%** (1,483 of 2,127). It is arithmetic, not a
+   fix — `BREATH_MAX` has not moved since v21 while the ocean has now grown
+   3.125x, then 2x, then 2x again. The two assertions that actually say the
+   biome is real content rather than a locked room are **not touched and both
+   pass with room**: the largest cave pocket in the world is 3,118 tiles at a
+   crossing of **5** (it was 124 before — the biggest pocket is now essentially
+   on the shore) and the largest Hollow pocket 1,100 tiles at a crossing of
+   **0**, against a 138-tile budget. **The trend is 88.5% -> 73.3% -> 63.4% and
+   the next expansion will do it again: this wants a decision rather than a
+   fourth restatement.** Scale `BREATH_MAX` with the world, or keep the rare
+   pockets off the open ocean. Every number is printed on every run.
+9. **⚠️ PART E'S FIND IS RECORDED AND DELIBERATELY NOT FIXED, and that is the
+   hardest call in this build.** `travelToPlayer()` still refuses without the
+   Unicorn Elder while its button no longer does. Both readings are real and
+   both are already written down in this file: Tuning/Polish's judgment call 1
+   chose the gate deliberately ("a free short-range teleport for everyone, in a
+   world whose whole pitch is that it is vast"), and the later hotfix commit
+   says in its own words that player-to-player teleport "was never supposed to
+   need an Elder at all". Which one wins is a design decision with real
+   gameplay consequences, PART E asked me to *confirm and record*, not to
+   change — and the state is now pinned by a `run4` gate that names it, so it
+   cannot go quiet and cannot be changed by accident. **The fix either way is
+   one line in `travelToPlayer()`.** Landmark fast travel is untouched and
+   still requires the Elder, which is the bible's own granted ability and must
+   stay.
+10. **A `run4` gate was found to be flaky rather than scale-bound, and it is
+    strengthened rather than re-pinned.** "The Golem Elder stands on a Ruin
+    tile" read the mob's LIVE position; `golemElderSpot()` puts it on the single
+    outermost `RUINB` tile in the world (75.96 of a 76-tile footprint on this
+    seed, 37.95 of 38 before), and v30's idle-wander patrols it up to its own
+    leash from there — one step outward and the tile under it is not `RUINB`,
+    which says nothing about where it was placed. It asserts its HOME tile now,
+    plus the wander bounded by the leash it is supposed to obey: two assertions
+    where there was one. `GOLEM_ELDER` gained `hx`/`hy` for it, additive.
+11. **A second `run4` gate was testing the wrong thing since the movement
+    rotation, and this is a real correction.** "Surfaced, WASD cannot enter deep
+    water" asserted an **x literal**, and since up/down/left/right became true
+    screen directions the block key walks a diagonal — so the player
+    legitimately drifts in y and can end one tile west while standing on
+    perfectly walkable shallow water. Verified directly before touching it: the
+    walk ends at (2258.07, 77.18), which is `B.WATER`, not `B.DEEP`. **The game
+    refused deep water exactly as it should.** It now asserts the biome under
+    the player, which is what the gate always meant and is true at any world
+    size or shoreline shape. Same call v32 made when its dive test picked a
+    doorway for a shore.
+12. **`run5`'s coverage list gained `demon_knight` AND `elder_drake`.** The
+    second of those is the point: the drake was never in `MOBK`, which is
+    precisely how it drew someone else's art for eighteen versions without a
+    single gate noticing. 1,081 -> **1,104** draws.
+13. **The `MAP_CELL` and dot sizes are mine.** The spec locks the window size
+    and says "same rendering technique"; 4px cells are what keep the card its
+    own size, and `MAP_DOT` 5 / `MAP_SELF_DOT` 7 are deliberately left in
+    pixels rather than scaled to the cell — at 0.45 of a 4px cell a player dot
+    would be under two pixels and simply not read. They now cover a little over
+    one tile each instead of half of one, which is a HUD legibility call, not a
+    map-accuracy one.
+14. **The push to `main` that the README's step 8 invites was deliberately not
+    attempted.** This session is instructed to develop and push only on its
+    designated branch. The README calls a blocked push to `main` a nice-to-have
+    and explicitly not a failure, so the build lands on the branch as usual and
+    a human can sync it. Same call every version since Expansion 2b has made.
+
 ### 2026-08-25 (v46 — Death Timer, Session Resume, Expansion 3, the real Minimap, block for all, the credit)
 
 Nine parts, and only two of them are rendering: PART D adds a genuinely new
@@ -1740,7 +2032,14 @@ unfinished work.
     would be inventing a stat, and v38 touches nothing in that path — flagged
     here rather than fixed silently.
 
-### 2026-08-18 (Elder Drake palette hotfix)
+### 2026-08-18 (Elder Drake palette hotfix) — ⚠️ MISDIAGNOSED, REALLY FIXED IN v48
+
+**Read the v48 entry at the top of this list before this one.** The user's
+report was right and this fix was in the wrong function: `drawMob` never
+reached `drawSpecies`' `elder_drake` branch at all, so everything recoloured
+below was dead code and the drake carried on drawing the Bandit's art. "Looks
+like a normal goon" was literally true. The recolour itself is kept and is
+what now actually paints; the routing is the real fix.
 
 Flagged by the user directly: the drake "looks like a normal goon" despite
 the silhouette matching the approved reference. Root cause found by

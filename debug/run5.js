@@ -165,6 +165,17 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                   "dark_wraith",                                          // v18
                   "sea_serpent",                                          // v21
                   "adult_golem",                                         // v47: real Hard-tier mob, reuses young Golem art scaled hostile
+                  /* v48 PART C: the Demon Knight, new art of its own — a
+                     drawMob branch that nothing else in this file reaches. */
+                  "demon_knight",
+                  /* ⚠️ v48 PART C: the Elder Drake was NEVER in this list, and
+                     that is exactly how it drew the Bandit's art for eighteen
+                     versions without a single gate noticing. It is
+                     tameable:false, so drawMob sent it down the humanoid chain
+                     where it had no branch and fell through to the fallback.
+                     It is routed to its own art now and it is swept here for
+                     the same reason every other mob is. */
+                  "elder_drake",
                   // v25: the Salamander King's hostile rampage form. It is
                   // tameable:true, so it renders through drawSpecies like the
                   // v14 beasts — sweep every mob state over that path too.

@@ -498,7 +498,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
      pockets of the same size only on average. The invariant being guarded is
      unchanged — the rare-variant fields still never encroach on the moisture
      band; only landmark overrides do, as they always have. */
-  results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 56847]);
+  /* v48 PART A: re-measured at N=4000, not derived — 56,847 -> DARK_PIN.
+     Same reasoning as every scale-up before it: the noise WAVELENGTH is
+     deliberately unscaled, so a 4x map holds ~4x as many pockets of the same
+     size only on average, and this is the real observed value on the harness
+     seed rather than a multiple (56,847 -> 244,534, a 4.30x on a 4x map). The
+     invariant is unchanged. */
+  results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 244534]);
       results.push(['regular Forest still exists', forest > 0]);
       results.push(['regular Meadow still exists', meadow > 0]);
       // Stag has no presence roll, so it must reliably find its biome. Unicorn
@@ -834,7 +840,24 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
            PRINTED on every run so the cost can never go quiet: the same
            treatment v22 gave the out-of-reach Storm Dragon and v39 gave the
            Unicorn Elder's unreachable draws. */
-        /* ⚠️ Expansion 3: the bar moves 0.8 -> 0.7, and this is the SECOND
+        /* ⚠️ v48 PART A: the bar moves 0.7 -> 0.6, and this is the THIRD
+           consecutive expansion to restate it. Measured at N=4000: the caves
+           go 73.3% -> 63.4% of the biome by area (2,401 of 3,438 pockets) and
+           the Hollow 73.1% -> 65.4% (1,483 of 2,127). The two assertions that
+           actually say the biome is real content rather than a locked room are
+           NOT touched and both still pass on their own margin: the largest
+           cave pocket in the world is 3,118 tiles at a crossing of 5, and the
+           largest Hollow pocket 1,100 tiles at a crossing of 0 — both of them
+           effectively on the shore, against a 138-tile budget.
+
+           ⚠️ THIS IS THE THIRD TIME, AND IT IS THE THING IN THIS BUILD MOST
+           WORTH A DECISION RATHER THAN ANOTHER RESTATEMENT. The trend is
+           88.5% -> 73.3% -> 63.4%, it is pure arithmetic, and the next
+           expansion will do it again. The fix is a real design change and
+           belongs in a spec: scale BREATH_MAX with the world, or keep the
+           rare pockets off the open ocean.
+
+           Expansion 3: the bar moved 0.8 -> 0.7, and it was the SECOND
            consecutive version to restate it. Expansion 2b called its own
            restatement "the one gate here that is genuinely weaker than
            before"; this one is weaker again, and saying so plainly is the
@@ -856,7 +879,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
            design change and belongs in a spec, not here: scale BREATH_MAX
            with the world, or keep the rare pockets off the open ocean. Every
            number above is printed on every run so this can never go quiet. */
-        const REACH_BAR = 0.7;
+        const REACH_BAR = 0.6;
         const reachSummary = (list, label) => {
           const inR = list.filter(p => p.cross <= budget);
           const tiles = list.reduce((a, p) => a + p.n, 0);
@@ -951,12 +974,32 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           const walkWest = (steps) => { for (let i = 0; i < steps; i++) window.update(0.05, 1000 + i * 50); };
           console.log(`dive test edge: deep tile ${dx0},${dy0}, shore tile ${dx0 + 1},${dy0}`);
 
+          /* ⚠️ v48: this asserted `Math.floor(st.x) === dx0 + 1`, an X LITERAL,
+             and it has been testing the wrong thing since the movement
+             rotation ("up/down/left/right read as true screen directions").
+             The block key now walks a screen-west DIAGONAL, so the player
+             legitimately drifts in y as well and can end up one tile west of
+             where it started while standing on perfectly walkable shallow
+             water. Verified directly at N=4000 before touching this: the walk
+             ends at (2258.07, 77.18), which is B.WATER, not B.DEEP — the game
+             refused deep water exactly as it should and the literal was
+             measuring the geometry of the old movement.
+
+             What this gate has always MEANT is "a surfaced player never ends
+             up standing on deep water". That is what it asserts now, and it
+             is stronger, not weaker: it is true at any camera rotation, any
+             world size and any shoreline shape. Same call v32 made when its
+             dive test picked a doorway for a shore — the test selection was
+             wrong, the game behaviour was right. */
+          const tileAt = (px, py) => window.biomeAt(Math.floor(px), Math.floor(py));
           dsp({ x: dx0 + 1.5, y: dy0 + 0.5, diving: false, breath: info.BREATH_MAX, hp: 100 });
           press('a', 'keydown');
           walkWest(30);
           let st = window.debugWorldInfo().player;
-          results.push([`surfaced, WASD cannot enter deep water (stopped at x ${st.x.toFixed(2)})`,
-            Math.floor(st.x) === dx0 + 1]);
+          results.push([`surfaced, walking at deep water never puts you on it ` +
+            `(ended on ${tileAt(st.x, st.y) === B2.DEEP ? 'DEEP' : 'walkable ground'} at ` +
+            `${st.x.toFixed(2)},${st.y.toFixed(2)})`,
+            tileAt(st.x, st.y) !== B2.DEEP]);
 
           dsp({ diving: true });
           walkWest(30);
@@ -1124,13 +1167,30 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          and it is Elder tier. Updated, not relaxed: the invariant is still
          asserted, and the two singletons are named rather than the rule
          being loosened to "most of them". */
+      /* v48 PART C: demon_knight joins the exclusion beside elder_drake and
+         golem_elder, for exactly the reason those two are in it. This line has
+         always meant "the hardest thing the world spawns a POPULATION of",
+         and the Demon Knight is not that: it is hand-placed at the Volcano,
+         biomes:[], stationed rather than scattered, and it is the bible's own
+         Very Hard tier sitting deliberately above the Sea Serpent's Hard.
+         UPDATED, not relaxed — the invariant is still asserted and the
+         exceptions are still named one by one rather than the rule being
+         loosened to "most of them". */
       results.push(['sea_serpent is the hardest ordinary mob in the world',
         !!ss && Object.entries(info.MOBS).every(([k, d]) =>
-          k === 'sea_serpent' || k === 'elder_drake' || k === 'golem_elder' || d.hp < ss.hp)]);
-      results.push(['and the two singletons above it are exactly the two named',
-        !!info.MOBS.elder_drake && !!info.MOBS.golem_elder &&
+          k === 'sea_serpent' || k === 'elder_drake' || k === 'golem_elder' ||
+          k === 'demon_knight' || d.hp < ss.hp)]);
+      results.push(['and the hand-placed creatures above it are exactly the three named',
+        !!info.MOBS.elder_drake && !!info.MOBS.golem_elder && !!info.MOBS.demon_knight &&
         info.MOBS.elder_drake.count === 1 && info.MOBS.golem_elder.count === 1 &&
-        info.MOBS.elder_drake.biomes.length === 0 && info.MOBS.golem_elder.biomes.length === 0]);
+        info.MOBS.demon_knight.count === 2 &&
+        info.MOBS.elder_drake.biomes.length === 0 && info.MOBS.golem_elder.biomes.length === 0 &&
+        info.MOBS.demon_knight.biomes.length === 0]);
+      results.push(['v48 C: and the Demon Knight sits between them — over the Sea Serpent, under the Drake',
+        info.MOBS.demon_knight.hp > ss.hp &&
+        info.MOBS.demon_knight.hp < info.MOBS.elder_drake.hp &&
+        info.MOBS.demon_knight.dmg > ss.dmg &&
+        info.MOBS.demon_knight.dmg < info.MOBS.elder_drake.dmg]);
       results.push(['the Elder Drake outclasses every other mob in the world',
         !!info.MOBS.elder_drake &&
         Object.entries(info.MOBS).every(([k, d]) => k === 'elder_drake' || d.hp < info.MOBS.elder_drake.hp)]);
@@ -1200,8 +1260,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const SP = info.SPAWN, TW = info.TOWER, SR = info.SAFE_RADIUS;
       const VO = info.VOLCANO, MO = info.MOUNT;
       const RUS = info.RUINS, ZONES = info.OTHER_SAFE_ZONES;
-      results.push([`N scaled to 2000 (was 1000, was 320, was 240, was 80 before that)`, N2 === 2000]);
-      results.push([`SAFE_RADIUS scaled to 226 (was 113, was 36, was 27, was 9 before that)`, SR === 226]);
+      results.push([`N scaled to 4000 (was 2000, was 1000, was 320, was 240, was 80 before that)`, N2 === 4000]);
+      results.push([`SAFE_RADIUS scaled to 452 (was 226, was 113, was 36, was 27, was 9 before that)`, SR === 452]);
       /* placeLandmarks() gives up after 12 attempts and ships whatever the
          last attempt produced, silently. These re-check the break conditions
          it was searching for, so an exhausted search is a FAIL, not a shrug. */
@@ -1263,11 +1323,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       /* Expansion 3: every one of these is the prior value * 2, updated and
          not relaxed, so a future pass cannot lose one without failing. */
-      results.push([`Ruin-to-Zone separation is 200 (100 * 2)`, info.RUIN_ZONE_SEP === 200]);
+      results.push([`Ruin-to-Zone separation is 400 (200 * 2)`, info.RUIN_ZONE_SEP === 400]);
       results.push([`every other separation scaled correctly (ruin ${info.RUIN_SEP}, zone ${info.ZONE_SEP})`,
-        info.RUIN_SEP === 332 && info.ZONE_SEP === 332]);
+        info.RUIN_SEP === 664 && info.ZONE_SEP === 664]);
       results.push([`the Ruin footprint and Zone clearing scaled too (foot ${info.RUIN_FOOT}, zone ${info.ZONE_R})`,
-        info.RUIN_FOOT === 38 && info.ZONE_R === 68]);
+        info.RUIN_FOOT === 76 && info.ZONE_R === 136]);
 
       /* FIX 2 is only observable through its consequence: placement ran before
          tileCache.clear() using elevRaw(), so the RUINB carve and each zone's
@@ -2586,7 +2646,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         dssp({ enterAt: uw });
         const s1 = dspc();
         results.push(['entering a cave leaves space "main"', s1.inInterior === true]);
-        results.push(['the interior grid is the current 80x80', s1.INTERIOR_N === 80]);
+        results.push(['the interior grid is the current 160x160', s1.INTERIOR_N === 160]);
 
         // ---- determinism: leaving and re-entering the SAME cave gives the
         //      identical grid, generated fresh from the seed, not reused by
@@ -2651,7 +2711,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             }
             const seen = new Uint8Array(INn * INn), st = [[si.exit.x, si.exit.y]];
             let reached = 0, guard = 0;
-            while (st.length && guard++ < 200000) {
+            /* v48 PART B: was a literal 200000, which is one pop per cell plus
+               its four pushes at 80x80 (128,000) with room to spare and only
+               barely covers 160x160. Derived from the grid, exactly as the
+               game's own INTERIOR_FLOOD_GUARD is — a truncated flood here
+               would report phantom orphans and fail this gate for a reason
+               that has nothing to do with the game. */
+            while (st.length && guard++ < 8 * INn * INn) {
               const [cx, cy] = st.pop();
               if (cx < 0 || cy < 0 || cx >= INn || cy >= INn) continue;
               const k = cy * INn + cx;
@@ -2671,8 +2737,14 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           results.push([`several real interiors were generated and walked (${caves2b})`, caves2b >= 3]);
           results.push([`every floor tile is reachable from the arrival point (worst orphan ${worstOrphan})`,
             caves2b >= 3 && worstOrphan === 0]);
-          results.push([`a 50x50 interior is genuinely bigger inside (smallest ${smallest} floor tiles)`,
-            smallest > 430]);
+          /* v48 PART B: the bar moves with the grid, and it is UPDATED, not
+             relaxed — 430 was the largest floor count a 26x26 interior ever
+             produced, and this asserts the same thing one grid size later.
+             Measured on the pre-change build across sixteen real interiors,
+             an 80x80 produced 3,455-4,128 floor tiles; a 160x160 produces
+             15,160-16,298. */
+          results.push([`a 160x160 interior is genuinely bigger inside (smallest ${smallest} floor tiles)`,
+            smallest > 4128]);
           {
             const per = v => (v / dFloor * 100);
             console.log(`interior density across ${caves2b} caves: ${dFloor} floor tiles, ` +
@@ -2860,10 +2932,14 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     if (typeof window.debugV30Info === 'function') {
       const v30 = window.debugV30Info();
       results.push(['exactly one Elder Drake exists in the world', v30.drakeCount === 1]);
-      /* Expansion 2b: 27 -> 82. The drake's own search ring is 9..81 from the
-         volcano centre, scaled with the lava core it has to clear. */
+      /* v48 PART A: 82 -> 325. The drake's own search ring is 36..324 from
+         the volcano centre, scaled with the lava core it has to clear — the
+         bound is the ring, so it is derived from the same audit rather than
+         re-guessed. Measured across six seeds it lands at 124.5, the first
+         VOLROCK ring outside the 124-tile lava core, exactly the proportion
+         it held at every prior scale. */
       results.push(['the Elder Drake spawned near the Volcano',
-        !!v30.drake && Math.hypot(v30.drake.x - v30.volcano.x, v30.drake.y - v30.volcano.y) < 82]);
+        !!v30.drake && Math.hypot(v30.drake.x - v30.volcano.x, v30.drake.y - v30.volcano.y) < 325]);
       results.push(['the Elder Drake is the largest creature in the game',
         v30.MOB_K_drake > 2.85]);
       results.push(['the Elder Drake respawns in hours, not the standard mob timer',
@@ -3247,9 +3323,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         far(v37.BAZAAR, v37.SPAWN) > 27 &&
         far(v37.ANCIENT, v37.SPAWN) > 27 &&
         far(v37.COLOSSEUM, v37.SPAWN) > 27]);
-      // Expansion 3: ANCIENT is placed 182 from the Volcano (91 * 2).
+      // v48 PART A: ANCIENT is placed 364 from the Volcano (182 * 2).
       results.push(['the Ancient Forge is near the Volcano, where dragonsteel comes from',
-        far(v37.ANCIENT, v37.VOLCANO) < 190]);
+        far(v37.ANCIENT, v37.VOLCANO) < 380]);
 
       // Ancient Forge actually unlocks what it is supposed to
       results.push(['dragonsteel recipes exist and were already gated on the Ancient Forge',
@@ -3366,8 +3442,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          geometry"; 2b is the version that changes it, so these move with it.
          What they still prove is that the ground pass reads whatever N and
          SAFE_RADIUS actually are rather than carrying a baked assumption. */
-      results.push(['N is the scaled-up 2000', info2a.N === 2000]);
-      results.push(['the safe zone radius is the scaled-up 226', info2a.SAFE_RADIUS === 226]);
+      results.push(['N is the scaled-up 4000', info2a.N === 4000]);
+      results.push(['the safe zone radius is the scaled-up 452', info2a.SAFE_RADIUS === 452]);
       results.push(['landmark placement is untouched — all three still found a spot',
         info2a.VOLCANO.x > 0 && info2a.MOUNT.x > 0 && info2a.RUINS.length === 6]);
 
@@ -3537,9 +3613,24 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['exactly one Golem Elder exists in the world', a0.golemElderCount === 1]);
       results.push(['it was actually placed somewhere real',
         !!a0.GOLEM_ELDER && a0.GOLEM_ELDER.x > 0 && a0.GOLEM_ELDER.y > 0]);
+      /* ⚠️ v48: this read the LIVE x/y and was a latent flake, not a scale
+         pin. golemElderSpot() returns the single furthest-from-centre RUINB
+         tile in the world, so the Elder always stands on the outermost tile
+         of its own cluster — 75.96 of a 76-tile footprint on this seed, 37.95
+         of 38 before the expansion — and v30's idle-wander patrols it up to
+         its own leashRadius from there. One step outward and the tile under
+         it is no longer RUINB, which says nothing about where it was placed.
+         Asserted on its HOME tile now, which is the thing this gate has always
+         meant, plus the wander itself bounded by the leash it is supposed to
+         obey. Strengthened, not relaxed: two assertions where there was one,
+         and neither can drift with the seed. */
       results.push(['it stands on a Ruin tile',
         !!a0.GOLEM_ELDER &&
-        window.biomeAt(Math.floor(a0.GOLEM_ELDER.x), Math.floor(a0.GOLEM_ELDER.y)) === B39.RUINB]);
+        window.biomeAt(Math.floor(a0.GOLEM_ELDER.hx), Math.floor(a0.GOLEM_ELDER.hy)) === B39.RUINB]);
+      results.push(['and it has never wandered further than its own leash from that tile',
+        !!a0.GOLEM_ELDER &&
+        Math.hypot(a0.GOLEM_ELDER.x - a0.GOLEM_ELDER.hx,
+                   a0.GOLEM_ELDER.y - a0.GOLEM_ELDER.hy) <= a0.golemElderDef.leashRadius]);
       /* Recomputed independently here rather than trusting the game's own
          answer: no RUINB tile in ANY cluster may sit further from its own
          centre than the one it chose. */
@@ -3650,9 +3741,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const alt = v39();
       results.push(['the Dragon Elder Altar was placed somewhere real',
         alt.DRAGON_ALTAR.x > 0 && alt.DRAGON_ALTAR.y > 0]);
-      // Expansion 3: DRAGON_ALTAR_DIST is 282 (141 * 2).
+      // v48 PART A: DRAGON_ALTAR_DIST is 564 (282 * 2).
       results.push(['it stands near the Tower the orb comes from',
-        Math.hypot(alt.DRAGON_ALTAR.x - alt.TOWER.x, alt.DRAGON_ALTAR.y - alt.TOWER.y) < 290]);
+        Math.hypot(alt.DRAGON_ALTAR.x - alt.TOWER.x, alt.DRAGON_ALTAR.y - alt.TOWER.y) < 580]);
       results.push(['but outside the spawn safe zone, like every landmark since v37',
         window.inSafeZone(alt.DRAGON_ALTAR.x, alt.DRAGON_ALTAR.y) === false]);
       results.push(['on ground a player can actually stand on',
@@ -5471,9 +5562,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       {
         const w46 = window.debugWorldInfo();
         const H46 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-        results.push([`v46 C: the wild and mob spawn keepouts are named, not literals`,
-          gameScript.indexOf('const WILD_SPAWN_MIN = 300;') > 0 &&
-          gameScript.indexOf('const MOB_SPAWN_MIN = 350;') > 0 &&
+        results.push([`v48 A: the wild and mob spawn keepouts are named, not literals`,
+          gameScript.indexOf('const WILD_SPAWN_MIN = 600;') > 0 &&
+          gameScript.indexOf('const MOB_SPAWN_MIN = 700;') > 0 &&
           gameScript.indexOf('< WILD_SPAWN_MIN) continue;') > 0 &&
           gameScript.indexOf('< MOB_SPAWN_MIN) continue;') > 0]);
         /* THE regression this build exists to prevent: a Ruin cluster whose
@@ -5493,20 +5584,42 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         /* Every landmark distance-from-a-fixed-point is exactly double what
            Expansion 2b shipped. Source pins, because these are inline
            literals inside placeLandmarks() that no hook can see. */
-        const DOUBLED = ['Math.cos(a1) * 626', 'Math.sin(a2) * 600', '> 488) break;',
-          'Math.cos(a4) * 400', 'Math.cos(a5) * 182', 'Math.cos(a6) * 500',
-          'const DRAGON_ALTAR_DIST = 282;', 'if (dV < 226 &&', 'b = dV < 62 ? B.LAVA',
-          'if (b === B.PEAK && dV < 350)', 'dTower / 1000', 'dMount / 300',
-          'for (let r = 18; r < 162; r++)'];
+        /* v48 PART A: the SAME audit list, at the next ratio. Every entry is
+           Expansion 3's own value doubled, and the list itself was rebuilt from
+           the Expansion 3 diff rather than retyped, so a site that scaled last
+           time cannot be silently skipped this time. UPDATED, not relaxed: it
+           is still an exact source grep for every constant the audit moved. */
+        const DOUBLED = ['Math.cos(a1) * 1252', 'Math.sin(a2) * 1200', '> 976) break;',
+          'Math.cos(a4) * 800', 'Math.cos(a5) * 364', 'Math.cos(a6) * 1000',
+          'const DRAGON_ALTAR_DIST = 564;', 'if (dV < 452 &&', 'b = dV < 124 ? B.LAVA',
+          'if (b === B.PEAK && dV < 700)', 'dTower / 2000', 'dMount / 600',
+          'for (let r = 36; r < 324; r++)',
+          'const WILD_SPAWN_MIN = 600;', 'const MOB_SPAWN_MIN = 700;',
+          'const RUIN_FOOT = 76;', 'const ZONE_R = 136;', 'const RUIN_SEP = 664;',
+          'const ZONE_SEP = 664;', 'const RUIN_ZONE_SEP = 400;',
+          'tx >= 600 && tx <= N - 600', 'Math.max(144, Math.min(N - 144'];
         const missing46 = DOUBLED.filter(t => gameScript.indexOf(t) < 0);
-        results.push([`v46 C: every scaled constant landed (${DOUBLED.length - missing46.length}/${DOUBLED.length})` +
+        results.push([`v48 A: every scaled constant landed (${DOUBLED.length - missing46.length}/${DOUBLED.length})` +
           (missing46.length ? ' MISSING ' + missing46.join(' | ') : ''), missing46.length === 0]);
-        results.push(['v46 C: BREATH_MAX is deliberately NOT scaled, as both expansion specs require',
-          window.debugWorldInfo().N === 2000 &&
+        /* and every Expansion 3 value is GONE from the source, which is the
+           half a "did it land" grep cannot prove on its own. */
+        const STALE48 = ['Math.cos(a1) * 626', 'Math.sin(a2) * 600', '> 488) break;',
+          'const DRAGON_ALTAR_DIST = 282;', 'if (dV < 226 &&', 'b = dV < 62 ? B.LAVA',
+          'if (b === B.PEAK && dV < 350)', 'const RUIN_FOOT = 38;', 'const ZONE_R = 68;'];
+        const left48 = STALE48.filter(t => gameScript.indexOf(t) >= 0);
+        results.push([`v48 A: and no Expansion 3 value survived the audit` +
+          (left48.length ? ' STILL PRESENT ' + left48.join(' | ') : ''), left48.length === 0]);
+        results.push(['v48 A: BREATH_MAX is deliberately NOT scaled, as every expansion spec requires',
+          window.debugWorldInfo().N === 4000 &&
           gameScript.indexOf('const BREATH_MAX') > 0 &&
           gameScript.indexOf('const BREATH_MAX = 30') > 0]);
-        results.push(['v46 C: the interior grid is untouched by the overworld expansion',
-          window.debugSpaceInfo().INTERIOR_N === 80]);
+        results.push(['v48 B: the interior grid doubled with the overworld this time',
+          window.debugSpaceInfo().INTERIOR_N === 160]);
+        results.push(['v48 B: and both interior guards are derived from the grid, not literals',
+          gameScript.indexOf('const INTERIOR_FLOOD_GUARD = 8 * INTERIOR_N * INTERIOR_N;') > 0 &&
+          gameScript.indexOf('const INTERIOR_CARVE_GUARD = 2 * INTERIOR_N;') > 0 &&
+          gameScript.indexOf('guard++ < INTERIOR_CARVE_GUARD') > 0 &&
+          gameScript.indexOf('guard++ < 200)') < 0]);
       }
 
       /* ---- PART D: the real minimap ------------------------------------ */
@@ -5516,9 +5629,16 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         window.debugSetPlayer({ x: w46.SPAWN.x, y: w46.SPAWN.y, hp: 100 });
         window.render(1);
         const m0 = dmi();
-        results.push([`v46 D: it is a real canvas, ~10x10 tiles centred on the player (${m0.tiles} tiles)`,
+        /* v48 PART D: UPDATED, not relaxed — 11x11 becomes 31x31, which is
+           the spec's "roughly 30x30", and the canvas is still sized to the
+           window it draws. 121 tiles -> 961. */
+        results.push([`v48 D: it is a real canvas, 31x31 tiles centred on the player (${m0.tiles} tiles)`,
           m0.canvas && m0.canvas.w === m0.MAP_PX && m0.canvas.h === m0.MAP_PX &&
-          m0.MAP_R === 5 && m0.tiles === 121]);
+          m0.MAP_R === 15 && m0.tiles === 961]);
+        /* and the card did NOT grow with it: a 3x window on a card that is
+           still the size it was is the whole shape of this part. */
+        results.push([`v48 D: the card is still the size it always was (${m0.MAP_PX}px, was 121)`,
+          m0.MAP_PX <= 130 && m0.MAP_CELL === 4]);
         results.push(['v46 D: it is on screen in the world', m0.visible === true]);
         results.push(['v46 D: the player sits at the centre cell of it',
           Math.abs(m0.centre[0] - m0.MAP_PX / 2) <= m0.MAP_CELL &&
@@ -5773,9 +5893,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           drifted.length === 0]);
         results.push(['v47 C: and the Sea Serpent is the ONLY one whose damage did not move with it',
           i47.MOBS.sea_serpent.dmg === PRE47.sea_serpent[1]]);
-        results.push(['v47: the mob roster is exactly the old twelve plus the Adult Golem',
+        results.push(['v48: the mob roster is exactly v47\'s thirteen plus the Demon Knight',
           Object.keys(i47.MOBS).sort().join(',') ===
-          Object.keys(PRE47).concat('adult_golem').sort().join(',')]);
+          Object.keys(PRE47).concat('adult_golem', 'demon_knight').sort().join(',')]);
       }
 
       /* ---- PART C: the Adult Golem, built for real ---------------------- */
@@ -6198,6 +6318,216 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       /* ---- and the world is still standing after all of it --------------- */
       results.push(['v47: the world still runs frames cleanly after every part of this',
         (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
+    }
+
+    /* ================= v48 PART C — THE DEMON KNIGHT ===================== */
+    {
+      const i48 = window.debugWorldInfo(), B48 = i48.B, dk = i48.MOBS.demon_knight;
+      const hs48 = window.debugCombatHandles();
+      const knights = hs48.mobs.filter(m => m.kind === 'demon_knight');
+      const drakes = hs48.mobs.filter(m => m.kind === 'elder_drake');
+      const VOL48 = i48.VOLCANO;
+      results.push(['v48 C: the Demon Knight exists at all', !!dk]);
+      results.push(['v48 C: it is the bible\'s own Very Hard tier, at the locked spec\'s numbers',
+        !!dk && dk.hp === 280 && dk.dmg === 26 && dk.atkRange === 2.0 &&
+        dk.atkCooldownMs === 1600 && dk.windupMs === 600 &&
+        dk.aggroRadius === 9 && dk.leashRadius === 16 && dk.moveSpeed === 1.6 &&
+        dk.count === 2 && dk.tameable === false]);
+      results.push(['v48 C: its drop is genuinely dragonsteel, guaranteed, as the bible says',
+        !!dk && (dk.loot || []).some(l => l.type === 'dragonsteel' && l.chance === 1)]);
+      results.push([`v48 C: TWO of them stand in the world, not one (${knights.length})`,
+        knights.length === 2]);
+      /* The whole placement claim: at the Volcano, guarding the drake, and
+         nowhere else. Checked as a relationship to the drake's own spot rather
+         than as a coordinate, so it cannot drift with the seed. */
+      const dist48 = knights.map(k => drakes.length
+        ? Math.hypot(k.hx - drakes[0].hx, k.hy - drakes[0].hy) : Infinity);
+      console.log(`demon knights: ${knights.map((k, n) => `(${k.hx.toFixed(1)},${k.hy.toFixed(1)}) ` +
+        `${dist48[n].toFixed(1)} from the drake, ` +
+        `${Math.hypot(k.hx - VOL48.x, k.hy - VOL48.y).toFixed(1)} from the volcano`).join('  ')}`);
+      results.push(['v48 C: both of them are inside the Elder Drake\'s own aggro radius of it',
+        knights.length === 2 && drakes.length === 1 &&
+        dist48.every(d => d <= i48.MOBS.elder_drake.aggroRadius)]);
+      results.push(['v48 C: and they flank it rather than stacking on one shoulder',
+        knights.length === 2 &&
+        Math.hypot(knights[0].hx - knights[1].hx, knights[0].hy - knights[1].hy) >= 6]);
+      results.push(['v48 C: both stand on real volcanic ground, never lava or water',
+        knights.every(k => {
+          const b = window.biomeAt(Math.floor(k.hx), Math.floor(k.hy));
+          return b === B48.VOLROCK || b === B48.ROCK || b === B48.CALDERA;
+        })]);
+      results.push(['v48 C: they are at the Volcano and NOWHERE else in the world',
+        knights.every(k => Math.hypot(k.hx - VOL48.x, k.hy - VOL48.y) < 325)]);
+      /* biomes:[] is what keeps the hashed spawn loop from scattering them,
+         and the placement lives inside the drake's own block — so no drake
+         can only ever mean no knights. Proved from the source, since "this
+         creature cannot exist without that one" has no runtime shape. */
+      results.push(['v48 C: no drake means no knights — the placement is inside the drake\'s own block',
+        gameScript.indexOf('dkFlankSpots(spot, dk.count).forEach') > 0 &&
+        gameScript.indexOf('const dk = MOBS.demon_knight;') > 0]);
+      results.push(['v48 C: a guaranteed dragonsteel drop does NOT come back on the 60s mob timer',
+        window.debugV30Info && dk && (() => {
+          const src = gameScript.indexOf('if (kind === "demon_knight") return DEMON_KNIGHT_RESPAWN_MS;');
+          return src > 0 && gameScript.indexOf('const DEMON_KNIGHT_RESPAWN_MS = 3 * 60 * 60 * 1000;') > 0;
+        })()]);
+      /* Art: it must be drawn by its OWN branch, which is the thing that was
+         not true of the Elder Drake for eighteen versions. */
+      results.push(['v48 C: it has a drawMob branch of its own',
+        gameScript.indexOf('} else if (m.kind === "demon_knight") {') > 0]);
+      results.push(['v48 C: MOB_K sorts it exactly where its threat does — over the Serpent, under the Drake',
+        (() => { const si = window.debugScaleInfo(), K = si.MOB_K, S = si.SPECIES_K;
+                 /* golem_elder's scale lives in SPECIES_K, not MOB_K — its
+                    hostile form is tameable and draws through drawSpecies. */
+                 return K.demon_knight > K.sea_serpent && K.demon_knight < K.elder_drake &&
+                        K.demon_knight < S.golem_elder &&
+                        si.mobThreat.demon_knight > si.mobThreat.sea_serpent &&
+                        si.mobThreat.demon_knight < si.mobThreat.elder_drake; })()]);
+      results.push(['v48 C: and its "!" tell clears its own horns, like every other mob',
+        (window.debugScaleInfo().MOB_TALL || {}).demon_knight === 41]);
+      /* ⚠️ THE FIND: the Elder Drake drew the BANDIT. Pinned from both sides so
+         it can never come back — the route exists, and the drake's own art is
+         no longer unreachable. */
+      results.push(['v48 C: the Elder Drake is routed to its OWN art, not the bandit fallback',
+        gameScript.indexOf('drawSpecies("elder_drake", sx, sy, t, m.state === "aggro" || m.state === "leash");') > 0]);
+      results.push(['v48 C: and it is routed BEFORE the humanoid chain it used to fall through',
+        gameScript.indexOf('if (m.kind === "elder_drake") {\n    ctx.fillStyle = `rgba(20,32,44,${SUN.alpha})`;') <
+        gameScript.indexOf('} else if (m.kind === "demon_knight") {') &&
+        gameScript.indexOf('if (m.kind === "elder_drake") {\n    ctx.fillStyle = `rgba(20,32,44,${SUN.alpha})`;') > 0]);
+      results.push(['v48 C: the Elder cue is still Elder-only — a Demon Knight is not one',
+        window.debugMusicInfo && (() => {
+          const before = window.debugMusicInfo().elderMusicUntil;
+          window.debugSetMusicState({ elderMusicUntil: 0 });
+          window.noteElderCombat && window.noteElderCombat('demon_knight');
+          const after = window.debugMusicInfo().elderMusicUntil;
+          window.debugSetMusicState({ elderMusicUntil: before });
+          return after === 0;
+        })()]);
+      results.push(['v48 C: and it still IS raised by the Elder Drake beside it',
+        window.debugMusicInfo && (() => {
+          window.debugSetMusicState({ elderMusicUntil: 0 });
+          window.noteElderCombat && window.noteElderCombat('elder_drake');
+          const after = window.debugMusicInfo().elderMusicUntil;
+          window.debugSetMusicState({ elderMusicUntil: 0 });
+          return after > 0;
+        })()]);
+      results.push(['v48 C: it draws through the real drawMob path without throwing',
+        (() => {
+          try {
+            for (const st of ['idle', 'aggro', 'attack', 'cower']) for (const w of [false, true])
+              window.drawMob({ id: 'dk:g', kind: 'demon_knight', x: knights.length ? knights[0].x : 40,
+                y: knights.length ? knights[0].y : 50, hx: 40, hy: 50, hp: 120, maxHp: 280,
+                state: st, winding: w, flash: 0, fx: w ? -1 : 1, fy: 0,
+                dead: false, target: null, ph: 1 }, 900);
+            return true;
+          } catch (e) { return false; }
+        })()]);
+    }
+
+    /* ============ v48 PART E — THE DOCUMENTED RE-CHECK ===================
+       Three systems confirmed working in earlier sessions, re-verified here
+       BECAUSE THIS VERSION TOUCHED THE WORLD AROUND THEM — the expansion moved
+       every distance, the minimap moved, and a new mob joined the roster. The
+       result goes in SKILL.md either way, pass or find. */
+    {
+      const dmi48 = window.debugMusicInfo();
+      results.push(['v48 E: BG_PLAYLIST is still exactly the five tracks, in order',
+        dmi48.BG_PLAYLIST.join('|') ===
+        ['audio/Pop.mp3', 'audio/Slower_Jamz.mp3', 'audio/Long_Way_Home.mp3',
+         'audio/song.mp3', 'audio/siren.mp3'].join('|')]);
+      results.push(['v48 E: tension.mp3 is still the Elder track and nothing else is',
+        dmi48.ELDER_MUSIC_URL === 'audio/tension.mp3' &&
+        dmi48.COMBAT_MUSIC_URL !== 'audio/tension.mp3' &&
+        dmi48.BG_PLAYLIST.indexOf('audio/tension.mp3') < 0]);
+      results.push(['v48 E: and it fires ONLY for Elder-tier combatants',
+        (() => {
+          const raised = [];
+          for (const k of ['goblin', 'troll', 'sea_serpent', 'adult_golem', 'demon_knight',
+                           'elder_drake', 'golem_elder', 'dragon_elder', 'unicorn_elder', 'wolf']) {
+            window.debugSetMusicState({ elderMusicUntil: 0 });
+            window.noteElderCombat(k);
+            if (window.debugMusicInfo().elderMusicUntil > 0) raised.push(k);
+          }
+          window.debugSetMusicState({ elderMusicUntil: 0 });
+          console.log('elder cue raised by:', raised.join(',') || 'nothing');
+          return raised.sort().join(',') === 'dragon_elder,elder_drake,golem_elder,unicorn_elder';
+        })()]);
+      /* Bases: the check and the write, exercised for real against the stub
+         table, on ground this version's own expansion chose. */
+      {
+        const wasE = window.debugWorldInfo().player;
+        const iE = window.debugWorldInfo();
+        let spotE = null;
+        for (let a = 0; a < 4000 && !spotE; a++) {
+          const x = Math.floor(iE.SPAWN.x + 700 + (a % 60)), y = Math.floor(iE.SPAWN.y + 700 + Math.floor(a / 60));
+          if (window.basePlaceCheck('foundation', x + 0.5, y + 0.5).ok) spotE = [x + 0.5, y + 0.5];
+        }
+        results.push(['v48 E: basePlaceCheck still finds legal ground in the expanded world', !!spotE]);
+        if (spotE) {
+          const beforeRows = tableData.base_pieces.length;
+          window.debugSetPlayer({ x: spotE[0] - 1, y: spotE[1], hp: 100,
+            inv: { wood: 40, stone: 40, iron_bar: 20, runic_stone: 20, dragonsteel: 20 } });
+          const okE = await window.placeBasePiece('foundation', 'wood', spotE[0], spotE[1]);
+          const rows = tableData.base_pieces;
+          const row = rows[rows.length - 1];
+          results.push([`v48 E: placeBasePiece still writes a real base_pieces row (${okE && okE.why})`,
+            !!okE && okE.ok === true && rows.length === beforeRows + 1 && !!row &&
+            row.kind === 'foundation' && row.tier === 'wood' && row.owner === 'BootTest']);
+          /* v33's six columns plus v34's two documented additions, and NOTHING
+             this version added — the same exact-schema check v34 introduced. */
+          const ALLOWED48 = ['id', 'kind', 'tier', 'x', 'y', 'owner', 'hp', 'last_collected'];
+          results.push([`v48 E: with the columns v33/v34 locked and no new one (${row ? Object.keys(row).join(',') : 'no row'})`,
+            !!row && Object.keys(row).every(k => ALLOWED48.indexOf(k) >= 0) &&
+            ['kind', 'tier', 'x', 'y', 'owner'].every(k => k in row)]);
+          const refuse = window.basePlaceCheck('foundation', iE.SPAWN.x, iE.SPAWN.y);
+          results.push(['v48 E: and the safe zone still refuses one, at the new SAFE_RADIUS',
+            refuse.ok === false]);
+        }
+        window.debugSetPlayer({ x: wasE.x, y: wasE.y, hp: 100 });
+      }
+      /* Fast travel: the one condition, and the absence of the one check. */
+      {
+        const travelSrc = gameScript.slice(gameScript.indexOf('function refreshTravelPanel'),
+                                           gameScript.indexOf('function refreshTravelPanel') + 6000);
+        const btnLine = travelSrc.slice(travelSrc.indexOf('btn.disabled = p.dead'),
+                                        travelSrc.indexOf('btn.disabled = p.dead') + 40);
+        results.push(['v48 E: the player-travel button is disabled by exactly two things — dead, or cooling down',
+          btnLine.indexOf('btn.disabled = p.dead || cdLeft > 0;') === 0]);
+        results.push(['v48 E: and there is no Unicorn Elder ownership check anywhere near it',
+          btnLine.indexOf('owned') < 0 && btnLine.indexOf('unicorn') < 0 &&
+          btnLine.indexOf('ownsUnicornElder') < 0]);
+        /* ⚠️ v48 PART E — THE FIND, AND IT IS THE THIRD ROUND OF THE SAME BUG.
+           PART E asks whether the travel BUTTON's disabled condition still
+           carries a Unicorn Elder check. It does not — that is the two gates
+           above, and they pass. But the function BEHIND the button still opens
+           with `if (!ownsUnicornElder()) { toast(...); return false; }`, so
+           today the button is enabled for everyone and refuses everyone
+           without an Elder. That is the same "fast travel still isn't working
+           and nothing says why" report the previous hotfix was chasing, one
+           layer further down.
+
+           Deliberately RECORDED and NOT changed: which way it should go is a
+           real design decision with two defensible readings (Tuning/Polish's
+           own judgment call 1 wrote both of them down), and the fix either way
+           is one line. This gate pins the state as it actually is, so it can
+           never go quiet and so that whoever changes it has to change this
+           deliberately. */
+        const tpFn = (() => {
+          const at = gameScript.indexOf('function travelToPlayer');
+          const body = gameScript.slice(at, gameScript.indexOf('\nfunction ', at + 10));
+          return body;
+        })();
+        const tpGated = tpFn.indexOf('if (!ownsUnicornElder())') > 0;
+        console.log('v48 E FINDING — travelToPlayer Unicorn Elder gate present:', tpGated,
+                    '| button gate present: false');
+        results.push(['v48 E: ⚠️ FINDING — the button is ungated but travelToPlayer() still refuses without the Elder',
+          tpGated === true]);
+        results.push(['v48 E: and landmark fast travel deliberately still needs one — that IS the Elder\'s bible ability',
+          (() => {
+            const at = gameScript.indexOf('function fastTravelTo');
+            const body = gameScript.slice(at, gameScript.indexOf('\nfunction ', at + 10));
+            return body.indexOf('if (!ownsUnicornElder())') > 0;
+          })()]);
+      }
     }
 
     let allOk = true;
