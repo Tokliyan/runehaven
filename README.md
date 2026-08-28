@@ -102,68 +102,82 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v49 — Feature-List Chunking & Spawn Density Rebalance)
+## Confirmed, locked spec for the next build (v49 — finish the harness repair, then ship)
 
-Confirmed live: `buildFeatureList()` runs a single eager `for(ty<N)
-for(tx<N)` pass at login, checking every one of N² tiles and building an
-in-memory `features` array + `featureIndex` map covering the ENTIRE
-world at once, regardless of where the player actually is. At N=4000
-this is 16 million tile checks synchronously blocking login, independently
-confirmed real: login went from 5.9s/326MB to 26s/988MB purely from this
-version's own expansion, and the automated test harness itself timed out
-attempting the full gauntlet against it.
+**This is a completion, not a fresh design — read this whole section
+before touching anything.** `runehaven.html` and `debug/run4.js` on
+`main` already contain real, finished work from tonight's repair
+session:
 
-**This is the exact same category of problem `bakeTerrain()` had before
-Expansion 2a replaced it with viewport-only rendering — that fix is the
-direct precedent for this one, not a new pattern being invented.**
+- `run4.js` re-synced to the real N=4000 world: every stale N=2000
+  literal re-recorded from the live file (map size, safe zone radius,
+  ruin/zone separation and footprint, cave grid size, Elder Drake's
+  search ring, Ancient Forge and Dragon Altar distances from their
+  reference points, Dark Forest area, minimap tile count).
+- Demon Knight correctly added to both mob-roster gates (it is allowed
+  to out-HP Sea Serpent — Very Hard sits above Hard on the bible's own
+  table — and it now counts in the named-roster check).
+- A genuine, real bug fixed in `runehaven.html` itself, not just the
+  test: `loadSavedCreds()` assumed `sbUrl`/`sbKey`/`connectBox` were
+  already in the DOM the instant it ran and could throw if they were
+  not yet parsed, silently breaking everything after it in page setup.
+  Made defensive again; the baked-in Supabase defaults are unchanged.
+- Several `window.debugXInfo()` calls in `run4.js` were made defensive
+  against a real, deterministic issue where they return `undefined` or
+  throw partway through a full run (`debugPinInfo`, `debugSettingsInfo`
+  confirmed so far) — **this pattern was not fully chased to its root
+  cause tonight and may recur at other call sites still further into
+  the file. Continue hardening any further `window.debugXInfo()` call
+  that throws the same way, in place, rather than reverting the ones
+  already fixed.**
 
-**PART A — chunk the feature list, load only what's near the player.**
-Divide the world into fixed-size chunks (propose 64x64 tiles — large
-enough that chunk-boundary crossings are infrequent during normal
-movement, small enough that a chunk's own feature scan stays cheap).
-`buildFeatureList()` is replaced with a per-chunk builder that runs ONLY
-for chunks within a real radius of the player (propose 3 chunks — a
-9-chunk window, matching roughly the same effective feature-visibility
-range the eager version already gave the player at any one moment,
-verify this against the current visible-radius rather than guess). A
-chunk's features are computed once and cached the first time the player
-comes near it — revisiting an already-loaded chunk costs nothing. Chunks
-outside the load radius may be evicted from memory to keep heap bounded,
-but a chunk a player has already interacted with (a mined node, a
-picked-up item) must not lose that state on eviction — reuse the exact
-`minedNodes` persistence mechanism already in place, this only changes
-WHEN a chunk's features get computed, not what gets remembered about
-them.
+**PART A — finish getting `run4.js` to a real, complete, honest run.**
+Continue from where tonight's session stopped: there is a `NaN` in the
+interior-density console log (`interior density across N caves: NaN
+floor tiles...`) immediately before the last guarded crash — this was
+NOT root-caused tonight, only worked around downstream. Determine
+whether `debugSpaceInfo()`'s `rec` lookup genuinely fails to see a
+just-entered interior at that point in the test sequence (a real
+harness bug) or whether call ordering needs to change (`dspc()` needs
+to run before `dssp({ clearCache: true })` on the next iteration, or
+similar) — fix the actual cause, not just the symptom, since a NaN
+silently reaching a `results.push` threshold check would be a false
+PASS or a confusing FAIL either way.
 
-**PART B — every existing call site updated, not just the builder.**
-Confirmed the render loop, `nearestGatherable()`, and any other function
-reading `features`/`featureIndex` currently assume the full map is
-already resident. Each must be re-checked against the chunked reality —
-a gather attempt near a chunk boundary must correctly see features from
-BOTH adjacent chunks if the player's own gather range spans it, not just
-whichever chunk loaded first.
+**PART B — reach real 0 FAIL on the current, unmodified file.** Run the
+full `run4.js` end to end without truncating early. Fix whatever
+remains the same way tonight's session did: verify against the real
+live constant/function before changing a test's expectation, and only
+diagnose-not-relax anything touching cave dive-reachability, which
+`SKILL.md` has already ruled belongs in a real design decision, not a
+third silent threshold drop.
 
-**PART C — real, measured proof this actually fixes the regression.**
-Confirm login time and heap usage return to something close to pre-
-Expansion-4 numbers (5.9s/326MB) rather than assuming the architecture
-change alone is sufficient — measure it the same way the v48 build
-measured the regression in the first place.
+**PART C — apply v49's actual work.** The chunked feature-loading fix
+and the density rebalance are already fully built, measured, and
+correct — saved as `BUILD_FAILED_v49.patch` in the repo (310
+insertions / 38 deletions against commit `ae3f277`). Do not redesign
+this. Apply it, then update `run4.js`'s `SP_COUNTS` table and the two
+exact-population gates (`Storm Dragon reaches its peaks`, `golem spawns
+its full v47 population`) to the patch's own new counts, exactly as the
+patch's own notes describe.
 
-**PART D — pet spawn density, rebalanced again.** Confirmed: v47's
-count increases are now roughly 4x sparser purely from N doubling again
-without the counts scaling alongside it — the identical problem v47
-fixed, undone by Expansion 4. Reapply the same tier-scaled correction
-technique from v47 (Common scales more aggressively than Rare, Elders
-and daily-capped species untouched), measured against the CURRENT
-N=4000 map, not re-deriving from v47's own already-stale N=2000 numbers.
+**PART D — the two small open decisions from the patch's own notes,
+make a real call on each:**
+1. `speciesDailyCap()` scales with `count`, so Rare species' daily caps
+   are now ~4x bigger (Unicorn 16 → 56) as a direct consequence of the
+   density fix. This is consistent with the fix's own intent — more
+   instances spread across 4x more map area — accept it, do not revert.
+2. Fight-to-tame pets (Boar, Bear, Griffin, Phoenix) take density from
+   `MOBS.count`, which neither v47 nor this patch touched — they are
+   still roughly 4x sparser than everything else post-Expansion-4.
+   Apply the same tier-scaled correction technique to these four
+   specifically, for consistency with every other species.
 
-**Proof gates:** standard gauntlet plus confirm login time and heap
-usage are measured and reported (not assumed), confirm a gather action
-near a chunk boundary correctly sees features from both sides, confirm
-a mined/picked-up node's state survives its chunk being evicted and
-reloaded, confirm pet density is genuinely restored to comparable
-findability as v47's own fix, verified the same way (real counts, real
-comparison, not assumed proportional).
+**Proof gates:** real, complete, unmodified full run4 + run5 + run2/run3
+with actual reported numbers — not partial, not truncated. Confirm login
+time and heap return to something close to the measured 5.99s/165.8MB
+from tonight's session. Confirm every gate this spec touches passes for
+a real, understood reason, not a guessed one.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
