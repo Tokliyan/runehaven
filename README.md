@@ -102,93 +102,68 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v48 — World Expansion 4, Demon Knight & Minimap 3x)
+## Confirmed, locked spec for the next build (v49 — Feature-List Chunking & Spawn Density Rebalance)
 
-Confirmed live: `N=2000`, `INTERIOR_N=80`. Three items deliberately
-deferred out of v47.
+Confirmed live: `buildFeatureList()` runs a single eager `for(ty<N)
+for(tx<N)` pass at login, checking every one of N² tiles and building an
+in-memory `features` array + `featureIndex` map covering the ENTIRE
+world at once, regardless of where the player actually is. At N=4000
+this is 16 million tile checks synchronously blocking login, independently
+confirmed real: login went from 5.9s/326MB to 26s/988MB purely from this
+version's own expansion, and the automated test harness itself timed out
+attempting the full gauntlet against it.
 
-**PART A — the map doubles again.** `N: 2000 -> 4000`. Full constant
-audit repeated exactly as rigorously as every prior expansion — every
-landmark-relative distance re-derived by the same ratio, not guessed;
-`bakeTerrain()` remains gone since Expansion 2a, so memory is not the
-blocker, but the viewport tile-count bound must still be re-confirmed at
-this scale regardless. Biome rarity thresholds and noise wavelengths
-stay untouched — proven correct twice already at two prior scales, this
-is the third confirmation, not a new risk.
+**This is the exact same category of problem `bakeTerrain()` had before
+Expansion 2a replaced it with viewport-only rendering — that fix is the
+direct precedent for this one, not a new pattern being invented.**
 
-**PART B — caves double again.** `INTERIOR_N: 80 -> 160`. Reuse the
-exact connectivity guarantee (flood-fill from arrival, carve to any
-orphaned region) and re-derive the flood-fill guard from the grid size
-itself, not a hardcoded number — this exact class of bug (a guard sized
-for the old grid silently truncating at the new one) has already
-happened once at this exact transition (50->80) and must not repeat at
-80->160. Ore/mob/node density scales with the new area, not left flat.
+**PART A — chunk the feature list, load only what's near the player.**
+Divide the world into fixed-size chunks (propose 64x64 tiles — large
+enough that chunk-boundary crossings are infrequent during normal
+movement, small enough that a chunk's own feature scan stays cheap).
+`buildFeatureList()` is replaced with a per-chunk builder that runs ONLY
+for chunks within a real radius of the player (propose 3 chunks — a
+9-chunk window, matching roughly the same effective feature-visibility
+range the eager version already gave the player at any one moment,
+verify this against the current visible-radius rather than guess). A
+chunk's features are computed once and cached the first time the player
+comes near it — revisiting an already-loaded chunk costs nothing. Chunks
+outside the load radius may be evicted from memory to keep heap bounded,
+but a chunk a player has already interacted with (a mined node, a
+picked-up item) must not lose that state on eviction — reuse the exact
+`minedNodes` persistence mechanism already in place, this only changes
+WHEN a chunk's features get computed, not what gets remembered about
+them.
 
-**PART C — Demon Knight, built for real.** Confirmed live: does not
-exist anywhere in `MOBS`. The bible places it in "Deep Dungeons," which
-do not exist as their own biome — rather than block this on building
-Dungeons from scratch (a whole separate landmark-scale feature), Demon
-Knight spawns as a dedicated guardian at the Volcano specifically,
-protecting the Elder Drake, matching the direct instruction already
-given: this is a deliberate, named exception to its bible placement, not
-an oversight — record it as such in the changelog. Stats at the bible's
-own "Very Hard" tier, above Adult Golem/Sea Serpent's "Hard" and below
-Elder Drake's "Boss": propose `hp:280, dmg:26, atkRange:2.0,
-atkCooldownMs:1600, windupMs:600, aggroRadius:9, leashRadius:16,
-moveSpeed:1.6, count:2` (two, flanking the Elder Drake, not one), drop
-`dragonsteel` — the bible's own stated drop for this creature, already
-consistent with dragonsteel's existing acquisition list. New art,
-following the locked style guide (flat colour-block, no muddy palettes —
-the exact lesson from the Elder Drake's own original mistake).
+**PART B — every existing call site updated, not just the builder.**
+Confirmed the render loop, `nearestGatherable()`, and any other function
+reading `features`/`featureIndex` currently assume the full map is
+already resident. Each must be re-checked against the chunked reality —
+a gather attempt near a chunk boundary must correctly see features from
+BOTH adjacent chunks if the player's own gather range spans it, not just
+whichever chunk loaded first.
 
-**PART D — minimap view area, 3x larger.** The rendered top-down minimap
-(not the compass dial, which is unrelated and stays as-is) currently
-shows roughly a 10x10 tile area — confirm the real current value at
-build time rather than assume. Expand to roughly 30x30, same rendering
-technique, same "close-range only, never reveals remote bases" limit
-from its original spec — this is a bigger window on the same view, not
-a different kind of view.
+**PART C — real, measured proof this actually fixes the regression.**
+Confirm login time and heap usage return to something close to pre-
+Expansion-4 numbers (5.9s/326MB) rather than assuming the architecture
+change alone is sufficient — measure it the same way the v48 build
+measured the regression in the first place.
 
-**PART E — re-verify music, bases, and fast travel are genuinely
-correct, for the record.** These have all been independently confirmed
-working in code across multiple prior sessions — this is not expected to
-find anything, it is a documented re-check requested directly, and the
-result (pass or genuinely find something) must be written into SKILL.md
-either way. Confirm: `BG_PLAYLIST` still lists all five tracks correctly,
-`tension.mp3` still fires only on Elder-tier combat; `basePlaceCheck()`
-and `placeBasePiece()` still correctly write to `base_pieces` with no
-regression from this version's own changes; the player-to-player travel
-button's `disabled` condition still has no Unicorn Elder ownership check
-anywhere in it.
+**PART D — pet spawn density, rebalanced again.** Confirmed: v47's
+count increases are now roughly 4x sparser purely from N doubling again
+without the counts scaling alongside it — the identical problem v47
+fixed, undone by Expansion 4. Reapply the same tier-scaled correction
+technique from v47 (Common scales more aggressively than Rare, Elders
+and daily-capped species untouched), measured against the CURRENT
+N=4000 map, not re-deriving from v47's own already-stale N=2000 numbers.
 
-**PART F — bake in the real connection, keep the box.** Confirmed live:
-`connectSupabase()` currently throws `"Add your Supabase URL and key in
-'Connect your world' first"` whenever the box is empty, and
-`loadSavedCreds()` only pre-fills it from `localStorage` — meaning every
-new browser genuinely requires typing it in once, which breaks down
-completely for the game's own "one shared world" premise if anyone ever
-points at a different project. Add two real constants, `DEFAULT_SB_URL`
-and `DEFAULT_SB_KEY` — **the real project anon key, not the service_role
-key, which must never be embedded anywhere** — and use them as the
-fallback everywhere `rh_sb_url`/`rh_sb_key` are currently read: the box
-still exists exactly as it is now, pre-filled with these real values on
-first load rather than blank, and `connectSupabase()` never throws for a
-missing value again since a real default always exists. A player can
-still edit the box and connect elsewhere if they choose to — this adds a
-working default, it does not remove the option.
-
-**The real URL and anon key must be supplied directly by the project
-owner before this can be built — placeholder values must never ship.**
-
-**Proof gates:** standard gauntlet plus six-seed sweep for the expansion
-with real before/after landmark and biome-pocket numbers (not assumed
-unchanged), cave connectivity re-confirmed with zero sealed-off tiles
-across a real multi-seed sample at the new interior size, confirm the
-flood-fill guard is derived from the grid and not a new hardcoded
-number, confirm Demon Knight spawns specifically at the Volcano
-guarding the Elder Drake and nowhere else, confirm its drop is genuinely
-dragonsteel, confirm the minimap's expanded radius still never reveals
-anything beyond its own close range.
+**Proof gates:** standard gauntlet plus confirm login time and heap
+usage are measured and reported (not assumed), confirm a gather action
+near a chunk boundary correctly sees features from both sides, confirm
+a mined/picked-up node's state survives its chunk being evicted and
+reloaded, confirm pet density is genuinely restored to comparable
+findability as v47's own fix, verified the same way (real counts, real
+comparison, not assumed proportional).
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
