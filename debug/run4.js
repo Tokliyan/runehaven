@@ -964,10 +964,34 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
 
           dsp({ x: dx0 + 1.5, y: dy0 + 0.5, diving: false, breath: info.BREATH_MAX, hp: 100 });
           press('a', 'keydown');
-          walkWest(30);
+          /* v49 PART B: this gate used to assert `Math.floor(st.x) === dx0+1`
+             — that the player is still standing in the shore COLUMN. That
+             assumed 'a' moves due west, which stopped being true in v47:
+             update() maps the keys to screen axes (`dx = rawX + rawY,
+             dy = rawY - rawX`), so 'a' is world (-1, +1) — southwest. The
+             player therefore slides ALONG the shoreline instead of pressing
+             into it, and where it comes to rest is a fact about the local
+             coastline, not about the block. Measured here: from (2259.5,
+             74.5) it ends at (2258.07, 77.18), tile [2258,77], which is
+             shallow WATER — walkable, never entered, correctly not DEEP.
+             So the claim in this gate's own title is asserted directly, and
+             per STEP rather than only at the end, which is strictly stronger
+             than the x literal ever was: a surfaced player is never standing
+             on a dive-only tile at any point of the walk. The diving half
+             below is unchanged and still proves the other direction. */
+          let deepStep = null;
+          for (let i = 0; i < 30 && !deepStep; i++) {
+            window.update(0.05, 1000 + i * 50);
+            const p = window.debugWorldInfo().player;
+            const bHere = window.biomeAt(Math.floor(p.x), Math.floor(p.y));
+            if (bHere === B2.DEEP || bHere === B2.UWCAVE || bHere === B2.ABYSSAL)
+              deepStep = `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
+          }
           let st = window.debugWorldInfo().player;
-          results.push([`surfaced, WASD cannot enter deep water (stopped at x ${st.x.toFixed(2)})`,
-            Math.floor(st.x) === dx0 + 1]);
+          results.push([`surfaced, WASD cannot enter deep water (ended on ` +
+            `${Math.floor(st.x)},${Math.floor(st.y)}` +
+            (deepStep ? `, ENTERED DEEP at ${deepStep}` : '') + `)`,
+            deepStep === null]);
 
           dsp({ diving: true });
           walkWest(30);
@@ -3550,9 +3574,19 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['exactly one Golem Elder exists in the world', a0.golemElderCount === 1]);
       results.push(['it was actually placed somewhere real',
         !!a0.GOLEM_ELDER && a0.GOLEM_ELDER.x > 0 && a0.GOLEM_ELDER.y > 0]);
+      /* v49 PART B: asked of the HOME tile (hx/hy), not the live x/y. The
+         live file already answered this one for us — v48 added `hx`/`hy` to
+         debugV39Info() with the comment "a mob idle-wanders up to its own
+         leashRadius, and the Golem Elder stands by construction on the single
+         outermost RUINB tile of its cluster, so 'it is on a ruin tile' is only
+         a stable question about its home" — and this gate was never moved onto
+         them. Placed on [829,2750] (a real RUINB tile, and the outermost of
+         its cluster, which the independent recompute below still proves); by
+         the time this runs it has idle-wandered off it, which is correct
+         behaviour, not a placement bug. Home is the stable claim. */
       results.push(['it stands on a Ruin tile',
         !!a0.GOLEM_ELDER &&
-        window.biomeAt(Math.floor(a0.GOLEM_ELDER.x), Math.floor(a0.GOLEM_ELDER.y)) === B39.RUINB]);
+        window.biomeAt(Math.floor(a0.GOLEM_ELDER.hx), Math.floor(a0.GOLEM_ELDER.hy)) === B39.RUINB]);
       /* Recomputed independently here rather than trusting the game's own
          answer: no RUINB tile in ANY cluster may sit further from its own
          centre than the one it chose. */
@@ -5486,8 +5520,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         const w46 = window.debugWorldInfo();
         const H46 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
         results.push([`v46 C: the wild and mob spawn keepouts are named, not literals`,
-          gameScript.indexOf('const WILD_SPAWN_MIN = 300;') > 0 &&
-          gameScript.indexOf('const MOB_SPAWN_MIN = 350;') > 0 &&
+          /* v49 PART B: re-synced to Expansion 4. These two were still the
+             N=2000 literals; the live file doubled them with the world
+             (`const WILD_SPAWN_MIN = 600;  // Expansion 4: 300 * 2`, and
+             MOB_SPAWN_MIN 350 -> 700 on the line below it). Read off the
+             live file before changing, exactly as the rest of the N=4000
+             re-sync was. The DERIVED-clearance gate below is what actually
+             proves the relationship; these two only pin the names. */
+          gameScript.indexOf('const WILD_SPAWN_MIN = 600;') > 0 &&
+          gameScript.indexOf('const MOB_SPAWN_MIN = 700;') > 0 &&
           gameScript.indexOf('< WILD_SPAWN_MIN) continue;') > 0 &&
           gameScript.indexOf('< MOB_SPAWN_MIN) continue;') > 0]);
         /* THE regression this build exists to prevent: a Ruin cluster whose
@@ -5496,8 +5537,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
            relationship, never as a literal. */
         const worst = Math.min(...w46.RUINS.map(r => H46(r, w46.SPAWN)));
         results.push([`v46 C: every Ruin clears both spawn exclusions by its whole footprint ` +
-          `(nearest ${worst.toFixed(1)} > 350 + ${w46.RUIN_FOOT})`,
-          worst > 350 + w46.RUIN_FOOT]);
+          /* v49 PART B: 350 was the N=2000 MOB_SPAWN_MIN and made this gate
+             WEAKER than its own name at N=4000 — it was passing against half
+             the exclusion it claims to check. 700 is the live constant, and
+             it is pinned by the source grep directly above, so the two move
+             together or this fails loudly. Real margin: 834.3 > 700 + 76. */
+          `(nearest ${worst.toFixed(1)} > 700 + ${w46.RUIN_FOOT})`,
+          worst > 700 + w46.RUIN_FOOT]);
         results.push([`v46 C: and the clearance is DERIVED from them, so the next expansion carries it`,
           gameScript.indexOf('if (H(tx, ty, SPAWN) <= MOB_SPAWN_MIN + RUIN_FOOT) continue;') > 0]);
         const alt46 = window.debugElderInfo ? window.debugElderInfo() : null;
