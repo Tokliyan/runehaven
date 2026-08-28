@@ -85,13 +85,23 @@
   /* PIN Fixes PART B: the retroactive opt-in. The login card's own bordered
      text-button idiom (#settingsBtn), one step quieter — it is an offer, and
      an offer must never look like the thing you came here to press. */
-  #pinProtect {
+  #pinProtect, #redeemBtn {
     display: none; background: none; border: 1px solid var(--panel-edge);
     color: var(--text-dim); font-family: inherit; font-size: 12px;
     letter-spacing: 1.2px; padding: 5px 14px; cursor: pointer;
     border-radius: 3px; margin-top: -12px;
   }
-  #pinProtect:hover { border-color: var(--gold-dim); color: var(--gold); }
+  #pinProtect:hover, #redeemBtn:hover { border-color: var(--gold-dim); color: var(--gold); }
+  /* v47 PART H: the redeem row. The field and the button are the two rules
+     above, extended by one selector each; everything here is layout — a row,
+     a width, and the display this button needs (the PIN offer is hidden until
+     it is offered, where the redeem row is simply always there). It sits
+     BELOW the ENTER button on purpose: it is an optional aside, and must
+     never look like the thing you came here to press. */
+  #redeemRow { display: flex; gap: 10px; align-items: center; }
+  #redeemInput { width: 200px; text-align: center; letter-spacing: 2px; }
+  #redeemBtn { display: inline-block; margin-top: 0; }
+  #redeemMsg { color: var(--text-dim); font-size: 12px; min-height: 16px; letter-spacing: 0.6px; max-width: 420px; text-align: center; }
   .class-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; max-width: 960px; }
   .class-card {
     background: var(--panel); border: 1px solid var(--panel-edge);
@@ -118,11 +128,16 @@
   #connDot.connected { color: #7fc96b; }
   .conn-fields { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 10px; }
   .conn-hint { color: var(--text-dim); font-size: 12px; line-height: 1.4; }
-  #sbUrl, #sbKey {
+  /* v47 PART G: #baseSignInput is the SAME rule, one selector wider — the
+     login card's field idiom is the only text-input language this file has
+     and a base sign should not invent a second one. The two lines below it
+     are a width and a margin, which is the whole CSS budget this part spends. */
+  #sbUrl, #sbKey, #baseSignInput, #redeemInput {
     background: rgba(8,10,16,0.8); border: 1px solid var(--panel-edge); color: var(--text);
     font-family: inherit; font-size: 13px; padding: 9px 11px; outline: none; border-radius: 3px;
   }
-  #sbUrl:focus, #sbKey:focus { border-color: var(--gold-dim); }
+  #sbUrl:focus, #sbKey:focus, #baseSignInput:focus { border-color: var(--gold-dim); }
+  #baseSignInput { width: 100%; box-sizing: border-box; margin: 4px 0 2px; }
 
   #enterBtn {
     background: linear-gradient(180deg, #f0c25e, #cf9c38); color: #241b06; border: none;
@@ -186,6 +201,11 @@
      Inventory and Crafting panels rather than a bolted-on builder. */
   #buildPanel { left: 352px; width: 330px; }
   #chestPanel { right: 640px; }
+  /* v47 PART F: the GIVE panel. It takes the Storage Chest's own slot on the
+     right — the two can never be open together (closeAllPanels), and both are
+     "the container in front of you" — so this is a position and nothing else.
+     Not one new component style, the seventh version running. */
+  #givePanel { right: 640px; }
   /* v35 PART C: the CHARACTER panel — the same .panel card, centred because a
      reclass is a deliberate, irreversible confirmation rather than something
      you keep open while playing. Position only, no new component styles. */
@@ -474,6 +494,15 @@
 
   <div id="loginError"></div>
   <button id="enterBtn">ENTER THE WORLD</button>
+  <!-- v47 PART H: the redeem field, below the ENTER button exactly as the
+       locked spec places it. The box is #sbUrl's own rule and the button is
+       #pinProtect's own idiom, each extended by one selector rather than
+       copied — no new component language on this card. -->
+  <div id="redeemRow">
+    <input id="redeemInput" maxlength="24" placeholder="Redeem code" autocomplete="off" spellcheck="false">
+    <button id="redeemBtn">REDEEM</button>
+  </div>
+  <div id="redeemMsg"></div>
 </div>
 
 <canvas id="game"></canvas>
@@ -512,6 +541,19 @@
   <div class="sub" id="buildWhere"></div>
   <div id="buildTierList"></div>
   <div id="buildList"></div>
+  <!-- v47 PART G: the base sign. One more .craft-row at the foot of the panel
+       that already builds the thing it names, with the login card's own field
+       idiom for the text box (#sbUrl / #sbKey's rule, extended by one
+       selector rather than copied) and .craft-row's own button. It lives in
+       the STATIC markup rather than being regenerated, because this panel
+       re-renders whenever the tile you face changes and that would wipe what
+       you were typing mid-word. -->
+  <div class="craft-row" id="buildSignRow">
+    <div>Base Sign</div>
+    <div class="mats" id="buildSignWhere"></div>
+    <input id="baseSignInput" maxlength="24" placeholder="Name this base" autocomplete="off" spellcheck="false">
+    <button id="baseSignBtn">SET SIGN</button>
+  </div>
 </div>
 
 <div class="panel" id="chestPanel">
@@ -520,6 +562,22 @@
   <div id="chestList"></div>
   <div class="sub">YOUR PACK — click a row to store one</div>
   <div id="chestMine"></div>
+</div>
+
+<!-- v47 PART F: the give panel. Every row is the .inv-row treatment the
+     Inventory and both Storage Chest lists already use, and the quantity
+     strip is the v23 settings card's own .set-tabs / .set-tab classes, reused
+     verbatim exactly as the FAST TRAVEL panel reuses them. No new component
+     style; the one CSS rule it adds is a position. -->
+<div class="panel" id="givePanel">
+  <h3>GIVE</h3>
+  <div class="sub" id="giveWho"></div>
+  <div class="set-tabs" id="giveQtyTabs">
+    <button class="set-tab selected" data-gq="1">&times;1</button>
+    <button class="set-tab" data-gq="5">&times;5</button>
+    <button class="set-tab" data-gq="all">ALL</button>
+  </div>
+  <div id="giveList"></div>
 </div>
 
 <div class="panel" id="charPanel">
@@ -2156,7 +2214,12 @@ const MOBS = {
   bandit: { name: "Bandit", biomes: [B.PLAINS, B.RUINB], hp: 55, dmg: 9,  atkRange: 1.5, atkCooldownMs: 1600, windupMs: 550, aggroRadius: 6.5, leashRadius: 13, moveSpeed: 1.85, count: 9, tameable: false,
     loot: [{ type: "iron_bar", qty: 1, chance: 0.5 }, { type: "wood", qty: 2, chance: 0.6 }, { type: "iron_ore", qty: 1, chance: 0.35 }] },
   /* v14: medium-tier mob — slower and heavier, longer tell so the big hits stay dodgeable */
-  troll:  { name: "Troll",   biomes: [B.ROCK, B.PEAK],     hp: 90, dmg: 14, atkRange: 1.7, atkCooldownMs: 2000, windupMs: 750, aggroRadius: 7,   leashRadius: 12, moveSpeed: 1.3,  count: 6, tameable: false,
+  /* v47 PART B: 90/14 -> 68/11, the locked spec's own numbers, a ~25% cut on
+     both. Trolls are placed inside cave interiors as well as on the surface
+     ROCK/PEAK band, and a cave is where a player meets them with no room to
+     back off. Nothing else about the creature moves: the 750ms tell, the
+     slow moveSpeed and the loot table are exactly as v14 tuned them. */
+  troll:  { name: "Troll",   biomes: [B.ROCK, B.PEAK],     hp: 68, dmg: 11, atkRange: 1.7, atkCooldownMs: 2000, windupMs: 750, aggroRadius: 7,   leashRadius: 12, moveSpeed: 1.3,  count: 6, tameable: false,
     loot: [{ type: "stone", qty: 3, chance: 0.9 }, { type: "iron_ore", qty: 2, chance: 0.6 }, { type: "iron_bar", qty: 1, chance: 0.3 }] },
   /* v14: fight-to-tame — hostile until worn below WEARDOWN_THRESHOLD, then the
      v12 taming flow takes over. Killing them drops loot; taming forfeits it. */
@@ -2179,7 +2242,11 @@ const MOBS = {
      atkRange, cooldown, aggro/leash, moveSpeed, count and the loot rates are
      designed tunables. Dark Forest only this version — the bible also lists
      Dungeons, which do not exist yet. */
-  dark_wraith: { name: "Dark Wraith", biomes: [B.DARKFOREST], hp: 65, dmg: 12, atkRange: 4.5, atkCooldownMs: 1700, windupMs: 600, aggroRadius: 7.5, leashRadius: 13, moveSpeed: 1.45, count: 6, tameable: false,
+  /* v47 PART B: 65/12 -> 49/9, the locked spec's own numbers, the same ~25%
+     cut the Troll takes and for the same reason — both are placed inside cave
+     interiors. Its RANGED identity is untouched (atkRange 4.5, the 600ms
+     tell, the bolt): this is a difficulty change, not a redesign. */
+  dark_wraith: { name: "Dark Wraith", biomes: [B.DARKFOREST], hp: 49, dmg: 9, atkRange: 4.5, atkCooldownMs: 1700, windupMs: 600, aggroRadius: 7.5, leashRadius: 13, moveSpeed: 1.45, count: 6, tameable: false,
     loot: [{ type: "runic_stone", qty: 1, chance: 0.75 }, { type: "stone", qty: 2, chance: 0.5 }] },
   /* v21: bible — "Sea Serpent — Underwater — Hard — Rare aquatic loot". The
      framework's standard MELEE shape (nothing about it is ranged), on the
@@ -2194,8 +2261,41 @@ const MOBS = {
   /* v29: biomes[] is now empty — Sea Serpent lives INSIDE cave interiors,
      spawned by populateInterior(), not on the surface grid. Moved, not
      duplicated: it must not appear in both places. */
-  sea_serpent: { name: "Sea Serpent", biomes: [], hp: 130, dmg: 18, atkRange: 1.8, atkCooldownMs: 1900, windupMs: 700, aggroRadius: 7, leashRadius: 12, moveSpeed: 1.5, count: 3, tameable: false,
+  /* v47 PART C: 130 -> 165 HP, the locked spec's own number. It moves the
+     OPPOSITE way to PART B deliberately, and it is not one of the creatures
+     that part touches: the Sea Serpent is UWCAVE-specific, reached only by a
+     player who dived to it, and it stays the hardest ordinary mob in the
+     world. Damage, windup and every timing are untouched. */
+  sea_serpent: { name: "Sea Serpent", biomes: [], hp: 165, dmg: 18, atkRange: 1.8, atkCooldownMs: 1900, windupMs: 700, aggroRadius: 7, leashRadius: 12, moveSpeed: 1.5, count: 3, tameable: false,
     loot: [{ type: "runic_stone", qty: 2, chance: 0.8 }, { type: "iron_bar", qty: 2, chance: 0.9 }] },
+  /* ============ v47 PART C — THE ADULT GOLEM ========================
+     Bible, verbatim, from its own MOBS row: "Adult Golem — Ruins — Hard —
+     Runic stone". Nothing here is invented: the biome, the difficulty tier
+     and the loot are the three things that line states, and the pet table
+     says the rest — "Golem — Found young in ruins only, adults are hostile
+     enemies". Until now the second half of that sentence had nothing behind
+     it: a young Golem was tameable in the Ruins and no adult existed
+     anywhere in the world.
+
+     B.RUINB is a real, already-used biome (Bandit spawns there too), so this
+     needs no new terrain and no new placement machinery — the hashed mob
+     loop places it exactly as it places everything else.
+
+     "Hard" is the bible's own tier for BOTH this and the Sea Serpent, so the
+     stats are matched to the Sea Serpent's PRE-buff baseline rather than
+     invented from nothing: 130 hp / 18 dmg. Every timing is a designed
+     TUNABLE around that, and moveSpeed is deliberately the Troll's 1.3 and
+     not the serpent's 1.5 — a golem is a slab of walking stone, and the way
+     you survive one is that you can outwalk it.
+
+     tameable:false because the bible says these are enemies, which also
+     keeps drawMob on its humanoid/mob chain rather than routing through
+     drawSpecies. Its art is the young Golem's silhouette scaled up and
+     recoloured — see MOB_K.adult_golem and drawMob's own branch. */
+  adult_golem: { name: "Adult Golem", biomes: [B.RUINB], hp: 130, dmg: 18, atkRange: 1.8,
+    atkCooldownMs: 1900, windupMs: 700, aggroRadius: 7, leashRadius: 12,
+    moveSpeed: 1.3, count: 3, tameable: false,
+    loot: [{ type: "runic_stone", qty: 2, chance: 0.9 }, { type: "stone", qty: 3, chance: 0.8 }] },
   /* v25 PART C: the rampaged Salamander King. Bible — "must be fed and kept
      happy or it will rampage and return to the caldera" — so this is NOT an
      ambient worldgen spawn: count is 0 on purpose, and the ONLY thing that
@@ -2267,14 +2367,54 @@ function canWearDownTame(m) {
    common ambient wildlife x3 (Sprites 3->9, wolf 2->6, golem 1->3, stag 2->6,
    fire_dragon 1->3, glow_moth 3->9), and the three already-gated rare pets x2
    (shadowfox/unicorn/lightfox 2->4) — scarcity is their whole design, so a
-   bigger map must not make them proportionally easier to find. */
+   bigger map must not make them proportionally easier to find.
+
+   ============ v47 PART A — THE MAP OUTGREW THESE COUNTS ============
+   Every count below was last tuned at N=240 (57,600 tiles) and carried
+   through two expansions untouched. The world is N=2000 now — 4,000,000
+   tiles, roughly 70x the area those numbers were chosen for — and nine
+   Tree Sprites across 70x the ground is not a rare pet, it is an absent
+   one. The locked spec's own confirmation, read off this table before a
+   value moved: the whole Common tier sits at exactly 9, five species
+   sharing that one number.
+
+   Scaled BY TIER, not by a flat percentage, exactly as the spec sets out:
+     Common     9    -> 70      (all five, still one shared number)
+     Uncommon   3-6  -> x6      (wolf 36, stag 36, golem 18)
+     Rare       2-4  -> x4      (unicorn 16, crystal_golem 8, dragons 12)
+   The relative spread inside each tier is preserved exactly — golem is
+   still half of wolf, crystal_golem still half of unicorn — and the tier
+   ordering holds with room to spare (70 > 36 > 16).
+
+   EPIC AND ABOVE ARE DELIBERATELY UNTOUCHED, and that is the spec's own
+   list: shadowfox / lightfox / krakenling / salamander_king keep 4/4/4/3,
+   the three Elders and the Duskfox Elder have no `count` at all (they are
+   hand-placed singletons), and no `base` — the tame chance — moves by a
+   digit anywhere in this file.
+
+   ⚠️ JUDGMENT CALL, flagged in the changelog: `speciesDailyCap()` READS
+   `count`, so a Rare species' daily world cap scales with it (a Unicorn's
+   goes 4 -> 16). The spec's own sentence says raising `count` "does not
+   bypass or weaken the cap itself", which is not true of this file — the
+   cap IS the count. The explicit tier block wins over that parenthetical,
+   since the alternative reading leaves the spec's own "Rare -> 4x" line
+   with nothing to apply to; the cap consequence is stated here instead of
+   being quietly shipped. `speciesDailyCap()` is the one function to change
+   if the caps were meant to hold at their old values.
+   ⚠️ SECOND FLAG: water_dragon and shadow_dragon carry `biomes: []` — they
+   live INSIDE cave interiors, one per interior, placed by
+   populateInterior(). Their `count` therefore drives the daily cap alone
+   and no density at all, so their x4 is a cap change wearing a density
+   change's clothes. Scaled with their tier anyway, because the spec's
+   "Rare (currently 2-4) -> roughly 4x each, keeping relative spread"
+   enumerates the live values these two are part of. One-line reverts. */
 const WILD_SPECIES = {
-  tree_sprite:  { name: "Tree Sprite",  base: 0.65, flier: true,  alt: 10, count: 9, biomes: [B.FOREST, B.DARKFOREST], bloodFavored: false, shunnedByBlood: false },
-  water_sprite: { name: "Water Sprite", base: 0.65, flier: true,  alt: 10, count: 9, biomes: [B.SHALLOW], bloodFavored: false, shunnedByBlood: false },
-  stone_sprite: { name: "Stone Sprite", base: 0.65, flier: true,  alt: 10, count: 9, biomes: [B.ROCK], bloodFavored: false, shunnedByBlood: false },
-  wind_sprite:  { name: "Wind Sprite",  base: 0.65, flier: true,  alt: 12, count: 9, biomes: [B.PLAINS, B.MEADOW], bloodFavored: false, shunnedByBlood: false },
-  wolf:         { name: "Wolf",         base: 0.50, flier: false, count: 6, biomes: [B.FOREST], bloodFavored: false, shunnedByBlood: false },
-  golem:        { name: "Golem",        base: 0.50, flier: false, count: 3, biomes: [B.RUINB], bloodFavored: false, shunnedByBlood: false },
+  tree_sprite:  { name: "Tree Sprite",  base: 0.65, flier: true,  alt: 10, count: 70, biomes: [B.FOREST, B.DARKFOREST], bloodFavored: false, shunnedByBlood: false },
+  water_sprite: { name: "Water Sprite", base: 0.65, flier: true,  alt: 10, count: 70, biomes: [B.SHALLOW], bloodFavored: false, shunnedByBlood: false },
+  stone_sprite: { name: "Stone Sprite", base: 0.65, flier: true,  alt: 10, count: 70, biomes: [B.ROCK], bloodFavored: false, shunnedByBlood: false },
+  wind_sprite:  { name: "Wind Sprite",  base: 0.65, flier: true,  alt: 12, count: 70, biomes: [B.PLAINS, B.MEADOW], bloodFavored: false, shunnedByBlood: false },
+  wolf:         { name: "Wolf",         base: 0.50, flier: false, count: 36, biomes: [B.FOREST], bloodFavored: false, shunnedByBlood: false },
+  golem:        { name: "Golem",        base: 0.50, flier: false, count: 18, biomes: [B.RUINB], bloodFavored: false, shunnedByBlood: false },
   /* v14 fight-to-tame species — spawn as HOSTILE MOBS (see MOBS), never as
      passive wilds; these entries define tame chance + tamed follower form */
   boar:         { name: "Boar",         base: 0.45, flier: false, biomes: [], fightToTame: true, bloodFavored: false, shunnedByBlood: false },
@@ -2299,8 +2439,8 @@ const WILD_SPECIES = {
      presence roll) but is pinned to Enchanted Forest, not regular Forest.
      Lightfox adds the one new gate — dawnOnly, see DAWN_END — stacked on its
      own presence roll, which is why its tame base is the lowest of the three. */
-  stag:         { name: "Stag",         base: 0.45, flier: false, count: 6, biomes: [B.ENCHFOREST], bloodFavored: false, shunnedByBlood: false },
-  unicorn:      { name: "Unicorn",      base: 0.25, flier: false, count: 4, biomes: [B.ENCHFOREST], nightOnly: true, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
+  stag:         { name: "Stag",         base: 0.45, flier: false, count: 36, biomes: [B.ENCHFOREST], bloodFavored: false, shunnedByBlood: false },
+  unicorn:      { name: "Unicorn",      base: 0.25, flier: false, count: 16, biomes: [B.ENCHFOREST], nightOnly: true, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
   lightfox:     { name: "Lightfox",     base: 0.20, flier: false, count: 4, biomes: [B.SACMEADOW], dawnOnly: true, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
   /* v18: the Underground Caves roster. Both are PASSIVE tames (hold-E channel,
      v12 formula) — the bible names no fight for either. Tame bases are the
@@ -2309,8 +2449,8 @@ const WILD_SPECIES = {
      depth sort and every v16 combat overlay with no special casing; Glow Moth
      hovers like the Sprites. `count` and `alt` are designed tunables, kept
      deliberately low in the same spirit as Part A's density pass. */
-  fire_dragon:  { name: "Fire Dragon",  base: 0.25, flier: false, count: 3, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
-  glow_moth:    { name: "Glow Moth",    base: 0.65, flier: true,  alt: 12, count: 9, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
+  fire_dragon:  { name: "Fire Dragon",  base: 0.25, flier: false, count: 12, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
+  glow_moth:    { name: "Glow Moth",    base: 0.65, flier: true,  alt: 12, count: 70, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
   /* v21: the Underwater Caves roster. Bible — "Water Dragon — Deep underwater
      caves, tame as hatchling" — so a PASSIVE tame (hold-E channel, v12
      formula) at the same 0.25 base as its Fire Dragon sibling, and a GROUND
@@ -2320,7 +2460,7 @@ const WILD_SPECIES = {
      tunable, matched to Fire Dragon's. Mountable per the bible, but riding is
      DEFERRED for every species alike — no riding code exists yet. */
   /* v29: same as Sea Serpent — moved inside, no surface spawn. */
-  water_dragon: { name: "Water Dragon", base: 0.25, flier: false, count: 3, biomes: [], bloodFavored: false, shunnedByBlood: false },
+  water_dragon: { name: "Water Dragon", base: 0.25, flier: false, count: 12, biomes: [], bloodFavored: false, shunnedByBlood: false },
   /* v22: the last two dragons the bible lists. Both are PASSIVE tames ("tame
      as hatchling", no fight named for either), at the same 0.25 base as their
      Fire and Water siblings, and both are GROUND species for the same reason
@@ -2350,10 +2490,10 @@ const WILD_SPECIES = {
      it. Griffin is also PEAK-only and deliberately does NOT carry it: it is
      a mob with an 8-tile aggro radius, so it comes down off the peak to you.
      A wild only wanders 0.9 tiles from home and never will. */
-  storm_dragon:  { name: "Storm Dragon",  base: 0.25, flier: false, count: 3, biomes: [B.PEAK],    reachOnFoot: true, bloodFavored: false, shunnedByBlood: false },
+  storm_dragon:  { name: "Storm Dragon",  base: 0.25, flier: false, count: 12, biomes: [B.PEAK],    reachOnFoot: true, bloodFavored: false, shunnedByBlood: false },
   /* v32: moved INSIDE the Abyssal Hollow interiors, same as Water Dragon in
      v29 — biomes:[] means no surface spawn at all. Moved, not duplicated. */
-  shadow_dragon: { name: "Shadow Dragon", base: 0.25, flier: false, count: 3, biomes: [], bloodFavored: false, shunnedByBlood: false },
+  shadow_dragon: { name: "Shadow Dragon", base: 0.25, flier: false, count: 12, biomes: [], bloodFavored: false, shunnedByBlood: false },
   /* v25 — the last three species the bible's pet table lists for biomes that
      already exist in this file. All three are PASSIVE tames (hold-E channel,
      v12 formula); the bible names no fight for any of them.
@@ -2381,7 +2521,7 @@ const WILD_SPECIES = {
      same Epic baseline. The feeding half of that sentence is the real new
      mechanic this version — see salamanderHappiness() and salamanderRampage()
      further down. count is a designed tunable, matched to the dragons'. */
-  crystal_golem:   { name: "Crystal Golem",   base: 0.25, flier: false, count: 2, biomes: [B.RUINB],   mountainRuinOnly: true, bloodFavored: false, shunnedByBlood: false },
+  crystal_golem:   { name: "Crystal Golem",   base: 0.25, flier: false, count: 8, biomes: [B.RUINB],   mountainRuinOnly: true, bloodFavored: false, shunnedByBlood: false },
   krakenling:      { name: "Krakenling",      base: 0.20, flier: false, count: 4, biomes: [B.ABYSSAL], dayCycle: 10, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
   salamander_king: { name: "Salamander King", base: 0.20, flier: false, count: 3, biomes: [B.CALDERA], bloodFavored: false, shunnedByBlood: false },
   /* ============ v39 — THE ELDER TRIO =============================
@@ -4879,6 +5019,181 @@ function debugPinInfo() {
 }
 
 /* =========================================================
+   v47 PART H — REDEEM CODES
+
+   Two new tables, and the game is fully playable without either:
+     create table redeem_codes (
+       code text primary key,
+       items jsonb,
+       uses_left integer
+     );
+     create table redeem_claims (
+       code text,
+       username text,
+       primary key (code, username)
+     );
+
+   The flow is deliberately split across the login gesture, and the split is
+   the one decision here worth reading twice. Pressing REDEEM only ever
+   CHECKS: it looks the code up, asks redeem_claims whether this username has
+   already had it, and arms the grant. Nothing is spent and no claim is
+   recorded until a login actually reaches the world, which is what the
+   spec's own "grants the items ... on next login" describes — and it means a
+   player who types a code and then closes the tab has lost nothing.
+
+   The claim row is written BEFORE the items are handed over, and its
+   (code, username) primary key is the real gate: a second claim from the
+   same name fails on the server whatever the client believes, so the
+   check at REDEEM time is feedback rather than security.
+
+   GRACEFUL DEGRADATION, in the safe direction. A missing `redeem_codes`
+   reads as "no redeem system on this world" and every login proceeds exactly
+   as it did before this shipped. A missing `redeem_claims` is treated the
+   same way rather than as "nobody has claimed anything": without somewhere
+   to record a claim, a code could be redeemed forever, so the system stays
+   OFF instead — the same direction v39's `players.role` degrades in.
+   ========================================================= */
+const REDEEM_CODE_MAX = 24;                 // matched by the input's maxlength
+const redeemInputEl = document.getElementById("redeemInput");
+const redeemBtnEl = document.getElementById("redeemBtn");
+const redeemMsgEl = document.getElementById("redeemMsg");
+/* Armed by a successful REDEEM, spent by the login that follows it. */
+let pendingRedeem = null;      // { code, items, usesLeft }
+let lastRedeemState = "idle";  // for the harness, and for nothing else
+
+function redeemSay(msg) { if (redeemMsgEl) redeemMsgEl.textContent = msg || ""; }
+/* The stub-and-server-agnostic row finder every lookup in this file uses:
+   never trust that a filter was applied, check what the rows actually ARE. */
+function redeemRowFor(data, code) {
+  const rows = Array.isArray(data) ? data : (data ? [data] : []);
+  return rows.find(r => r && r.code === code) || null;
+}
+/* `items` is jsonb, so it can be anything at all. Normalised to a plain
+   {type: qty} map of items THIS WORLD ACTUALLY HAS — an unknown type is
+   dropped rather than minted, and quantities are clamped to sane integers.
+   Both shapes are accepted: {"wood": 5} and [{type:"wood", qty:5}]. */
+function normalizeRedeemItems(raw) {
+  const out = {};
+  const add = (type, qty) => {
+    if (!type || !ITEM_META[type]) return;
+    const n = Math.min(999, Math.max(0, Math.floor(+qty || 0)));
+    if (n > 0) out[type] = (out[type] || 0) + n;
+  };
+  if (Array.isArray(raw)) raw.forEach(r => r && add(r.type, r.qty == null ? 1 : r.qty));
+  else if (raw && typeof raw === "object") Object.entries(raw).forEach(([t, q]) => add(t, q));
+  return out;
+}
+/* One answer, and it can never throw. States: "no-system" (either table is
+   absent or unreachable), "no-code", "spent", "claimed", "empty", "ok". */
+async function redeemLookup(code, username) {
+  const out = { code, username, state: "no-system", items: null, usesLeft: null };
+  if (!code || !username) { out.state = "no-code"; return out; }
+  if (!sb) { try { connectSupabase(); } catch (e) { out.state = "no-system"; return out; } }
+  let row = null;
+  try {
+    const { data, error } = await sb.from("redeem_codes")
+      .select("code, items, uses_left").eq("code", code).maybeSingle();
+    if (error) return out;                       // no table -> no redeem system
+    row = redeemRowFor(data, code);
+  } catch (e) { return out; }
+  if (!row) { out.state = "no-code"; return out; }
+  /* The claims table has to be REACHABLE before anything is promised — see
+     the header: no claim ledger means the system is off, never open. */
+  let claims = null;
+  try {
+    const { data, error } = await sb.from("redeem_claims")
+      .select("code, username").eq("code", code).eq("username", username);
+    if (error) return out;
+    claims = Array.isArray(data) ? data : (data ? [data] : []);
+  } catch (e) { return out; }
+  if (claims.some(r => r && r.code === code && r.username === username)) {
+    out.state = "claimed"; return out;
+  }
+  out.usesLeft = typeof row.uses_left === "number" ? row.uses_left : null;
+  if (out.usesLeft !== null && out.usesLeft <= 0) { out.state = "spent"; return out; }
+  out.items = normalizeRedeemItems(row.items);
+  out.state = Object.keys(out.items).length ? "ok" : "empty";
+  return out;
+}
+async function submitRedeem() {
+  const code = (redeemInputEl ? redeemInputEl.value : "").trim().slice(0, REDEEM_CODE_MAX);
+  const username = nameInput.value.trim();
+  if (!code) { lastRedeemState = "no-code"; redeemSay("Enter a code first."); return lastRedeemState; }
+  if (username.length < 3) { lastRedeemState = "no-name"; redeemSay("Type your name above first — a code is claimed by a name."); return lastRedeemState; }
+  redeemSay("Checking…");
+  const res = await redeemLookup(code, username);
+  lastRedeemState = res.state;
+  if (res.state === "ok") {
+    pendingRedeem = { code, items: res.items, usesLeft: res.usesLeft };
+    const list = Object.entries(res.items)
+      .map(([t, q]) => `${ITEM_META[t].name} ×${q}`).join(", ");
+    redeemSay(`Code accepted — ${list} will be waiting when you enter.`);
+  } else {
+    pendingRedeem = null;
+    redeemSay({
+      "no-code": "No such code.",
+      "claimed": "You have already claimed that code.",
+      "spent": "That code has been used up.",
+      "empty": "That code carries nothing this world knows about.",
+      "no-system": "Redeem codes aren't active on this world.",
+    }[res.state] || "That code could not be redeemed.");
+  }
+  return lastRedeemState;
+}
+if (redeemBtnEl) redeemBtnEl.onclick = () => submitRedeem();
+/* Enter in the code field submits the code, never the login — the two are
+   different questions and the button under the field is not the one above it. */
+if (redeemInputEl) redeemInputEl.onkeydown = e => {
+  if (e.key === "Enter") { e.preventDefault(); submitRedeem(); }
+};
+
+/* Called by the login gesture once the player genuinely exists. The claim is
+   recorded FIRST: if that write fails — a duplicate claim, a missing table,
+   anything at all — nothing is granted, so the failure direction is always
+   "you keep your code", never "you got it twice". */
+async function grantPendingRedeem() {
+  if (!pendingRedeem || !me || !sb) return false;
+  const { code, items, usesLeft } = pendingRedeem;
+  pendingRedeem = null;
+  try {
+    const { error } = await sb.from("redeem_claims").insert({ code, username: me.username });
+    if (error) { lastRedeemState = "claim-failed"; redeemSay("That code could not be claimed."); return false; }
+  } catch (e) { lastRedeemState = "claim-failed"; return false; }
+  const names = [];
+  for (const [type, qty] of Object.entries(items)) {
+    invAdd(type, qty);
+    names.push(`${ITEM_META[type].name} ×${qty}`);
+  }
+  /* Best effort, un-awaited, never throws — the same discipline as every
+     other optional write in this file. A decrement that fails costs the code
+     one extra use; a claim that failed above would have cost a player their
+     items, which is why only one of the two is allowed to block. */
+  if (usesLeft !== null) {
+    try { sb.from("redeem_codes").update({ uses_left: usesLeft - 1 }).eq("code", code); } catch (e) {}
+  }
+  lastRedeemState = "granted";
+  savePlayer();
+  toast(`Code redeemed — ${names.join(", ")}`);
+  return true;
+}
+/* Harness hook, same shape and same reason as debugPinInfo(): every value
+   above is top-level and never lands on window. */
+function debugRedeemInfo() {
+  return { max: REDEEM_CODE_MAX, state: lastRedeemState,
+           pending: pendingRedeem ? { code: pendingRedeem.code,
+                                      items: Object.assign({}, pendingRedeem.items),
+                                      usesLeft: pendingRedeem.usesLeft } : null,
+           field: redeemInputEl ? redeemInputEl.value : null,
+           msg: redeemMsgEl ? redeemMsgEl.textContent : null };
+}
+function debugSetRedeem(patch) {
+  if (!patch) return debugRedeemInfo();
+  if ("code" in patch && redeemInputEl) redeemInputEl.value = patch.code;
+  if (patch.clear) { pendingRedeem = null; lastRedeemState = "idle"; redeemSay(""); }
+  return debugRedeemInfo();
+}
+
+/* =========================================================
    v46 PART B — RELOAD RESUMES YOUR SESSION
    A successful login writes the name to localStorage; the next page load
    fills it back in and presses ENTER for you. That is the whole feature.
@@ -4988,6 +5303,11 @@ enterBtn.onclick = async () => {
        placeLandmarks() and the cache clears above have already settled, and
        loadPets is one select. Nothing else moved. */
     await loginPlayer(username, chosenClass, pinCheck);
+    /* v47 PART H: "grants the items ... on next login" — this is that login.
+       It runs directly after the player row exists and before anything else
+       reads the inventory, so the items are simply in the pack when the world
+       opens. It is a no-op for everyone who typed no code. */
+    await grantPendingRedeem();
     await loadPets();
     /* Mob Rarity PART A: the day's takes are read BEFORE worldgen, for the
        same reason v39 moved loadPets() ahead of it — buildFeatureList() is
@@ -5169,6 +5489,7 @@ async function loadGroundItems() {
 function mobHit(m, dmg, opts = {}) {
   if (m.dead) return;
   noteElderCombat(m.kind);   // PART D: a hit landed ON an Elder is an Elder fight
+  noteCombatDamage();        // v47 PART E: damage DEALT opens the logout window
   m.hp -= dmg;
   m.flash = performance.now();
   // small shove so melee weight reads on mobs too
@@ -5946,6 +6267,24 @@ async function joinRealtime() {
   channel.on("broadcast", { event: "item_del" }, ({ payload: p }) => {
     groundItems.delete(p.id);
   });
+  /* v47 PART F: an item handed straight to you. Addressed, so every other
+     client on the one channel ignores it, and the RECIPIENT is the one that
+     writes its own inventory row — the same authority model `kill` uses, and
+     the reason no client ever has to write another player's row.
+     The payload is normalised before it is trusted: an unknown item type is
+     dropped rather than minted, and the quantity is clamped, so a malformed
+     or hostile packet can only ever add real items in a sane amount. */
+  channel.on("broadcast", { event: "item_give" }, ({ payload: p }) => {
+    if (!me || !p || p.to !== me.username) return;
+    const type = p.type;
+    if (!ITEM_META[type]) return;
+    const qty = Math.min(9999, Math.max(0, Math.floor(+p.qty || 0)));
+    if (qty <= 0) return;
+    invAdd(type, qty);
+    burst(me.x, me.y, ITEM_META[type].color || "#fff", 8, 1.8);
+    toast(`${p.from || "Someone"} gave you ${ITEM_META[type].name} ×${qty}`);
+    savePlayer();
+  });
   /* v33: a base appears for everyone the moment it is built, over the one
      existing channel — the same shape as item_add, no new channel. There is
      deliberately no removal twin to this: nothing a player builds can be
@@ -5968,6 +6307,16 @@ async function joinRealtime() {
     /* v30: a world boss that respawns like a goblin is not a world boss. */
     m.respawnAt = p.until || (Date.now() +
       mobRespawnMs(m.kind));
+  });
+
+  /* v47 PART G: a sign appears for everyone the moment its owner sets it,
+     over the one existing channel — the same shape as base_add and base_hit,
+     no new channel. Normalised on arrival exactly as the setter normalises
+     it, so a malformed payload can only ever produce a short plain string. */
+  channel.on("broadcast", { event: "base_sign" }, ({ payload: p }) => {
+    const bp = basePieces.get(p && p.id);
+    if (!bp) return;
+    bp.sign = String(p.sign == null ? "" : p.sign).trim().slice(0, BASE_SIGN_MAX);
   });
 
   channel.on("broadcast", { event: "base_hit" }, ({ payload: p }) => {
@@ -6191,7 +6540,56 @@ async function savePlayerExtras() {
     }).eq("username", me.username);
   } catch (e) { /* ignore — see above */ }
 }
-window.addEventListener("beforeunload", () => { if (me && sb) savePlayer(); });
+/* =========================================================
+   v47 PART E — COMBAT LOGOUT, SCOPED TO WHAT A BROWSER CAN ACTUALLY ENFORCE
+
+   The exploit is real and there was nothing at all in front of it: this
+   listener saved the player and let the tab close, so a losing fight could
+   always be ended by closing it.
+
+   ⚠️ WHAT THIS IS NOT. No web page can hold a tab open against its user's
+   will, and nothing here pretends to. The one mechanism a browser genuinely
+   offers is the native beforeunload confirmation — the "changes you made may
+   not be saved" dialog, whose wording is the browser's own and is not
+   customisable. That is friction and a moment's warning for the opponent,
+   which is the honest ceiling; a player who means to leave still leaves.
+   Anything claiming to PREVENT it would be a promise this code cannot keep.
+
+   The window is driven by one new tracked value — the last moment this
+   player dealt or took damage — set at the three places damage actually
+   changes hands (applyDamage for taken, dealHit for player-vs-player dealt,
+   mobHit for mob damage dealt). Deliberately NOT tryAttack: a swing at empty
+   air is not a fight. COMBAT_LOGOUT_MS is a TUNABLE. */
+const COMBAT_LOGOUT_MS = 30000;          // TUNABLE: the spec's 30 seconds
+let lastCombatDamageAt = 0;              // performance.now() of the last damage either way
+function noteCombatDamage() { lastCombatDamageAt = performance.now(); }
+function inCombatLogoutWindow() {
+  return !!lastCombatDamageAt && (performance.now() - lastCombatDamageAt) < COMBAT_LOGOUT_MS;
+}
+/* Harness hook, the same shape and the same reason as every other one in this
+   file: both values above are top-level and never land on window. */
+function debugCombatLogoutInfo() {
+  return { windowMs: COMBAT_LOGOUT_MS, lastAt: lastCombatDamageAt,
+           sinceMs: lastCombatDamageAt ? performance.now() - lastCombatDamageAt : null,
+           active: inCombatLogoutWindow() };
+}
+function debugSetCombatLogout(patch) {
+  if (patch && "lastAt" in patch) lastCombatDamageAt = +patch.lastAt || 0;
+  if (patch && "agoMs" in patch) lastCombatDamageAt = performance.now() - (+patch.agoMs || 0);
+  return debugCombatLogoutInfo();
+}
+window.addEventListener("beforeunload", (e) => {
+  if (me && sb) savePlayer();
+  /* The save above is unchanged and still happens FIRST, on every path — a
+     player who leaves mid-fight must not also lose their progress. The prompt
+     is only ever raised inside the window, and never for someone already
+     dead: a corpse has nothing to flee from. */
+  if (me && !dead && inCombatLogoutWindow()) {
+    e.preventDefault();
+    e.returnValue = "";        // the two forms browsers actually read
+    return "";
+  }
+});
 
 /* =========================================================
    INVENTORY / ITEMS
@@ -6397,6 +6795,7 @@ function dealHit(targetName, dmg, opts = {}) {
     mk: opts.marked ? 1 : 0,      // v27: a Marked Shot ignores Guard Break
   } });
   markPvpEngaged(targetName);   // v16: we are now in combat with them
+  noteCombatDamage();           // v47 PART E: damage DEALT opens the logout window
   o.flash = performance.now();
   burst(o.x, o.y, opts.crit ? "#ffb340" : "#ffd8a0", opts.crit ? 12 : 8, 2.2);
   // v10: crits read amber with an "!" — unmistakably not a normal hit
@@ -6595,6 +6994,7 @@ function applyDamage(dmg, from, opts = {}) {
   }
   me.hp -= dmg;
   combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;   // v24: combat music signal
+  noteCombatDamage();          // v47 PART E: damage TAKEN opens the logout window
   hitFlash = performance.now();
   shakeT = performance.now();
   // v10: stagger recoil + knockback shove in the hit direction
@@ -6873,6 +7273,16 @@ async function doInteract() {
     }
   }
   if (item) { lastGather = now; tryPickup(item); return; }
+  /* v47 PART F: another player within the same GATHER_RANGE everything else
+     uses opens the give panel. Deliberately placed AFTER the ground-item
+     pickup — dropping and picking up is how the Bazaar has traded since v37
+     and a player standing over your dropped item must never block it — and
+     BEFORE the gatherables, because someone standing this close to you is
+     something you aimed at, and a tree is not. */
+  {
+    const who = nearestGiveTarget();
+    if (who) { lastGather = now; openGivePanel(who); return; }
+  }
   const g = nearestGatherable();
   if (g && g._node) {
     /* v29: an interior node — local to this cave's generated space, so no
@@ -7035,7 +7445,27 @@ function craft(recipe) {
 /* ============ v34: RAIDING & GENERATION ==========================
    HP read straight off the bible's own tier descriptions — "low
    durability" through "near indestructible" — not invented numbers. */
-const BASE_TIER_HP = { wood: 40, stone: 90, iron: 180, runic: 350, dragonsteel: 800 };
+/* v47 PART D: every tier DOUBLED — 40/90/180/350/800 -> 80/180/360/700/1600.
+   The bible's own ordering ("low durability" through "near indestructible")
+   and the 20x spread between wood and dragonsteel are both preserved exactly;
+   this is the whole ladder moved up, not a reshaping of it.
+
+   "Genuinely harder to penetrate" is a claim about TIME, not about a
+   constant, so it was checked rather than assumed: baseHit() subtracts the
+   attacker's own per-swing damage and nothing else — no multiplier against
+   structures, no per-tier resistance, no cooldown of its own beyond the
+   weapon's `cd` that every swing already pays. So hits-to-destroy is
+   ceil(maxHp / dmg) and real time is that times the weapon cooldown, both of
+   which are linear in maxHp: doubling the HP genuinely doubles both. Worked
+   through at the two ends of the weapon table — an Iron Sword (15 dmg,
+   450ms cd) against a wood wall goes 3 hits/1.35s -> 6 hits/2.70s, and
+   against a dragonsteel one 54 hits/24.3s -> 107 hits/48.2s; a Dragonsteel
+   Sword (40 dmg) against dragonsteel goes 20 hits/9.0s -> 40 hits/18.0s.
+   There is deliberately no crit against a structure and no knockback, so
+   nothing else in the swing can absorb the change. run4 asserts that
+   relationship from the live constants rather than trusting these numbers.
+   The Architect's x1.20 rides on top exactly as before. */
+const BASE_TIER_HP = { wood: 80, stone: 180, iron: 360, runic: 700, dragonsteel: 1600 };
 const ARCHITECT_HP_BONUS = 1.20;      // TUNABLE: "stronger structures"
 const ARCHITECT_GEN_BONUS = 1.25;     // TUNABLE: "resource generation"
 const GENERATOR_CAP_HOURS = 24;       // TUNABLE: offline yield ceiling
@@ -7060,6 +7490,64 @@ function baseHpOf(p) {
   if (typeof p.hp === "number" && Number.isFinite(p.hp)) return p.hp;
   p.hp = baseMaxHp(p);
   return p.hp;
+}
+/* ============ v47 PART G — BASE SIGNS ============================
+   A short label an owner can hang on their own Foundation, and nothing more
+   than that. It is deliberately attached to the piece carrying `anchor:
+   true` — the one every other piece already has to be built near — so a base
+   has exactly one name however many walls it grows, and there is no second
+   rule to learn about which piece is the "main" one.
+
+   ⚠️ It is OWNER-SETTABLE ONLY, and that is a real rule rather than a hidden
+   button: setBaseSign() refuses a piece someone else owns, so finding a base
+   still lets you take everything in it (the bible's own raiding pitch) but
+   never lets you rename it.
+
+   Nothing here weakens the bible's "hide your base well": a sign is only
+   ever visible to somebody already standing in front of the base, drawn by
+   the same entity pass as the piece itself. The compass and the minimap
+   still refuse to draw a base piece at all, which is where a leak would
+   actually come from.
+
+   ⚠️ A SMALL v47 SQL UPDATE IS NEEDED for a sign to survive a reload:
+     alter table base_pieces add column sign text;
+   Without it everything still works for the session — the write fails
+   server-side, is swallowed, and the in-memory value holds — and the sign is
+   simply gone at the next login. Same graceful-degradation discipline as
+   v34's `hp` / `last_collected` columns and every optional column since. */
+const BASE_SIGN_MAX = 24;     // TUNABLE: characters, matched by the input's maxlength
+const BASE_SIGN_R = 2.2;      // TUNABLE: the Generator's own reach, reused
+/* One place decides what a piece's sign IS, so a missing column, a null and
+   a whitespace-only string can never be three different answers. */
+function baseSignOf(p) {
+  if (!p) return "";
+  const s = typeof p.sign === "string" ? p.sign : "";
+  return s.trim().slice(0, BASE_SIGN_MAX);
+}
+function baseSignPieceNear() {
+  if (!me) return null;
+  let best = null, bd = BASE_SIGN_R;
+  for (const [, p] of basePieces) {
+    if (p.destroyed) continue;
+    const def = BASE_PIECES[p.kind];
+    if (!def || !def.anchor) continue;          // the Foundation, by its own flag
+    const d = Math.hypot(p.x - me.x, p.y - me.y);
+    if (d <= bd) { best = p; bd = d; }
+  }
+  return best;
+}
+function setBaseSign(p, text) {
+  if (!me || !p) return { ok: false, why: "no piece" };
+  const def = BASE_PIECES[p.kind];
+  if (!def || !def.anchor) return { ok: false, why: "not a Foundation" };
+  if (p.owner !== me.username) return { ok: false, why: "not yours" };
+  const sign = String(text == null ? "" : text).trim().slice(0, BASE_SIGN_MAX);
+  p.sign = sign;
+  channel.send({ type: "broadcast", event: "base_sign", payload: { id: p.id, sign } });
+  /* Best effort, un-awaited, never throws — the v34 pattern exactly. */
+  try { sb.from("base_pieces").update({ sign }).eq("id", p.id); } catch (e) {}
+  toast(sign ? `The sign reads "${sign}"` : "The sign is taken down");
+  return { ok: true, why: "", sign };
 }
 /* Same discipline: no last_collected means "just now", never backdated —
    a missing column must not credit years of imaginary production. */
@@ -7431,6 +7919,45 @@ function refreshBuildPanel() {
       placeBasePiece(el.dataset.bp, buildTier, t2.x, t2.y);
     };
   });
+  refreshBaseSignRow();
+}
+
+/* v47 PART G: the sign row's own refresh. It writes TEXT and toggles a
+   button, and it deliberately never rebuilds its own markup — the input is
+   static, so a panel repaint mid-word cannot eat what is being typed. The
+   field is only ever re-filled when the Foundation in reach CHANGES, which is
+   the one moment its old contents would be about somebody else's base. */
+let lastSignPieceId = null;
+function refreshBaseSignRow() {
+  const row = document.getElementById("buildSignRow");
+  const where = document.getElementById("buildSignWhere");
+  const input = document.getElementById("baseSignInput");
+  const btn = document.getElementById("baseSignBtn");
+  if (!me || !row || !where || !input || !btn) return;
+  const p = baseSignPieceNear();
+  const mine = !!p && p.owner === me.username;
+  /* textContent, never innerHTML: a sign is text a player typed, and it is
+     rendered as text everywhere it appears — here and on the canvas. */
+  where.textContent = !p
+    ? "Stand at your own Foundation to name this base."
+    : mine
+      ? (baseSignOf(p) ? `Currently reads "${baseSignOf(p)}". Clear the field to take it down.`
+                       : "Unnamed. Up to " + BASE_SIGN_MAX + " characters.")
+      : `That Foundation is ${p.owner}'s — only its owner can name it.`;
+  input.disabled = !mine;
+  btn.disabled = !mine;
+  if ((p ? p.id : null) !== lastSignPieceId) {
+    lastSignPieceId = p ? p.id : null;
+    input.value = mine ? baseSignOf(p) : "";
+  }
+  btn.onclick = () => {
+    const target = baseSignPieceNear();
+    if (!target) { toast("No Foundation of yours in reach."); return; }
+    const res = setBaseSign(target, input.value);
+    if (!res.ok) toast(res.why === "not yours" ? "That base is not yours to name." : "That piece cannot carry a sign.");
+    lastSignPieceId = null;      // re-read from the piece on the next refresh
+    refreshBaseSignRow();
+  };
 }
 
 function refreshChestPanel() {
@@ -7483,8 +8010,16 @@ function debugBaseInfo() {
     BASE_MIN_SEP, BASE_ANCHOR_R, BASE_FORGE_R, BASE_PLACE_DIST,
     build: KEYBINDS.build, buildDefault: KEYBIND_DEFAULTS.build,
     buildTier,
+    /* v47 PART D/G: `hp`/`maxHp` and the sign join the copy — a gate cannot
+       read a piece's real durability or its label any other way. */
     pieces: [...basePieces.values()].map(p => ({ id: p.id, kind: p.kind, tier: p.tier,
-                                                 x: p.x, y: p.y, owner: p.owner })),
+                                                 x: p.x, y: p.y, owner: p.owner,
+                                                 hp: baseHpOf(p), maxHp: baseMaxHp(p),
+                                                 sign: baseSignOf(p) })),
+    BASE_TIER_HP: Object.assign({}, BASE_TIER_HP),      // v47 PART D
+    BASE_SIGN_MAX, BASE_SIGN_R,                          // v47 PART G
+    signNear: (() => { const p = me ? baseSignPieceNear() : null; return p ? p.id : null; })(),
+    signResult: lastDebugSign,
     chests: [...chestContents.entries()].map(([id, c]) => ({ id, contents: Object.assign({}, c) })),
     openChest: openChest ? openChest.id : null,
     nearForge: me ? nearForge() : false,
@@ -7501,8 +8036,20 @@ function debugSetBase(patch) {
   if ("buildTier" in patch) buildTier = patch.buildTier;
   if (patch.openId) { const p = basePieces.get(patch.openId); if (p) openBaseChest(p); }
   if (patch.closeChest) closeBaseChest();
+  /* v47 PART G: the sign path, driven against the REAL piece. `basePieces` is
+     a Map that never lands on window, so a harness holding a copy out of
+     debugBaseInfo() could otherwise only ever rename its own copy and prove
+     nothing. `ownerId` is the same shortcut v33's Door gate took through the
+     stub table — it flips who owns a piece so the refusal can be driven from
+     the outside without a second player in the world. */
+  if (patch.signId) {
+    const p = basePieces.get(patch.signId);
+    lastDebugSign = p ? setBaseSign(p, patch.sign) : { ok: false, why: "no piece" };
+  }
+  if (patch.ownerId) { const p = basePieces.get(patch.ownerId); if (p) p.owner = patch.owner; }
   return debugBaseInfo();
 }
+let lastDebugSign = null;
 
 /* =========================================================
    PANELS (unchanged UI)
@@ -7514,6 +8061,141 @@ const buildPanel = document.getElementById("buildPanel");     // v33
 const chestPanel = document.getElementById("chestPanel");     // v33
 const charPanel = document.getElementById("charPanel");       // v35
 const travelPanel = document.getElementById("travelPanel");   // v39
+const givePanel = document.getElementById("givePanel");       // v47 PART F
+
+/* =========================================================
+   v47 PART F — HANDING AN ITEM TO ANOTHER PLAYER
+
+   Bible: the Grand Bazaar is "item-for-item trading only, no currency
+   system, trades happen at players' own risk". Until now the only way to
+   pass something to somebody was to drop it on the ground and hope they
+   picked it up before anyone else did. This is the same philosophy with the
+   ground taken out of it: no approval step, no escrow, no trade window that
+   both sides confirm — you hand it over, and whether they hand anything back
+   is between the two of you, which is exactly what "at players' own risk"
+   means.
+
+   Nothing here is a new system. The transfer is invAdd/invSpend on each
+   side, and it travels as one more broadcast on the ONE existing channel, in
+   the same shape as `item_add`/`item_del` and `kill`: the sender spends and
+   announces, the recipient adds to their OWN row and saves it. That is the
+   file's standing authority model — every client is authoritative over its
+   own player row and no client ever writes another's.
+   ========================================================= */
+let giveTarget = null;          // the username the open panel is aimed at
+let giveQty = "1";              // "1" | "5" | "all" — the quantity strip
+
+/* Range is measured with the SAME GATHER_RANGE every other interaction uses,
+   and the same space test the render and collision paths use — someone in a
+   cave interior is not standing next to you. */
+function nearestGiveTarget() {
+  let best = null, bestD = GATHER_RANGE;
+  for (const [name, o] of others) {
+    if (o.dead) continue;
+    if ((o.space || "main") !== (me.space || "main")) continue;
+    const d = Math.hypot(o.x - me.x, o.y - me.y);
+    if (d < bestD) { best = name; bestD = d; }
+  }
+  return best;
+}
+function openGivePanel(name) {
+  giveTarget = name;
+  closeAllPanels(givePanel);
+  givePanel.style.display = "block";
+  refreshGivePanel();
+}
+function closeGivePanel() {
+  giveTarget = null;
+  if (givePanel) givePanel.style.display = "none";
+}
+/* How many of `type` one click actually hands over. ALL is capped by what is
+   held, so the strip can never promise more than there is. */
+function giveQtyFor(type) {
+  const held = me.inv[type] || 0;
+  if (giveQty === "all") return held;
+  return Math.min(held, +giveQty || 1);
+}
+function refreshGivePanel() {
+  if (!me || !givePanel) return;
+  const who = document.getElementById("giveWho");
+  const list = document.getElementById("giveList");
+  if (!who || !list) return;
+  const still = giveTarget && others.has(giveTarget) && nearestGiveTarget() === giveTarget;
+  who.textContent = !giveTarget
+    ? "Nobody in reach."
+    : still
+      ? `Give to ${giveTarget} — click a row to hand it over. Nothing is asked in return; this is at your own risk.`
+      : `${giveTarget} has moved out of reach.`;
+  const ic = col => `<span class="icon" style="background:${col}"></span>`;
+  const entries = Object.entries(me.inv).filter(([, q]) => q > 0);
+  list.innerHTML = entries.length
+    ? entries.map(([type, qty]) => {
+        const meta = ITEM_META[type] || { name: type, color: "#8a94a2" };
+        const n = giveQtyFor(type);
+        return `<div class="inv-row ${still && n > 0 ? "weapon" : ""}" data-give="${type}">
+          <span class="iconwrap">${ic(meta.color)}<span>${meta.name}</span></span>
+          <span class="qty">${still && n > 0 ? "give ×" + n + " of " + qty : "×" + qty}</span></div>`;
+      }).join("")
+    : `<div class="inv-row"><span class="qty">You carry nothing to give.</span></div>`;
+  list.querySelectorAll("[data-give]").forEach(el => {
+    el.onclick = () => giveItemTo(giveTarget, el.dataset.give, giveQtyFor(el.dataset.give));
+  });
+  const tabs = document.getElementById("giveQtyTabs");
+  if (tabs) tabs.querySelectorAll("[data-gq]").forEach(b => {
+    b.classList.toggle("selected", b.dataset.gq === giveQty);
+    b.onclick = () => { giveQty = b.dataset.gq; refreshGivePanel(); };
+  });
+}
+/* The transfer itself. Every refusal is checked HERE rather than by the panel
+   being closed, so a stale panel, a click after walking away, or a harness
+   calling this directly all hit the same gates. */
+function giveItemTo(name, type, qty) {
+  if (!me || dead || !name || !type) return false;
+  const o = others.get(name);
+  if (!o || o.dead) { toast("They are not here."); return false; }
+  if ((o.space || "main") !== (me.space || "main") ||
+      Math.hypot(o.x - me.x, o.y - me.y) > GATHER_RANGE) {
+    toast("Too far away to hand anything over."); return false;
+  }
+  const held = me.inv[type] || 0;
+  const n = Math.min(held, Math.floor(qty) || 0);
+  if (n <= 0) { toast("You have none of that."); return false; }
+  invSpend({ [type]: n });
+  /* An equipped item that is no longer in the pack must not stay equipped —
+     the three slots are POINTERS into the inventory (the v21 charm rule), so
+     handing your sword over has to put your fists back. Same clearing the
+     death path does, minus the drop it already made. */
+  if (!me.inv[type]) {
+    if (me.equipped === type) me.equipped = null;
+    if (me.armor === type) me.armor = null;
+    if (me.charm === type) { me.charm = null; me.maxBreath = breathMax(); me.breath = Math.min(me.breath, me.maxBreath); }
+    if (me.cos) for (const slot of Object.keys(me.cos)) if (me.cos[slot] === type) me.cos[slot] = null;
+  }
+  channel.send({ type: "broadcast", event: "item_give",
+                 payload: { to: name, from: me.username, type, qty: n } });
+  burst(me.x, me.y, ITEM_META[type]?.color || "#fff", 6, 1.6);
+  toast(`Gave ${ITEM_META[type]?.name || type} ×${n} to ${name}`);
+  refreshPanels();
+  refreshGivePanel();
+  sendMove(true);
+  savePlayer();
+  return true;
+}
+/* Harness hook, same shape and same reason as every other: `giveTarget` and
+   `giveQty` are top-level and never land on window. */
+function debugGiveInfo() {
+  return { target: giveTarget, qty: giveQty,
+           open: !!givePanel && givePanel.style.display === "block",
+           who: (document.getElementById("giveWho") || {}).textContent || null,
+           nearest: me ? nearestGiveTarget() : null };
+}
+function debugSetGive(patch) {
+  if (!patch) return debugGiveInfo();
+  if ("qty" in patch) giveQty = patch.qty;
+  if (patch.open) openGivePanel(patch.open);
+  if (patch.close) closeGivePanel();
+  return debugGiveInfo();
+}
 
 /* =========================================================
    v35 PART C — RECLASSING
@@ -8044,6 +8726,10 @@ function refreshPanels() {
     </div>`;
   }).join("");
   cl.querySelectorAll("button").forEach(b => b.onclick = () => craft(RECIPES[+b.dataset.i]));
+  /* v47 PART F: the give list is a view of this same inventory, so it has to
+     be repainted by whatever repaints the Inventory — otherwise handing over
+     the last of something leaves its row on screen. */
+  if (givePanel && givePanel.style.display === "block") refreshGivePanel();
 }
 
 /* =========================================================
@@ -8056,7 +8742,10 @@ function refreshPanels() {
    or more open at once meaningfully covers the screen, worse on smaller
    viewports. Standard fix: opening any one of these closes the rest. */
 function closeAllPanels(exceptEl) {
-  for (const p of [invPanel, craftPanel, petPanel, buildPanel, charPanel, travelPanel, chestPanel]) {
+  /* v47 PART F: the GIVE panel joins the same list — it shares the Storage
+     Chest's own position on screen, so the two could otherwise be stacked
+     exactly on top of one another. */
+  for (const p of [invPanel, craftPanel, petPanel, buildPanel, charPanel, travelPanel, chestPanel, givePanel]) {
     if (p && p !== exceptEl) p.style.display = "none";
   }
 }
@@ -9834,7 +10523,16 @@ const SPECIES_K = {
      boss       (>3000)     +28%  elder_drake 25200
    Every value is old x its band, rounded to two places. Pure render scale
    (it also scales the v16 overlay offsets below) — one line to revert. */
+/* v47 PART C: adult_golem 3.10. The young Golem is SPECIES_K 2.50, so this is
+   the same silhouette at +24% — "adults are hostile enemies" reading as the
+   same creature grown, which is the v25 Crystal Golem rule (same body, other
+   material) applied along the age axis instead of the material one. It also
+   has to sit where its threat does: hp x dmg puts the Adult Golem between the
+   Troll (748) and the Sea Serpent (2,970), and 3.10 sits between their 2.33
+   and 3.42, so the file's "size sorts exactly as threat does" rule holds with
+   one more creature in it. */
 const MOB_K = { goblin: 1.50, bandit: 1.85, troll: 2.33, dark_wraith: 1.40, sea_serpent: 3.42,
+  adult_golem: 3.10,     // v47 PART C
   elder_drake: 4.35 };   // v30: the largest thing in the world, by design
 /* hotfix: sea_serpent was already the single largest creature in the game
    by a wide margin (2.60, next highest was troll at 1.94) — bumped more
@@ -9895,7 +10593,16 @@ const MOB_K = { goblin: 1.50, bandit: 1.85, troll: 2.33, dark_wraith: 1.40, sea_
    19.2px at the new size against an offset of 24, and scaling the rule onto
    it would push its bar to 43 — floating a body-length above a creature it is
    supposed to belong to. Measured, not assumed. */
-const MOB_TALL = { troll: 31, bandit: 5, boar: 7, bear: 17, griffin: 21, phoenix: 24, dark_wraith: 6, sea_serpent: 78, salamander_king: 4, golem_elder: 54, elder_drake: 46 };
+/* v47 PART C: adult_golem 24, and it is measured rather than guessed, the same
+   way every value on this line was. The golem body's topmost paint is its head
+   slab at -12.6 in local units; at MOB_K 3.10 that is 39.1px above the
+   baseline, and the "!" tell and the HP bar draw at `sy - 20 - MOB_TALL`. 24
+   puts them at 44 — a ~5px clearance, which is the Troll's own margin (45px
+   body against a 51px offset). The v13 fairness rule is on the must-not-
+   regress list, so a new creature has to arrive with this entry, not without
+   one: the Elder Drake shipped without it for a whole version and drew its
+   tell 30px inside its own chest. */
+const MOB_TALL = { troll: 31, bandit: 5, boar: 7, bear: 17, griffin: 21, phoenix: 24, dark_wraith: 6, sea_serpent: 78, adult_golem: 24, salamander_king: 4, golem_elder: 54, elder_drake: 46 };
 
 const KIT = {
   Ranger:      { trim: "#2e4a22", accent: "#c8b078", cloth: "#5a4a30" },
@@ -10348,6 +11055,50 @@ function drawMob(m, t) {
       ctx.beginPath(); ctx.arc((0) + 14 + i * 3, (0) - 22 - ph * 10, 1.4, 0, Math.PI * 2); ctx.stroke();
     }
 
+  } else if (m.kind === "adult_golem") {
+
+    /* v47 PART C: THE SAME BODY AS THE YOUNG GOLEM, GROWN AND GONE COLD.
+       Every coordinate below is drawSpecies' `golem` branch verbatim, with
+       only the v15 port convention applied (`sx`/`sy` -> `(0)`, because this
+       chain runs inside drawMob's own body transform). Nothing was redrawn
+       and no new geometry was invented: the bible's framing is that this IS
+       that creature — "Found young in ruins only, adults are hostile
+       enemies" — so it has to read as the same slab-bodied golem at a
+       distance, exactly as v25's Crystal Golem reads as one in another
+       material. MOB_K 3.10 against the young Golem's SPECIES_K 2.50 is the
+       whole size half of that read.
+
+       What separates them is colour, and it is two changes:
+       - The stone is the young Golem's own palette darkened and pulled cold
+         (#9c9282 -> #6e6a60 and so on down the face list, one consistent
+         step), so an adult reads as weathered rock rather than as a
+         different material.
+       - Where a young Golem has a runic-cyan eye and MOSS, this has a molten
+         ember core and seams and NO moss at all. Moss is the young Golem's
+         signature (the v25 rule, which the Golem Elder already follows) and
+         must never spread up the line. The ember is #ff7a3c — the locked
+         Lava palette entry, already the file's own "this thing is dangerous"
+         colour since the v30 drake hotfix — never gold, which means Elder on
+         the ground and nothing else. Flat fills and hard edges throughout;
+         the glow is a flat square halo, not a gradient. */
+    P(ctx, [(0) - 4.4, (0), (0) - 4.4, (0) - 8.4, (0) + 4.4, (0) - 8.4, (0) + 4.4, (0)], "#6e6a60");     // body
+    P(ctx, [(0) + 1.4, (0) - 8.4, (0) + 4.4, (0) - 8.4, (0) + 4.4, (0), (0) + 1.4, (0)], "#46433c");
+    P(ctx, [(0) - 4.4, (0) - 8.4, (0) - 1.6, (0) - 9.8, (0) + 4.4, (0) - 8.4], "#847f72");               // top light
+    P(ctx, [(0) - 2.6, (0) - 8.6, (0) - 2.6, (0) - 12.6, (0) + 2.6, (0) - 12.6, (0) + 2.6, (0) - 8.6], "#7a7568"); // head
+    P(ctx, [(0) + 0.6, (0) - 12.6, (0) + 2.6, (0) - 12.6, (0) + 2.6, (0) - 8.6, (0) + 0.6, (0) - 8.6], "#4e4a42");
+    ctx.fillStyle = "#ff7a3c";
+    ctx.fillRect((0) - 1.6, (0) - 11.4, 1.4, 1.4);                                                       // molten core eye
+    ctx.fillStyle = "rgba(255,122,60,0.25)"; ctx.fillRect((0) - 2.4, (0) - 12.2, 3, 3);
+    P(ctx, [(0) - 6.6, (0) - 7.4, (0) - 4.4, (0) - 7.4, (0) - 4.4, (0) - 2.4, (0) - 6.6, (0) - 2.4], "#635f55"); // arms
+    P(ctx, [(0) + 4.4, (0) - 7.4, (0) + 6.6, (0) - 7.4, (0) + 6.6, (0) - 2.4, (0) + 4.4, (0) - 2.4], "#4e4a42");
+    ctx.strokeStyle = "#33302a"; ctx.lineWidth = 0.6;                                                    // cracks
+    ctx.beginPath();
+    ctx.moveTo((0) - 3, (0) - 6.6); ctx.lineTo((0) - 1.4, (0) - 4.6); ctx.lineTo((0) - 2.4, (0) - 2.4); ctx.stroke();
+    const gseam = 0.5 + Math.sin(t / 520 + m.ph) * 0.25;                                                 // slow, heavy pulse
+    ctx.fillStyle = `rgba(255,122,60,${gseam})`;                                                         // molten seams, no moss
+    ctx.fillRect((0) - 3.8, (0) - 3.4, 2.4, 0.9); ctx.fillRect((0) + 1.8, (0) - 6.4, 1.8, 0.9);
+    P(ctx, [(0) + 4.4, (0) - 8.4, (0) + 3, (0) - 8.4, (0) + 4.4, (0) - 7], "#3e3b34");                    // chipped corner
+
   } else {
 
     P(ctx, [(0), (0) - 10.5, (0) - 4, (0) - 0.6, (0), (0) + 0.8], "#7a5c40");
@@ -10740,6 +11491,28 @@ function drawBasePiece(bp, t) {
     const gl = 0.28 + 0.18 * Math.sin(t / 900);
     ctx.fillStyle = `rgba(232,182,76,${gl})`;
     ctx.fillRect(sx - 3, sy - 13, 6, 4);
+  }
+  /* v47 PART G: the sign, and it is the PLAYER NAMEPLATE, reused — the same
+     11px Barlow, the same centred text, the same dark rgba(6,9,14,0.62)
+     plate at the same sy-38 / sy-28 offsets drawPlayerEntity() has drawn
+     names at since v8. Not a second label component, and deliberately not a
+     new prop: the thing a player reads above a base should look like the
+     thing they read above a person.
+     ⚠️ It is drawn in the OTHER-PLAYER white (#dde4ec), never the local
+     player's gold: gold on the ground means Elder and nothing else, and the
+     nameplate's own gold means "this one is you". A base is neither.
+     Only pieces that actually carry a sign draw one — baseSignOf() returns
+     "" for a missing column, a null, or a whitespace-only string, so a world
+     without the v47 SQL simply never enters this branch. */
+  const sign47 = baseSignOf(bp);
+  if (sign47) {
+    ctx.font = "11px 'Barlow', sans-serif";
+    ctx.textAlign = "center";
+    const tw47 = ctx.measureText(sign47).width;
+    ctx.fillStyle = "rgba(6,9,14,0.62)";
+    ctx.fillRect(sx - tw47 / 2 - 4, sy - 38, tw47 + 8, 13);
+    ctx.fillStyle = "#dde4ec";
+    ctx.fillText(sign47, sx, sy - 28);
   }
 }
 
@@ -13014,7 +13787,8 @@ function updateHUD(dayT) {
   hpBar.classList.toggle("low", me.hp / me.maxHp < 0.35);
 
   const item = nearestGroundItem();
-  const g = item ? null : nearestGatherable();
+  const giveNear = item ? null : nearestGiveTarget();      // v47 PART F
+  const g = (item || giveNear) ? null : nearestGatherable();
   // v13: wear-down tame gate — INERT until v14 flags a mob tameable
   const wdMob = nearestWeakMob();
   const wldNear = nearestWild();
@@ -13040,6 +13814,10 @@ function updateHUD(dayT) {
   else if (nearChest()) { hudPrompt.textContent = "[E] Dev Supply Chest — stock all materials"; hudPrompt.style.display = "block"; }
   else if (nearBaseChest()) { hudPrompt.textContent = "[E] Storage Chest — open"; hudPrompt.style.display = "block"; }
   else if (item) { hudPrompt.textContent = `[E] Pick up ${ITEM_META[item.type]?.name || item.type}`; hudPrompt.style.display = "block"; }
+  /* v47 PART F: in the same position in this chain as the branch it mirrors
+     in doInteract() — after the ground item, before the gatherable — so the
+     prompt can never advertise something a keypress would not actually do. */
+  else if (giveNear) { hudPrompt.textContent = `[E] Give an item to ${giveNear}`; hudPrompt.style.display = "block"; }
   else if (g) {
     const verb = (FINITE.has(g.type) && !PICKED.has(g.type)) ? "Mine" : "Gather";
     /* Caves & Enchanted Forest Expansion PART A, found by this build's new
@@ -13069,6 +13847,17 @@ function updateHUD(dayT) {
      only when the tile you face actually changes — rebuilding it every frame
      would destroy a button between mousedown and mouseup. */
   if (openChest && Math.hypot(openChest.x - me.x, openChest.y - me.y) > 2.4) closeBaseChest();
+  /* v47 PART F: the give panel tracks the world the same way the chest does —
+     walk away from the person and it closes, rather than sitting there aimed
+     at somebody who is no longer in front of you. Closed rather than
+     re-rendered every frame, for the reason the comment above gives: a panel
+     rebuilt mid-frame destroys a button between mousedown and mouseup. The
+     small margin past GATHER_RANGE stops it flickering shut on one step. */
+  if (giveTarget && givePanel && givePanel.style.display === "block") {
+    const gt = others.get(giveTarget);
+    if (!gt || gt.dead || (gt.space || "main") !== (me.space || "main") ||
+        Math.hypot(gt.x - me.x, gt.y - me.y) > GATHER_RANGE + 0.8) closeGivePanel();
+  }
   if (buildPanel.style.display === "block") {
     const tgt33 = buildTarget();
     if (baseKey(tgt33.x, tgt33.y) !== lastBuildTile) refreshBuildPanel();
