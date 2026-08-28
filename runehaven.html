@@ -719,13 +719,23 @@
 /* ---------------- SUPABASE CONNECTION ---------------- */
 let sb = null;
 
+/* Real project anon key — safe to embed, confirmed by decoding its own
+   JWT payload before this went in ("role":"anon", not service_role,
+   which must never appear here). One world, shared by all, means every
+   player needs the same project regardless — this removes the setup
+   step that made no sense once that was true. The box stays exactly as
+   it was: pre-filled now instead of blank, still editable, still saved
+   to localStorage exactly the same way if changed. */
+const DEFAULT_SB_URL = "https://bfktwiuhbzbmtzovngzc.supabase.co";
+const DEFAULT_SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJma3R3aXVoYnpibXR6b3ZuZ3pjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMxNjQ1ODIsImV4cCI6MjA5ODc0MDU4Mn0.oUy41XgwQZXiQ-p00IZzQJmNIQqmQaY-3lJL6igCZc4";
+
 function loadSavedCreds() {
   try {
-    const url = localStorage.getItem("rh_sb_url") || "";
-    const key = localStorage.getItem("rh_sb_key") || "";
-    if (url) document.getElementById("sbUrl").value = url;
-    if (key) document.getElementById("sbKey").value = key;
-    document.getElementById("connectBox").open = !(url && key);
+    const url = localStorage.getItem("rh_sb_url") || DEFAULT_SB_URL;
+    const key = localStorage.getItem("rh_sb_key") || DEFAULT_SB_KEY;
+    document.getElementById("sbUrl").value = url;
+    document.getElementById("sbKey").value = key;
+    document.getElementById("connectBox").open = false;
     updateConnDot();
   } catch (e) {}
 }
@@ -735,9 +745,8 @@ function updateConnDot() {
   document.getElementById("connDot").classList.toggle("connected", !!(url && key));
 }
 function connectSupabase() {
-  let url = document.getElementById("sbUrl").value.trim().replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "");
-  const key = document.getElementById("sbKey").value.trim();
-  if (!url || !key) throw new Error("Add your Supabase URL and key in 'Connect your world' first.");
+  let url = (document.getElementById("sbUrl").value.trim() || DEFAULT_SB_URL).replace(/\/rest\/v1\/?$/, "").replace(/\/$/, "");
+  const key = document.getElementById("sbKey").value.trim() || DEFAULT_SB_KEY;
   if (!/^https:\/\/.+\.supabase\.co$/.test(url))
     throw new Error("URL should look like https://xxxx.supabase.co (no extra path)");
   try { localStorage.setItem("rh_sb_url", url); localStorage.setItem("rh_sb_key", key); } catch (e) {}
