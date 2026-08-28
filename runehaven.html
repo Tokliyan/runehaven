@@ -733,9 +733,20 @@ function loadSavedCreds() {
   try {
     const url = localStorage.getItem("rh_sb_url") || DEFAULT_SB_URL;
     const key = localStorage.getItem("rh_sb_key") || DEFAULT_SB_KEY;
-    document.getElementById("sbUrl").value = url;
-    document.getElementById("sbKey").value = key;
-    document.getElementById("connectBox").open = false;
+    /* Real bug caught during the v49 harness repair: this used to guard
+       each field with `if (url) ...`, which happened to also protect
+       against the elements not existing yet at this exact point in page
+       load. Removing that guard to always show real defaults left it
+       assuming sbUrl/sbKey/connectBox are already in the DOM the instant
+       this runs — if they are not, it throws here and the whole rest of
+       login setup after it silently never executes. Defensive again,
+       behavior unchanged: still always shows the real defaults. */
+    const urlEl = document.getElementById("sbUrl");
+    const keyEl = document.getElementById("sbKey");
+    const boxEl = document.getElementById("connectBox");
+    if (urlEl) urlEl.value = url;
+    if (keyEl) keyEl.value = key;
+    if (boxEl) boxEl.open = false;
     updateConnDot();
   } catch (e) {}
 }
