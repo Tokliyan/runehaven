@@ -46,6 +46,11 @@ const tableData = {
   base_pieces: [],        // v33
   rare_takes: [],         // Mob Rarity PART A
   account_pins: [],       // Account PIN Protection
+  /* v47 PART H: the two redeem tables. Present and empty by default, so the
+     login path this whole file already drives is unchanged — a world with the
+     tables but no codes in them behaves exactly as one without them. */
+  redeem_codes: [],
+  redeem_claims: [],
 };
 /* v33: a real round trip is needed for exactly one table. PART D has to prove
    a placed piece survives a reload — insert, then re-select, same data back —
@@ -73,9 +78,22 @@ const tableData = {
    `.eq('username', n)` has to really filter, and `.maybeSingle()` has to hand
    back ONE row (or null) rather than the list, which is what both the game's
    login select and the PIN lookup use. */
-const INSERT_RECORDING = new Set(['base_pieces', 'pets', 'rare_takes', 'players', 'account_pins']);
-const EQ_FILTERING = new Set(['rare_takes']);
-const MAYBE_TABLES = new Set(['players', 'account_pins']);
+/* v47 PART H: `redeem_claims` joins the recording set, because the whole
+   double-claim gate is a real row that has to be there on the second attempt;
+   `redeem_codes` joins the maybeSingle/eq set, since the lookup filters on the
+   code and asks for one row. The stub also enforces the (code, username)
+   PRIMARY KEY the spec's own SQL declares — without it the harness would be
+   testing a claim ledger that accepts anything twice, which is the one thing
+   this part must not do. */
+const INSERT_RECORDING = new Set(['base_pieces', 'pets', 'rare_takes', 'players', 'account_pins', 'redeem_claims']);
+const EQ_FILTERING = new Set(['rare_takes', 'redeem_claims']);
+const MAYBE_TABLES = new Set(['players', 'account_pins', 'redeem_codes']);
+/* Flipped by the v47 PART H section to simulate a world whose SQL has not been
+   run: BOTH tables absent, which must degrade to "no redeem system" and never
+   to "nobody has claimed anything". */
+const redeemMissing = new Set();   // table names the world does not have yet
+const REDEEM_MISSING_ERR = { code: '42P01', message: 'relation "public.redeem_codes" does not exist' };
+const DUP_CLAIM_ERR = { code: '23505', message: 'duplicate key value violates unique constraint "redeem_claims_pkey"' };
 /* Flipped by the PIN section to simulate the one specified failure mode the
    spec names: the account_pins table not existing yet. */
 let pinTableMissing = false;
@@ -83,6 +101,7 @@ const PIN_MISSING_ERR = { code: '42P01', message: 'relation "public.account_pins
 let insertSeq = 0;
 function chain(table) {
   let pending = null;
+  let pendingErr = null;      // v47 PART H: an insert the server refuses
   let singled = false;
   const eqs = [];
   const result = () => {
@@ -94,6 +113,11 @@ function chain(table) {
     if (table === 'account_pins' && pinTableMissing) {
       singled = false;
       return { data: null, error: PIN_MISSING_ERR };
+    }
+    if (pendingErr) { const e = pendingErr; pendingErr = null; singled = false; return { data: null, error: e }; }
+    if (redeemMissing.has(table)) {
+      singled = false;
+      return { data: null, error: REDEEM_MISSING_ERR };
     }
     let d = tableData[table];
     if ((EQ_FILTERING.has(table) || MAYBE_TABLES.has(table)) && Array.isArray(d) && eqs.length) {
@@ -122,6 +146,15 @@ function chain(table) {
         return (rows) => {
           // a table that does not exist does not accept rows either
           if (table === 'account_pins' && pinTableMissing) return c;
+          if (redeemMissing.has(table)) return c;
+          /* v47 PART H: the real primary key, enforced. */
+          if (table === 'redeem_claims') {
+            const arr0 = Array.isArray(rows) ? rows : [rows];
+            if (arr0.some(r => tableData.redeem_claims.some(x => x.code === r.code && x.username === r.username))) {
+              pendingErr = DUP_CLAIM_ERR;
+              return c;
+            }
+          }
           const arr = Array.isArray(rows) ? rows : [rows];
           // the insert is what mints the id, exactly as the real table does
           const stamped = arr.map(r => Object.assign({ id: table + ':' + (++insertSeq) }, r));
@@ -136,6 +169,14 @@ function chain(table) {
   });
   return c;
 }
+const channelHandlers = [];  // v47 PART F: [event, cb] for every broadcast the game listens to
+/* Hands a payload to the game's own receive handler for that event — the same
+   call the real client makes when a packet lands. */
+function deliverBroadcast(event, payload) {
+  let n = 0;
+  for (const [e, cb] of channelHandlers) if (e === event) { cb({ payload }); n++; }
+  return n;
+}
 const sentBroadcasts = [];   // v39: every channel.send() the game makes
 /* v46 PART F: the presence roster the channel reports, and a count of the
    re-announcements the client makes. Both are ADDITIVE and both keep their
@@ -149,7 +190,17 @@ window.supabase = {
     from: (table) => chain(table),
     channel: () => {
       const ch = {
-        on: () => ch,
+        /* v47 PART F: broadcast handlers are RECORDED rather than dropped.
+           "The transfer writes to the real recipient inventory" is a claim
+           about the receiving half of the wire, and the receiving half is a
+           handler this stub used to throw away — so the gate could only ever
+           have been a source grep. Additive: `on` still returns the same
+           chain object, so nothing that registers can behave differently. */
+        on: (type, filter, cb) => {
+          if (type === 'broadcast' && filter && filter.event && typeof cb === 'function')
+            channelHandlers.push([filter.event, cb]);
+          return ch;
+        },
         subscribe: (cb) => { if (cb) setTimeout(() => cb("SUBSCRIBED"), 0); return ch; },
         /* v39: sends are recorded rather than dropped. "Broadcast it ONCE"
            is a real requirement of the world-reset trigger and there is no
@@ -489,18 +540,53 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       for (const [k, want] of Object.entries(MOB_COUNTS)) {
         results.push([`MOBS.${k}.count = ${want}`, info.MOBS[k] && info.MOBS[k].count === want]);
       }
-      const SP_COUNTS = { tree_sprite: 9, water_sprite: 9, stone_sprite: 9, wind_sprite: 9,
-                          wolf: 6, golem: 3, stag: 6,
-                          // x2, not x3 — scarcity IS these three's design, so a
-                          // bigger map must not make them proportionally easier
-                          shadowfox: 4, unicorn: 4, lightfox: 4,
-                          fire_dragon: 3, glow_moth: 9,
-                          water_dragon: 3,     // v21: Fire Dragon's count
-                          storm_dragon: 3, shadow_dragon: 3,    // v22: same
-                          // v25 designed tunables. crystal_golem is lowest of
-                          // the three — only a subset of Ruins can host it;
-                          // krakenling matches the other doubly-gated rares.
-                          crystal_golem: 2, krakenling: 4, salamander_king: 3 };
+      /* v47 PART A: UPDATED, NOT RELAXED. Every value below is still an exact
+         literal from the locked spec's own tier table, scaled for the N=2000
+         world these counts had never been re-tuned for: Common 9 -> 70 (all
+         five still sharing one number), Uncommon x6, Rare x4. Epic and above
+         are deliberately UNMOVED — shadowfox / lightfox / krakenling /
+         salamander_king are exactly as they were, which is what makes this a
+         tier scaling rather than a blanket one. */
+      const SP_COUNTS = { tree_sprite: 70, water_sprite: 70, stone_sprite: 70, wind_sprite: 70,
+                          wolf: 36, golem: 18, stag: 36,
+                          // UNTOUCHED by v47: scarcity IS these three's design
+                          shadowfox: 4, unicorn: 16, lightfox: 4,
+                          fire_dragon: 12, glow_moth: 70,
+                          water_dragon: 12,     // v21: Fire Dragon's count
+                          storm_dragon: 12, shadow_dragon: 12,   // v22: same
+                          // v25 designed tunables, x4 with the rest of the
+                          // Rare tier; krakenling is EPIC and stays at 4.
+                          crystal_golem: 8, krakenling: 4, salamander_king: 3 };
+      /* v47 PART A's own shape gates: the tiers still sort, the spread inside
+         each tier is preserved, and `base` — the tame chance — did not move by
+         a digit anywhere. The last of those is the spec's own proof gate. */
+      results.push(['v47 A: the tier ordering held (common > uncommon > rare)',
+        info.WILD_SPECIES.tree_sprite.count > info.WILD_SPECIES.wolf.count &&
+        info.WILD_SPECIES.wolf.count > info.WILD_SPECIES.unicorn.count]);
+      results.push(['v47 A: the relative spread inside a tier is preserved exactly',
+        info.WILD_SPECIES.golem.count * 2 === info.WILD_SPECIES.wolf.count &&
+        info.WILD_SPECIES.crystal_golem.count * 2 === info.WILD_SPECIES.unicorn.count]);
+      results.push(['v47 A: the whole Common tier still shares ONE number',
+        new Set(['tree_sprite','water_sprite','stone_sprite','wind_sprite','glow_moth']
+          .map(k => info.WILD_SPECIES[k].count)).size === 1]);
+      {
+        /* Every tame chance in the file, checked against an independent copy
+           written out here — PART A is about density and must not have moved
+           a single one of them. */
+        const BASES = { tree_sprite: 0.65, water_sprite: 0.65, stone_sprite: 0.65,
+          wind_sprite: 0.65, glow_moth: 0.65, wolf: 0.50, golem: 0.50, boar: 0.45,
+          bear: 0.40, griffin: 0.42, phoenix: 0.30, shadowfox: 0.20, stag: 0.45,
+          unicorn: 0.25, lightfox: 0.20, fire_dragon: 0.25, water_dragon: 0.25,
+          storm_dragon: 0.25, shadow_dragon: 0.25, crystal_golem: 0.25,
+          krakenling: 0.20, salamander_king: 0.20, golem_elder: 0.15,
+          dragon_elder: 0.15, unicorn_elder: 0.15, duskfox_elder: 0.15 };
+        const moved = Object.entries(BASES)
+          .filter(([k, v]) => !info.WILD_SPECIES[k] || info.WILD_SPECIES[k].base !== v)
+          .map(([k]) => k);
+        results.push([`v47 A: not one tame chance moved (${moved.join(',') || 'none'})`,
+          moved.length === 0 &&
+          Object.keys(info.WILD_SPECIES).length === Object.keys(BASES).length]);
+      }
       for (const [k, want] of Object.entries(SP_COUNTS)) {
         results.push([`WILD_SPECIES.${k}.count = ${want}`,
           info.WILD_SPECIES[k] && info.WILD_SPECIES[k].count === want]);
@@ -540,8 +626,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
 
       // ===== v18 PART C: Dark Wraith's locked stats + its ranged mechanism =====
       const dw = info.MOBS.dark_wraith;
-      results.push(['dark_wraith 65 HP',        !!dw && dw.hp === 65]);
-      results.push(['dark_wraith 12 dmg',       !!dw && dw.dmg === 12]);
+      /* v47 PART B: 65/12 -> 49/9, updated and not relaxed — the literals move
+         with the locked spec and everything else about the creature is
+         asserted below exactly as it was. */
+      results.push(['v47 B: dark_wraith 49 HP (was 65)',  !!dw && dw.hp === 49]);
+      results.push(['v47 B: dark_wraith 9 dmg (was 12)',  !!dw && dw.dmg === 9]);
       results.push(['dark_wraith 600ms windup', !!dw && dw.windupMs === 600]);
       results.push(['dark_wraith is not tameable', !!dw && dw.tameable === false]);
       results.push(['dark_wraith spawns in Dark Forest only',
@@ -1013,7 +1102,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         info.WILD_SPECIES.water_dragon.biomes.length === 0]);
       // the Sea Serpent's locked stats
       const ss = info.MOBS.sea_serpent;
-      results.push(['sea_serpent 130 HP',        !!ss && ss.hp === 130]);
+      /* v47 PART C: 130 -> 165, the opposite direction to PART B and on a
+         creature PART B does not touch. Updated, not relaxed. */
+      results.push(['v47 C: sea_serpent 165 HP (was 130)', !!ss && ss.hp === 165]);
       results.push(['sea_serpent 18 dmg',        !!ss && ss.dmg === 18]);
       results.push(['sea_serpent 700ms windup',  !!ss && ss.windupMs === 700]);
       results.push(['sea_serpent is not tameable', !!ss && ss.tameable === false]);
@@ -1050,7 +1141,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const kdSpots = info.wildSpots.filter(w => w.species === 'shadow_dragon');
       console.log('storm_dragon spots:', JSON.stringify(sdSpots));
       console.log('shadow_dragon spots:', JSON.stringify(kdSpots));
-      results.push([`Storm Dragon reaches its peaks (${sdSpots.length} spawned)`, sdSpots.length === 3]);
+      /* v47 PART A: 3 -> 12 with the rest of the Rare tier. Updated, not
+         relaxed: it is still an EXACT count, and it still has to reach the
+         peaks through the reachOnFoot filter to get there. */
+      results.push([`Storm Dragon reaches its peaks (${sdSpots.length} spawned)`, sdSpots.length === 12]);
       results.push([`every Storm Dragon stands on a PEAK tile`,
         sdSpots.length > 0 && sdSpots.every(w =>
           window.biomeAt(Math.floor(w.x), Math.floor(w.y)) === B2.PEAK)]);
@@ -1294,11 +1388,23 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // all three rare biomes survived the scale-up — re-run in one place
       results.push([`all three rare biomes survived the scale-up ` +
         `(ench ${ench2}, sacred ${sac2}, cave ${cave})`, ench2 > 0 && sac2 > 0 && cave > 0]);
-      // Part D actually applied: entity total should land near 3x, not 1x or 9x
+      /* v19 asked whether its own x3 density pass had applied at all; v47 PART A
+         asks the same question of a far bigger scaling, and it is now pinned as
+         a RELATIONSHIP rather than as a literal window. The ceiling is computed
+         from the live tables — every species that can spawn on the surface, at
+         its own count, plus the two hand-placed Elder singletons — so it moves
+         with any future count change instead of going stale, and the floor is
+         70% of it (the gated rares may legitimately roll absent, and a species
+         whose biome is tiny can fall short of its count by geometry). A world
+         that quietly stopped scaling lands nowhere near it: the pre-v47 tables
+         in this same seed produced 36. */
       const ents = info.wildSpecies.length + info.mobKinds.length;
-      console.log(`entities: ${ents} (v18 baseline in this seed: 36; target ~3x = ~108)`);
-      results.push([`entity total is roughly 3x the old world (${ents}, want 72..160)`,
-        ents >= 72 && ents <= 160]);
+      const ceiling = Object.values(info.WILD_SPECIES)
+          .reduce((n, d) => n + ((d.biomes && d.biomes.length && d.count) ? d.count : 0), 2) +
+        Object.values(info.MOBS).reduce((n, d) => n + (d.count || 0), 0);
+      console.log(`entities: ${ents} (v18 baseline in this seed: 36; v47 table ceiling: ${ceiling})`);
+      results.push([`v47 A: the world is populated to its own tables (${ents} of a ${ceiling} ceiling)`,
+        ents <= ceiling && ents >= Math.floor(ceiling * 0.7)]);
     } else {
       results.push(['debugWorldInfo exposes MOBS/WILD_SPECIES', false]);
     }
@@ -1871,7 +1977,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         cg.every(w => !plain.some(r => inRuin(w, r)))]);
       // ...and the plain Golem is completely unaffected by any of it
       const gg = info5.wildSpots.filter(w => w.species === 'golem');
-      results.push([`golem still spawns as before (${gg.length})`, gg.length === 3]);
+      /* v47 PART A: 3 -> 18, the Uncommon tier's x6. Still exact. */
+      results.push([`golem spawns its full v47 population (${gg.length})`, gg.length === 18]);
       results.push(['golem is NOT restricted to tagged ruins — it still reaches plain ones',
         gg.some(w => plain.some(r => inRuin(w, r)))]);
       results.push(['only crystal_golem carries the mountainRuinOnly gate',
@@ -5170,8 +5277,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['PIN Fixes: no guild or clan system was added — the bible rules one out explicitly',
         html.toLowerCase().indexOf('guild') < 0 && html.toLowerCase().indexOf('clan') < 0]);
       const TABLES = [...new Set([...gameScript.matchAll(/from\("([a-z_]+)"\)/g)].map(m => m[1]))].sort();
-      results.push(['PIN Fixes: no new table of any kind — admin bootstrap included — was added',
-        TABLES.join(',') === 'account_pins,base_pieces,ground_items,mined_nodes,pets,players,rare_takes,world']);
+      /* v47 PART H: UPDATED, NOT RELAXED — the permanent table census now
+         names ten, and the two new ones are exactly the two the locked spec
+         asks for. Still an exact list, so a future version cannot quietly add
+         an eleventh: no guild table, no admin table, nothing unlisted. */
+      results.push(['the table census is exactly the ten this project has documented',
+        TABLES.join(',') === 'account_pins,base_pieces,ground_items,mined_nodes,pets,players,rare_takes,redeem_claims,redeem_codes,world']);
       results.push(['PIN Fixes: admin is still read straight off the real players row, as it already was',
         gameScript.indexOf('role: p.role === "admin" ? "admin" : "player"') > 0 &&
         gameScript.split('role: p.role === "admin"').length === 2]);
@@ -5210,7 +5321,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     {
       results.push(['closeAllPanels() exists and covers every real panel',
         gameScript.indexOf('function closeAllPanels(exceptEl)') > 0 &&
-        gameScript.indexOf('[invPanel, craftPanel, petPanel, buildPanel, charPanel, travelPanel, chestPanel]') > 0]);
+        gameScript.indexOf('[invPanel, craftPanel, petPanel, buildPanel, charPanel, travelPanel, chestPanel, givePanel]') > 0]);
       results.push(['opening Inventory now closes the others first',
         gameScript.indexOf('const now2 = invPanel.style.display !== "block"; closeAllPanels();') > 0]);
       results.push(['opening Build now closes the others first',
@@ -5302,14 +5413,32 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       {
         const CLS = ['Ranger', 'Knight', 'Mystic', 'Beastmaster', 'Architect'];
         const held = [], reduced = [];
+        const openSpot46 = (() => {
+          const W46 = window.debugWorldInfo();
+          for (let r = 300; r < 900; r += 37) {
+            for (let a = 0; a < 16; a++) {
+              const x = W46.SPAWN.x + Math.cos(a / 16 * Math.PI * 2) * r;
+              const y = W46.SPAWN.y + Math.sin(a / 16 * Math.PI * 2) * r;
+              if (x > 4 && y > 4 && x < W46.N - 4 && y < W46.N - 4 && !window.inSafeZone(x, y))
+                return [x, y];
+            }
+          }
+          return [W46.SPAWN.x + 400, W46.SPAWN.y + 400];
+        })();
         const keyOf = window.debugSettingsInfo().KEYBINDS.block;
         for (const c of CLS) {
           window.debugSetPlayer({ cls: c, hp: 100, armor: null });
           window.dispatchEvent(new window.KeyboardEvent('keydown', { key: keyOf }));
           if (window.isBlocking()) held.push(c);
           const hpBefore = window.debugWorldInfo().player.hp;
-          window.debugSetPlayer({ x: window.debugWorldInfo().SPAWN.x + 400,
-                                  y: window.debugWorldInfo().SPAWN.y + 400, hp: 100 });
+          /* CORRECTED, not relaxed (found by the v47 run): this was a FIXED
+             offset from SPAWN, and the admin world-reset gate further up
+             genuinely re-seeds the world — so on some runs SPAWN + (400,400)
+             landed inside one of the scattered Safe Zones, applyDamage()
+             correctly returned early, and all five classes recorded "took no
+             damage". The game was right and the spot was wrong. Same class of
+             correction Expansion 2b made to its two SAFE_RADIUS-bound spots. */
+          window.debugSetPlayer({ x: openSpot46[0], y: openSpot46[1], hp: 100 });
           window.applyDamage(40, 'a proof gate');
           const took = 100 - window.debugWorldInfo().player.hp;
           if (took > 0 && took <= 12) reduced.push(c);
@@ -5573,6 +5702,501 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
 
       results.push(['v46: and the world still runs frames cleanly after all of it',
+        (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
+    }
+
+    /* ===================== v47: balance, anti-exploit & economy ============
+       PART A's own gates live up in the density block beside the counts they
+       are about; everything else this version changed is below. */
+    {
+      const doc47 = window.document;
+      const i47 = window.debugWorldInfo();
+      const dsp47 = window.debugSetPlayer;
+      const wasP47 = i47.player;
+      /* Somewhere a player can actually be hit. applyDamage() correctly
+         returns early inside ANY safe zone, and the admin world-reset gate
+         above this block genuinely re-rolls the world seed — so every landmark
+         and every scattered Safe Zone is in a different place on every run.
+         A fixed offset from SPAWN is therefore a coin flip, which is exactly
+         how the v46 block's own fixed spot was found to flake. Searched, not
+         assumed. */
+      const openSpot47 = (() => {
+        for (let r = 300; r < 900; r += 37) {
+          for (let a = 0; a < 16; a++) {
+            const x = i47.SPAWN.x + Math.cos(a / 16 * Math.PI * 2) * r;
+            const y = i47.SPAWN.y + Math.sin(a / 16 * Math.PI * 2) * r;
+            if (x > 4 && y > 4 && x < i47.N - 4 && y < i47.N - 4 && !window.inSafeZone(x, y))
+              return [x, y];
+          }
+        }
+        return [i47.SPAWN.x + 400, i47.SPAWN.y + 400];
+      })();
+
+      /* ---- PART B: the two cave mobs are genuinely EASIER ---------------- */
+      const tr = i47.MOBS.troll, dw47 = i47.MOBS.dark_wraith;
+      results.push(['v47 B: troll 68 HP / 11 dmg (was 90/14)',
+        !!tr && tr.hp === 68 && tr.dmg === 11]);
+      results.push([`v47 B: troll is genuinely easier, not just different (${tr.hp * tr.dmg} vs 1260)`,
+        tr.hp * tr.dmg < 90 * 14 && tr.hp < 90 && tr.dmg < 14]);
+      results.push([`v47 B: dark_wraith is genuinely easier too (${dw47.hp * dw47.dmg} vs 780)`,
+        dw47.hp * dw47.dmg < 65 * 12 && dw47.hp < 65 && dw47.dmg < 12]);
+      /* Everything ELSE about both is untouched — this is a difficulty pass,
+         not a redesign. The wraith in particular must stay the ranged one. */
+      results.push(['v47 B: the Troll keeps its longer 750ms tell and its slow walk',
+        tr.windupMs === 750 && tr.moveSpeed === 1.3 && tr.count === 6 &&
+        tr.atkRange === 1.7 && tr.atkCooldownMs === 2000]);
+      results.push(['v47 B: the Dark Wraith is still the file\'s only ranged mob',
+        dw47.atkRange === 4.5 && dw47.windupMs === 600 &&
+        Object.entries(i47.MOBS).every(([k, d]) => k === 'dark_wraith' || d.atkRange < 4.5)]);
+
+      /* ---- PART C: Sea Serpent moved, and moved ALONE ------------------- */
+      const ss47 = i47.MOBS.sea_serpent;
+      results.push([`v47 C: the Sea Serpent got HARDER while PART B's two got easier (${ss47.hp * ss47.dmg} vs 2340)`,
+        ss47.hp * ss47.dmg > 130 * 18 && ss47.dmg === 18 && ss47.windupMs === 700]);
+      {
+        /* An independent copy of every mob stat as it stood BEFORE v47. The
+           only three entries allowed to differ are the two PART B moves and
+           the Sea Serpent's HP; anything else that shifted is a change nobody
+           asked for. adult_golem is new this version and is asserted on its
+           own terms below. */
+        const PRE47 = { goblin: [40, 6], bandit: [55, 9], troll: [90, 14], boar: [50, 7],
+                        bear: [80, 13], griffin: [70, 11], phoenix: [75, 11],
+                        dark_wraith: [65, 12], sea_serpent: [130, 18],
+                        salamander_king: [75, 13], golem_elder: [420, 20],
+                        elder_drake: [900, 28] };
+        const MOVED47 = new Set(['troll', 'dark_wraith', 'sea_serpent']);
+        const drifted = Object.entries(PRE47)
+          .filter(([k, [hp, dmg]]) => !MOVED47.has(k) &&
+            (!i47.MOBS[k] || i47.MOBS[k].hp !== hp || i47.MOBS[k].dmg !== dmg))
+          .map(([k]) => k);
+        results.push([`v47 C: no mob moved that this version did not name (${drifted.join(',') || 'none'})`,
+          drifted.length === 0]);
+        results.push(['v47 C: and the Sea Serpent is the ONLY one whose damage did not move with it',
+          i47.MOBS.sea_serpent.dmg === PRE47.sea_serpent[1]]);
+        results.push(['v47: the mob roster is exactly the old twelve plus the Adult Golem',
+          Object.keys(i47.MOBS).sort().join(',') ===
+          Object.keys(PRE47).concat('adult_golem').sort().join(',')]);
+      }
+
+      /* ---- PART C: the Adult Golem, built for real ---------------------- */
+      const ag = i47.MOBS.adult_golem;
+      results.push(['v47 C: the Adult Golem exists at all',  !!ag]);
+      results.push(['v47 C: it is the bible\'s own line — Ruins, Hard, Runic Stone',
+        !!ag && ag.biomes.length === 1 && ag.biomes[0] === i47.B.RUINB &&
+        ag.loot.some(l => l.type === 'runic_stone')]);
+      results.push(['v47 C: "adults are hostile enemies" — it is not tameable',
+        !!ag && ag.tameable === false]);
+      results.push(['v47 C: Hard tier means the Sea Serpent\'s own pre-buff baseline',
+        !!ag && ag.hp === 130 && ag.dmg === 18 && ag.windupMs === 700]);
+      results.push(['v47 C: but slower than a serpent — a golem is outwalkable',
+        !!ag && ag.moveSpeed === 1.3 && ag.moveSpeed < i47.MOBS.sea_serpent.moveSpeed]);
+      results.push([`v47 C: and it genuinely spawns in the world (${i47.mobKinds.filter(k => k === 'adult_golem').length})`,
+        i47.mobKinds.filter(k => k === 'adult_golem').length === ag.count]);
+      {
+        const spots = i47.mobSpots.filter(m => m.kind === 'adult_golem');
+        results.push(['v47 C: every Adult Golem stands on a real RUINB tile',
+          spots.length > 0 && spots.every(m =>
+            window.biomeAt(Math.floor(m.x), Math.floor(m.y)) === i47.B.RUINB)]);
+      }
+      results.push(['v47 C: it is a MOB, never a pet — no rarity tier, no tame chance',
+        !i47.WILD_SPECIES.adult_golem &&
+        !window.debugRareTakesInfo().PET_RARITY.adult_golem]);
+      {
+        const sc47 = window.debugScaleInfo();
+        results.push([`v47 C: it is the young Golem's silhouette GROWN (${sc47.MOB_K.adult_golem} vs ${sc47.SPECIES_K.golem})`,
+          sc47.MOB_K.adult_golem > sc47.SPECIES_K.golem &&
+          sc47.MOB_K.adult_golem < sc47.SPECIES_K.golem * 1.5]);
+        results.push(['v47 C: and its size sits where its threat does, between Troll and Sea Serpent',
+          sc47.MOB_K.adult_golem > sc47.MOB_K.troll &&
+          sc47.MOB_K.adult_golem < sc47.MOB_K.sea_serpent]);
+        /* The v13 fairness rule: the "!" tell and the HP bar draw at
+           sy - 20 - MOB_TALL, and the golem body paints 12.6 local units up.
+           A creature that arrives without an entry wears its own tell. */
+        results.push([`v47 C: it arrived WITH an overlay offset (${sc47.MOB_TALL.adult_golem})`,
+          typeof sc47.MOB_TALL.adult_golem === 'number' &&
+          20 + sc47.MOB_TALL.adult_golem > 12.6 * sc47.MOB_K.adult_golem]);
+      }
+      results.push(['v47 C: its art is the golem body ported, not new geometry',
+        gameScript.indexOf('} else if (m.kind === "adult_golem") {') > 0 &&
+        gameScript.indexOf('THE SAME BODY AS THE YOUNG GOLEM, GROWN AND GONE COLD') > 0]);
+      {
+        /* Moss is the young Golem's signature (the v25 rule) and must never
+           spread up the line — the Golem Elder already honours it. The ember
+           is the LOCKED lava palette entry, and gold is never used: gold on
+           the ground means Elder and nothing else. */
+        const branch = gameScript.slice(gameScript.indexOf('} else if (m.kind === "adult_golem") {'));
+        const body = branch.slice(0, branch.indexOf('} else {'));
+        results.push(['v47 C: no moss on the adult — that is the young Golem\'s signature',
+          body.indexOf('#5c8a44') < 0 && body.indexOf('#7fb85c') < 0]);
+        results.push(['v47 C: its ember is the locked Lava palette entry, and it is never gold',
+          body.indexOf('#ff7a3c') > 0 && body.indexOf('#e8b64c') < 0 &&
+          body.indexOf('#7ae8f8') < 0]);
+      }
+
+      /* ---- PART D: base HP doubled, and the real time doubled with it ---- */
+      const dv47 = window.debugV34Info, ds47 = window.debugSetV34;
+      results.push(['v47 D: every tier is exactly double what it was',
+        JSON.stringify(dv47().BASE_TIER_HP) ===
+        JSON.stringify({ wood: 80, stone: 180, iron: 360, runic: 700, dragonsteel: 1600 })]);
+      results.push(['v47 D: the bible\'s own ordering and its 20x spread both survived',
+        dv47().BASE_TIER_HP.wood < dv47().BASE_TIER_HP.stone &&
+        dv47().BASE_TIER_HP.stone < dv47().BASE_TIER_HP.iron &&
+        dv47().BASE_TIER_HP.iron < dv47().BASE_TIER_HP.runic &&
+        dv47().BASE_TIER_HP.runic < dv47().BASE_TIER_HP.dragonsteel &&
+        dv47().BASE_TIER_HP.dragonsteel / dv47().BASE_TIER_HP.wood === 20]);
+      {
+        /* THE REAL TIME-TO-DESTROY, driven through the real baseHit() rather
+           than asserted off the constant. Hits are counted by swinging at a
+           genuinely placed piece until it is gone; time is hits x the
+           weapon's own cooldown, which nothing in this part touches, so a
+           doubled hit count IS a doubled time. */
+        const OFF47 = [[0, 0], [3, 0]];
+        let site47 = null;
+        for (let x = 30; x < 260 && !site47; x += 7) {
+          for (let y = 30; y < 260; y += 7) {
+            if (OFF47.every(o => window.basePlaceCheck('foundation', x + o[0] + 0.5, y + o[1] + 0.5).ok)) {
+              site47 = [x, y]; break;
+            }
+          }
+        }
+        if (site47) {
+          const [X7, Y7] = site47;
+          dsp47({ x: X7 + 0.5, y: Y7 - 4.5, hp: 100,
+                  inv: { wood: 500, stone: 500, iron_bar: 500, runic_stone: 500, dragonsteel: 500 } });
+          const woodP = await window.placeBasePiece('foundation', 'wood', X7 + 0.5, Y7 + 0.5);
+          const dsP = await window.placeBasePiece('wall', 'dragonsteel', X7 + 3.5, Y7 + 0.5);
+          const swingsToDestroy = (id, dmg) => {
+            let n = 0;
+            while (dv47().pieces.find(p => p.id === id) && n < 400) { ds47({ hitId: id, dmg }); n++; }
+            return n;
+          };
+          const IRON_SWORD = 15, DS_SWORD = 40;      // the real WEAPONS values
+          const woodHits = woodP && woodP.ok ? swingsToDestroy(woodP.piece.id, IRON_SWORD) : -1;
+          const dsHits = dsP && dsP.ok ? swingsToDestroy(dsP.piece.id, DS_SWORD) : -1;
+          results.push([`v47 D: an Iron Sword now needs ${woodHits} swings on wood, exactly double the 3 it needed`,
+            woodHits === Math.ceil(80 / IRON_SWORD) && woodHits === 2 * Math.ceil(40 / IRON_SWORD)]);
+          results.push([`v47 D: a Dragonsteel Sword needs ${dsHits} on dragonsteel, exactly double its old 20`,
+            dsHits === Math.ceil(1600 / DS_SWORD) && dsHits === 2 * Math.ceil(800 / DS_SWORD)]);
+          results.push(['v47 D: nothing absorbed the change — a swing still subtracts exactly its own damage',
+            gameScript.indexOf('baseHit(bp34.piece, Math.max(1, Math.round(w.dmg)));') > 0 &&
+            gameScript.indexOf('const after = Math.max(0, before - dmg);') > 0]);
+        } else {
+          results.push(['v47 D: a clear build site was found for the time-to-destroy gate', false]);
+        }
+      }
+
+      /* ---- PART G: base signs ------------------------------------------- */
+      {
+        const dbi47 = window.debugBaseInfo;
+        let site = null;
+        for (let x = 300; x < 520 && !site; x += 7) {
+          for (let y = 300; y < 520; y += 7) {
+            if (window.basePlaceCheck('foundation', x + 0.5, y + 0.5).ok &&
+                window.basePlaceCheck('foundation', x + 3.5, y + 0.5).ok) { site = [x, y]; break; }
+            /* both offsets must be clear: a Wall needs a Foundation to anchor
+               to, and the two must clear BASE_MIN_SEP of each other. */
+          }
+        }
+        if (site) {
+          const [XG, YG] = site;
+          dsp47({ x: XG + 0.5, y: YG - 1.4, hp: 100,
+                  inv: { wood: 500, stone: 500, iron_bar: 500, runic_stone: 500, dragonsteel: 500 } });
+          const f1 = await window.placeBasePiece('foundation', 'stone', XG + 0.5, YG + 0.5);
+          const w1 = await window.placeBasePiece('wall', 'stone', XG + 3.5, YG + 0.5);
+          const found = f1 && f1.ok ? f1.piece : null;
+          const wall = w1 && w1.ok ? w1.piece : null;
+          results.push(['v47 G: a Foundation and a Wall were placed to assert against', !!found && !!wall]);
+          if (found) {
+            dsp47({ x: found.x, y: found.y + 1 });
+            results.push([`v47 G: the sign reach finds the owner's own Foundation (${dbi47().signNear === found.id})`,
+              dbi47().signNear === found.id && dbi47().BASE_SIGN_MAX === 24]);
+            const sres = (id, txt) => window.debugSetBase({ signId: id, sign: txt }).signResult;
+            const set1 = sres(found.id, '  The Long Watch  ');
+            const signed = dbi47().pieces.find(p => p.id === found.id);
+            results.push(['v47 G: the owner can name their own Foundation, trimmed and stored',
+              set1.ok === true && signed.sign === 'The Long Watch']);
+            results.push(['v47 G: and it goes out over the ONE existing channel, not a new one',
+              sentBroadcasts.some(b => b.event === 'base_sign' &&
+                b.payload.id === found.id && b.payload.sign === 'The Long Watch') &&
+              (gameScript.match(/sb\.channel\(/g) || []).length === 1]);
+            /* Only the anchor piece carries one — the whole point of hanging
+               it on the piece every other piece already needs. */
+            results.push(['v47 G: a Wall cannot carry a sign — it is the Foundation\'s, by its own anchor flag',
+              sres(wall.id, 'Not here').ok === false &&
+              !dbi47().pieces.find(p => p.id === wall.id).sign]);
+            /* Owner-settable ONLY: finding a base still lets you take
+               everything in it, and never lets you rename it. */
+            const realOwner = found.owner;
+            window.debugSetBase({ ownerId: found.id, owner: 'SomeoneElse' });
+            const refused = sres(found.id, 'Raider Was Here');
+            results.push(['v47 G: someone else\'s Foundation refuses the rename',
+              refused.ok === false && refused.why === 'not yours' &&
+              dbi47().pieces.find(p => p.id === found.id).sign === 'The Long Watch']);
+            window.debugSetBase({ ownerId: found.id, owner: realOwner });
+            /* It is TEXT, everywhere it appears — a canvas fillText and a
+               textContent, never markup, and never longer than its own cap. */
+            const LONG47 = '<img src=x onerror=alert(1)> and a very long tail';
+            sres(found.id, LONG47);
+            const xss = dbi47().pieces.find(p => p.id === found.id).sign;
+            results.push([`v47 G: a sign is text and only text, capped at ${dbi47().BASE_SIGN_MAX} (${JSON.stringify(xss)})`,
+              xss.length === 24 && xss === LONG47.slice(0, 24)]);
+            results.push(['v47 G: the panel writes it with textContent, and the world draws it with fillText',
+              gameScript.indexOf('where.textContent =') > 0 &&
+              gameScript.indexOf('ctx.fillText(sign47, sx, sy - 28);') > 0 &&
+              gameScript.indexOf('const sign47 = baseSignOf(bp);') > 0]);
+            /* It is the PLAYER NAMEPLATE, reused — same font, same plate, same
+               offsets — and it draws only when there is one to draw. */
+            results.push(['v47 G: it is the player nameplate reused, not a second label component',
+              gameScript.indexOf('ctx.fillRect(sx - tw47 / 2 - 4, sy - 38, tw47 + 8, 13);') > 0 &&
+              gameScript.indexOf('ctx.fillRect(sx - tw / 2 - 4, sy - 38, tw + 8, 13);') > 0 &&
+              (gameScript.match(/11px 'Barlow', sans-serif/g) || []).length >= 2]);
+            sres(found.id, '');
+            results.push(['v47 G: clearing the field takes the sign down again',
+              dbi47().pieces.find(p => p.id === found.id).sign === '']);
+            /* A world whose SQL has not been run: no `sign` column at all. */
+            results.push(['v47 G: a piece with no sign column reads as unsigned, never as a crash',
+              window.baseSignOf({ kind: 'foundation' }) === '' &&
+              window.baseSignOf({ kind: 'foundation', sign: null }) === '' &&
+              window.baseSignOf({ kind: 'foundation', sign: '   ' }) === '']);
+            /* The broadcast the OTHER client receives normalises the same way. */
+            deliverBroadcast('base_sign', { id: found.id, sign: '   Remote Name   ' });
+            results.push(['v47 G: a sign arriving over the channel is normalised exactly as the setter does',
+              dbi47().pieces.find(p => p.id === found.id).sign === 'Remote Name']);
+            results.push(['v47 G: and the compass and the minimap still refuse to know bases exist',
+              gameScript.slice(gameScript.indexOf('function updateWorldMap'),
+                               gameScript.indexOf('function updateWorldMap') + 3000)
+                .indexOf('basePieces') < 0]);
+          }
+        } else {
+          results.push(['v47 G: a clear build site was found for the sign gates', false]);
+        }
+      }
+
+      /* ---- PART E: combat logout ---------------------------------------- */
+      if (window.debugCombatLogoutInfo && window.debugSetCombatLogout) {
+        const dcl = window.debugCombatLogoutInfo, dscl = window.debugSetCombatLogout;
+        results.push(['v47 E: the window is the spec\'s 30 seconds, as one named tunable',
+          dcl().windowMs === 30000 &&
+          gameScript.indexOf('const COMBAT_LOGOUT_MS = 30000;') > 0]);
+        results.push(['v47 E: the save still happens FIRST, on every path',
+          gameScript.indexOf('if (me && sb) savePlayer();\n  /* The save above is unchanged') > 0]);
+        const fireUnload = () => {
+          const ev = new window.Event('beforeunload', { cancelable: true });
+          window.dispatchEvent(ev);
+          return ev.defaultPrevented;
+        };
+        /* Each state is read at the moment it is fired: the window is a
+           moving one, so a flag read after the next step would be answering
+           about the step after this one. */
+        const probeUnload = (patch) => { dscl(patch); return { prompted: fireUnload(), active: dcl().active }; };
+        const quiet = probeUnload({ lastAt: 0 });
+        const inFight = probeUnload({ agoMs: 1000 });
+        const after31 = probeUnload({ agoMs: 31000 });
+        results.push(['v47 E: no damage in living memory — the tab closes silently, as it always did',
+          quiet.prompted === false && quiet.active === false]);
+        results.push(['v47 E: one second after a hit, leaving raises the browser\'s own prompt',
+          inFight.prompted === true && inFight.active === true]);
+        results.push(['v47 E: thirty-one seconds later it is gone again — the window really is a window',
+          after31.prompted === false && after31.active === false]);
+        /* And the window is opened by REAL damage, through the real paths. */
+        dscl({ lastAt: 0 });
+        const mob47 = window.debugCombatHandles().mobs.find(m => !m.dead);
+        if (mob47) {
+          const hpWas = mob47.hp;
+          window.mobHit(mob47, 1);
+          results.push(['v47 E: damage DEALT to a mob opens it', dcl().active === true]);
+          mob47.hp = hpWas;
+        } else {
+          results.push(['v47 E: damage DEALT to a mob opens it', false]);
+        }
+        dscl({ lastAt: 0 });
+        dsp47({ x: openSpot47[0], y: openSpot47[1], hp: 100 });
+        window.applyDamage(3, 'Someone');
+        results.push(['v47 E: damage TAKEN opens it too', dcl().active === true]);
+        /* The window is opened by DAMAGE and by nothing else: three call
+           sites, and tryAttack() — a swing that may hit nothing at all — is
+           deliberately not one of them. */
+        results.push([`v47 E: exactly three damage sites open it, and a swing at air is not one (${(gameScript.match(/noteCombatDamage\(\);/g) || []).length})`,
+          (gameScript.match(/noteCombatDamage\(\);/g) || []).length === 3 &&
+          gameScript.indexOf('function tryAttack(aimX, aimY) {\n  if (dead) return;\n  const w = equippedWeapon();') > 0 &&
+          gameScript.slice(gameScript.indexOf('function tryAttack('),
+                           gameScript.indexOf('function dealHit(')).indexOf('noteCombatDamage') < 0]);
+        results.push(['v47 E: it is honest about its ceiling — nothing here claims to PREVENT leaving',
+          gameScript.indexOf('No web page can hold a tab open against its user') > 0 &&
+          gameScript.indexOf('e.returnValue = ""') > 0]);
+        results.push(['v47 E: and a dead player is never prompted — a corpse has nothing to flee',
+          gameScript.indexOf('if (me && !dead && inCombatLogoutWindow())') > 0]);
+        dsp47({ x: wasP47.x, y: wasP47.y, hp: 100 });
+        dscl({ lastAt: 0 });
+      } else {
+        results.push(['v47 E: the combat-logout hooks are reachable', false]);
+      }
+
+      /* ---- PART F: handing an item to another player -------------------- */
+      if (window.giveItemTo && window.debugGiveInfo) {
+        const others47 = window.debugCombatHandles().others;
+        const dgi = window.debugGiveInfo;
+        const invNow = () => window.debugWorldInfo().player.inv;
+        others47.clear();
+        dsp47({ x: 400.5, y: 400.5, hp: 100, inv: { wood: 20, iron_bar: 3 }, equipped: null });
+        const stand = (dx) => others47.set('Giftee', { x: 400.5 + dx, y: 400.5, cls: 'Ranger',
+          hp: 100, maxHp: 100, lastHeard: 1e15, space: 'main', level: 1 });
+        stand(0.8);
+        results.push(['v47 F: someone standing within gather range is a give target',
+          dgi().nearest === 'Giftee']);
+        window.debugSetGive({ open: 'Giftee' });
+        results.push(['v47 F: the panel opens on them, and closes every other panel with it',
+          dgi().open === true && dgi().target === 'Giftee' &&
+          doc47.getElementById('invPanel').style.display !== 'block']);
+        const sentBefore = sentBroadcasts.length;
+        const gave = window.giveItemTo('Giftee', 'wood', 5);
+        const sentAfter = sentBroadcasts.slice(sentBefore).filter(b => b.event === 'item_give');
+        results.push(['v47 F: the sender genuinely loses what they hand over',
+          gave === true && invNow().wood === 15]);
+        results.push(['v47 F: and it goes out addressed, over the one existing channel',
+          sentAfter.length === 1 && sentAfter[0].payload.to === 'Giftee' &&
+          sentAfter[0].payload.from === 'BootTest' &&
+          sentAfter[0].payload.type === 'wood' && sentAfter[0].payload.qty === 5]);
+        /* THE RECEIVING HALF, driven through the game's own handler with the
+           sender's own payload — this is the spec's "writes to the real
+           recipient inventory" gate, and it is the wire, not a source grep. */
+        const before = invNow().wood;
+        deliverBroadcast('item_give', sentAfter[0].payload);
+        results.push(['v47 F: a packet addressed to someone else is ignored',
+          invNow().wood === before]);
+        deliverBroadcast('item_give', Object.assign({}, sentAfter[0].payload, { to: 'BootTest' }));
+        results.push(['v47 F: the same packet addressed to you writes into your real inventory',
+          invNow().wood === before + 5]);
+        /* A malformed or hostile packet can only ever add real items, sanely. */
+        const invJson = JSON.stringify(invNow());
+        deliverBroadcast('item_give', { to: 'BootTest', from: 'X', type: 'not_a_real_item', qty: 99 });
+        deliverBroadcast('item_give', { to: 'BootTest', from: 'X', type: 'wood', qty: -5 });
+        results.push(['v47 F: an unknown item type is dropped, never minted',
+          JSON.stringify(invNow()) === invJson]);
+        deliverBroadcast('item_give', { to: 'BootTest', from: 'X', type: 'wood', qty: 1e9 });
+        results.push(['v47 F: and a wild quantity is clamped rather than trusted',
+          invNow().wood <= before + 5 + 9999]);
+        /* Range is checked at the moment of the click, not by the panel. */
+        dsp47({ inv: { wood: 10 } });
+        stand(5);
+        const far = window.giveItemTo('Giftee', 'wood', 1);
+        results.push(['v47 F: walking away refuses the transfer at the moment it is attempted',
+          far === false && invNow().wood === 10]);
+        others47.delete('Giftee');
+        const gone = window.giveItemTo('Giftee', 'wood', 1);
+        results.push(['v47 F: and a target who is not there at all refuses too',
+          gone === false && invNow().wood === 10]);
+        /* Giving away the last of an EQUIPPED item has to put your fists back:
+           the equip slots are pointers into the inventory. */
+        stand(0.8);
+        dsp47({ inv: { iron_sword: 1 }, equipped: 'iron_sword' });
+        window.giveItemTo('Giftee', 'iron_sword', 1);
+        results.push(['v47 F: handing over your last sword unequips it — the slots are pointers',
+          !invNow().iron_sword && window.equippedWeapon().name !== 'Iron Sword' &&
+          gameScript.indexOf('if (me.equipped === type) me.equipped = null;') > 0]);
+        results.push(['v47 F: no approval step was invented — the bible\'s own "at players\' own risk"',
+          gameScript.indexOf('no escrow, no trade window that') > 0 &&
+          gameScript.indexOf('function giveItemTo(name, type, qty)') > 0]);
+        results.push(['v47 F: the interact key opens it, after the ground item and before the tree',
+          gameScript.indexOf('const who = nearestGiveTarget();') >
+          gameScript.indexOf('if (item) { lastGather = now; tryPickup(item); return; }') &&
+          gameScript.indexOf('const who = nearestGiveTarget();') <
+          gameScript.indexOf('const g = nearestGatherable();\n  if (g && g._node)')]);
+        window.debugSetGive({ close: true });
+        others47.clear();
+        dsp47({ x: wasP47.x, y: wasP47.y, hp: 100, inv: wasP47.inv, equipped: null });
+      } else {
+        results.push(['v47 F: the give hooks are reachable', false]);
+      }
+
+      /* ---- PART H: redeem codes ----------------------------------------- */
+      if (window.submitRedeem && window.debugRedeemInfo) {
+        const dri = window.debugRedeemInfo;
+        const codeEl = doc47.getElementById('redeemInput');
+        const nameEl47 = doc47.getElementById('username');
+        const invNow = () => window.debugWorldInfo().player.inv;
+        nameEl47.value = 'BootTest';
+        dsp47({ inv: {} });
+        results.push(['v47 H: the field is on the login card, below the ENTER button',
+          !!codeEl && !!doc47.getElementById('redeemBtn') &&
+          html.indexOf('<button id="enterBtn">ENTER THE WORLD</button>') <
+          html.indexOf('<input id="redeemInput"')]);
+
+        /* 1. A world whose SQL has not been run. BOTH tables absent. */
+        redeemMissing.add('redeem_codes'); redeemMissing.add('redeem_claims');
+        tableData.redeem_codes.push({ code: 'RUNE47', items: { wood: 5, dragonsteel: 1, not_a_thing: 9 }, uses_left: 2 });
+        codeEl.value = 'RUNE47';
+        const noSys = await window.submitRedeem();
+        results.push(['v47 H: with no tables it degrades to "not active on this world", and grants nothing',
+          noSys === 'no-system' && dri().pending === null &&
+          (await window.grantPendingRedeem()) === false]);
+        /* 2. The claims ledger alone missing is the SAME answer, deliberately:
+              with nowhere to record a claim a code could be redeemed forever,
+              so the system stays off rather than open. */
+        redeemMissing.delete('redeem_codes');
+        const noLedger = await window.submitRedeem();
+        results.push(['v47 H: no claims ledger reads as "system off", never as "nobody has claimed"',
+          noLedger === 'no-system' && dri().pending === null]);
+        redeemMissing.delete('redeem_claims');
+
+        /* 3. The happy path. */
+        const ok1 = await window.submitRedeem();
+        results.push(['v47 H: a real code is accepted, and unknown items in it are dropped rather than minted',
+          ok1 === 'ok' && dri().pending &&
+          JSON.stringify(dri().pending.items) === JSON.stringify({ wood: 5, dragonsteel: 1 })]);
+        results.push(['v47 H: nothing is spent by pressing REDEEM — no claim is recorded yet',
+          tableData.redeem_claims.length === 0]);
+        const granted = await window.grantPendingRedeem();
+        results.push(['v47 H: the login that follows grants it straight into the real inventory',
+          granted === true && invNow().wood === 5 && invNow().dragonsteel === 1]);
+        results.push(['v47 H: and the claim is recorded against that username',
+          tableData.redeem_claims.length === 1 &&
+          tableData.redeem_claims[0].code === 'RUNE47' &&
+          tableData.redeem_claims[0].username === 'BootTest']);
+        results.push(['v47 H: uses_left is decremented by the same grant',
+          gameScript.indexOf('sb.from("redeem_codes").update({ uses_left: usesLeft - 1 }).eq("code", code);') > 0 &&
+          dri().state === 'granted']);
+
+        /* 4. The same username cannot claim it twice. */
+        const twice = await window.submitRedeem();
+        results.push(['v47 H: the same name is refused a second claim',
+          twice === 'claimed' && dri().pending === null]);
+        results.push(['v47 H: and nothing was added for the refused attempt',
+          invNow().wood === 5 && tableData.redeem_claims.length === 1]);
+
+        /* 5. The race: the claim row appears between REDEEM and the login.
+              The claim is written FIRST, so the failure direction is always
+              "you keep your code", never "you got it twice". */
+        tableData.redeem_codes.push({ code: 'RUNE47B', items: { stone: 3 }, uses_left: 5 });
+        codeEl.value = 'RUNE47B';
+        const armed = await window.submitRedeem();
+        tableData.redeem_claims.push({ code: 'RUNE47B', username: 'BootTest' });
+        const raced = await window.grantPendingRedeem();
+        results.push(['v47 H: a claim that lands in between refuses the grant outright',
+          armed === 'ok' && raced === false && !invNow().stone]);
+
+        /* 6. The two ordinary refusals. */
+        codeEl.value = 'NOT-A-CODE';
+        const nope = await window.submitRedeem();
+        tableData.redeem_codes.push({ code: 'SPENT47', items: { wood: 1 }, uses_left: 0 });
+        codeEl.value = 'SPENT47';
+        const spent = await window.submitRedeem();
+        results.push(['v47 H: an unknown code and a used-up code each say so, and grant nothing',
+          nope === 'no-code' && spent === 'spent' && dri().pending === null]);
+        results.push(['v47 H: a code is claimed BY A NAME, so it asks for one first',
+          (nameEl47.value = '', await window.submitRedeem()) === 'no-name']);
+        nameEl47.value = 'BootTest';
+        codeEl.value = '';
+        window.debugSetRedeem({ clear: true });
+        tableData.redeem_codes.length = 0;
+        tableData.redeem_claims.length = 0;
+        dsp47({ x: wasP47.x, y: wasP47.y, hp: 100, inv: wasP47.inv });
+      } else {
+        results.push(['v47 H: the redeem hooks are reachable', false]);
+      }
+
+      /* ---- and the world is still standing after all of it --------------- */
+      results.push(['v47: the world still runs frames cleanly after every part of this',
         (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
     }
 
