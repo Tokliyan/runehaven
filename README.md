@@ -149,6 +149,18 @@ technique, same "close-range only, never reveals remote bases" limit
 from its original spec — this is a bigger window on the same view, not
 a different kind of view.
 
+**PART E — re-verify music, bases, and fast travel are genuinely
+correct, for the record.** These have all been independently confirmed
+working in code across multiple prior sessions — this is not expected to
+find anything, it is a documented re-check requested directly, and the
+result (pass or genuinely find something) must be written into SKILL.md
+either way. Confirm: `BG_PLAYLIST` still lists all five tracks correctly,
+`tension.mp3` still fires only on Elder-tier combat; `basePlaceCheck()`
+and `placeBasePiece()` still correctly write to `base_pieces` with no
+regression from this version's own changes; the player-to-player travel
+button's `disabled` condition still has no Unicorn Elder ownership check
+anywhere in it.
+
 **Proof gates:** standard gauntlet plus six-seed sweep for the expansion
 with real before/after landmark and biome-pocket numbers (not assumed
 unchanged), cave connectivity re-confirmed with zero sealed-off tiles
