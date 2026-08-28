@@ -164,6 +164,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     const MOBK = ["goblin", "bandit", "troll", "boar", "bear", "griffin", "phoenix",
                   "dark_wraith",                                          // v18
                   "sea_serpent",                                          // v21
+                  "adult_golem",                                         // v47: real Hard-tier mob, reuses young Golem art scaled hostile
                   // v25: the Salamander King's hostile rampage form. It is
                   // tameable:true, so it renders through drawSpecies like the
                   // v14 beasts — sweep every mob state over that path too.
