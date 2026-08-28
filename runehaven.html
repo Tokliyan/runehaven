@@ -519,7 +519,7 @@
 </div>
 <div class="hud" id="hudMap">
   <div class="mm-title">MINIMAP</div>
-  <canvas id="mapCanvas" width="121" height="121"></canvas>
+  <canvas id="mapCanvas" width="124" height="124"></canvas>
 </div>
 <div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character &nbsp;•&nbsp; M fast travel</div>
 <div id="hpBarWrap"><div id="hpBar"></div></div>
@@ -745,7 +745,15 @@ function connectSupabase() {
 }
 
 /* ---------------- CONSTANTS ---------------- */
-/* v46 PART C — EXPANSION 3. N 1000 -> 2000: 4x the area, 1,000,000 tiles
+/* v48 PART A — EXPANSION 4. N 2000 -> 4000: 4x the area again, 4,000,000
+   tiles become 16,000,000. The audit below is Expansion 3's own list re-run at
+   the same ratio of exactly 2.0 — every site it names is named again here, and
+   the list itself was rebuilt from the Expansion 3 diff rather than retyped
+   from memory, so nothing it scaled can be silently missed this time. Biome
+   rarity thresholds and noise wavelengths are untouched for the third
+   consecutive expansion, exactly as the locked spec requires.
+
+   v46 PART C — EXPANSION 3. N 1000 -> 2000: 4x the area, 1,000,000 tiles
    become 4,000,000. The full constant audit Expansion 2b's PART E invented is
    repeated here at a ratio of exactly 2.0, and it is the same rule both times:
    EVERY constant that is a distance relative to a fixed point scales, and
@@ -755,12 +763,12 @@ function connectSupabase() {
    freedom in it; every one of them is listed in the SKILL.md entry for this
    version, and the two that needed real measurement rather than arithmetic
    (MOUNTAIN_RUIN_ELEV and the six-seed landmark sweep) are called out there. */
-const N = 2000;
+const N = 4000;
 const IW2 = 22, IH2 = 11;
 const HZ = 16;                       // taller steps: cliffs must READ
 const DAY_LENGTH = 600;
 const PLAYER_SPEED = 4.6;
-const SAFE_RADIUS = 226;   // Expansion 3: 113 * 2
+const SAFE_RADIUS = 452;   // Expansion 4: 226 * 2
 const BROADCAST_HZ = 10;
 const SAVE_EVERY = 5000;
 /* v46 PART A: the death timer. Ten minutes was a punishment nobody asked
@@ -1405,7 +1413,7 @@ const COLOSSEUM_R = 9;   // the arena floor
    meaningless, and the walk is the whole mechanic. Distance is a tunable. */
 let DRAGON_ALTAR = { x: 0, y: 0 };
 const DRAGON_ALTAR_R = 2.2;      // interact reach, the Shrine/Oracle language
-const DRAGON_ALTAR_DIST = 282;   // TUNABLE: how far from the Tower it stands
+const DRAGON_ALTAR_DIST = 564;   // TUNABLE: how far from the Tower it stands
 let floatTexts = [];                 // v9: rising damage numbers
 let pulseT = 0;                      // v9: staff cast pulse timer
 let swingKind = null;                // v9: which weapon silhouette the swing sweeps
@@ -1966,7 +1974,12 @@ function debugV39Info() {
   const uw = wilds.find(w => w.species === "unicorn_elder") || null;
   return {
     /* PART A */
-    GOLEM_ELDER: ge ? { x: ge.x, y: ge.y, hp: ge.hp, maxHp: ge.maxHp, dead: !!ge.dead } : null,
+    /* v48: `hx`/`hy` — the tile it was PLACED on — join the live x/y. A mob
+       idle-wanders up to its own leashRadius, and the Golem Elder stands by
+       construction on the single outermost RUINB tile of its cluster, so
+       "it is on a ruin tile" is only a stable question about its home. */
+    GOLEM_ELDER: ge ? { x: ge.x, y: ge.y, hx: ge.hx, hy: ge.hy,
+                        hp: ge.hp, maxHp: ge.maxHp, dead: !!ge.dead } : null,
     golemElderCount: mobs.filter(m => m.kind === "golem_elder").length,
     golemElderSpot: golemElderSpot(),
     golemElderDef: Object.assign({}, MOBS.golem_elder),
@@ -2296,6 +2309,46 @@ const MOBS = {
     atkCooldownMs: 1900, windupMs: 700, aggroRadius: 7, leashRadius: 12,
     moveSpeed: 1.3, count: 3, tameable: false,
     loot: [{ type: "runic_stone", qty: 2, chance: 0.9 }, { type: "stone", qty: 3, chance: 0.8 }] },
+  /* ============ v48 PART C — THE DEMON KNIGHT =======================
+     Bible, verbatim, from its own MOBS row: "Demon Knight — Deep dungeons —
+     Very Hard — Dragonsteel", and from the dragonsteel line: "Killing a Demon
+     Knight in a dungeon". Confirmed before a line was written: the creature
+     existed nowhere in this file, in any form.
+
+     ⚠️ IT IS AT THE VOLCANO, NOT IN A DUNGEON, AND THAT IS A DELIBERATE,
+     NAMED EXCEPTION rather than an oversight. "Deep Dungeons" is not a biome
+     in this game — the bible lists Dungeons, and what exists today is the v20
+     dungeon ENTRANCE set piece, a doorway with nothing behind it. Building
+     Dungeons properly is a landmark-scale feature of its own (a whole
+     traversal/instance architecture), and the locked spec chose instead to
+     station the Demon Knight as a dedicated guardian at the Volcano,
+     protecting the Elder Drake. That is where dragonsteel already comes from,
+     so the one thing the bible is unambiguous about — that this creature is
+     how you get dragonsteel by killing something that is not a dragon — lands
+     exactly where a player is already going to look for it. When Dungeons are
+     built, this is the creature that moves into them.
+
+     "Very Hard" is the bible's own tier and it sits between two tiers this
+     file already has: above Adult Golem and Sea Serpent ("Hard"), below the
+     Elder Drake ("Boss"). Every number below is the locked spec's own
+     proposal, taken as written. hp x dmg = 7,280 puts it between the Sea
+     Serpent (2,970) and the Golem Elder (8,400), which is where MOB_K 3.80
+     puts its silhouette too — the file's "size sorts exactly as threat does"
+     rule holds with one more creature in it.
+
+     biomes:[] and the hand-placement after the mob loop are the Elder Drake's
+     own pattern, for the same reason: these two are not a population the
+     hashed loop scatters, they are stationed. count:2 — two, flanking, not
+     one — and the placement reads that count rather than assuming it. */
+  demon_knight: { name: "Demon Knight", biomes: [], hp: 280, dmg: 26, atkRange: 2.0,
+    atkCooldownMs: 1600, windupMs: 600, aggroRadius: 9, leashRadius: 16,
+    moveSpeed: 1.6, count: 2, tameable: false,
+    /* The bible names dragonsteel for this creature specifically, and it is
+       already on dragonsteel's own acquisition list, so the first row is not
+       a design decision. The second is: runic_stone at 0.7 is a designed
+       TUNABLE, the same shape the Elder Drake's second row is. */
+    loot: [{ type: "dragonsteel", qty: 1, chance: 1.0 },
+           { type: "runic_stone", qty: 2, chance: 0.7 }] },
   /* v25 PART C: the rampaged Salamander King. Bible — "must be fed and kept
      happy or it will rampage and return to the caldera" — so this is NOT an
      ambient worldgen spawn: count is 0 on purpose, and the ONLY thing that
@@ -2345,9 +2398,19 @@ const MOB_RESPAWN_MS = 60000;      // dev-island convenience: fights are repeata
    long-timer creature to those same lines meant either fixing that or
    copying it; noted in the changelog rather than done silently. */
 const GOLEM_ELDER_RESPAWN_MS = 12 * 60 * 60 * 1000;   // v39: 12 real hours
+/* v48 PART C: the Demon Knight's own timer, and it is the one number this
+   creature genuinely needed that the locked spec does not state. Its drop is
+   a GUARANTEED dragonsteel — the rarest material in the world, "near
+   indestructible", tier 5 — so on the flat 60-second MOB_RESPAWN_MS two of
+   them standing beside each other would be an unlimited dragonsteel tap
+   fifteen tiles from the Ancient Forge. Three hours is deliberately half the
+   Elder Drake's six: killing one is an expedition, not a rotation, and the
+   drake is still the bigger event. TUNABLE. */
+const DEMON_KNIGHT_RESPAWN_MS = 3 * 60 * 60 * 1000;   // v48 PART C: 3 real hours
 function mobRespawnMs(kind) {
   if (kind === "elder_drake") return ELDER_DRAKE_RESPAWN_MS;
   if (kind === "golem_elder") return GOLEM_ELDER_RESPAWN_MS;
+  if (kind === "demon_knight") return DEMON_KNIGHT_RESPAWN_MS;
   return MOB_RESPAWN_MS;
 }
 const DW_BOLT_MS = 240;            // v18: Dark Wraith ranged-strike bolt lifetime
@@ -2825,39 +2888,39 @@ function placeLandmarks() {
   // Landmarks must keep clear of spawn so the safe zone stays green grass
   for (let attempt = 0; attempt < 12; attempt++) {
     const a1 = (hash2(1 + attempt, 1, worldSeed)) * Math.PI * 2;
-    VOLCANO = { x: Math.round(TOWER.x + Math.cos(a1) * 626), y: Math.round(TOWER.y + Math.sin(a1) * 626) };
+    VOLCANO = { x: Math.round(TOWER.x + Math.cos(a1) * 1252), y: Math.round(TOWER.y + Math.sin(a1) * 1252) };
     if (Math.hypot(VOLCANO.x - SPAWN.x, VOLCANO.y - SPAWN.y) > SAFE_RADIUS + 42) break;
   }
   for (let attempt = 0; attempt < 12; attempt++) {
     const a2 = (hash2(2 + attempt, 2, worldSeed)) * Math.PI * 2;
-    MOUNT = { x: Math.round(TOWER.x + Math.cos(a2) * 600), y: Math.round(TOWER.y + Math.sin(a2) * 600) };
+    MOUNT = { x: Math.round(TOWER.x + Math.cos(a2) * 1200), y: Math.round(TOWER.y + Math.sin(a2) * 1200) };
     if (Math.hypot(MOUNT.x - SPAWN.x, MOUNT.y - SPAWN.y) > SAFE_RADIUS + 36 &&
-        Math.hypot(MOUNT.x - VOLCANO.x, MOUNT.y - VOLCANO.y) > 488) break;
+        Math.hypot(MOUNT.x - VOLCANO.x, MOUNT.y - VOLCANO.y) > 976) break;
   }
   /* v37: the three remaining landmarks, same hashed-angle technique, each
      kept clear of spawn and of one another so they never overlap. */
   for (let attempt = 0; attempt < 20; attempt++) {
     const a4 = (hash2(4 + attempt, 4, worldSeed)) * Math.PI * 2;
-    BAZAAR = { x: Math.round(TOWER.x + Math.cos(a4) * 400), y: Math.round(TOWER.y + Math.sin(a4) * 400) };
+    BAZAAR = { x: Math.round(TOWER.x + Math.cos(a4) * 800), y: Math.round(TOWER.y + Math.sin(a4) * 800) };
     if (Math.hypot(BAZAAR.x - SPAWN.x, BAZAAR.y - SPAWN.y) > SAFE_RADIUS + 20 &&
-        Math.hypot(BAZAAR.x - VOLCANO.x, BAZAAR.y - VOLCANO.y) > 250 &&
-        Math.hypot(BAZAAR.x - MOUNT.x, BAZAAR.y - MOUNT.y) > 250) break;
+        Math.hypot(BAZAAR.x - VOLCANO.x, BAZAAR.y - VOLCANO.y) > 500 &&
+        Math.hypot(BAZAAR.x - MOUNT.x, BAZAAR.y - MOUNT.y) > 500) break;
   }
   for (let attempt = 0; attempt < 20; attempt++) {
     const a5 = (hash2(5 + attempt, 5, worldSeed)) * Math.PI * 2;
     /* The Ancient Forge belongs near the volcano — it is the only place
        dragonsteel can be smelted, and dragonsteel comes from there. */
-    ANCIENT = { x: Math.round(VOLCANO.x + Math.cos(a5) * 182), y: Math.round(VOLCANO.y + Math.sin(a5) * 182) };
+    ANCIENT = { x: Math.round(VOLCANO.x + Math.cos(a5) * 364), y: Math.round(VOLCANO.y + Math.sin(a5) * 364) };
     if (Math.hypot(ANCIENT.x - SPAWN.x, ANCIENT.y - SPAWN.y) > SAFE_RADIUS + 30 &&
-        Math.hypot(ANCIENT.x - BAZAAR.x, ANCIENT.y - BAZAAR.y) > 188) break;
+        Math.hypot(ANCIENT.x - BAZAAR.x, ANCIENT.y - BAZAAR.y) > 376) break;
   }
   for (let attempt = 0; attempt < 20; attempt++) {
     const a6 = (hash2(6 + attempt, 6, worldSeed)) * Math.PI * 2;
-    COLOSSEUM = { x: Math.round(TOWER.x + Math.cos(a6) * 500), y: Math.round(TOWER.y + Math.sin(a6) * 500) };
+    COLOSSEUM = { x: Math.round(TOWER.x + Math.cos(a6) * 1000), y: Math.round(TOWER.y + Math.sin(a6) * 1000) };
     if (Math.hypot(COLOSSEUM.x - SPAWN.x, COLOSSEUM.y - SPAWN.y) > SAFE_RADIUS + 26 &&
-        Math.hypot(COLOSSEUM.x - BAZAAR.x, COLOSSEUM.y - BAZAAR.y) > 212 &&
-        Math.hypot(COLOSSEUM.x - ANCIENT.x, COLOSSEUM.y - ANCIENT.y) > 212 &&
-        Math.hypot(COLOSSEUM.x - VOLCANO.x, COLOSSEUM.y - VOLCANO.y) > 212) break;
+        Math.hypot(COLOSSEUM.x - BAZAAR.x, COLOSSEUM.y - BAZAAR.y) > 424 &&
+        Math.hypot(COLOSSEUM.x - ANCIENT.x, COLOSSEUM.y - ANCIENT.y) > 424 &&
+        Math.hypot(COLOSSEUM.x - VOLCANO.x, COLOSSEUM.y - VOLCANO.y) > 424) break;
   }
 
   /* v39 PART B: the Dragon Elder Altar, the same technique a seventh time.
@@ -2880,14 +2943,14 @@ function placeLandmarks() {
        pre-Ruin, pre-Zone biome for every tile it touched. */
     if (isPlaceableLand(Math.round(DRAGON_ALTAR.x), Math.round(DRAGON_ALTAR.y)) &&
         Math.hypot(DRAGON_ALTAR.x - SPAWN.x, DRAGON_ALTAR.y - SPAWN.y) > SAFE_RADIUS + 4 &&
-        Math.hypot(DRAGON_ALTAR.x - BAZAAR.x, DRAGON_ALTAR.y - BAZAAR.y) > 150 &&
-        Math.hypot(DRAGON_ALTAR.x - ANCIENT.x, DRAGON_ALTAR.y - ANCIENT.y) > 150 &&
-        Math.hypot(DRAGON_ALTAR.x - COLOSSEUM.x, DRAGON_ALTAR.y - COLOSSEUM.y) > 150 &&
-        Math.hypot(DRAGON_ALTAR.x - VOLCANO.x, DRAGON_ALTAR.y - VOLCANO.y) > 150 &&
-        Math.hypot(DRAGON_ALTAR.x - MOUNT.x, DRAGON_ALTAR.y - MOUNT.y) > 150) break;
+        Math.hypot(DRAGON_ALTAR.x - BAZAAR.x, DRAGON_ALTAR.y - BAZAAR.y) > 300 &&
+        Math.hypot(DRAGON_ALTAR.x - ANCIENT.x, DRAGON_ALTAR.y - ANCIENT.y) > 300 &&
+        Math.hypot(DRAGON_ALTAR.x - COLOSSEUM.x, DRAGON_ALTAR.y - COLOSSEUM.y) > 300 &&
+        Math.hypot(DRAGON_ALTAR.x - VOLCANO.x, DRAGON_ALTAR.y - VOLCANO.y) > 300 &&
+        Math.hypot(DRAGON_ALTAR.x - MOUNT.x, DRAGON_ALTAR.y - MOUNT.y) > 300) break;
   }
 
-  const clamp = p => { p.x = Math.max(72, Math.min(N - 72, p.x)); p.y = Math.max(72, Math.min(N - 72, p.y)); };
+  const clamp = p => { p.x = Math.max(144, Math.min(N - 144, p.x)); p.y = Math.max(144, Math.min(N - 144, p.y)); };
   clamp(VOLCANO); clamp(MOUNT); clamp(BAZAAR); clamp(ANCIENT); clamp(COLOSSEUM);
   clamp(DRAGON_ALTAR);
   placeRuinsAndZones();
@@ -2917,8 +2980,8 @@ const RUIN_COUNT = 6, ZONE_COUNT = 4;
    relationship is written down instead: a Ruin cluster must clear the LARGER
    exclusion by its own whole footprint, which makes "every ruin-only species
    can reach every cluster" true by construction at any N. */
-const WILD_SPAWN_MIN = 300;   // Expansion 3: 150 * 2 — wilds keep this far from SPAWN
-const MOB_SPAWN_MIN = 350;    // Expansion 3: 175 * 2 — hostile mobs keep further still
+const WILD_SPAWN_MIN = 600;   // Expansion 4: 300 * 2 — wilds keep this far from SPAWN
+const MOB_SPAWN_MIN = 700;    // Expansion 4: 350 * 2 — hostile mobs keep further still
 /* v25 PART A: what counts as a "mountain ruin" in this game's own terms. The
    bible says Crystal Golems are "found young in mountain ruins only", and this
    file has no separate mountain-ruin structure — so the tag is elevation at
@@ -2952,11 +3015,11 @@ const MOB_SPAWN_MIN = 350;    // Expansion 3: 175 * 2 — hostile mobs keep furt
    nowhere near demanding snow (the placeable band stops at 0.84, PEAK
    starts at 0.86). Still the tunable this comment always said it was. */
 const MOUNTAIN_RUIN_ELEV = 0.66;
-const RUIN_FOOT = 38;       // carve radius of one Ruin cluster (Expansion 3: 19 * 2)
-const ZONE_R = 68;          // a Safe Zone's grass clearing AND its protected radius (Expansion 3: 34 * 2)
-const RUIN_SEP = 332;       // Ruin-to-Ruin (Expansion 3: 166 * 2)
-const ZONE_SEP = 332;       // Zone-to-Zone and Zone-to-SPAWN/TOWER/VOLCANO/MOUNT (Expansion 3: 166 * 2)
-const RUIN_ZONE_SEP = 200;  // Ruin-to-Zone (Expansion 3: 100 * 2)
+const RUIN_FOOT = 76;       // carve radius of one Ruin cluster (Expansion 4: 38 * 2)
+const ZONE_R = 136;         // a Safe Zone's grass clearing AND its protected radius (Expansion 4: 68 * 2)
+const RUIN_SEP = 664;       // Ruin-to-Ruin (Expansion 4: 332 * 2)
+const ZONE_SEP = 664;       // Zone-to-Zone and Zone-to-SPAWN/TOWER/VOLCANO/MOUNT (Expansion 4: 332 * 2)
+const RUIN_ZONE_SEP = 400;  // Ruin-to-Zone (Expansion 4: 200 * 2)
 
 /* Land fitness for placement. This MUST use elevRaw() and never biomeAt():
    placeLandmarks() runs before tileCache.clear(), so a biomeAt() call here
@@ -2985,8 +3048,8 @@ function placeRuinsAndZones() {
   RUINS = [];
   OTHER_SAFE_ZONES = [];
   const H = (ax, ay, p) => Math.hypot(ax - p.x, ay - p.y);
-  const inBounds = (tx, ty) => tx >= 300 && tx <= N - 300 && ty >= 300 && ty <= N - 300;
-  for (let a = 0; a < 240000 && RUINS.length < RUIN_COUNT; a++) {
+  const inBounds = (tx, ty) => tx >= 600 && tx <= N - 600 && ty >= 600 && ty <= N - 600;
+  for (let a = 0; a < 960000 && RUINS.length < RUIN_COUNT; a++) {
     const tx = Math.floor(hash2(a, 61, worldSeed + 7717) * N);
     const ty = Math.floor(hash2(a, 67, worldSeed + 7723) * N);
     if (!inBounds(tx, ty) || !isPlaceableLand(tx, ty)) continue;
@@ -2995,15 +3058,15 @@ function placeRuinsAndZones() {
        whole footprint, or a ruin-only species has nowhere legal to stand in
        it. Derived, so the next expansion carries it for free. */
     if (H(tx, ty, SPAWN) <= MOB_SPAWN_MIN + RUIN_FOOT) continue;
-    if (H(tx, ty, VOLCANO) <= 350) continue;
-    if (H(tx, ty, MOUNT) <= 350) continue;
+    if (H(tx, ty, VOLCANO) <= 700) continue;
+    if (H(tx, ty, MOUNT) <= 700) continue;
     if (RUINS.some(r => H(tx, ty, r) <= RUIN_SEP)) continue;
     /* v25 PART A: tag the cluster mountain-or-not once, here, while elevRaw()
        is already the safe thing to call (see isPlaceableLand's note — this
        runs before tileCache.clear(), so biomeAt() must not be touched). */
     RUINS.push({ x: tx, y: ty, mtn: elevRaw(tx, ty) >= MOUNTAIN_RUIN_ELEV });
   }
-  for (let a = 0; a < 240000 && OTHER_SAFE_ZONES.length < ZONE_COUNT; a++) {
+  for (let a = 0; a < 960000 && OTHER_SAFE_ZONES.length < ZONE_COUNT; a++) {
     const tx = Math.floor(hash2(a, 71, worldSeed + 8837) * N);
     const ty = Math.floor(hash2(a, 73, worldSeed + 8849) * N);
     if (!inBounds(tx, ty) || !isPlaceableLand(tx, ty)) continue;
@@ -3035,8 +3098,8 @@ function elevRaw(tx, ty) {
   const dTower = Math.hypot(tx - TOWER.x, ty - TOWER.y);
   const dMount = Math.hypot(tx - MOUNT.x, ty - MOUNT.y);
   return fbm(tx, ty, worldSeed)
-       + Math.max(0, 1 - dTower / 1000) * 0.16
-       + Math.max(0, 1 - dMount / 300) * 0.55
+       + Math.max(0, 1 - dTower / 2000) * 0.16
+       + Math.max(0, 1 - dMount / 600) * 0.55
        - Math.max(0, edge - 0.60) * 1.6;
 }
 
@@ -3051,8 +3114,24 @@ function elevRaw(tx, ty) {
    is in the same space together, matching the bible's one-world rule.
    The mechanism is one extra field on the move broadcast plus a filter
    on the receiving end. No new channel, no new sync system. */
-const INTERIOR_N = 80;           // interior grid is 80x80 tiles
-/* Caves & Enchanted Forest Expansion PART A: 50 -> 80, which is 2.56x the
+const INTERIOR_N = 160;          // interior grid is 160x160 tiles
+/* v48 PART B — EXPANSION 4 UNDERGROUND. 80 -> 160: 4x the grid, 6,400 tiles
+   become 25,600. Everything that fills a cave already keys itself to something
+   derived — INTERIOR_AREA_K to the grid, every content count to that
+   interior's OWN floor tally — so the density carried itself again and no new
+   factor was invented. What DID have to move is the second guard in this
+   function, and it is exactly the failure mode the locked spec names: a number
+   sized for the old grid that silently truncates at the new one. The
+   flood-fill guard was already written as `8 * INTERIOR_N * INTERIOR_N` (see
+   below) and needed nothing; `carve`'s own guard was still the literal 200,
+   which covers an L-shaped tunnel across an 80x80 grid (76 + 75 = 151 steps at
+   worst) and does NOT cover one across 160x160 (155 + 155 = 310). A truncated
+   carve stops digging half way and leaves the orphan region it was joining
+   still sealed — the exact "I cannot enter that second cavern" report the
+   connectivity pass exists to prevent, arriving through a different door. It
+   is derived from the grid now, so the next doubling carries it too.
+
+   Caves & Enchanted Forest Expansion PART A: 50 -> 80, which is 2.56x the
    grid and — because the two-tile wall border is a smaller fraction of a
    bigger grid, exactly as Tuning/Polish measured going 26 -> 50 — rather
    more than that in real walkable floor. Nothing below needed a new factor:
@@ -3187,9 +3266,15 @@ function buildInterior(spaceId, anchor) {
   };
   /* Carve a straight L-shaped tunnel between two points — simple, always
      succeeds, and reads as a deliberate passage rather than noise. */
+  /* v48 PART B: `200` was a literal sized for the 80x80 grid. An L-shaped
+     path is at most (INTERIOR_N - 1) steps in x plus (INTERIOR_N - 1) in y, so
+     2 * INTERIOR_N covers the worst case at any grid size with room to spare —
+     310 needed against 320 at 160x160, where the old 200 would have stopped a
+     third of the way short and left the region it was joining sealed off. */
+  const INTERIOR_CARVE_GUARD = 2 * INTERIOR_N;
   const carve = (x0, y0, x1, y1) => {
     let x = x0, y = y0, guard = 0;
-    while ((x !== x1 || y !== y1) && guard++ < 200) {
+    while ((x !== x1 || y !== y1) && guard++ < INTERIOR_CARVE_GUARD) {
       if (x !== x1) x += Math.sign(x1 - x);
       else if (y !== y1) y += Math.sign(y1 - y);
       if (x > 1 && y > 1 && x < INTERIOR_N - 2 && y < INTERIOR_N - 2) {
@@ -3509,8 +3594,8 @@ function biomeAt(tx, ty) {
   }
 
   const dV = Math.hypot(tx - VOLCANO.x, ty - VOLCANO.y);
-  if (dV < 226 && b !== B.DEEP && b !== B.WATER) {
-    b = dV < 62 ? B.LAVA : B.VOLROCK;
+  if (dV < 452 && b !== B.DEEP && b !== B.WATER) {
+    b = dV < 124 ? B.LAVA : B.VOLROCK;
   }
   /* v22: the Sunforge Caldera — the same rare-pocket technique as every one
      before it, on its own independent field and seed offset, but applied
@@ -3522,7 +3607,7 @@ function biomeAt(tx, ty) {
   if (b === B.VOLROCK &&
       valueNoise(tx / 20, ty / 20, worldSeed + 1913) > CALDERA_RARITY) b = B.CALDERA;
   // Transition buffer: no stark white snow flush against volcanic rock
-  if (b === B.PEAK && dV < 350) b = B.ROCK;
+  if (b === B.PEAK && dV < 700) b = B.ROCK;
   /* v20: the RUINB carve now loops every cluster, same radius and same guards */
   if (!BLOCKED.has(b) && b !== B.WATER &&
       RUINS.some(r => Math.hypot(tx - r.x, ty - r.y) < RUIN_FOOT)) b = B.RUINB;
@@ -3612,8 +3697,8 @@ function rawHeight(tx, ty) {
     else if (p > 0.60) h = 1;
     else h = 0;
     const dM = Math.hypot(tx - MOUNT.x, ty - MOUNT.y);
-    if (dM < 30) h = Math.max(h, 2);
-    else if (dM < 54) h = Math.max(h, 1);
+    if (dM < 60) h = Math.max(h, 2);
+    else if (dM < 108) h = Math.max(h, 1);
     /* v22: B.CALDERA keeps VOLROCK's cone height. It is carved out of the
        cone itself, and without this it would fall through to the plateau
        branch above and punch a 2-3 level pit into the rim — the volcano
@@ -3621,7 +3706,7 @@ function rawHeight(tx, ty) {
        for a hotter-looking VOLROCK, not a hole in the mountain. */
     if (b === B.VOLROCK || b === B.CALDERA) {
       const dV = Math.hypot(tx - VOLCANO.x, ty - VOLCANO.y);
-      h = dV < 33 ? 3 : 2;              // volcano rim rises like a cone
+      h = dV < 66 ? 3 : 2;              // volcano rim rises like a cone
     }
     if (b === B.LAVA) h = 1;           // lava pit inside the rim
     // Safe zone and tower footing stay level ground
@@ -3996,7 +4081,7 @@ function buildFeatureList() {
        that has to hold, and at 12000 the rare-biome species (cave, ruin) fell
        short of their counts purely because the search ran out, not by design.
        Costs ~12ms of boot. Still a search budget, still not a design number. */
-    for (let a = 0; a < 144000 && placed < Math.min(def.count || 3, spawnBudget); a++) {
+    for (let a = 0; a < 576000 && placed < Math.min(def.count || 3, spawnBudget); a++) {
       const tx = Math.floor(hash2(a, 21 + placed, worldSeed + spSeed) * N);
       const ty = Math.floor(hash2(a, 37 + placed, worldSeed + spSeed * 3) * N);
       if (!def.biomes.includes(biomeAt(tx, ty))) continue;
@@ -4041,7 +4126,7 @@ function buildFeatureList() {
      core exactly as 3 did and ends inside the 113-tile cone exactly as 26
      did. */
   const edPlace = () => {
-    for (let r = 18; r < 162; r++) {
+    for (let r = 36; r < 324; r++) {
       for (let a = 0; a < 24; a++) {
         const ang = (a / 24) * Math.PI * 2;
         const tx = Math.round(VOLCANO.x + Math.cos(ang) * r);
@@ -4053,6 +4138,32 @@ function buildFeatureList() {
       }
     }
     return null;
+  };
+  /* v48 PART C: where the two Demon Knights stand. Deliberately derived from
+     the drake's OWN spot rather than searched for independently, so "they
+     guard the Elder Drake and are nowhere else in the world" is true by
+     construction and not by coincidence: no drake, no knights. Same ring
+     sweep the drake's own placement uses, nearest ring first, taking real
+     volcanic ground only — and the second one has to be at least 6 tiles from
+     the first, which is what makes them flank it rather than stack on one
+     shoulder. Inside the drake's own 14-tile aggro radius throughout, so a
+     player who opens on the boss has both of them coming. */
+  const dkFlankSpots = (spot, want) => {
+    const out = [];
+    for (let r = 3; r <= 14 && out.length < want; r++) {
+      for (let a = 0; a < 16; a++) {
+        const ang = (a / 16) * Math.PI * 2;
+        const tx = Math.round(spot[0] + Math.cos(ang) * r);
+        const ty = Math.round(spot[1] + Math.sin(ang) * r);
+        if (tx < 2 || ty < 2 || tx >= N - 2 || ty >= N - 2) continue;
+        const b = biomeAt(tx, ty);
+        if (b !== B.VOLROCK && b !== B.ROCK && b !== B.CALDERA) continue;
+        if (out.some(([ox, oy]) => Math.hypot(ox - tx, oy - ty) < 6)) continue;
+        out.push([tx, ty]);
+        if (out.length >= want) break;
+      }
+    }
+    return out;
   };
   let mobSeed = 500;
   for (const [mk, def] of Object.entries(MOBS)) {
@@ -4067,7 +4178,7 @@ function buildFeatureList() {
     if (mobBudget <= 0) continue;
     /* v19: 600 -> 5400, the same area-scaled search-budget widening as the
        wilds above, for the same reason. */
-    for (let a = 0; a < 21600 && placed < Math.min(def.count, mobBudget); a++) {
+    for (let a = 0; a < 86400 && placed < Math.min(def.count, mobBudget); a++) {
       const tx = Math.floor(hash2(a, 11 + placed, worldSeed + mobSeed) * N);
       const ty = Math.floor(hash2(a, 53 + placed, worldSeed + mobSeed * 3) * N);
       if (!def.biomes.includes(biomeAt(tx, ty))) continue;
@@ -4147,6 +4258,19 @@ function buildFeatureList() {
         maxHp: Math.round(ed.hp * bloodMoonMobMult()), state: "idle", target: null,
         atkAt: 0, windupStart: 0, winding: false, flash: 0, boltT: 0,
         ph: 1.7, dead: false, respawnAt: 0, lastSync: 0, fx: 0, fy: 1, boss: true,
+      });
+      /* v48 PART C: the two Demon Knights, placed from the drake's own spot
+         inside the same block, so neither can exist without it. */
+      const dk = MOBS.demon_knight;
+      dkFlankSpots(spot, dk.count).forEach(([kx, ky], i) => {
+        mobs.push({
+          id: "demon_knight:" + kx + "," + ky, kind: "demon_knight",
+          x: kx + 0.5, y: ky + 0.5, hx: kx + 0.5, hy: ky + 0.5,
+          hp: Math.round(dk.hp * bloodMoonMobMult()),
+          maxHp: Math.round(dk.hp * bloodMoonMobMult()), state: "idle", target: null,
+          atkAt: 0, windupStart: 0, winding: false, flash: 0, boltT: 0,
+          ph: 2.9 + i * 1.3, dead: false, respawnAt: 0, lastSync: 0, fx: 0, fy: 1,
+        });
       });
     }
   }
@@ -8423,10 +8547,13 @@ function playerLandingSpot(cx, cy) {
 }
 function travelToPlayer(name) {
   if (!me || dead) return false;
-  if (!ownsUnicornElder()) {
-    toast("Nothing carries you. This is not a road you can walk onto.");
-    return false;
-  }
+  /* CRITICAL FIX: this was the exact same Unicorn Elder check I already
+     removed from the button's disabled state, just one layer deeper —
+     the button looked enabled for everyone, but silently failed for
+     everyone without an Elder. Player-to-player teleport was never
+     supposed to require one at all, matching the original Tuning/Polish
+     design and the button fix already shipped. Not a design choice,
+     a leftover of the same bug caught twice now. */
   if (inInterior()) { toast("Not from down here — find the way out first."); return false; }
   const left = playerTpReadyIn();
   if (left > 0) { toast(`The world will not fold again for ${Math.ceil(left / 1000)}s.`); return false; }
@@ -10531,8 +10658,15 @@ const SPECIES_K = {
    Troll (748) and the Sea Serpent (2,970), and 3.10 sits between their 2.33
    and 3.42, so the file's "size sorts exactly as threat does" rule holds with
    one more creature in it. */
+/* v48 PART C: demon_knight 3.80. Its threat (280 x 26 = 7,280) sits between
+   the Sea Serpent's 2,970 and the Golem Elder's 8,400, so its scale sits
+   between their 3.42 and 4.05 — the same rule adult_golem was placed by, and
+   it keeps the Elder Drake's 4.35 the largest MOB_K in the file. Measured, it
+   paints 58.9px above its baseline against the drake's real 62.1px: a big
+   armoured figure that is unmistakably not the boss it is standing next to. */
 const MOB_K = { goblin: 1.50, bandit: 1.85, troll: 2.33, dark_wraith: 1.40, sea_serpent: 3.42,
   adult_golem: 3.10,     // v47 PART C
+  demon_knight: 3.80,    // v48 PART C
   elder_drake: 4.35 };   // v30: the largest thing in the world, by design
 /* hotfix: sea_serpent was already the single largest creature in the game
    by a wide margin (2.60, next highest was troll at 1.94) — bumped more
@@ -10602,7 +10736,18 @@ const MOB_K = { goblin: 1.50, bandit: 1.85, troll: 2.33, dark_wraith: 1.40, sea_
    regress list, so a new creature has to arrive with this entry, not without
    one: the Elder Drake shipped without it for a whole version and drew its
    tell 30px inside its own chest. */
-const MOB_TALL = { troll: 31, bandit: 5, boar: 7, bear: 17, griffin: 21, phoenix: 24, dark_wraith: 6, sea_serpent: 78, adult_golem: 24, salamander_king: 4, golem_elder: 54, elder_drake: 46 };
+/* v48 PART C: demon_knight 41, measured with the same transform-tracking
+   recorder every other value on this line was checked against, never guessed.
+   The topmost paint is the horn tips at -15.5 in local units; at MOB_K 3.80
+   that is 58.9px above the baseline, and the "!" tell and the HP bar draw at
+   `sy - 20 - MOB_TALL`. 41 puts them at 61 — 2.1px of clearance over the
+   horns, the same family as the Troll's 1.1 and the Adult Golem's 2.0, so the
+   v13 fairness rule reads on this creature exactly as it does on those.
+   `elder_drake` keeps its 46 and that is a MEASUREMENT, not an omission: see
+   drawMob's own note — its real art paints 62.1px where the Bandit art it has
+   been drawing all along painted 64.0, so the same 66 offset that cleared the
+   wrong body by 2.0px clears the right one by 3.9px. */
+const MOB_TALL = { troll: 31, bandit: 5, boar: 7, bear: 17, griffin: 21, phoenix: 24, dark_wraith: 6, sea_serpent: 78, adult_golem: 24, demon_knight: 41, salamander_king: 4, golem_elder: 54, elder_drake: 46 };
 
 const KIT = {
   Ranger:      { trim: "#2e4a22", accent: "#c8b078", cloth: "#5a4a30" },
@@ -10923,6 +11068,59 @@ function drawMob(m, t) {
     drawMobOverlays(m, sx, sy, t, def);
     return;
   }
+  /* ⚠️ v48 PART C — THE FIND, AND IT IS A USER-REPORTED VISUAL BUG THAT HAS
+     BEEN OPEN SINCE v30: THE ELDER DRAKE HAS NEVER DRAWN ITS OWN ART.
+     `elder_drake` is tameable:false, so drawMob has always sent it down the
+     humanoid chain below — where it has no branch of its own and therefore
+     fell through to the final `else`, WHICH IS THE BANDIT. The world boss has
+     been a hooded bandit at MOB_K 4.35 for its entire existence, and its real
+     body has sat in drawSpecies as unreachable dead code the whole time.
+
+     This is not a new diagnosis of a vague complaint. The 2026-08-18 hotfix
+     in this skill's own running list records the user reporting that the
+     drake "looks like a normal goon" — which is exactly, literally what a
+     Bandit at 4.35 looks like — and that hotfix recoloured the drawSpecies
+     branch, i.e. code that never ran. The report was right and the fix landed
+     in the wrong place; this is the real one.
+
+     Measured with a transform-tracking canvas recorder before touching
+     anything, and this is why it is safe to correct here rather than being
+     deferred as a silhouette decision: the drake's own art paints 14.28 local
+     units above its baseline and the Bandit's paints 14.70, so at MOB_K 4.35
+     the body goes 63.9px -> 62.1px. `MOB_TALL.elder_drake` of 46 puts the "!"
+     tell and the HP bar at 66 either way — clearance 2.1px -> 3.9px, the same
+     family as the Troll's 1.1 and the Adult Golem's 4.9. NOTHING in the
+     overlay geometry has to move, so the whole correction is this route.
+
+     ⚠️ WIDTH is where you will see it, and it is the one thing here most
+     worth a screenshot. The Bandit body at 4.35 paints 49.6px wide; the
+     drake's own body paints 235.7px — a low, long quadruped nearly five times
+     the width, where there has been an upright hooded figure. That is what
+     MOB_K 4.35 was always FOR ("the largest and hardest thing in the world",
+     v30's own words), and it is left exactly where v30 and Tuning/Polish set
+     it rather than being re-guessed now that the right body is under it — but
+     4.35 was last tuned against the wrong silhouette, so if the boss now
+     reads too wide, THAT number is the one to move, not this route.
+
+     It goes here, above the humanoid chain and not inside it, because
+     drawSpecies runs its own translate/scale around (sx, sy) and the chain
+     below is already inside drawMob's body transform — the tameable branch
+     above is the existing shape for exactly this, and this is that shape with
+     the MOB_K scale it needs wrapped around it. */
+  if (m.kind === "elder_drake") {
+    ctx.fillStyle = `rgba(20,32,44,${SUN.alpha})`;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy + 1, 5.6 * mk, 2.4 * mk, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.scale(flip * mk, mk);
+    ctx.translate(-sx, -sy);
+    drawSpecies("elder_drake", sx, sy, t, m.state === "aggro" || m.state === "leash");
+    ctx.restore();
+    drawMobOverlays(m, sx, sy, t, def);
+    return;
+  }
   // sun shadow, standard treatment (humanoids + troll)
   ctx.fillStyle = `rgba(20,32,44,${SUN.alpha})`;
   ctx.beginPath();
@@ -11098,6 +11296,61 @@ function drawMob(m, t) {
     ctx.fillStyle = `rgba(255,122,60,${gseam})`;                                                         // molten seams, no moss
     ctx.fillRect((0) - 3.8, (0) - 3.4, 2.4, 0.9); ctx.fillRect((0) + 1.8, (0) - 6.4, 1.8, 0.9);
     P(ctx, [(0) + 4.4, (0) - 8.4, (0) + 3, (0) - 8.4, (0) + 4.4, (0) - 7], "#3e3b34");                    // chipped corner
+
+  } else if (m.kind === "demon_knight") {
+
+    /* ============ v48 PART C — THE DEMON KNIGHT'S ART ==================
+       New art, and it is written against this skill's own hardest-won lesson:
+       the Elder Drake's original palette was five shades of near-black muddy
+       brown and the user's report was that it "looks like a normal goon". So
+       this is three flat colour families and nothing between them — cold
+       black-violet plate, one bold structural CRIMSON, and a dragonsteel
+       violet blade — with hard edges, no gradients, no outlines and no
+       desaturated middle tones anywhere.
+
+       Every colour is chosen against what the world already says:
+       - The plate is #2b2238 / #150f1e, a cold black-violet. Not the Knight
+         class's steel #8d99a8 (a player must never be mistaken for this), not
+         the Dark Wraith's #3c3058 (that one is incorporeal and 86% alpha;
+         this is solid armour), and not the drake's warm near-black #14100d.
+       - The crimson #d8323c is the identity, and it is STRUCTURE, not an
+         accent: the cloak, the tabard down the centre line, the crest and the
+         eye slit. That is the drake hotfix's own rule — the bold colour has
+         to be the thing you read the silhouette by, never tiny decoration.
+       - The blade is dragonsteel violet #b06ce0, the exact ITEM_META colour
+         of the material this creature drops, and the bible's own "dragonsteel
+         gear and weapons emit a faint purple aura". It is the one thing on it
+         that tells you what killing it is for.
+       - Gold appears nowhere. Gold means Elder on the ground and nothing
+         else, and this is not one.
+       The eye slit is a flat bar over a flat square halo — the adult Golem's
+       molten-core treatment recoloured, never a radial gradient. */
+    P(ctx, [(0) - 1.4, (0) - 11.4, (0) - 7.4, (0) - 3.0, (0) - 5.0, (0) + 1.2, (0) - 0.6, (0) + 0.4], "#8e1f2c"); // cloak, shadow side
+    P(ctx, [(0) - 1.4, (0) - 11.4, (0) - 5.0, (0) - 4.4, (0) - 2.0, (0) + 0.2], "#d8323c");                        // cloak, lit fold
+    P(ctx, [(0) - 3.2, (0) - 4.2, (0) - 0.8, (0) - 4.2, (0) - 0.8, (0) + 1.2, (0) - 3.4, (0) + 1.2], "#2b2238");   // greaves
+    P(ctx, [(0) + 0.8, (0) - 4.2, (0) + 3.2, (0) - 4.2, (0) + 3.4, (0) + 1.2, (0) + 0.8, (0) + 1.2], "#150f1e");
+    P(ctx, [(0) - 4.0, (0) - 11.2, (0) + 4.0, (0) - 11.2, (0) + 3.3, (0) - 3.2, (0) - 3.3, (0) - 3.2], "#2b2238"); // cuirass, lit facet
+    P(ctx, [(0) + 0.8, (0) - 11.2, (0) + 4.0, (0) - 11.2, (0) + 3.3, (0) - 3.2, (0) + 0.6, (0) - 3.2], "#150f1e"); // cuirass, shadow facet
+    P(ctx, [(0) - 1.4, (0) - 10.2, (0) + 1.4, (0) - 10.2, (0) + 1.2, (0) - 2.2, (0) - 1.2, (0) - 2.2], "#d8323c"); // tabard — the centre line
+    P(ctx, [(0) + 0.3, (0) - 10.2, (0) + 1.4, (0) - 10.2, (0) + 1.2, (0) - 2.2, (0) + 0.3, (0) - 2.2], "#8e1f2c");
+    ctx.fillStyle = "#150f1e"; ctx.fillRect((0) - 3.9, (0) - 4.8, 7.8, 1.4);                                        // belt
+    P(ctx, [(0) - 4.2, (0) - 11.4, (0) - 7.2, (0) - 9.8, (0) - 6.0, (0) - 6.8, (0) - 3.6, (0) - 8.2], "#3e3150");  // pauldrons
+    P(ctx, [(0) + 4.2, (0) - 11.4, (0) + 7.2, (0) - 9.8, (0) + 6.0, (0) - 6.8, (0) + 3.6, (0) - 8.2], "#241c30");
+    P(ctx, [(0) - 5.4, (0) - 9.6, (0) - 3.6, (0) - 9.6, (0) - 3.4, (0) - 4.4, (0) - 5.2, (0) - 4.4], "#241c30");   // arms
+    P(ctx, [(0) + 3.6, (0) - 9.6, (0) + 5.4, (0) - 9.6, (0) + 5.6, (0) - 4.4, (0) + 3.8, (0) - 4.4], "#150f1e");
+    P(ctx, [(0) - 2.4, (0) - 11.4, (0) + 2.4, (0) - 11.4, (0) + 2.0, (0) - 14.0, (0) - 2.0, (0) - 14.0], "#2b2238"); // closed helm
+    P(ctx, [(0) + 0.6, (0) - 11.4, (0) + 2.4, (0) - 11.4, (0) + 2.0, (0) - 14.0, (0) + 0.6, (0) - 14.0], "#150f1e");
+    P(ctx, [(0) - 2.0, (0) - 13.6, (0) - 5.2, (0) - 15.5, (0) - 3.4, (0) - 12.8], "#3e3150");                       // horns
+    P(ctx, [(0) + 2.0, (0) - 13.6, (0) + 5.2, (0) - 15.5, (0) + 3.4, (0) - 12.8], "#241c30");
+    P(ctx, [(0) - 0.8, (0) - 14.0, (0) + 0.8, (0) - 14.0, (0), (0) - 15.4], "#d8323c");                             // crest between the horns
+    const dkGlow = 0.6 + Math.sin(t / 300 + m.ph) * 0.3;                                                            // the eye slit — flat bar, flat halo
+    ctx.fillStyle = `rgba(240,80,90,${dkGlow})`;
+    ctx.fillRect((0) - 1.6, (0) - 12.9, 3.2, 0.9);
+    ctx.fillStyle = `rgba(240,80,90,${dkGlow * 0.25})`;
+    ctx.fillRect((0) - 2.4, (0) - 13.6, 4.8, 2.4);
+    P(ctx, [(0) + 5.0, (0) - 5.0 - raise, (0) + 6.3, (0) - 5.0 - raise, (0) + 7.8, (0) - 13.0 - raise, (0) + 6.0, (0) - 13.2 - raise], "#b06ce0"); // dragonsteel blade
+    R(ctx, [(0) + 5.65, (0) - 5.4 - raise, (0) + 6.9, (0) - 12.8 - raise], "#d8b4f4", 0.5);                          // fuller
+    ctx.fillStyle = "#150f1e"; ctx.fillRect((0) + 4.5, (0) - 5.6 - raise, 2.8, 1.0);                                 // guard
 
   } else {
 
@@ -11634,7 +11887,7 @@ function feedSalamander(row) {
 /* Where a rampaging Salamander King goes home to. Same hashed-sampling sweep
    the wilds and mobs use at worldgen, one fixed stream of its own. */
 function calderaSpot() {
-  for (let a = 0; a < 144000; a++) {
+  for (let a = 0; a < 576000; a++) {
     const tx = Math.floor(hash2(a, 91, worldSeed + 9931) * N);
     const ty = Math.floor(hash2(a, 97, worldSeed + 9941) * N);
     if (biomeAt(tx, ty) === B.CALDERA) return { x: tx + 0.5, y: ty + 0.5 };
@@ -13639,6 +13892,19 @@ function updateMinimap() {
    what the ground under your feet actually looks like. Neither can do the
    other's job, which is why this is an addition rather than a replacement.
 
+   v48 PART D: the window is 31x31 tiles, not 11x11. The confirmed current
+   value was 11 across (MAP_R 5), not the spec's remembered "roughly 10x10", so
+   MAP_R 5 -> 15 is the 3x it asks for measured off the real number: 121 tiles
+   become 961, and 31 is as close to "roughly 30x30" as an odd-sided window
+   centred on the player can be. NOTHING else about it changes. It is the same
+   flat PAL fill on the same checkerboard, the same two dot colours, the same
+   two things drawn and no third — and it is still the CARD it always was:
+   MAP_CELL 11 -> 4 keeps the canvas at 124px against the old 121, because the
+   spec asks for a bigger window on the same view and not for a HUD element
+   that suddenly occupies a third of the screen. The dots stay at their pixel
+   sizes for the same reason they were pixel sizes to begin with — a dot scaled
+   to 0.45 of a 4px cell would be under two pixels and simply not read.
+
    It is a top-down window, NOT the isometric projection. That is deliberate:
    an 11x11 patch of diamonds at 11px each would be a smear, and a map is the
    one place in this game where a square grid reads better than the world's own
@@ -13648,8 +13914,11 @@ function updateMinimap() {
    Caldera reads hot on the card exactly as it does on the ground. No
    gradients, no outlines, no blur: the flat-shaded rule holds on the HUD too.
 
-   ⚠️ CLOSE RANGE IS THE WHOLE DESIGN. Eleven tiles across is roughly what is
-   already on screen, so this map can never be used to find anything — the
+   ⚠️ CLOSE RANGE IS THE WHOLE DESIGN, AND IT SURVIVES THE 3x. Thirty-one
+   tiles across is still inside what the camera itself shows (the ground pass
+   draws a viewport roughly 60 tiles wide at 1024x768), so the window has grown
+   without ever reaching past the screen the player is already looking at. It
+   still cannot be used to find anything — the
    bible's "does not reveal exact base locations" is honoured the same way the
    v35 compass honours it, by having nothing to leak. `basePieces` and
    `baseIndex` are not read anywhere in this function and a proof gate greps
@@ -13661,9 +13930,9 @@ function updateMinimap() {
    before it: in there the grid is the interior's own and `biomeAt` would be
    answering about the surface a hundred tiles overhead.
    ========================================================= */
-const MAP_R = 5;                             // tiles either side: an 11x11 window
-const MAP_CELL = 11;                         // px per tile
-const MAP_PX = (MAP_R * 2 + 1) * MAP_CELL;   // 121 — the canvas is sized to match
+const MAP_R = 15;                            // v48 PART D: tiles either side — a 31x31 window
+const MAP_CELL = 4;                          // px per tile (v48 PART D: 11 -> 4, so the card keeps its size)
+const MAP_PX = (MAP_R * 2 + 1) * MAP_CELL;   // 124 — the canvas is sized to match
 const MAP_SELF_COL = "#e8b64c";              // --gold: you, and only you
 const MAP_DOT = 5, MAP_SELF_DOT = 7;         // hard flat squares, never rings
 let mapCtx = null;
