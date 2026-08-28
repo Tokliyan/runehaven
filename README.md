@@ -161,6 +161,25 @@ regression from this version's own changes; the player-to-player travel
 button's `disabled` condition still has no Unicorn Elder ownership check
 anywhere in it.
 
+**PART F — bake in the real connection, keep the box.** Confirmed live:
+`connectSupabase()` currently throws `"Add your Supabase URL and key in
+'Connect your world' first"` whenever the box is empty, and
+`loadSavedCreds()` only pre-fills it from `localStorage` — meaning every
+new browser genuinely requires typing it in once, which breaks down
+completely for the game's own "one shared world" premise if anyone ever
+points at a different project. Add two real constants, `DEFAULT_SB_URL`
+and `DEFAULT_SB_KEY` — **the real project anon key, not the service_role
+key, which must never be embedded anywhere** — and use them as the
+fallback everywhere `rh_sb_url`/`rh_sb_key` are currently read: the box
+still exists exactly as it is now, pre-filled with these real values on
+first load rather than blank, and `connectSupabase()` never throws for a
+missing value again since a real default always exists. A player can
+still edit the box and connect elsewhere if they choose to — this adds a
+working default, it does not remove the option.
+
+**The real URL and anon key must be supplied directly by the project
+owner before this can be built — placeholder values must never ship.**
+
 **Proof gates:** standard gauntlet plus six-seed sweep for the expansion
 with real before/after landmark and biome-pocket numbers (not assumed
 unchanged), cave connectivity re-confirmed with zero sealed-off tiles
