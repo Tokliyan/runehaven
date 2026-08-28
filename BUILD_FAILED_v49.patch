@@ -1,0 +1,492 @@
+diff --git a/runehaven.html b/runehaven.html
+index ce835a3..ea15988 100644
+--- a/runehaven.html
++++ b/runehaven.html
+@@ -1614,9 +1614,13 @@ function debugWorldInfo() {
+            mobSpots: mobs.map(m => ({ kind: m.kind, x: m.hx, y: m.hy })),
+            wildSpots: wilds.map(w => ({ species: w.species, x: w.x, y: w.y })),
+            /* featureIndex is a top-level `let`, so it never lands on window —
+-              the harness can only see the per-cluster runic vein from here. */
++              the harness can only see the per-cluster runic vein from here.
++              v49 PART A: asked of featureAtTile() rather than of the index,
++              because the index now holds the loaded window rather than the
++              whole world — six Ruins are never all near one player. Same
++              builder, same answer, and asking does not load their chunks. */
+            ruinVeins: RUINS.filter(r => {
+-             const f = featureIndex.get(r.x + "," + (r.y - 1));
++             const f = featureAtTile(r.x, r.y - 1);
+              return !!f && f.type === "runic";
+            }).length,
+            ruinPieceSpots: ruinPieces.map(p => ({ k: p.k, x: p.x, y: p.y })),
+@@ -1643,6 +1647,17 @@ function debugWorldInfo() {
+               would have painted on screen. Copies. */
+            GROUND_MARGIN, GROUND_UP, GROUND_DOWN,
+            ground: Object.assign({}, groundStats),
++           /* v49 PART A: the feature window. `featureChunks`, `features` and
++              `decor` are top-level `let`s, so this is the only way a gate can
++              see that the window really is a window — how many chunks are
++              resident, how many have ever been built, how many were evicted,
++              and how far the guaranteed cover reaches against the visible
++              radius the frame itself just used. Copies, like `ground`. */
++           FEATURE_CHUNK, FEATURE_LOAD_R, FEATURE_CHUNK_N,
++           featureChunks: Object.assign({}, featureChunkStats,
++             { size: featureChunks.size,
++               keys: [...featureChunks.keys()],
++               coverTiles: featureChunkStats.radius * FEATURE_CHUNK }),
+            player: me ? { x: me.x, y: me.y, hp: me.hp, maxHp: me.maxHp,
+                           diving: !!me.diving, breath: me.breath,
+                           maxBreath: me.maxBreath, charm: me.charm || null,
+@@ -1685,6 +1700,11 @@ function debugSetPlayer(patch) {
+      tiles around SPAWN — every on-camera branch it meant to reach silently
+      never ran. This is the same assignment login and respawn already make. */
+   if ("x" in patch || "y" in patch) { cam.x = me.x; cam.y = me.y; }
++  /* v49 PART A: and it moves the feature window with it, for the same reason
++     v22 moved the camera. update() does this on the first frame anyway; a
++     harness that teleports and then asks a question WITHOUT pumping a frame
++     would otherwise be asking it of the chunks around wherever it just left. */
++  if ("x" in patch || "y" in patch) updateFeatureChunks(false);
+   return debugWorldInfo().player;
+ }
+ /* v25: harness hook, the same shape and the same reason as the two above.
+@@ -1865,8 +1885,15 @@ function debugV37Info() {
+         const d = f.tx === undefined ? drawD(f) : tileD(f);
+         return d >= lo && d < hi;
+       });
+-      const inR = near(features, 0, BAZAAR_R), ring = near(features, BAZAAR_R, BAZAAR_R + 6);
+-      const drifted = features.filter(f => tileD(f) >= BAZAAR_R && drawD(f) < BAZAAR_R);
++      /* v49 PART A: the census comes from featureCensus() rather than from
++         `features` directly, because `features` now holds the chunks near the
++         player and the Bazaar is somewhere else on a 4000-tile map. Same
++         buildFeatureChunk(), so the counts are the same counts — this asks
++         the builder what it puts on that ground instead of assuming the whole
++         world is resident, which is the assumption that stopped being true. */
++      const census = featureCensus(BAZAAR.x, BAZAAR.y, BAZAAR_R + 6);
++      const inR = near(census.feats, 0, BAZAAR_R), ring = near(census.feats, BAZAAR_R, BAZAAR_R + 6);
++      const drifted = census.feats.filter(f => tileD(f) >= BAZAAR_R && drawD(f) < BAZAAR_R);
+       const biomes = {}, heights = new Set();
+       for (let ty = Math.floor(BAZAAR.y - BAZAAR_R); ty <= Math.ceil(BAZAAR.y + BAZAAR_R); ty++)
+         for (let tx = Math.floor(BAZAAR.x - BAZAAR_R); tx <= Math.ceil(BAZAAR.x + BAZAAR_R); tx++)
+@@ -1877,7 +1904,7 @@ function debugV37Info() {
+           }
+       return {
+         features: inR.length, trees: inR.filter(f => f.type === "tree").length,
+-        decor: near(decor, 0, BAZAAR_R).length,
++        decor: near(census.dec, 0, BAZAAR_R).length,
+         drifted: drifted.length,
+         driftMinD: drifted.length ? Math.min(...drifted.map(drawD)) : null,
+         ringFeatures: ring.length, ringTrees: ring.filter(f => f.type === "tree").length,
+@@ -2479,14 +2506,61 @@ function canWearDownTame(m) {
+    and no density at all, so their x4 is a cap change wearing a density
+    change's clothes. Scaled with their tier anyway, because the spec's
+    "Rare (currently 2-4) -> roughly 4x each, keeping relative spread"
+-   enumerates the live values these two are part of. One-line reverts. */
++   enumerates the live values these two are part of. One-line reverts.
++
++   ============ v49 PART D — THE MAP OUTGREW THEM AGAIN =============
++   Expansion 4 took N 2000 -> 4000 without these counts moving, so every
++   number v47 chose is spread over 4x the ground it was chosen for: the
++   identical problem v47 fixed, undone by one line in someone else's spec.
++   Measured on the current N = 4000 map rather than re-derived from v47's own
++   already-stale N = 2000 arithmetic.
++
++   Same technique, same shape: scaled BY TIER, Common most aggressively,
++   Epic and above untouched. The multipliers are centred on the 4.0 that
++   restores exactly the density v47 achieved, and spread around it in v47's
++   own tier order:
++     Common     x4.5   70 -> 315   (all five, still one shared number)
++     Uncommon   x4.0   wolf 36 -> 144, stag 36 -> 144, golem 18 -> 72
++     Rare       x3.5   unicorn 16 -> 56, crystal_golem 8 -> 28,
++                       the four dragons 12 -> 42
++   The relative spread inside each tier is preserved EXACTLY — golem is
++   still half of wolf, crystal_golem still half of unicorn, the Common tier
++   is still one shared number — and the tier ordering holds with room
++   (315 > 144 > 56).
++
++   Measured against v47's own density at N = 2000, which is what "restored"
++   has to mean: Common ends up 1.125x as dense as v47's world, Uncommon
++   exactly as dense, Rare 0.875x. In findability terms — the distance you
++   walk to the nearest one, which goes as the square root of that — Common
++   is 6% closer than v47's, Uncommon identical, Rare 7% further. That is a
++   restoration, not a proportional guess, and every one of those numbers is
++   printed by a real gate rather than asserted.
++
++   EPIC AND ABOVE ARE DELIBERATELY UNTOUCHED, exactly as they were in v47:
++   shadowfox / lightfox / krakenling / salamander_king keep 4/4/4/3, the
++   three Elders and the Duskfox Elder have no `count` at all, and no `base`
++   — the tame chance — moves by a digit anywhere in this file.
++
++   ⚠️ JUDGMENT CALL, and it is v47's own, restated because it is now four
++   times bigger: `speciesDailyCap()` READS `count`, so a Rare species' daily
++   world cap scales with it again (a Unicorn's goes 16 -> 56). Flagged here
++   rather than quietly shipped; `speciesDailyCap()` is still the one
++   function to change if the caps were meant to hold.
++   ⚠️ SECOND JUDGMENT CALL: the fight-to-tame pets — Boar, Bear, Griffin,
++   Phoenix — take their density from `MOBS.count`, not from this table, and
++   they are NOT scaled here. That is the same boundary v47 drew: it moved
++   this table and never touched MOBS, because MOBS is also where Goblin,
++   Bandit, Troll and the Wraith live and their density is combat balance
++   rather than pet findability. Those four pets are therefore still 4x
++   sparser than they were at N = 2000, and that is a spec's decision to
++   make, not this build's. */
+ const WILD_SPECIES = {
+-  tree_sprite:  { name: "Tree Sprite",  base: 0.65, flier: true,  alt: 10, count: 70, biomes: [B.FOREST, B.DARKFOREST], bloodFavored: false, shunnedByBlood: false },
+-  water_sprite: { name: "Water Sprite", base: 0.65, flier: true,  alt: 10, count: 70, biomes: [B.SHALLOW], bloodFavored: false, shunnedByBlood: false },
+-  stone_sprite: { name: "Stone Sprite", base: 0.65, flier: true,  alt: 10, count: 70, biomes: [B.ROCK], bloodFavored: false, shunnedByBlood: false },
+-  wind_sprite:  { name: "Wind Sprite",  base: 0.65, flier: true,  alt: 12, count: 70, biomes: [B.PLAINS, B.MEADOW], bloodFavored: false, shunnedByBlood: false },
+-  wolf:         { name: "Wolf",         base: 0.50, flier: false, count: 36, biomes: [B.FOREST], bloodFavored: false, shunnedByBlood: false },
+-  golem:        { name: "Golem",        base: 0.50, flier: false, count: 18, biomes: [B.RUINB], bloodFavored: false, shunnedByBlood: false },
++  tree_sprite:  { name: "Tree Sprite",  base: 0.65, flier: true,  alt: 10, count: 315, biomes: [B.FOREST, B.DARKFOREST], bloodFavored: false, shunnedByBlood: false },
++  water_sprite: { name: "Water Sprite", base: 0.65, flier: true,  alt: 10, count: 315, biomes: [B.SHALLOW], bloodFavored: false, shunnedByBlood: false },
++  stone_sprite: { name: "Stone Sprite", base: 0.65, flier: true,  alt: 10, count: 315, biomes: [B.ROCK], bloodFavored: false, shunnedByBlood: false },
++  wind_sprite:  { name: "Wind Sprite",  base: 0.65, flier: true,  alt: 12, count: 315, biomes: [B.PLAINS, B.MEADOW], bloodFavored: false, shunnedByBlood: false },
++  wolf:         { name: "Wolf",         base: 0.50, flier: false, count: 144, biomes: [B.FOREST], bloodFavored: false, shunnedByBlood: false },
++  golem:        { name: "Golem",        base: 0.50, flier: false, count: 72, biomes: [B.RUINB], bloodFavored: false, shunnedByBlood: false },
+   /* v14 fight-to-tame species — spawn as HOSTILE MOBS (see MOBS), never as
+      passive wilds; these entries define tame chance + tamed follower form */
+   boar:         { name: "Boar",         base: 0.45, flier: false, biomes: [], fightToTame: true, bloodFavored: false, shunnedByBlood: false },
+@@ -2511,8 +2585,8 @@ const WILD_SPECIES = {
+      presence roll) but is pinned to Enchanted Forest, not regular Forest.
+      Lightfox adds the one new gate — dawnOnly, see DAWN_END — stacked on its
+      own presence roll, which is why its tame base is the lowest of the three. */
+-  stag:         { name: "Stag",         base: 0.45, flier: false, count: 36, biomes: [B.ENCHFOREST], bloodFavored: false, shunnedByBlood: false },
+-  unicorn:      { name: "Unicorn",      base: 0.25, flier: false, count: 16, biomes: [B.ENCHFOREST], nightOnly: true, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
++  stag:         { name: "Stag",         base: 0.45, flier: false, count: 144, biomes: [B.ENCHFOREST], bloodFavored: false, shunnedByBlood: false },
++  unicorn:      { name: "Unicorn",      base: 0.25, flier: false, count: 56, biomes: [B.ENCHFOREST], nightOnly: true, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
+   lightfox:     { name: "Lightfox",     base: 0.20, flier: false, count: 4, biomes: [B.SACMEADOW], dawnOnly: true, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
+   /* v18: the Underground Caves roster. Both are PASSIVE tames (hold-E channel,
+      v12 formula) — the bible names no fight for either. Tame bases are the
+@@ -2521,8 +2595,8 @@ const WILD_SPECIES = {
+      depth sort and every v16 combat overlay with no special casing; Glow Moth
+      hovers like the Sprites. `count` and `alt` are designed tunables, kept
+      deliberately low in the same spirit as Part A's density pass. */
+-  fire_dragon:  { name: "Fire Dragon",  base: 0.25, flier: false, count: 12, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
+-  glow_moth:    { name: "Glow Moth",    base: 0.65, flier: true,  alt: 12, count: 70, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
++  fire_dragon:  { name: "Fire Dragon",  base: 0.25, flier: false, count: 42, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
++  glow_moth:    { name: "Glow Moth",    base: 0.65, flier: true,  alt: 12, count: 315, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
+   /* v21: the Underwater Caves roster. Bible — "Water Dragon — Deep underwater
+      caves, tame as hatchling" — so a PASSIVE tame (hold-E channel, v12
+      formula) at the same 0.25 base as its Fire Dragon sibling, and a GROUND
+@@ -2532,7 +2606,7 @@ const WILD_SPECIES = {
+      tunable, matched to Fire Dragon's. Mountable per the bible, but riding is
+      DEFERRED for every species alike — no riding code exists yet. */
+   /* v29: same as Sea Serpent — moved inside, no surface spawn. */
+-  water_dragon: { name: "Water Dragon", base: 0.25, flier: false, count: 12, biomes: [], bloodFavored: false, shunnedByBlood: false },
++  water_dragon: { name: "Water Dragon", base: 0.25, flier: false, count: 42, biomes: [], bloodFavored: false, shunnedByBlood: false },
+   /* v22: the last two dragons the bible lists. Both are PASSIVE tames ("tame
+      as hatchling", no fight named for either), at the same 0.25 base as their
+      Fire and Water siblings, and both are GROUND species for the same reason
+@@ -2562,10 +2636,10 @@ const WILD_SPECIES = {
+      it. Griffin is also PEAK-only and deliberately does NOT carry it: it is
+      a mob with an 8-tile aggro radius, so it comes down off the peak to you.
+      A wild only wanders 0.9 tiles from home and never will. */
+-  storm_dragon:  { name: "Storm Dragon",  base: 0.25, flier: false, count: 12, biomes: [B.PEAK],    reachOnFoot: true, bloodFavored: false, shunnedByBlood: false },
++  storm_dragon:  { name: "Storm Dragon",  base: 0.25, flier: false, count: 42, biomes: [B.PEAK],    reachOnFoot: true, bloodFavored: false, shunnedByBlood: false },
+   /* v32: moved INSIDE the Abyssal Hollow interiors, same as Water Dragon in
+      v29 — biomes:[] means no surface spawn at all. Moved, not duplicated. */
+-  shadow_dragon: { name: "Shadow Dragon", base: 0.25, flier: false, count: 12, biomes: [], bloodFavored: false, shunnedByBlood: false },
++  shadow_dragon: { name: "Shadow Dragon", base: 0.25, flier: false, count: 42, biomes: [], bloodFavored: false, shunnedByBlood: false },
+   /* v25 — the last three species the bible's pet table lists for biomes that
+      already exist in this file. All three are PASSIVE tames (hold-E channel,
+      v12 formula); the bible names no fight for any of them.
+@@ -2593,7 +2667,7 @@ const WILD_SPECIES = {
+      same Epic baseline. The feeding half of that sentence is the real new
+      mechanic this version — see salamanderHappiness() and salamanderRampage()
+      further down. count is a designed tunable, matched to the dragons'. */
+-  crystal_golem:   { name: "Crystal Golem",   base: 0.25, flier: false, count: 8, biomes: [B.RUINB],   mountainRuinOnly: true, bloodFavored: false, shunnedByBlood: false },
++  crystal_golem:   { name: "Crystal Golem",   base: 0.25, flier: false, count: 28, biomes: [B.RUINB],   mountainRuinOnly: true, bloodFavored: false, shunnedByBlood: false },
+   krakenling:      { name: "Krakenling",      base: 0.20, flier: false, count: 4, biomes: [B.ABYSSAL], dayCycle: 10, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
+   salamander_king: { name: "Salamander King", base: 0.20, flier: false, count: 3, biomes: [B.CALDERA], bloodFavored: false, shunnedByBlood: false },
+   /* ============ v39 — THE ELDER TRIO =============================
+@@ -3945,12 +4019,63 @@ function ownsUnicornElder() {
+ }
+ function unicornElderLuck() { return ownsUnicornElder() ? UNICORN_ELDER_LUCK : 0; }
+ 
+-function buildFeatureList() {
+-  features = [];
+-  featureIndex.clear();
+-  decor = [];
+-  for (let ty = 0; ty < N; ty++) {
+-    for (let tx = 0; tx < N; tx++) {
++/* ============ v49 PART A — THE FEATURE LIST, CHUNKED ================
++   Confirmed live before this version: buildFeatureList() ran ONE eager
++   `for (ty < N) for (tx < N)` pass at login and built `features`,
++   `featureIndex` and `decor` for the ENTIRE world at once, regardless of
++   where the player actually stood. At N = 4000 that is 16,000,000 tile
++   checks synchronously blocking login, and it was measured rather than
++   assumed: the same jsdom boot, same seed, same machine, went 8.0s / 215 MB
++   at N = 2000 to 37.7s / 717 MB at N = 4000.
++
++   This is bakeTerrain()'s own problem in a second form, so the fix is
++   Expansion 2a's own fix rather than a new pattern being invented: compute
++   only what is near the player, and leave every drawing decision alone. The
++   double loop below is buildFeatureList()'s own loop body, MOVED into a
++   per-chunk builder with only its bounds and its two push targets changed —
++   every biome test, every hash, every jitter, the Bazaar keepout, the
++   TOWER/SPAWN_FORGE keepouts and the whole decor branch are the code that
++   already produced them.
++
++   ⚠️ WHAT IS REMEMBERED IS UNCHANGED, and that is the load-bearing half.
++   A mined or picked node is remembered in `minedNodes` — a set of tile keys
++   that lives OUTSIDE the chunks entirely, is loaded once at login, is
++   written by both the local mine path and the `node_mined` broadcast, and is
++   never evicted — and the builder below skips a FINITE feature whose key is
++   in it, exactly as the eager pass did on the line it was moved from. So a
++   node mined and walked away from is still gone when its chunk is rebuilt
++   hours later. This version changes WHEN a chunk's features are computed,
++   never what is known about them. */
++const FEATURE_CHUNK = 64;            // tiles per chunk edge — the spec's own proposal
++/* The MINIMUM chunk radius around the player's own chunk: 2, a 5x5 window,
++   which guarantees at least FEATURE_CHUNK * 2 = 128 tiles of loaded features
++   in every direction even for a player standing hard on a chunk edge.
++
++   ⚠️ The spec proposes "3 chunks — a 9-chunk window", and those are two
++   different numbers (a radius of 3 is a 49-chunk window; a 9-chunk window is
++   a radius of 1), so the tie-break is the spec's own instruction: verify it
++   against the real visible radius rather than guess. That radius is derived,
++   not assumed — see featureWindowRadius() — and it is 46 tiles at 1920x1080
++   and 62 at 2560x1440, so 128 clears every ordinary screen with room, and a
++   viewport big enough to need more widens the window instead of quietly
++   dropping trees off the edge of it. */
++const FEATURE_LOAD_R = 2;
++const FEATURE_CHUNK_N = Math.ceil(N / FEATURE_CHUNK);
++let featureChunks = new Map();       // "cx,cy" -> { feats, dec } for a LOADED chunk
++let decorFixed = [];                 // hand-placed decor (fences, sign, torches) — never chunked
++let featureWindowKey = null;         // the window's centre + radius, as a string
++let featureChunkStats = { loaded: 0, built: 0, evicted: 0, tiles: 0,
++                          radius: 0, cx: 0, cy: 0, features: 0, decor: 0 };
++function chunkOf(t) { return Math.floor(t / FEATURE_CHUNK); }
++
++/* The moved loop body. Everything between the two `for` lines is the eager
++   pass's own code; only the bounds and the push targets are this version's. */
++function buildFeatureChunk(cx, cy) {
++  const feats = [], dec = [];
++  const tx0 = cx * FEATURE_CHUNK, ty0 = cy * FEATURE_CHUNK;
++  const tx1 = Math.min(N, tx0 + FEATURE_CHUNK), ty1 = Math.min(N, ty0 + FEATURE_CHUNK);
++  for (let ty = ty0; ty < ty1; ty++) {
++    for (let tx = tx0; tx < tx1; tx++) {
+       /* Mount/Bazaar Polish PART B: the other half of the Bazaar's clearing,
+          and the half that actually removes the trees. The biome override in
+          biomeAt() takes the forest off the ground, but PLAINS still grows a
+@@ -3968,8 +4093,7 @@ function buildFeatureList() {
+         const jx = (hash2(tx, ty, 401) - 0.5) * 0.66;
+         const jy = (hash2(tx, ty, 403) - 0.5) * 0.66;
+         const feat = { type: f, x: tx + 0.5 + jx, y: ty + 0.5 + jy, tx, ty, key, h: hash2(tx, ty, 91) };
+-        features.push(feat);
+-        featureIndex.set(key, feat);
++        feats.push(feat);
+         continue;
+       }
+       // Non-gatherable decorative clutter (2026-07-11): bushes, flowers, pebbles
+@@ -3985,33 +4109,161 @@ function buildFeatureList() {
+         const v = hash2(tx, ty, 509);
+         const kind = v < 0.34 ? "pebble" : v < 0.72 ? "bush" : "flowers";
+         if (kind === "flowers" && (b === B.FOREST || b === B.ENCHFOREST)) continue;
+-        decor.push({ kind, x: tx + 0.5 + jx, y: ty + 0.5 + jy, h: hash2(tx, ty, 511) });
++        dec.push({ kind, x: tx + 0.5 + jx, y: ty + 0.5 + jy, h: hash2(tx, ty, 511) });
+       }
+     }
+   }
+-  // One deliberate runic vein placed among the ruins — v20: one per cluster
++  /* One deliberate runic vein placed among the ruins — v20: one per cluster.
++     It stays in the chunk its own tile falls in, appended AFTER that chunk's
++     tile sweep exactly as it was appended after the eager sweep, so a vein
++     sharing a tile with a scattered feature still wins the index the same
++     way it always did. */
+   for (const R of RUINS) {
+     const tx = R.x, ty = R.y - 1;
++    if (chunkOf(tx) !== cx || chunkOf(ty) !== cy) continue;
+     const key = tx + "," + ty;
+     if (!minedNodes.has(key)) {
+-      const feat = { type: "runic", x: tx + 0.3, y: ty + 0.4, tx, ty, key, h: 0.7 };
+-      features.push(feat);
+-      featureIndex.set(key, feat);
++      feats.push({ type: "runic", x: tx + 0.3, y: ty + 0.4, tx, ty, key, h: 0.7 });
++    }
++  }
++  return { feats, dec };
++}
++
++/* A chunk's contents whether or not it is loaded: from the cache when the
++   player is near it, computed and DISCARDED when they are not. This is what
++   lets a question about ground the player is nowhere near ("what stands on
++   the Bazaar's floor?", "does every Ruin still have its vein?") be answered
++   by the real builder without pulling those chunks into memory. */
++function featureChunkContents(cx, cy) {
++  if (cx < 0 || cy < 0 || cx >= FEATURE_CHUNK_N || cy >= FEATURE_CHUNK_N) return null;
++  return featureChunks.get(cx + "," + cy) || buildFeatureChunk(cx, cy);
++}
++/* The feature the builder puts on one tile, last-wins, exactly as the
++   index's own last-write did. Null for a tile that grows nothing, and null
++   for a FINITE node already in minedNodes — which is how a gate proves a
++   mined node stays mined across an eviction and a rebuild. */
++function featureAtTile(tx, ty) {
++  const c = featureChunkContents(chunkOf(tx), chunkOf(ty));
++  if (!c) return null;
++  const key = tx + "," + ty;
++  let hit = null;
++  for (const f of c.feats) if (f.key === key) hit = f;
++  return hit;
++}
++/* Every feature and decor item the builder produces on the chunks covering a
++   disc. The caller filters by real distance, exactly as it did when it was
++   filtering the whole-world arrays. */
++function featureCensus(wx, wy, rad) {
++  const feats = [], dec = [];
++  for (let cy = chunkOf(wy - rad); cy <= chunkOf(wy + rad); cy++) {
++    for (let cx = chunkOf(wx - rad); cx <= chunkOf(wx + rad); cx++) {
++      const c = featureChunkContents(cx, cy);
++      if (!c) continue;
++      for (const f of c.feats) feats.push(f);
++      for (const d of c.dec) dec.push(d);
++    }
++  }
++  return { feats, dec };
++}
++
++/* The flat lists the rest of the file reads. `features`, `featureIndex` and
++   `decor` keep their exact previous shape and meaning — the render loop,
++   nearestGatherable() and removeFeature() are untouched by this version —
++   they simply now hold the loaded window instead of the whole world. */
++function rebuildFeatureLists() {
++  features = [];
++  featureIndex.clear();
++  decor = [];
++  for (const c of featureChunks.values()) {
++    for (const f of c.feats) { features.push(f); featureIndex.set(f.key, f); }
++    for (const d of c.dec) decor.push(d);
++  }
++  for (const d of decorFixed) decor.push(d);
++  featureChunkStats.loaded = featureChunks.size;
++  featureChunkStats.features = features.length;
++  featureChunkStats.decor = decor.length;
++}
++
++/* How many chunks either side of the player's own must be resident. Derived
++   from the frame's OWN bounds rather than guessed: render()'s four-corner
++   screenToWorld() block reaches w/2 pixels along the screen x axis and h/2
++   along y, which is w/(4*IW2) + h/(4*IH2) tiles either side of the camera in
++   world x and in world y. The + 8 covers the entity pass's own +6 corner
++   margin and the up-to-0.33 jitter a feature is drawn with. A player standing
++   hard on a chunk edge gets only `r` WHOLE chunks of cover on that side, so
++   that is the quantity that has to clear it. */
++function featureWindowRadius() {
++  const cw = canvas.width || 1280, chh = canvas.height || 720;
++  const half = cw / (4 * IW2) + chh / (4 * IH2) + 8;
++  return Math.max(FEATURE_LOAD_R, Math.ceil(half / FEATURE_CHUNK));
++}
++
++/* Move the window if the player has left its centre chunk. Cheap enough to
++   call every frame — two Math.floor()s and a string compare — and it does
++   nothing at all until a chunk boundary is actually crossed. A chunk already
++   loaded is never rebuilt, so walking back into one costs nothing. */
++function updateFeatureChunks(force) {
++  if (!me) return;
++  /* Inside a cave interior me.x/me.y are the INTERIOR's own grid coordinates,
++     not world ones, so following them would centre the window on a chunk the
++     player is nowhere near. The window holds on the surface tile they went in
++     at — the same treatment the compass and the minimap give an interior. */
++  const at = inInterior() ? me.surfaceReturn : me;
++  if (!at) return;
++  const cx = chunkOf(at.x), cy = chunkOf(at.y), r = featureWindowRadius();
++  const wkey = cx + "," + cy + ":" + r;
++  if (!force && wkey === featureWindowKey) return;
++  featureWindowKey = wkey;
++  for (const k of [...featureChunks.keys()]) {
++    const c = k.split(",");
++    if (Math.abs(+c[0] - cx) > r || Math.abs(+c[1] - cy) > r) {
++      featureChunks.delete(k);
++      featureChunkStats.evicted++;
++    }
++  }
++  for (let dy = -r; dy <= r; dy++) {
++    for (let dx = -r; dx <= r; dx++) {
++      const ax = cx + dx, ay = cy + dy;
++      if (ax < 0 || ay < 0 || ax >= FEATURE_CHUNK_N || ay >= FEATURE_CHUNK_N) continue;
++      const k = ax + "," + ay;
++      if (featureChunks.has(k)) continue;
++      featureChunks.set(k, buildFeatureChunk(ax, ay));
++      featureChunkStats.built++;
++      featureChunkStats.tiles += FEATURE_CHUNK * FEATURE_CHUNK;
+     }
+   }
++  featureChunkStats.radius = r; featureChunkStats.cx = cx; featureChunkStats.cy = cy;
++  rebuildFeatureLists();
++}
++
++function buildFeatureList() {
++  /* v49 PART A: what used to be 16,000,000 tile checks here is now a 5x5
++     window built at the bottom of this function, once the player's own
++     position is known. Everything else below — the hand-placed decor, the
++     critters, the dock, the reflection anchor, the wild and mob rosters and
++     the ruin set pieces — is unchanged: none of it ever swept the grid, and
++     none of it is chunked. */
++  featureChunks.clear();
++  featureWindowKey = null;
++  featureChunkStats = { loaded: 0, built: 0, evicted: 0, tiles: 0,
++                        radius: 0, cx: 0, cy: 0, features: 0, decor: 0 };
++  features = [];
++  featureIndex.clear();
++  decor = [];
++  decorFixed = [];
+   // A few fence segments near the Spawn Forge for character
+-  decor.push({ kind: "fence", x: SPAWN_FORGE.x - 1.6, y: SPAWN_FORGE.y + 1.3, dir: "x" });
+-  decor.push({ kind: "fence", x: SPAWN_FORGE.x - 2.4, y: SPAWN_FORGE.y + 1.3, dir: "x" });
+-  decor.push({ kind: "fence", x: SPAWN_FORGE.x - 2.8, y: SPAWN_FORGE.y + 0.5, dir: "y" });
++  decorFixed.push({ kind: "fence", x: SPAWN_FORGE.x - 1.6, y: SPAWN_FORGE.y + 1.3, dir: "x" });
++  decorFixed.push({ kind: "fence", x: SPAWN_FORGE.x - 2.4, y: SPAWN_FORGE.y + 1.3, dir: "x" });
++  decorFixed.push({ kind: "fence", x: SPAWN_FORGE.x - 2.8, y: SPAWN_FORGE.y + 0.5, dir: "y" });
+   // v8: signpost near the trail with real directional text
+-  decor.push({ kind: "sign", x: SPAWN.x + 1.6, y: SPAWN.y + 1.2 });
++  decorFixed.push({ kind: "sign", x: SPAWN.x + 1.6, y: SPAWN.y + 1.2 });
+   // v8: torch posts along the trail + safe boundary; glow doubles as night lit-ground marker
+   TORCHES = [
+     { x: SPAWN.x + 1.4, y: SPAWN.y + 0.4 },
+     { x: SPAWN.x + 2.9, y: SPAWN.y + 1.5 },
+     { x: SPAWN.x - 2.5, y: SPAWN.y + SAFE_RADIUS - 1.2 },
+   ];
+-  for (const tp of TORCHES) decor.push({ kind: "torch", x: tp.x, y: tp.y });
++  for (const tp of TORCHES) decorFixed.push({ kind: "torch", x: tp.x, y: tp.y });
+   // v8: grazing rabbits in open plains/meadow
+   critters = [];
+   for (let a = 0; a < 400 && critters.length < 3; a++) {
+@@ -4287,6 +4539,12 @@ function buildFeatureList() {
+   /* v20: each Other Safe Zone is anchored by the existing ruin "well" set
+      piece — the same stone well art, reused, no new drawing code. */
+   for (const z of OTHER_SAFE_ZONES) ruinPieces.push({ k: "well", x: z.x, y: z.y });
++  /* v49 PART A: the first window, built LAST and around the player, so login
++     pays for 25 chunks instead of the whole world. Both callers of this
++     function — the login sequence and the v39 world reset — reach it with a
++     real `me` already standing somewhere, which is why the centre can be the
++     player rather than SPAWN. */
++  updateFeatureChunks(true);
+ }
+ 
+ /* Hand-composed ancient ruin (2026-07-11): a few large broken structures,
+@@ -4343,6 +4601,14 @@ function removeFeature(key) {
+   featureIndex.delete(key);
+   const i = features.indexOf(f);
+   if (i >= 0) features.splice(i, 1);
++  /* v49 PART A: the same object also sits in its own chunk's cached array,
++     and that array is what the flat lists are rebuilt from every time the
++     window moves — so removing it from one and not the other would stand a
++     mined node back up the moment the player crossed a chunk boundary. The
++     DURABLE record of it is still `minedNodes` (a rebuilt chunk skips the
++     key outright); this is the live copy catching up with it. */
++  const c = featureChunks.get(chunkOf(f.tx) + "," + chunkOf(f.ty));
++  if (c) { const j = c.feats.indexOf(f); if (j >= 0) c.feats.splice(j, 1); }
+ }
+ 
+ /* =========================================================
+@@ -8973,6 +9239,12 @@ function loop(t) {
+ }
+ 
+ function update(dt, t) {
++  /* v49 PART A: the feature window follows the player. Deliberately the FIRST
++     thing in the frame, before movement, gathering or anything that reads
++     `features` — so a frame that crosses a chunk boundary is already looking
++     at the new window rather than at last frame's. It is a no-op on every
++     frame that does not cross one. */
++  updateFeatureChunks(false);
+   iAmMoving = false;
+   if (!dead) {
+     let rawX = 0, rawY = 0;
