@@ -102,84 +102,62 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v47 — Balance, Anti-Exploit & Economy)
+## Confirmed, locked spec for the next build (v48 — World Expansion 4, Demon Knight & Minimap 3x)
 
-**Revised after a genuine, correct RED stop.** Two real corrections below,
-both mine, caught by the build reading the actual file rather than
-trusting the spec's own claims. Everything else (Parts B, D-H) was
-independently verified clean and is unchanged.
+Confirmed live: `N=2000`, `INTERIOR_N=80`. Three items deliberately
+deferred out of v47.
 
-**PART A — REVISED AGAIN, more aggressively: this map has outgrown its
-own pet counts.** Confirmed live: Common tier tops out at `count: 9` —
-five species, all sharing that exact number. The world is currently
-N=2000 (4,000,000 tiles), roughly 70x the area it was when these counts
-were likely first tuned. A flat +25-30% (9 -> ~11-12) does not come
-close to closing that gap — real, severe scarcity confirmed directly by
-report, not assumed. Scale by tier, not a flat percentage:
-```
-Common     (currently 9):      -> 70
-Uncommon   (currently 3-6):    -> roughly 6x each, keeping relative spread
-Rare       (currently 2-4):    -> roughly 4x each
-```
-Elders, Duskfox Elder, and any daily-capped species from Mob Rarity +
-Music are explicitly untouched — their scarcity is governed by a
-separate system (the daily world cap), and raising `count` for them only
-helps players physically find one within a day's allotment, it does not
-bypass or weaken the cap itself. Do not touch `base` (tame chance)
-anywhere in this part.
+**PART A — the map doubles again.** `N: 2000 -> 4000`. Full constant
+audit repeated exactly as rigorously as every prior expansion — every
+landmark-relative distance re-derived by the same ratio, not guessed;
+`bakeTerrain()` remains gone since Expansion 2a, so memory is not the
+blocker, but the viewport tile-count bound must still be re-confirmed at
+this scale regardless. Biome rarity thresholds and noise wavelengths
+stay untouched — proven correct twice already at two prior scales, this
+is the third confirmation, not a new risk.
 
-**PART B — unchanged.** Troll `hp:90,dmg:14 -> hp:68,dmg:11`. Dark Wraith
-`hp:65,dmg:12 -> hp:49,dmg:9`. Both confirmed live and unique.
+**PART B — caves double again.** `INTERIOR_N: 80 -> 160`. Reuse the
+exact connectivity guarantee (flood-fill from arrival, carve to any
+orphaned region) and re-derive the flood-fill guard from the grid size
+itself, not a hardcoded number — this exact class of bug (a guard sized
+for the old grid silently truncating at the new one) has already
+happened once at this exact transition (50->80) and must not repeat at
+80->160. Ore/mob/node density scales with the new area, not left flat.
 
-**PART C — Sea Serpent buffed, AND Adult Golem built for real this
-time.** Sea Serpent: `hp:130 -> hp:165`, unchanged from before.
+**PART C — Demon Knight, built for real.** Confirmed live: does not
+exist anywhere in `MOBS`. The bible places it in "Deep Dungeons," which
+do not exist as their own biome — rather than block this on building
+Dungeons from scratch (a whole separate landmark-scale feature), Demon
+Knight spawns as a dedicated guardian at the Volcano specifically,
+protecting the Elder Drake, matching the direct instruction already
+given: this is a deliberate, named exception to its bible placement, not
+an oversight — record it as such in the changelog. Stats at the bible's
+own "Very Hard" tier, above Adult Golem/Sea Serpent's "Hard" and below
+Elder Drake's "Boss": propose `hp:280, dmg:26, atkRange:2.0,
+atkCooldownMs:1600, windupMs:600, aggroRadius:9, leashRadius:16,
+moveSpeed:1.6, count:2` (two, flanking the Elder Drake, not one), drop
+`dragonsteel` — the bible's own stated drop for this creature, already
+consistent with dragonsteel's existing acquisition list. New art,
+following the locked style guide (flat colour-block, no muddy palettes —
+the exact lesson from the Elder Drake's own original mistake).
 
-Adult Golem, genuinely built, not substituted or guessed: the bible's
-own mob table names it directly — "Ruins, Hard, Runic Stone" — placing
-it at the exact same difficulty tier as Sea Serpent. New `MOBS` entry,
-`biomes: [B.RUINB]` (already a real, used biome — Bandit spawns there
-too), stats matched to Sea Serpent's PRE-buff baseline since both are
-the bible's own "Hard" tier: `hp:130, dmg:18, atkRange:1.8,
-atkCooldownMs:1900, windupMs:700, aggroRadius:7, leashRadius:12,
-moveSpeed:1.3` (slower than Sea Serpent — a golem, not a serpent — but
-otherwise comparable threat), `count:3`, `loot: runic_stone`,
-`tameable: false`. Art: confirmed the young, tameable Golem's draw
-function already exists (`species === "golem"`) — Adult Golem reuses
-that same silhouette scaled up and recolored toward stone/hostile tones
-rather than inventing new geometry from nothing, matching the bible's
-own framing that this IS the same species, grown hostile.
+**PART D — minimap view area, 3x larger.** The rendered top-down minimap
+(not the compass dial, which is unrelated and stays as-is) currently
+shows roughly a 10x10 tile area — confirm the real current value at
+build time rather than assume. Expand to roughly 30x30, same rendering
+technique, same "close-range only, never reveals remote bases" limit
+from its original spec — this is a bigger window on the same view, not
+a different kind of view.
 
-**PART D — unchanged.** `BASE_TIER_HP` doubled:
-`{wood:80, stone:180, iron:360, runic:700, dragonsteel:1600}`. Confirm
-the real time-to-destroy roughly doubles with it, not just the constant.
-
-**PART E — unchanged.** `beforeunload` currently only calls
-`savePlayer()`. Needs one new tracked value — last damage-dealt-or-taken
-timestamp — to drive the 30-second window; add it as a tunable. Native
-browser confirmation prompt only; no code can force a tab to stay open.
-
-**PART F — unchanged.** Player-to-player item drop, reusing `invAdd`/
-`invRemove` and the existing `item_add`/`item_del` broadcast pattern.
-
-**PART G — unchanged.** Base sign on the Foundation piece (`anchor:
-true`), owner-settable, rendered with the exact same nameplate technique
-already used for player names above characters — dark rounded plate,
-centred 11px Barlow, no new component invented.
-
-**PART H — unchanged.** Redeem codes, two new tables, same
-graceful-degradation fallback as `account_pins`/`baseHpOf()`.
-
-**Proof gates:** standard gauntlet plus confirm every species' `count`
-increased ~25-30% while relative tier ordering held, confirm `base`
-(tame chance) is byte-identical to before this version anywhere it
-appears, confirm Sea Serpent alone moved in Part C with nothing else
-touched, confirm Troll/Dark Wraith genuinely easier, confirm base HP
-doubled with real time-to-destroy verified alongside it, confirm the
-beforeunload prompt only fires within the 30s combat window, confirm
-player-to-player item transfer writes to the real recipient inventory,
-confirm base signs render only where set, confirm redeem codes reject a
-second claim from the same username and degrade gracefully with no
-tables present.
+**Proof gates:** standard gauntlet plus six-seed sweep for the expansion
+with real before/after landmark and biome-pocket numbers (not assumed
+unchanged), cave connectivity re-confirmed with zero sealed-off tiles
+across a real multi-seed sample at the new interior size, confirm the
+flood-fill guard is derived from the grid and not a new hardcoded
+number, confirm Demon Knight spawns specifically at the Volcano
+guarding the Elder Drake and nowhere else, confirm its drop is genuinely
+dragonsteel, confirm the minimap's expanded radius still never reveals
+anything beyond its own close range.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
