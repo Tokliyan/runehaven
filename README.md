@@ -102,82 +102,63 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v49 — finish the harness repair, then ship)
+## Confirmed, locked spec for the next build (v50 — Magical Biome Landmarks, Ruin Density, Ambient Life)
 
-**This is a completion, not a fresh design — read this whole section
-before touching anything.** `runehaven.html` and `debug/run4.js` on
-`main` already contain real, finished work from tonight's repair
-session:
+Direct feedback: magical biomes currently read as a ground-tile color
+shift with nothing standing in them — confirmed live, `ENCHFOREST`'s
+shimmer (line ~4951) is real and correctly coded but is a floor effect
+only, no object. The fix is giving magic a light source and a location,
+not another palette pass.
 
-- `run4.js` re-synced to the real N=4000 world: every stale N=2000
-  literal re-recorded from the live file (map size, safe zone radius,
-  ruin/zone separation and footprint, cave grid size, Elder Drake's
-  search ring, Ancient Forge and Dragon Altar distances from their
-  reference points, Dark Forest area, minimap tile count).
-- Demon Knight correctly added to both mob-roster gates (it is allowed
-  to out-HP Sea Serpent — Very Hard sits above Hard on the bible's own
-  table — and it now counts in the named-roster check).
-- A genuine, real bug fixed in `runehaven.html` itself, not just the
-  test: `loadSavedCreds()` assumed `sbUrl`/`sbKey`/`connectBox` were
-  already in the DOM the instant it ran and could throw if they were
-  not yet parsed, silently breaking everything after it in page setup.
-  Made defensive again; the baked-in Supabase defaults are unchanged.
-- Several `window.debugXInfo()` calls in `run4.js` were made defensive
-  against a real, deterministic issue where they return `undefined` or
-  throw partway through a full run (`debugPinInfo`, `debugSettingsInfo`
-  confirmed so far) — **this pattern was not fully chased to its root
-  cause tonight and may recur at other call sites still further into
-  the file. Continue hardening any further `window.debugXInfo()` call
-  that throws the same way, in place, rather than reverting the ones
-  already fixed.**
+**PART A — five biome-anchored landmark objects, one per magical
+biome.** Reuse the exact placement technique `golemElderSpot()` and
+`unicornElderSpot()` already use — search real generated tiles of the
+target biome, pick deterministically from the world seed, not a fixed
+offset (unlike SHRINE, which anchors to SPAWN — these anchor to their
+biome instead, since the biome itself is scattered, not fixed).
 
-**PART A — finish getting `run4.js` to a real, complete, honest run.**
-Continue from where tonight's session stopped: there is a `NaN` in the
-interior-density console log (`interior density across N caves: NaN
-floor tiles...`) immediately before the last guarded crash — this was
-NOT root-caused tonight, only worked around downstream. Determine
-whether `debugSpaceInfo()`'s `rec` lookup genuinely fails to see a
-just-entered interior at that point in the test sequence (a real
-harness bug) or whether call ordering needs to change (`dspc()` needs
-to run before `dssp({ clearCache: true })` on the next iteration, or
-similar) — fix the actual cause, not just the symptom, since a NaN
-silently reaching a `results.push` threshold check would be a false
-PASS or a confusing FAIL either way.
+- **Enchanted Forest — the Heartwood Tree.** One per real ENCHFOREST
+  pocket found (not one globally) — thick trunk, internally-lit canopy,
+  slow pulse, tall enough to read from outside the pocket's edge.
+- **Underwater Caves — Kelp-Crystal Clusters.** Multiple per interior,
+  jutting from cave walls, faint glow, reuse the drifting-particle
+  technique already used for cave ore veins rather than inventing a new
+  particle system.
+- **The Abyssal Hollow — a Void Rift.** Single, striking, dark
+  violet-black energy effect at the deepest point already defined for
+  this biome — this is the one most in need of visually justifying
+  "deepest point in the world," currently indistinguishable from a
+  regular dark cave.
+- **Sacred Meadow — a Dawn Obelisk.** Only visibly lit during the dawn
+  window — tie its lit state to the exact same time check Lightfox's own
+  spawn window already uses, so the visual and the mechanic reinforce
+  each other rather than being separately tuned.
+- **The Sunforge Caldera — visible heat distortion and glowing ground
+  cracks**, not another orange overlay — actual cracks in the terrain
+  texture with an ember glow, matching the "blinding heat" bible line
+  more literally than a tint does.
 
-**PART B — reach real 0 FAIL on the current, unmodified file.** Run the
-full `run4.js` end to end without truncating early. Fix whatever
-remains the same way tonight's session did: verify against the real
-live constant/function before changing a test's expectation, and only
-diagnose-not-relax anything touching cave dive-reachability, which
-`SKILL.md` has already ruled belongs in a real design decision, not a
-third silent threshold drop.
+**PART B — ruins, genuinely more of them.** `RUIN_COUNT` confirmed live
+at 6. Increase to a real, noticeably denser number — propose 10 — with
+the standard six-seed sweep to confirm placement still respects every
+existing separation constant (RUIN_SEP, RUIN_ZONE_SEP) rather than
+starting to overlap zones or each other as density goes up.
 
-**PART C — apply v49's actual work.** The chunked feature-loading fix
-and the density rebalance are already fully built, measured, and
-correct — saved as `BUILD_FAILED_v49.patch` in the repo (310
-insertions / 38 deletions against commit `ae3f277`). Do not redesign
-this. Apply it, then update `run4.js`'s `SP_COUNTS` table and the two
-exact-population gates (`Storm Dragon reaches its peaks`, `golem spawns
-its full v47 population`) to the patch's own new counts, exactly as the
-patch's own notes describe.
+**PART C — ambient life in magical biomes specifically.** Drifting
+motes/will-o-wisps as a light, genuinely ambient particle effect — present
+in Enchanted Forest, Dark Forest (night), Sacred Meadow (dawn), and the
+Abyssal Hollow, absent from Plains/Forest/Meadow so the effect stays
+meaningful rather than becoming wallpaper. Reuse whatever particle
+technique the game already has (cave ore glow, gathering bursts) rather
+than building a new particle system from scratch.
 
-**PART D — the two small open decisions from the patch's own notes,
-make a real call on each:**
-1. `speciesDailyCap()` scales with `count`, so Rare species' daily caps
-   are now ~4x bigger (Unicorn 16 → 56) as a direct consequence of the
-   density fix. This is consistent with the fix's own intent — more
-   instances spread across 4x more map area — accept it, do not revert.
-2. Fight-to-tame pets (Boar, Bear, Griffin, Phoenix) take density from
-   `MOBS.count`, which neither v47 nor this patch touched — they are
-   still roughly 4x sparser than everything else post-Expansion-4.
-   Apply the same tier-scaled correction technique to these four
-   specifically, for consistency with every other species.
-
-**Proof gates:** real, complete, unmodified full run4 + run5 + run2/run3
-with actual reported numbers — not partial, not truncated. Confirm login
-time and heap return to something close to the measured 5.99s/165.8MB
-from tonight's session. Confirm every gate this spec touches passes for
-a real, understood reason, not a guessed one.
+**Proof gates:** standard gauntlet plus confirm each landmark object
+only renders where its real biome actually exists (not globally), confirm
+the Sacred Meadow obelisk's lit state matches Lightfox's own spawn-window
+check exactly, confirm ruin density increase holds every existing
+separation constant across a real six-seed sweep, confirm ambient
+particles are scoped only to the five named biomes/conditions and do not
+appear elsewhere.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
