@@ -53,6 +53,194 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-29 (v49 — the feature list finally chunked, pet density restored for N=4000, and the dive-reachability decision taken in writing)
+
+**This version closes the v46 entry's own flagged item by name.** That entry
+said, of the login cost the world's doubling created: *"chunking or lazily
+building the feature list is a rendering-architecture decision rather than a
+tunable, so it is flagged and not invented."* It has now been specced, built,
+measured and shipped. Not one palette entry, biome colour, cliff-face ratio,
+`SPECIES_K`, `MOB_K`, `MOB_TALL`, silhouette or shadow was touched, and
+`run5`'s coverage sweep is **1,084 draws — byte-identical to the pre-change
+file**, which is the point: the world draws exactly as it did this morning.
+
+- **⚠️ `buildFeatureList()` no longer sweeps the world, and this is the
+  version's whole architecture change.** It ran one eager
+  `for (ty < N) for (tx < N)` pass at login and built `features`,
+  `featureIndex` and `decor` for the ENTIRE map regardless of where the player
+  stood — **16,000,000 tile checks synchronously blocking login at N=4000.**
+  It is now a 5x5 chunk window of 64-tile chunks built around the player, moved
+  by `updateFeatureChunks()` as the first thing in `update()`. This is
+  Expansion 2a's own fix (compute what is near the player, leave every drawing
+  decision alone) applied to the second place that needed it.
+- **The double loop was MOVED, not rewritten, and that is what makes it safe.**
+  `buildFeatureChunk()` is `buildFeatureList()`'s own loop body with only its
+  bounds and its two push targets changed — every biome test, every hash, every
+  jitter, the Bazaar keepout, the TOWER/SPAWN_FORGE keepouts and the whole
+  decor branch are the code that already produced them. `features`,
+  `featureIndex` and `decor` keep their exact previous shape and meaning, so
+  the render loop, `nearestGatherable()` and `removeFeature()` are untouched;
+  they simply now hold the loaded window rather than the whole world.
+- **⚠️ WHAT IS REMEMBERED IS UNCHANGED, and that is the load-bearing half.** A
+  mined or picked node lives in `minedNodes`, a set of tile keys that sits
+  OUTSIDE the chunks entirely, is loaded once at login and is never evicted —
+  and the chunk builder skips a FINITE feature whose key is in it, on the line
+  it was moved from. So a node mined and walked away from is still gone when
+  its chunk is rebuilt hours later. This version changes WHEN a chunk's
+  features are computed, never what is known about them. `removeFeature()`
+  gained the matching splice out of the chunk's own cached array, or a mined
+  node would have stood back up the moment the player crossed a chunk boundary.
+- **⚠️ The window radius is DERIVED from the frame's own bounds, not guessed,
+  and the spec's own proposal was self-contradictory.** It proposed "3 chunks —
+  a 9-chunk window", and those are two different numbers (radius 3 is a
+  49-chunk window; a 9-chunk window is radius 1). The tie-break is the spec's
+  own instruction to verify against the real visible radius:
+  `featureWindowRadius()` computes it from `render()`'s four-corner
+  `screenToWorld()` reach, which is **46 tiles at 1920x1080 and 62 at
+  2560x1440**, against a floor of 2 chunks = 128 tiles of guaranteed cover in
+  every direction even for a player standing hard on a chunk edge. A viewport
+  big enough to need more widens the window instead of quietly dropping trees
+  off the edge of it.
+- **⚠️ MEASURED, LIKE-FOR-LIKE, ON ONE MACHINE — the cost the v46 entry
+  recorded is genuinely gone.** Same jsdom boot, same seed, the unmodified file
+  against the patched one:
+  **login 28,294 ms -> 5,008 ms, V8 heap 987.4 MB -> 260.9 MB.** That is 5.6x
+  the login speed at 3.8x less heap. Per-FRAME cost was never the problem and
+  is untouched. (The v49 spec's own session measured 37.67s -> 5.99s and
+  717 MB -> 165.8 MB on different hardware; the absolute numbers differ with
+  the machine, the ratio and the direction are the same, and the patched login
+  lands within a second of their figure.)
+- **Three harness hooks had to stop assuming the whole world is resident, and
+  each asks the real builder instead.** `debugWorldInfo()`'s ruin-vein census
+  goes through `featureAtTile()`, and `debugV37Info()`'s Bazaar census through
+  `featureCensus()` — same `buildFeatureChunk()`, so the counts are the same
+  counts — because six Ruins are never all near one player on a 4000-tile map
+  and the Bazaar is somewhere else entirely. `debugSetPlayer()` now moves the
+  window with the teleport, for the same reason v22 made it move the camera.
+- **Pet density was restored for the N=4000 world, and this is v47's own pass
+  run again one expansion later.** Expansion 4 doubled `N` without these counts
+  moving, so every number v47 chose was spread over 4x the ground it was chosen
+  for. Scaled BY TIER, Common most aggressively, Epic and above untouched:
+  **Common x4.5 (70 -> 315), Uncommon x4.0 (wolf/stag 36 -> 144, golem
+  18 -> 72), Rare x3.5 (unicorn 16 -> 56, crystal_golem 8 -> 28, the four
+  dragons 12 -> 42).** Relative spread inside each tier is preserved exactly —
+  golem is still half of wolf, crystal_golem still half of unicorn, the whole
+  Common tier is still one shared number — and `run4` pins all three as
+  relationships rather than literals. Measured: the world went from **537
+  entities against a 563 ceiling to 2,225 against a 2,231 ceiling**, and that
+  ceiling is computed from the live tables so it moved on its own.
+- **⚠️ The four fight-to-tame pets were 4x sparser than everything else, and
+  only because of where their density is stored.** Boar, Bear, Griffin and
+  Phoenix take `count` from `MOBS`, not `WILD_SPECIES` — so v47's pass and the
+  v49 patch both skipped them, each having deliberately declined to touch
+  `MOBS` because that is also where Goblin, Bandit, Troll, Dark Wraith and Sea
+  Serpent live and THEIR density is combat balance rather than pet
+  findability. This version's spec makes that call: the four PETS are scaled by
+  the same tier multipliers (**boar/bear 6 -> 24, griffin 3 -> 12, phoenix
+  3 -> 11**) and the five pure-combat mobs beside them are untouched to the
+  digit. No `hp`, `dmg`, `aggroRadius` or tame `base` moves anywhere.
+
+## PERMANENT NOTE — THE DIVE-REACHABILITY DECISION (v49, and it is a sign-off)
+
+**This is the written rationale `NEXT_BUILD.md` required, recorded here because
+`SKILL.md` is where the two previous restatements of this bar live.**
+
+For three consecutive expansions `run4`'s dive-reachability bar has moved, and
+the v46 entry's judgment call 6 said plainly that the fix "is a real design
+change and belongs in a spec". At N=4000 the deadlock became explicit and a
+build stopped RED on it rather than guessing: **the gate asserting `BREATH_MAX`
+is deliberately NOT scaled and the gate requiring 70% reachability cannot both
+hold**, because the ocean has grown 3.125x then 2x then 2x again while one tank
+of air has not moved since v21. It is arithmetic, not a bug.
+
+The decision taken, in `NEXT_BUILD.md`'s own words, is to **accept the figure
+explicitly**: *"Every largest pocket stays reachable; the bible itself
+describes a 'very large' world where things are genuinely hard to find by
+design. Do not scale `BREATH_MAX` (reverses a decision already made twice,
+deliberately) and do not move underwater content closer to shore (a worldgen
+change, not what this version is for)."*
+
+Measured at N=4000, and printed on every run so it can never go quiet:
+
+| | pockets | by area | largest pocket | worst crossing |
+|---|---|---|---|---|
+| Underwater Caves | 2401/3438 (69.8%) | **63.4%** | 3,118 tiles at 5 — reachable | 1,094 |
+| Abyssal Hollow | 1483/2127 (69.7%) | **65.4%** | 1,100 tiles at 0 — reachable | 1,091 |
+
+`REACH_BAR` is therefore **0.7 -> 0.60**, and 0.60 rather than 0.634
+deliberately: pinning it to the worst figure one seed happens to produce is a
+measurement, not a bar — it would go red on the next seed a tenth of a point
+lower and tell nobody anything. 0.60 is a FLOOR with about three points of room
+under the worst number, so the gate still catches a genuine collapse (a
+worldgen change that seals the biome off, a pocket generator that strands its
+content) while no longer failing on arithmetic three specs in a row have
+deliberately chosen.
+
+**⚠️ WHAT IS NOT RELAXED:** the assertion that the LARGEST pocket in each biome
+is reachable is untouched at exactly its previous strength, and passes in both
+(3,118 tiles at a crossing of 5; 1,100 at 0). That is the one that says the
+deep biomes are real content rather than a locked room. So is "a real region,
+not a speck". **Only the two aggregate percentages moved.**
+
+**⚠️ THIS NUMBER DOES NOT MOVE AGAIN WITHOUT A NEW SIGN-OFF OF THE SAME KIND.**
+`NEXT_BUILD.md`: *"do not silently relax it again next expansion without this
+same explicit sign-off."* A future expansion that finds this gate red must
+bring a spec decision to it, not edit the line.
+
+## JUDGMENT CALLS THIS VERSION
+
+All shipped through the full gate — parse clean, `run2` `CAUGHT ERROR: none`,
+`run3` `CAUGHT ERROR: none` with login settled in 5,008 ms, `run4` **1,160 PASS
+/ 0 FAIL** with `CAUGHT ERROR: none`, `run5` **1,084 coverage draws clean**
+across all 19 ground biomes, and 33/33 grep checks including the preservation
+half. Refinements to consider, not unfinished work.
+
+1. **⚠️ `speciesDailyCap()` reads `count`, so every Rare species' daily world
+   cap grew with the density fix — a Unicorn's goes 16 -> 56.** Accepted rather
+   than reverted, on the spec's own instruction and for its own reason: the
+   caps are now spread across 4x more map area, which is exactly what the
+   density fix is for. **`speciesDailyCap()` is still the one function to
+   change if the caps were meant to hold.** This is the single most likely call
+   here to want a second look.
+2. **⚠️ Phoenix is the one number in either table that does not land whole.**
+   3 x 3.5 = 10.5, taken UP to 11 rather than down to 10, because Phoenix is
+   the only Rare species in the `MOBS` table and rounding down would have put
+   it below the ratio every other Rare took. Every other value in both tier
+   tables is exact. One digit.
+3. **`REACH_BAR` is 0.60, not 0.634.** Reasoned in full in the permanent note
+   above — a floor with room under it, rather than a transcription of one
+   seed's worst measurement.
+4. **`FEATURE_LOAD_R = 2` resolves a spec proposal that names two different
+   numbers**, and it is a floor rather than the operating value: the real
+   radius is derived per-frame from the viewport by `featureWindowRadius()`, so
+   an unusually large window widens rather than dropping features off its edge.
+   Verified at two real resolutions before the constant was chosen.
+5. **The window follows `me.surfaceReturn` inside a cave interior, not
+   `me.x/me.y`.** In there those are the INTERIOR's own grid coordinates, so
+   following them would centre the window on a chunk the player is nowhere
+   near. This is the same treatment the compass and the minimap already give an
+   interior.
+6. **`run4`'s two exact-population gates were UPDATED, not relaxed** — Storm
+   Dragon `=== 12` -> `=== 42`, golem `=== 18` -> `=== 72`. Both are still
+   exact counts, and every Storm Dragon still has to reach the peaks through
+   the `reachOnFoot` filter, which the gate immediately below it still proves
+   independently.
+7. **`run5` was not extended, deliberately.** Step 7 of the standard process
+   asks for coverage of any new species, mob, weapon kind or class — **this
+   build adds none**, and adds no canvas draw of any kind. Its lists are
+   already complete, and the unchanged 1,084 is itself the assertion that no
+   render branch moved. Same call the PIN build made for the same reason.
+8. **The patch's own stale note was corrected rather than left to contradict
+   the file.** It said the four fight-to-tame pets are "a spec's decision to
+   make, not this build's" — the spec has since made it, so the comment now
+   points at `MOBS` and says so, instead of describing a state that stopped
+   being true one section further down.
+9. **The push to `main` that the README's step 8 invites was deliberately not
+   attempted.** This session is instructed to develop and push only on its
+   designated branch. The README calls a blocked push to `main` a nice-to-have
+   and explicitly not a failure, so the build lands on the branch as usual and
+   a human can sync it. Same call every version since Expansion 2b has made.
+
 ### 2026-08-25 (v46 — Death Timer, Session Resume, Expansion 3, the real Minimap, block for all, the credit)
 
 Nine parts, and only two of them are rendering: PART D adds a genuinely new

@@ -542,8 +542,19 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       /* v19 PART D — every count above rescaled for the 9x map: common
          ambient wildlife x3, already-gated rare pets x2. This table is the
          locked spec's, exactly as v18's was; it is not a floor or a guess. */
-      const MOB_COUNTS = { goblin: 9, bandit: 9, troll: 6, boar: 6, bear: 6,
-                           griffin: 3, phoenix: 3, dark_wraith: 6,
+      /* v49 PART D: the four fight-to-tame PETS in this table are scaled by
+         the same tier multipliers PART D applies in WILD_SPECIES, because
+         their density lives here rather than there and both v47 and v49's own
+         PART A patch skipped them for that storage reason alone — leaving them
+         4x sparser than every other tameable species after N went 2000 ->
+         4000. boar/bear uncommon x4 (6 -> 24), griffin uncommon x4 (3 -> 12),
+         phoenix rare x3.5 (3 -> 10.5, taken UP to 11 — the one non-integer in
+         either table). The five PURE-COMBAT mobs beside them are UNTOUCHED to
+         the digit: goblin, bandit, troll, dark_wraith and sea_serpent are
+         combat balance, not pet findability, which is what makes this a scoped
+         correction rather than a blanket one. */
+      const MOB_COUNTS = { goblin: 9, bandit: 9, troll: 6, boar: 24, bear: 24,
+                           griffin: 12, phoenix: 11, dark_wraith: 6,
                            sea_serpent: 3,     // v21: designed tunable
                            // v25: 0 on purpose — the ONLY hostile Salamander
                            // Kings in the world are rampaged pets.
@@ -558,16 +569,31 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          are deliberately UNMOVED — shadowfox / lightfox / krakenling /
          salamander_king are exactly as they were, which is what makes this a
          tier scaling rather than a blanket one. */
-      const SP_COUNTS = { tree_sprite: 70, water_sprite: 70, stone_sprite: 70, wind_sprite: 70,
-                          wolf: 36, golem: 18, stag: 36,
-                          // UNTOUCHED by v47: scarcity IS these three's design
-                          shadowfox: 4, unicorn: 16, lightfox: 4,
-                          fire_dragon: 12, glow_moth: 70,
-                          water_dragon: 12,     // v21: Fire Dragon's count
-                          storm_dragon: 12, shadow_dragon: 12,   // v22: same
-                          // v25 designed tunables, x4 with the rest of the
+      /* v49 PART D: UPDATED, NOT RELAXED — the same exercise v47 did, for the
+         same reason, one expansion later. Expansion 4 took N 2000 -> 4000
+         without these counts moving, so every number v47 chose was spread over
+         4x the ground it was chosen for. Scaled BY TIER off the patch's own
+         table: Common x4.5 (70 -> 315, all five still sharing one number),
+         Uncommon x4.0 (wolf/stag 36 -> 144, golem 18 -> 72), Rare x3.5
+         (unicorn 16 -> 56, crystal_golem 8 -> 28, the four dragons 12 -> 42).
+         Epic and above are deliberately UNMOVED — shadowfox / lightfox /
+         krakenling / salamander_king are exactly as they were — which is what
+         makes this a tier scaling rather than a blanket one, exactly as in
+         v47. The three shape gates below still hold on the new numbers:
+         315 > 144 > 56 orders the tiers, golem x2 === wolf and
+         crystal_golem x2 === unicorn preserve the spread inside a tier, and
+         the whole Common tier is still one shared number. */
+      const SP_COUNTS = { tree_sprite: 315, water_sprite: 315, stone_sprite: 315, wind_sprite: 315,
+                          wolf: 144, golem: 72, stag: 144,
+                          // UNTOUCHED by v47 and by v49: scarcity IS these
+                          // three's design
+                          shadowfox: 4, unicorn: 56, lightfox: 4,
+                          fire_dragon: 42, glow_moth: 315,
+                          water_dragon: 42,     // v21: Fire Dragon's count
+                          storm_dragon: 42, shadow_dragon: 42,   // v22: same
+                          // v25 designed tunables, scaled with the rest of the
                           // Rare tier; krakenling is EPIC and stays at 4.
-                          crystal_golem: 8, krakenling: 4, salamander_king: 3 };
+                          crystal_golem: 28, krakenling: 4, salamander_king: 3 };
       /* v47 PART A's own shape gates: the tiers still sort, the spread inside
          each tier is preserved, and `base` — the tame chance — did not move by
          a digit anywhere. The last of those is the spec's own proof gate. */
@@ -866,8 +892,57 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
            If the intent is that a diver can reach anywhere, the fix is a real
            design change and belongs in a spec, not here: scale BREATH_MAX
            with the world, or keep the rare pockets off the open ocean. Every
-           number above is printed on every run so this can never go quiet. */
-        const REACH_BAR = 0.7;
+           number above is printed on every run so this can never go quiet.
+
+           ===== v49: THE DESIGN DECISION THAT SENTENCE ASKED FOR, AND IT IS
+           AN EXPLICIT SIGN-OFF RATHER THAN A THIRD SILENT DROP. ============
+
+           At N=4000 the two paragraphs above finally contradicted each other
+           outright, and a build stopped RED on it rather than guessing. The
+           deadlock, stated plainly: the gate at "BREATH_MAX is deliberately
+           NOT scaled" requires breath to stay at 30, and this gate at 0.7
+           required reach that only scaled breath could deliver. Both could
+           not hold, so a spec had to choose which one gives.
+
+           NEXT_BUILD.md chose, in writing, and this is that decision recorded
+           where the number lives:
+
+             "explicitly accept the current ~65% figure and move REACH_BAR to
+              match ... Every largest pocket stays reachable; the bible itself
+              describes a 'very large' world where things are genuinely hard
+              to find by design. Do not scale BREATH_MAX (reverses a decision
+              already made twice, deliberately) and do not move underwater
+              content closer to shore (a worldgen change, not what this
+              version is for)."
+
+           Measured at N=4000, which is what "~65%" refers to:
+             Underwater Caves  2401/3438 pockets (69.8%), 63.4% BY AREA
+             Abyssal Hollow    1483/2127 pockets (69.7%), 65.4% BY AREA
+           The bar is 0.60 rather than 0.634 deliberately. Pinning it to the
+           worst figure this seed happens to produce would be a measurement,
+           not a bar — it would go red on the next seed that came out a tenth
+           of a point lower and tell nobody anything. 0.60 is a FLOOR with
+           about three points of room under the worst number, chosen so that
+           the gate still catches a genuine collapse (a worldgen change that
+           seals the biome off, a pocket generator that strands its content)
+           while no longer failing on arithmetic that three specs in a row
+           have now deliberately chosen.
+
+           ⚠️ WHAT IS NOT RELAXED, and it is the load-bearing half: the
+           LARGEST pocket in each biome must still be reachable, and both of
+           those assertions below are untouched at exactly the strength they
+           have always had. That is the one that says the deep biomes are real
+           content rather than a locked room, and it passes in both. So does
+           "a real region, not a speck". Only the two aggregate percentages
+           moved.
+
+           ⚠️ THIS IS THE LAST TIME THIS NUMBER MOVES WITHOUT A NEW SIGN-OFF.
+           NEXT_BUILD.md's own words: "This is the final word on this specific
+           bar for this version - do not silently relax it again next
+           expansion without this same explicit sign-off." A future expansion
+           that finds this gate red must bring a spec decision to it, exactly
+           as this one did, and not edit this line. */
+        const REACH_BAR = 0.60;
         const reachSummary = (list, label) => {
           const inR = list.filter(p => p.cross <= budget);
           const tiles = list.reduce((a, p) => a + p.n, 0);
@@ -1178,10 +1253,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const kdSpots = info.wildSpots.filter(w => w.species === 'shadow_dragon');
       console.log('storm_dragon spots:', JSON.stringify(sdSpots));
       console.log('shadow_dragon spots:', JSON.stringify(kdSpots));
-      /* v47 PART A: 3 -> 12 with the rest of the Rare tier. Updated, not
-         relaxed: it is still an EXACT count, and it still has to reach the
-         peaks through the reachOnFoot filter to get there. */
-      results.push([`Storm Dragon reaches its peaks (${sdSpots.length} spawned)`, sdSpots.length === 12]);
+      /* v47 PART A: 3 -> 12 with the rest of the Rare tier. v49 PART D: 12 ->
+         42, the Rare tier's x3.5 for the N=4000 world. Updated, not relaxed,
+         both times: it is still an EXACT count, and every one of the 42 still
+         has to reach the peaks through the reachOnFoot filter to get there —
+         which the gate immediately below this one is what actually proves. */
+      results.push([`Storm Dragon reaches its peaks (${sdSpots.length} spawned)`, sdSpots.length === 42]);
       results.push([`every Storm Dragon stands on a PEAK tile`,
         sdSpots.length > 0 && sdSpots.every(w =>
           window.biomeAt(Math.floor(w.x), Math.floor(w.y)) === B2.PEAK)]);
@@ -2014,8 +2091,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         cg.every(w => !plain.some(r => inRuin(w, r)))]);
       // ...and the plain Golem is completely unaffected by any of it
       const gg = info5.wildSpots.filter(w => w.species === 'golem');
-      /* v47 PART A: 3 -> 18, the Uncommon tier's x6. Still exact. */
-      results.push([`golem spawns its full v47 population (${gg.length})`, gg.length === 18]);
+      /* v47 PART A: 3 -> 18, the Uncommon tier's x6. v49 PART D: 18 -> 72,
+         the Uncommon tier's x4 for the N=4000 world. Still exact, both times. */
+      results.push([`golem spawns its full v49 population (${gg.length})`, gg.length === 72]);
       results.push(['golem is NOT restricted to tagged ruins — it still reaches plain ones',
         gg.some(w => plain.some(r => inRuin(w, r)))]);
       results.push(['only crystal_golem carries the mountainRuinOnly gate',
