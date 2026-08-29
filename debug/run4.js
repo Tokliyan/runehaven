@@ -509,7 +509,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
      pockets of the same size only on average. The invariant being guarded is
      unchanged — the rare-variant fields still never encroach on the moisture
      band; only landmark overrides do, as they always have. */
-  results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 244534]);
+  /* v50 PART B re-measured this, did not relax it: RUIN_COUNT 6 -> 10 means
+     four more RUINB carves taking their tiles out of the moisture band, the
+     same way v20 re-measured 875 -> 763 when one Ruin became six. The
+     invariant is unchanged — the rare-variant noise fields still never touch
+     this band, only landmark overrides do. 244,534 -> 242,044. */
+  results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 242044]);
       results.push(['regular Forest still exists', forest > 0]);
       results.push(['regular Meadow still exists', meadow > 0]);
       // Stag has no presence roll, so it must reliably find its biome. Unicorn
@@ -1336,7 +1341,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          stopped RED precisely because it could not place all six and all four. */
       console.log(`RUINS (${RUS.length}): ` + RUS.map(r => `${r.x},${r.y}`).join('  '));
       console.log(`ZONES (${ZONES.length}): ` + ZONES.map(z => `${z.x},${z.y}`).join('  '));
-      results.push([`all ${6} Ruin clusters placed (${RUS.length})`, RUS.length === 6]);
+      results.push([`all ${info.RUIN_COUNT} Ruin clusters placed (${RUS.length})`,
+        RUS.length === info.RUIN_COUNT]);   // v50 PART B: follows the constant, not a literal
       results.push([`all ${4} Other Safe Zones placed (${ZONES.length})`, ZONES.length === 4]);
       // every Ruin keeps the v19 Ruin's own separations, unchanged
       for (let i = 0; i < RUS.length; i++) {
@@ -1402,7 +1408,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       });
       console.log(`RUINB tiles per cluster: ${ruinbPer.join(', ')}`);
       results.push([`every cluster carved real RUINB ground (${ruinbPer.join('/')})`,
-        ruinbPer.length === 6 && ruinbPer.every(n => n > 400)]);
+        ruinbPer.length === info.RUIN_COUNT && ruinbPer.every(n => n > 400)]);
       results.push([`every ruin centre is a RUINB tile (FIX 2 — no stale cache)`,
         RUS.every(r => window.biomeAt(r.x, r.y) === B2.RUINB)]);
       results.push([`every zone centre is plain grass (FIX 2 — no stale cache)`,
@@ -1482,14 +1488,18 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          must hold is that every cluster built something and every cluster got
          its entrance — asserted below and in the v30 block. */
       results.push([`ruin set pieces built per centre (${info.ruinPieceSpots.length} total)`,
-        info.ruinPieceSpots.length > 30 && pk.rubble >= 6 && pk.col >= 6]);
-      results.push([`one dungeon entrance per cluster (${pk.entrance || 0})`, pk.entrance === 6]);
+        info.ruinPieceSpots.length > 5 * info.RUIN_COUNT &&
+        pk.rubble >= info.RUIN_COUNT && pk.col >= info.RUIN_COUNT]);
+      results.push([`one dungeon entrance per cluster (${pk.entrance || 0})`,
+        pk.entrance === info.RUIN_COUNT]);
       /* v30: only two of the three ruin layouts include a well, so the count
          is now layout-dependent — the four Safe Zone wells are the constant. */
       results.push([`wells exist across ruins and Safe Zones (${pk.well || 0})`,
-        (pk.well || 0) >= 4 && (pk.well || 0) <= 10]);
+        (pk.well || 0) >= info.ZONE_COUNT &&
+        (pk.well || 0) <= info.ZONE_COUNT + info.RUIN_COUNT]);
       // the deliberate runic vein is now one per cluster
-      results.push([`one deliberate runic vein per cluster (${info.ruinVeins})`, info.ruinVeins === 6]);
+      results.push([`one deliberate runic vein per cluster (${info.ruinVeins})`,
+        info.ruinVeins === info.RUIN_COUNT]);
       // the safe zone must still read as plain grass at the new radius
       let nonGrass = [];
       for (const [dx, dy] of [[0,0],[8,0],[-8,0],[0,8],[0,-8],[15,15],[-15,-15],
@@ -3484,7 +3494,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['N is the scaled-up 4000', info2a.N === 4000]);
       results.push(['the safe zone radius is the scaled-up 452', info2a.SAFE_RADIUS === 452]);
       results.push(['landmark placement is untouched — all three still found a spot',
-        info2a.VOLCANO.x > 0 && info2a.MOUNT.x > 0 && info2a.RUINS.length === 6]);
+        info2a.VOLCANO.x > 0 && info2a.MOUNT.x > 0 &&
+        info2a.RUINS.length === info2a.RUIN_COUNT]);
 
       /* --- the real gate: no tile that would paint on screen is skipped ---
          Walks a wide window of REAL tiles, computes each one's true painted
@@ -6336,6 +6347,337 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       /* ---- and the world is still standing after all of it --------------- */
       results.push(['v47: the world still runs frames cleanly after every part of this',
         (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
+    }
+
+    /* ===================== v50 — MAGICAL BIOME LANDMARKS ====================
+       PART A's five landmark objects, PART B's ruin density and PART C's
+       will-o-wisps, each against its own proof gate from the locked spec.
+       The six-seed half of PART B's gate is a build-time sweep (six real
+       boots, six real world seeds — a harness that boots once cannot re-run
+       worldgen); what is pinned permanently here is everything checkable
+       from the live world this harness already has. ======================= */
+    const dli50 = window.debugLandmarkInfo;
+    if (typeof dli50 === 'function') {
+      const W50 = window.debugWorldInfo();
+      const B50 = W50.B, N50 = W50.N;
+      const L50 = dli50();
+      const dsp50 = window.debugSetPlayer;
+      const was50 = { x: window.debugWorldInfo().player.x, y: window.debugWorldInfo().player.y };
+
+      /* ---- PART A3: the Void Rift, single and really in the Hollow ------- */
+      results.push(['v50 A: a Void Rift was placed at all', !!L50.voidRift]);
+      results.push(['v50 A: and it stands on a real B.ABYSSAL tile, not just anywhere',
+        !!L50.voidRift && L50.voidRiftBiome === B50.ABYSSAL &&
+        window.biomeAt(L50.voidRift.tx, L50.voidRift.ty) === B50.ABYSSAL]);
+      const rift2 = window.voidRiftSpot();
+      results.push(['v50 A: the rift is deterministic — the same seed picks the same tile',
+        !!rift2 && !!L50.voidRift && rift2.tx === L50.voidRift.tx && rift2.ty === L50.voidRift.ty]);
+
+      /* ---- PART A1/A4: one landmark per REAL pocket, never global -------- */
+      let ef50 = null, sm50 = null;
+      for (let y = 0; y < N50 && (!ef50 || !sm50); y += 2)
+        for (let x = 0; x < N50 && (!ef50 || !sm50); x += 2) {
+          const b = window.biomeAt(x, y);
+          if (!ef50 && b === B50.ENCHFOREST) ef50 = [x, y];
+          if (!sm50 && b === B50.SACMEADOW) sm50 = [x, y];
+        }
+      results.push(['v50 A: the two pocket biomes exist in the test seed to place into',
+        !!ef50 && !!sm50]);
+      const cE50 = ef50 ? dli50(ef50[0], ef50[1], 160) : null;
+      const cS50 = sm50 ? dli50(sm50[0], sm50[1], 160) : null;
+      results.push([`v50 A: Heartwood Trees stand in the Enchanted Forest (${cE50 ? cE50.heartwood.length : 0} found)`,
+        !!cE50 && cE50.heartwood.length > 0]);
+      results.push(['v50 A: and every one of them is ON an ENCHFOREST tile',
+        !!cE50 && cE50.heartwood.every(h => h.biome === B50.ENCHFOREST)]);
+      results.push([`v50 A: Dawn Obelisks stand in the Sacred Meadow (${cS50 ? cS50.obelisk.length : 0} found)`,
+        !!cS50 && cS50.obelisk.length > 0]);
+      results.push(['v50 A: and every one of them is ON a SACMEADOW tile',
+        !!cS50 && cS50.obelisk.every(o => o.biome === B50.SACMEADOW)]);
+      /* The "not globally" half, and the one that would catch a landmark
+         leaking into ordinary ground: the spawn safe zone is plain grass. */
+      const cSp50 = dli50(W50.SPAWN.x, W50.SPAWN.y, 160);
+      results.push(['v50 A: neither landmark appears on the plain grass around SPAWN',
+        cSp50.heartwood.length === 0 && cSp50.obelisk.length === 0]);
+      results.push(['v50 A: the ordinary decor around SPAWN is untouched by this version',
+        cSp50.decorKinds.every(k => ['pebble', 'bush', 'flowers', 'fence', 'sign', 'torch'].includes(k))]);
+      /* ONE PER POCKET, proven as a relationship rather than as a count:
+         every Heartwood is its own pocket's anchor, and no two of them
+         resolve to the same pocket. */
+      const anchored50 = !!cE50 && cE50.heartwood.every(h =>
+        window.isPocketAnchor(Math.floor(h.x), Math.floor(h.y), B50.ENCHFOREST));
+      results.push(['v50 A: every Heartwood sits on its pocket\'s own anchor tile', anchored50]);
+      const pockets50 = !cE50 ? [] : cE50.heartwood.map(h => {
+        const a = window.clusterAnchor(Math.floor(h.x), Math.floor(h.y), B50.ENCHFOREST);
+        return a ? a[0] + ',' + a[1] : 'none';
+      });
+      results.push(['v50 A: and no two Heartwoods share a pocket — one per pocket, exactly',
+        pockets50.length > 0 && new Set(pockets50).size === pockets50.length &&
+        !pockets50.includes('none')]);
+      const obPockets50 = !cS50 ? [] : cS50.obelisk.map(o => {
+        const a = window.clusterAnchor(Math.floor(o.x), Math.floor(o.y), B50.SACMEADOW);
+        return a ? a[0] + ',' + a[1] : 'none';
+      });
+      results.push(['v50 A: the same holds for the Dawn Obelisks',
+        obPockets50.length > 0 && new Set(obPockets50).size === obPockets50.length &&
+        !obPockets50.includes('none')]);
+
+      /* ---- PART A4: the obelisk's lit state IS the Lightfox's window ----- */
+      const realDayT50 = window.getDayT, iwv50 = window.isWildVisible;
+      let mismatch50 = 0, litSamples50 = 0;
+      for (let i = 0; i < 1000; i++) {
+        const tt = i / 1000;
+        window.getDayT = () => tt;
+        const lit = window.inDawn();
+        const fox = iwv50({ species: 'lightfox' });
+        if (lit) litSamples50++;
+        if (lit !== fox) mismatch50++;
+      }
+      window.getDayT = realDayT50;
+      results.push([`v50 A: the obelisk is lit on EXACTLY the Lightfox's own window (${litSamples50}/1000 samples, ${mismatch50} disagreements)`,
+        mismatch50 === 0 && litSamples50 > 0]);
+      results.push(['v50 A: and that window is inDawn(), reading the one DAWN_END there is',
+        L50.DAWN_END === 0.07 && window.inDawn(0.0) === true &&
+        window.inDawn(0.069) === true && window.inDawn(0.071) === false]);
+
+      /* ---- PART A5: the Caldera cracks really join across tiles ---------- */
+      let cal50 = null;
+      for (let y = 0; y < N50 && !cal50; y++) for (let x = 0; x < N50; x++) {
+        if (window.biomeAt(x, y) === B50.CALDERA) { cal50 = [x, y]; break; }
+      }
+      results.push(['v50 A: a CALDERA tile exists to crack', !!cal50]);
+      if (cal50) {
+        /* The whole design of the crack network is that the decision belongs
+           to the shared EDGE. A tile's south-edge key and its southern
+           neighbour's north-edge key must be the identical hash2 call, or
+           the fissures stop at every tile boundary and it is speckle again. */
+        const [cx50, cy50] = cal50;
+        /* The four expressions the branch actually uses, read off the
+           shipped source rather than reproduced here — a copy of them in
+           this file could agree with itself while the game disagreed. The
+           pairing that has to hold is that the key a tile uses for its
+           SOUTH edge, `hash2(tx, ty + 1, 260)`, is the identical expression
+           its southern neighbour uses for its NORTH edge, `hash2(tx, ty,
+           260)` evaluated at (tx, ty+1) — and likewise 262 for east/west.
+           So the source must contain exactly those four forms and no fifth
+           salt, which is what makes the network join rather than stop at
+           every tile boundary. */
+        const EDGE50 = ['hash2(tx, ty, 260) > CALDERA_CRACK',
+                        'hash2(tx, ty, 262) > CALDERA_CRACK',
+                        'hash2(tx, ty + 1, 260) > CALDERA_CRACK',
+                        'hash2(tx + 1, ty, 262) > CALDERA_CRACK'];
+        results.push(['v50 A: the crack decision belongs to the SHARED EDGE — all four keys present',
+          EDGE50.every(e => gameScript.indexOf(e) >= 0)]);
+        results.push(['v50 A: and each edge key is used exactly once, so no fifth salt drifted in',
+          EDGE50.every(e => gameScript.split(e).length === 2)]);
+        /* And the values really are equal across the boundary, evaluated
+           through the game's own hash2 from both sides. */
+        const southFromHere50 = window.hash2(cx50, cy50 + 1, 260);   // this tile's south edge
+        const northFromThere50 = window.hash2(cx50, (cy50 + 1), 260); // neighbour's north edge
+        const eastFromHere50 = window.hash2(cx50 + 1, cy50, 262);
+        const westFromThere50 = window.hash2((cx50 + 1), cy50, 262);
+        results.push(['v50 A: and both sides of a boundary compute the identical key',
+          southFromHere50 === northFromThere50 && eastFromHere50 === westFromThere50 &&
+          southFromHere50 >= 0 && southFromHere50 <= 1]);
+        /* The v22 per-tile scratches are gone, not left underneath. */
+        results.push(['v50 A: the v22 hashed 3-point scratches were REPLACED, not layered under',
+          gameScript.indexOf('hash2(tx, ty, 234 + k)') < 0 &&
+          gameScript.indexOf('hash2(tx, ty, 238 + k)') < 0]);
+        const gctx50 = window.document.createElement('canvas').getContext('2d');
+        let drewCal = true;
+        try { window.drawGroundTile(gctx50, cx50, cy50); } catch (e) { drewCal = false; }
+        results.push(['v50 A: the cracked Caldera tile draws without throwing', drewCal]);
+      }
+
+      /* ---- PART A2: Kelp-Crystal Clusters, inside the caves only --------- */
+      const dspc50 = window.debugSpaceInfo, dssp50 = window.debugSetSpace;
+      if (typeof dssp50 === 'function') {
+        let uw50 = null, ab50 = null;
+        for (let y = 0; y < N50 && (!uw50 || !ab50); y += 2)
+          for (let x = 0; x < N50 && (!uw50 || !ab50); x += 2) {
+            const b = window.biomeAt(x, y);
+            if (!uw50 && b === B50.UWCAVE) uw50 = [x, y];
+            if (!ab50 && b === B50.ABYSSAL) ab50 = [x, y];
+          }
+        if (uw50) {
+          dssp50({ clearCache: true });
+          dssp50({ enterAt: uw50, biome: B50.UWCAVE });
+          const si50 = dspc50();
+          const kelp50 = si50.kelp || [];
+          results.push([`v50 A: an Underwater Cave interior carries MULTIPLE kelp-crystal clusters (${kelp50.length})`,
+            kelp50.length >= 2]);
+          const IN50 = si50.INTERIOR_N, grid50 = si50.grid, WALL50 = si50.IN_WALL;
+          const at50 = (x, y) => grid50[y * IN50 + x];
+          const onFloor50 = kelp50.length > 0 &&
+            kelp50.every(k => at50(Math.floor(k.x), Math.floor(k.y)) !== WALL50);
+          const onWallEdge50 = kelp50.length > 0 && kelp50.every(k => {
+            const x = Math.floor(k.x), y = Math.floor(k.y);
+            return at50(x - 1, y) === WALL50 || at50(x + 1, y) === WALL50 ||
+                   at50(x, y - 1) === WALL50 || at50(x, y + 1) === WALL50;
+          });
+          results.push(['v50 A: every cluster stands on walkable floor', onFloor50]);
+          results.push(['v50 A: and every one of them JUTS FROM A WALL — a wall tile is adjacent',
+            onWallEdge50]);
+          /* Scenery, never a resource: a kelp cluster carries none of the
+             fields a gatherable does, and shares no tile with one. */
+          /* Scenery, not a resource, and proven where it would actually
+             matter: a cluster carries none of the fields a gatherable does,
+             the interior's own node and ore counts are untouched by it, and
+             the render list gives it its own `kelp` kind rather than routing
+             it through a node draw. (Two independent hashed streams CAN land
+             on the same floor tile — every stream in this generator can, and
+             always could — so tile overlap is deliberately not asserted.) */
+          results.push(['v50 A: a cluster is scenery — no `taken`, no `type`, nothing to mine',
+            kelp50.every(k => !('taken' in k) && !('type' in k))]);
+          results.push(['v50 A: and it added nothing to what an interior holds to gather',
+            (si50.nodes || []).length > 0 && (si50.ore || []).length > 0 &&
+            (si50.nodes || []).every(n => 'taken' in n) &&
+            (si50.ore || []).every(o => 'taken' in o)]);
+          const dc50 = window.document.createElement('canvas').getContext('2d');
+          let drewKelp = true;
+          try { for (const k of kelp50.slice(0, 4)) window.drawKelpCluster(k, 900); }
+          catch (e) { drewKelp = false; }
+          results.push(['v50 A: the clusters draw without throwing', drewKelp]);
+          dssp50({ exit: true });
+        } else {
+          results.push(['v50 A: a UWCAVE tile exists to enter', false]);
+        }
+        if (ab50) {
+          dssp50({ enterAt: ab50, biome: B50.ABYSSAL });
+          const abInfo50 = dspc50();
+          results.push(['v50 A: an Abyssal Hollow interior deliberately carries NONE — its landmark is the rift',
+            Array.isArray(abInfo50.kelp) && abInfo50.kelp.length === 0]);
+          dssp50({ exit: true });
+        } else {
+          results.push(['v50 A: an ABYSSAL tile exists to enter', false]);
+        }
+        dsp50({ x: was50.x, y: was50.y, hp: 100 });
+      }
+
+      /* ---- PART B: ten Ruins, and NOT ONE separation relaxed to buy them - */
+      results.push(['v50 B: RUIN_COUNT is 10, and ten clusters really placed',
+        W50.RUIN_COUNT === 10 && W50.RUINS.length === 10]);
+      results.push(['v50 B: all four Other Safe Zones still placed alongside them',
+        W50.ZONE_COUNT === 4 && W50.OTHER_SAFE_ZONES.length === 4]);
+      /* Pinned as literals on purpose: the whole proof gate is that density
+         went up while every separation constant stayed exactly where it was,
+         so a future pass cannot quietly buy more ruins by shrinking one. */
+      results.push(['v50 B: every separation constant is UNCHANGED (664/664/400/76/136)',
+        W50.RUIN_SEP === 664 && W50.ZONE_SEP === 664 && W50.RUIN_ZONE_SEP === 400 &&
+        W50.RUIN_FOOT === 76 && W50.ZONE_R === 136]);
+      let minRR50 = Infinity, minRZ50 = Infinity, minZZ50 = Infinity;
+      for (let i = 0; i < W50.RUINS.length; i++) {
+        for (let j = i + 1; j < W50.RUINS.length; j++)
+          minRR50 = Math.min(minRR50, Math.hypot(W50.RUINS[i].x - W50.RUINS[j].x,
+                                                 W50.RUINS[i].y - W50.RUINS[j].y));
+        for (const z of W50.OTHER_SAFE_ZONES)
+          minRZ50 = Math.min(minRZ50, Math.hypot(W50.RUINS[i].x - z.x, W50.RUINS[i].y - z.y));
+      }
+      for (let i = 0; i < W50.OTHER_SAFE_ZONES.length; i++)
+        for (let j = i + 1; j < W50.OTHER_SAFE_ZONES.length; j++)
+          minZZ50 = Math.min(minZZ50, Math.hypot(W50.OTHER_SAFE_ZONES[i].x - W50.OTHER_SAFE_ZONES[j].x,
+                                                 W50.OTHER_SAFE_ZONES[i].y - W50.OTHER_SAFE_ZONES[j].y));
+      results.push([`v50 B: closest two Ruins are ${minRR50.toFixed(0)} apart, still clear of RUIN_SEP`,
+        minRR50 > W50.RUIN_SEP]);
+      results.push([`v50 B: closest Ruin-to-Zone is ${minRZ50.toFixed(0)}, still clear of RUIN_ZONE_SEP`,
+        minRZ50 > W50.RUIN_ZONE_SEP]);
+      results.push([`v50 B: closest two Zones are ${minZZ50.toFixed(0)}, still clear of ZONE_SEP`,
+        minZZ50 > W50.ZONE_SEP]);
+      /* Ten Ruins are only worth more if each one is still a real ruin: the
+         per-cluster set pieces and the per-cluster runic vein have to have
+         scaled with the count, not stayed at six clusters' worth. */
+      results.push([`v50 B: all ten clusters carry their own runic vein (${W50.ruinVeins})`,
+        W50.ruinVeins === 10]);
+      const centres50 = new Set(W50.ruinPieceSpots.map(p =>
+        Math.round(p.x / 200) + ':' + Math.round(p.y / 200)));
+      results.push([`v50 B: ruin set pieces were built around every cluster (${W50.ruinPieceSpots.length} pieces)`,
+        W50.ruinPieceSpots.length >= 10 && centres50.size >= 8]);
+
+      /* ---- PART C: will-o-wisps, scoped to four places and nowhere else -- */
+      const wispsNow = () => dli50().particles.filter(p => p.wisp !== null && p.wisp !== undefined);
+      const drain50 = () => {
+        window.setSetting('reduceMotion', true);
+        for (let i = 0; i < 240; i++) window.updateParticles(0.05, 500000 + i * 50);
+        window.setSetting('reduceMotion', false);
+      };
+      const pumpAt50 = (tile, dayT) => {
+        drain50();
+        dsp50({ x: tile[0] + 0.5, y: tile[1] + 0.5, hp: 100, diving: false });
+        const real = window.getDayT;
+        if (dayT !== undefined) window.getDayT = () => dayT;
+        for (let i = 0; i < 90; i++) window.updateParticles(0.05, 600000 + i * 50);
+        const w = wispsNow();
+        window.getDayT = real;
+        return w;
+      };
+      const biggest50 = (bid) => {          // a tile with plenty of its own biome around it
+        let best = null, bestC = -1;
+        for (let y = 8; y < N50 - 8; y += 17) {
+          for (let x = 8; x < N50 - 8; x += 17) {
+            if (window.biomeAt(x, y) !== bid) continue;
+            let c = 0;
+            for (let dy = -6; dy <= 6; dy += 2) for (let dx = -6; dx <= 6; dx += 2)
+              if (window.biomeAt(x + dx, y + dy) === bid) c++;
+            if (c > bestC) { bestC = c; best = [x, y]; }
+            if (bestC >= 40) return best;
+          }
+        }
+        return best;
+      };
+      const ALLOWED50 = [B50.ENCHFOREST, B50.DARKFOREST, B50.SACMEADOW, B50.ABYSSAL];
+      const spotEF = biggest50(B50.ENCHFOREST), spotDF = biggest50(B50.DARKFOREST),
+            spotSM = biggest50(B50.SACMEADOW), spotAB = biggest50(B50.ABYSSAL),
+            spotPL = biggest50(B50.PLAINS), spotFO = biggest50(B50.FOREST),
+            spotME = biggest50(B50.MEADOW);
+      const wEF = spotEF ? pumpAt50(spotEF, 0.25) : [];
+      results.push([`v50 C: will-o-wisps drift in the Enchanted Forest (${wEF.length})`, wEF.length > 0]);
+      const wDFnight = spotDF ? pumpAt50(spotDF, 0.75) : [];
+      results.push([`v50 C: and in the Dark Forest AT NIGHT (${wDFnight.length})`,
+        wDFnight.filter(p => p.wisp === B50.DARKFOREST).length > 0]);
+      const wDFday = spotDF ? pumpAt50(spotDF, 0.25) : [];
+      results.push(['v50 C: and NOT in the Dark Forest by day',
+        wDFday.filter(p => p.wisp === B50.DARKFOREST).length === 0]);
+      const wSMdawn = spotSM ? pumpAt50(spotSM, 0.02) : [];
+      results.push([`v50 C: in the Sacred Meadow AT DAWN (${wSMdawn.length})`,
+        wSMdawn.filter(p => p.wisp === B50.SACMEADOW).length > 0]);
+      const wSMday = spotSM ? pumpAt50(spotSM, 0.30) : [];
+      results.push(['v50 C: and NOT in the Sacred Meadow after dawn has passed',
+        wSMday.filter(p => p.wisp === B50.SACMEADOW).length === 0]);
+      const wAB = spotAB ? pumpAt50(spotAB, 0.25) : [];
+      results.push([`v50 C: and in the Abyssal Hollow (${wAB.length})`,
+        wAB.filter(p => p.wisp === B50.ABYSSAL).length > 0]);
+      /* ⚠️ Standing IN a plain forest is not the test — the Enchanted
+         Forest is carved out of Forest, so the 28x28 patch the spawner
+         samples around the camera legitimately contains enchanted tiles and
+         legitimately grows wisps on them. What must never happen is a wisp
+         whose OWN spawn tile was Plains, Forest or Meadow, which is what the
+         `wisp` marker records and what is asserted here. */
+      const banned50 = [B50.PLAINS, B50.FOREST, B50.MEADOW];
+      const wPL = spotPL ? pumpAt50(spotPL, 0.25) : [];
+      const wFO = spotFO ? pumpAt50(spotFO, 0.75) : [];
+      const wME = spotME ? pumpAt50(spotME, 0.25) : [];
+      const bad50 = [].concat(wPL, wFO, wME, wEF, wDFnight, wDFday, wSMdawn, wSMday, wAB)
+        .filter(p => banned50.includes(p.wisp));
+      results.push([`v50 C: NEVER spawned over Plains, Forest or Meadow — the exclusion that keeps it meaningful (${bad50.length} offenders)`,
+        bad50.length === 0]);
+      const everySeen50 = [].concat(wEF, wDFnight, wSMdawn, wAB);
+      results.push(['v50 C: every wisp ever spawned came from one of the four named windows',
+        everySeen50.length > 0 && everySeen50.every(p => ALLOWED50.includes(p.wisp))]);
+      results.push(['v50 C: and NO new particle kind was invented — a wisp is a `mote`',
+        everySeen50.every(p => p.kind === 'mote')]);
+      /* Reduce motion still switches the whole ambient spawner off, wisps
+         included — v23's own rule, applied to the new effect for free. */
+      window.setSetting('reduceMotion', true);
+      for (let i = 0; i < 240; i++) window.updateParticles(0.05, 700000 + i * 50);
+      results.push(['v50 C: reduce motion still stops every ambient spawner, wisps included',
+        dli50().particles.length === 0]);
+      window.setSetting('reduceMotion', false);
+      drain50();
+      dsp50({ x: was50.x, y: was50.y, hp: 100 });
+
+      results.push(['v50: the world still runs frames cleanly after all of it',
+        (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
+    } else {
+      results.push(['v50: debugLandmarkInfo() is reachable', false]);
     }
 
     let allOk = true;
