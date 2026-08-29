@@ -1,1 +1,1 @@
-v50 shipped. Nothing queued. Wait for README.md to be updated with a new spec before starting anything.
+Build exactly per "Confirmed, locked spec for the next build — v51 — Ambience Fix, Minimap Texture, Density Rebalance & Guilds" in README.md.
