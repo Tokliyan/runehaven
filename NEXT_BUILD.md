@@ -1,3 +1,1 @@
-Build exactly per the v49 completion spec in README.md, resuming from branch claude/dazzling-planck-z6tciw.
-
-DECISION on the dive-reachability blocker: explicitly accept the current ~65% figure and move REACH_BAR to match, with a written rationale in SKILL.md. Every largest pocket stays reachable; the bible itself describes a "very large" world where things are genuinely hard to find by design. Do not scale BREATH_MAX (reverses a decision already made twice, deliberately) and do not move underwater content closer to shore (a worldgen change, not what this version is for). This is the final word on this specific bar for this version - do not silently relax it again next expansion without this same explicit sign-off.
+v49 shipped. Nothing queued. Wait for README.md to be updated with a new spec before starting anything.
