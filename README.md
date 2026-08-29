@@ -102,63 +102,84 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v50 — Magical Biome Landmarks, Ruin Density, Ambient Life)
+## Confirmed, locked spec for the next build (v51 — Ambience Fix, Minimap Texture, Density Rebalance & Guilds)
 
-Direct feedback: magical biomes currently read as a ground-tile color
-shift with nothing standing in them — confirmed live, `ENCHFOREST`'s
-shimmer (line ~4951) is real and correctly coded but is a floor effect
-only, no object. The fix is giving magic a light source and a location,
-not another palette pass.
+**PART A — the wisp effect, made genuinely visible.** Confirmed live: it
+fires at a 0.32 chance per qualifying tile, and by its own documented
+design it fires INSTEAD of the existing mote/firefly chain for
+Enchanted Forest specifically — meaning that biome got nothing NEW from
+v50, only Dark Forest (night), Sacred Meadow (dawn), and the Abyssal
+Hollow did. Fix: raise the fire chance to something clearly noticeable
+(propose 0.55) across all four conditions, and give Enchanted Forest its
+own additive wisp layer instead of the mutually-exclusive fallback — the
+existing motes and the new wisps should both be present there, not one
+replacing the other.
 
-**PART A — five biome-anchored landmark objects, one per magical
-biome.** Reuse the exact placement technique `golemElderSpot()` and
-`unicornElderSpot()` already use — search real generated tiles of the
-target biome, pick deterministically from the world seed, not a fixed
-offset (unlike SHRINE, which anchors to SPAWN — these anchor to their
-biome instead, since the biome itself is scattered, not fixed).
+**PART B — minimap gets real texture, not flat color blocks.** Confirmed
+live: `renderMinimap()`'s tile loop does a single `fillRect` per tile
+from a two-color checkerboard palette, nothing else. Add a light texture
+pass on top — small darker flecks for tiles with trees, a small grey
+fleck for rock/mountain tiles, reusing whatever per-tile feature data
+`buildFeatureList()`'s chunking already tracks rather than re-scanning
+biomes from scratch. Keep it subtle at this cell size (4px) — a mark,
+not a redraw of the whole tile.
 
-- **Enchanted Forest — the Heartwood Tree.** One per real ENCHFOREST
-  pocket found (not one globally) — thick trunk, internally-lit canopy,
-  slow pulse, tall enough to read from outside the pocket's edge.
-- **Underwater Caves — Kelp-Crystal Clusters.** Multiple per interior,
-  jutting from cave walls, faint glow, reuse the drifting-particle
-  technique already used for cave ore veins rather than inventing a new
-  particle system.
-- **The Abyssal Hollow — a Void Rift.** Single, striking, dark
-  violet-black energy effect at the deepest point already defined for
-  this biome — this is the one most in need of visually justifying
-  "deepest point in the world," currently indistinguishable from a
-  regular dark cave.
-- **Sacred Meadow — a Dawn Obelisk.** Only visibly lit during the dawn
-  window — tie its lit state to the exact same time check Lightfox's own
-  spawn window already uses, so the visual and the mechanic reinforce
-  each other rather than being separately tuned.
-- **The Sunforge Caldera — visible heat distortion and glowing ground
-  cracks**, not another orange overlay — actual cracks in the terrain
-  texture with an ember glow, matching the "blinding heat" bible line
-  more literally than a tint does.
+**PART C — overworld density, up across pets, ruins, and mobs together.**
+Ruins already went 6→10 in v50. Increase overworld MOBS.count values
+(Goblin/Bandit currently 9, Troll currently 6, and the rest of the
+non-cave roster) by roughly the same proportion applied to pets in v49
+(tier-scaled, not flat) — measure the real current spread before
+picking multipliers, the same discipline every prior density pass used.
+Pet counts (WILD_SPECIES) get a further increase on top of v49's fix,
+specifically for overworld-biome species — this is on top of, not
+instead of, what already shipped.
 
-**PART B — ruins, genuinely more of them.** `RUIN_COUNT` confirmed live
-at 6. Increase to a real, noticeably denser number — propose 10 — with
-the standard six-seed sweep to confirm placement still respects every
-existing separation constant (RUIN_SEP, RUIN_ZONE_SEP) rather than
-starting to overlap zones or each other as density goes up.
+**PART D — caves inverted: fewer mobs, more pets.** Confirmed live:
+Troll and Dark Wraith (both cave-placed) are the two hostile mobs
+inside cave interiors. Reduce their `count` specifically — caves should
+feel less like a combat gauntlet. In the same pass, increase whatever
+tameable pet species spawn inside cave interiors (Golem, Crystal Golem,
+Glow Moth per the bible's own cave placements) so caves shift toward
+"a place to find companions" rather than "a place full of hostiles" —
+this is a real inversion of current cave identity, treat it as such.
 
-**PART C — ambient life in magical biomes specifically.** Drifting
-motes/will-o-wisps as a light, genuinely ambient particle effect — present
-in Enchanted Forest, Dark Forest (night), Sacred Meadow (dawn), and the
-Abyssal Hollow, absent from Plains/Forest/Meadow so the effect stays
-meaningful rather than becoming wallpaper. Reuse whatever particle
-technique the game already has (cave ore glow, gathering bursts) rather
-than building a new particle system from scratch.
+**PART E — the Guild system, redesigned with real buffs and a real
+balance philosophy.** Thirteen guilds, assigned deterministically from a
+hash of the username at account creation — never chosen, never
+re-rollable, matching "raw and unpredictable" rather than the bible's
+explicitly-forbidden coordinated clan system. Twelve are meant to feel
+roughly equally desirable to a player — each buff is a genuine, felt
+advantage in its own situation, not a stat-sheet footnote — and the
+thirteenth is deliberately the outlier, both rarer and stronger,
+something worth quietly hoping for rather than a balanced pick:
 
-**Proof gates:** standard gauntlet plus confirm each landmark object
-only renders where its real biome actually exists (not globally), confirm
-the Sacred Meadow obelisk's lit state matches Lightfox's own spawn-window
-check exactly, confirm ruin density increase holds every existing
-separation constant across a real six-seed sweep, confirm ambient
-particles are scoped only to the five named biomes/conditions and do not
-appear elsewhere.
+1. **The Hollow Choir** — mourners, death-touched. *"We sang before you were born, we'll sing after."* Respawn wait halved.
+2. **Ashbound** — fire and ruin. *"Let it burn, let it teach."* Immune to lava-proximity damage tick (still dies to full lava contact).
+3. **The Drowned Court** — water and secrets. *"What sinks, we keep."* Breath capacity +50% while diving.
+4. **Stormwrought** — storm and mountain. *"The sky owes us nothing, and gives everything."* +20% move speed during any active world event (Blood Moon, Meteor Shower).
+5. **The Quiet Vein** — earth and stone. *"Deep enough, everything is treasure."* Ore and stone gathering yields +1 extra per action.
+6. **Nightglass** — shadow and dark forest. *"We are the shape you almost saw."* Untargetable by wild mob aggro at night specifically (still fully PvP-vulnerable).
+7. **The Gilded Bough** — enchanted forest, growth and luck. *"Every root remembers."* Real, felt bump to rare-pet tame-chance specifically (not spawn density).
+8. **Emberkin** — volcano and forge. *"We were shaped by what should have killed us."* Crafting at any forge costs 10% less material.
+9. **The Salt Wardens** — coasts and open plains. *"Nothing here belongs to anyone."* Take 15% less damage while inside a Plains biome specifically.
+10. **Duskthread** — twilight, in-between things. *"Neither day claims us, nor night."* Double XP during the dawn and dusk transition windows specifically.
+11. **The Bramblewatch** — dark forest, thorn and warning. *"We do not chase. We wait."* +20% damage to any mob that attacked first (not the initiator).
+12. **Frostmere** — shattered peaks, cold and isolation. *"Alone is not the same as lost."* Immune to Storm Dragon's own environmental effects at the peaks specifically.
+13. **The Nameless Tide** — deliberately the outlier. *"Some of us were never meant to be counted."* Rarer assignment odds than the other twelve (propose roughly half as likely), and a genuinely stronger, stacked effect: small passive HP regen at all times AND a smaller version of the Beastmaster Shrine's own taming boost, permanently, without needing to stand at the Shrine. This is meant to feel like a real, quietly-lucky draw — not something any of the other twelve should approach.
+
+Each guild's motto and name render somewhere the player's own identity
+already shows (character panel, alongside class) — reuse that existing
+display, do not invent a second one.
+
+**Proof gates:** standard gauntlet plus confirm the wisp fire-chance
+increase and Enchanted Forest's additive layer, confirm minimap texture
+flecks only appear where real feature data says they should, confirm
+overworld density increases hold tier-proportionality the same way
+v49's pet fix did, confirm cave Troll/Dark Wraith counts genuinely drop
+while cave-biome pet counts genuinely rise, confirm guild assignment is
+deterministic (same username always yields the same guild) and that
+the Nameless Tide's real assignment rate is meaningfully rarer than the
+other twelve, not just described as such.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
