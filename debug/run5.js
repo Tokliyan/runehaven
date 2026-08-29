@@ -733,6 +733,156 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         console.log('minimap hide/show swept — interior and surface');
       }
     }
+    /* ===== v50 sweep — the five landmarks, the cracked Caldera, the wisps ==
+       The five-frame boot happens at SPAWN, which is plain grass a very long
+       way from an Enchanted Forest pocket, an Abyssal Hollow or a Caldera —
+       so every branch this version adds is unreachable without walking to
+       it, which is exactly the gap this sweep exists to close. It hard-fails
+       if any of the five was never drawn, or if a Heartwood was never drawn
+       through the REAL decor path the world builds. ===================== */
+    if (window.debugLandmarkInfo && window.drawDecor && window.drawVoidRift) {
+      const w50 = window.debugWorldInfo(), B50 = w50.B, N50 = w50.N;
+      const c50 = window.document.createElement('canvas').getContext('2d');
+      let drew50 = [];
+
+      /* Both pocket landmarks, drawn directly first — every branch inside
+         them, including the obelisk's LIT and UNLIT states, which are two
+         genuinely different paintings and only one of them can be reached
+         at any one moment of the day. */
+      const realT50 = window.getDayT;
+      for (const h of [0, 0.4, 0.99]) {
+        window.drawDecor({ kind: 'heartwood', x: w50.SPAWN.x, y: w50.SPAWN.y, h }, 900 + h * 1000);
+        n += 1;
+      }
+      window.getDayT = () => 0.01;                       // inside the dawn window
+      window.drawDecor({ kind: 'obelisk', x: w50.SPAWN.x, y: w50.SPAWN.y, h: 0.3 }, 900);
+      const wasLit50 = window.inDawn();
+      window.getDayT = () => 0.40;                       // outside it
+      window.drawDecor({ kind: 'obelisk', x: w50.SPAWN.x, y: w50.SPAWN.y, h: 0.8 }, 900);
+      const wasUnlit50 = window.inDawn();
+      window.getDayT = realT50;
+      n += 2;
+      if (!wasLit50 || wasUnlit50) {
+        console.log('COVERAGE GAP: the obelisk lit/unlit branches were not both reached');
+        process.exit(1);
+      }
+      drew50.push('obelisk lit + unlit');
+
+      /* The Void Rift, drawn where it actually stands — walk to it, so the
+         real entity pass picks it up over real frames rather than only the
+         direct call. */
+      const L50 = window.debugLandmarkInfo();
+      window.drawVoidRift(900); n += 1;
+      if (L50.voidRift) {
+        window.debugSetPlayer({ x: L50.voidRift.x, y: L50.voidRift.y, diving: true, hp: 100, breath: 30 });
+        for (let f = 0; f < 4; f++) { window.render(900 + f * 16); n += 1; }
+        drew50.push('void rift at ' + L50.voidRift.tx + ',' + L50.voidRift.ty);
+      }
+
+      /* A real Enchanted Forest pocket and a real Sacred Meadow pocket,
+         walked to so the chunk builder produces the landmark and the entity
+         pass draws it through drawDecor with everything else. */
+      let ef50 = null, sm50 = null, ab50 = null, cal50 = null, df50 = null;
+      for (let y = 0; y < N50 && (!ef50 || !sm50 || !ab50 || !cal50 || !df50); y += 2)
+        for (let x = 0; x < N50 && (!ef50 || !sm50 || !ab50 || !cal50 || !df50); x += 2) {
+          const b = window.biomeAt(x, y);
+          if (!ef50 && b === B50.ENCHFOREST) ef50 = [x, y];
+          if (!sm50 && b === B50.SACMEADOW) sm50 = [x, y];
+          if (!ab50 && b === B50.ABYSSAL) ab50 = [x, y];
+          if (!cal50 && b === B50.CALDERA) cal50 = [x, y];
+          if (!df50 && b === B50.DARKFOREST) df50 = [x, y];
+        }
+      const standAt = (tile, diving) => {
+        if (!tile) return 0;
+        window.debugSetPlayer({ x: tile[0] + 0.5, y: tile[1] + 0.5, diving: !!diving, hp: 100, breath: 30 });
+        let k = 0;
+        for (let f = 0; f < 4; f++) { window.render(1500 + f * 16); k++; }
+        return k;
+      };
+      n += standAt(ef50);
+      const hw50 = ef50 ? window.debugLandmarkInfo(ef50[0], ef50[1], 96).heartwood.length : 0;
+      n += standAt(sm50);
+      const ob50 = sm50 ? window.debugLandmarkInfo(sm50[0], sm50[1], 96).obelisk.length : 0;
+      n += standAt(cal50);
+      n += standAt(ab50, true);
+      if (hw50 > 0) drew50.push('heartwood x' + hw50);
+      if (ob50 > 0) drew50.push('obelisk x' + ob50);
+      if (!hw50 || !ob50) {
+        console.log('COVERAGE GAP: the chunk builder produced no Heartwood or no Obelisk to draw');
+        process.exit(1);
+      }
+
+      /* The cracked Caldera tile with both its uphill neighbours, so the
+         south and east crack branches run against a real biome boundary. */
+      if (cal50) {
+        window.drawGroundTile(c50, cal50[0], cal50[1]);
+        window.drawGroundTile(c50, cal50[0] + 1, cal50[1]);
+        window.drawGroundTile(c50, cal50[0], cal50[1] + 1);
+        n += 3;
+        drew50.push('caldera cracks');
+      } else {
+        console.log('COVERAGE GAP: no B.CALDERA tile to crack');
+        process.exit(1);
+      }
+
+      /* The Kelp-Crystal clusters, through the real interior render pass. */
+      let uw50 = null;
+      for (let y = 0; y < N50 && !uw50; y++) for (let x = 0; x < N50; x++) {
+        if (window.biomeAt(x, y) === B50.UWCAVE) { uw50 = [x, y]; break; }
+      }
+      if (uw50) {
+        window.debugSetPlayer({ x: uw50[0] + 0.5, y: uw50[1] + 0.5, diving: true, hp: 100, breath: 30 });
+        window.enterInterior(uw50[0], uw50[1], B50.UWCAVE);
+        const kelp50 = (window.debugSpaceInfo().kelp || []);
+        for (const k of kelp50.slice(0, 12)) { window.drawKelpCluster(k, 1200); n += 1; }
+        const at50 = window.debugSpaceInfo();
+        window.debugSetPlayer({ x: at50.player ? at50.player.x : 8, y: at50.player ? at50.player.y : 8,
+                                keepSpace: true, hp: 100 });
+        for (let f = 0; f < 4; f++) { window.render(1700 + f * 16); n += 1; }
+        window.exitInterior();
+        if (!kelp50.length) {
+          console.log('COVERAGE GAP: the Underwater Cave interior built no kelp clusters to draw');
+          process.exit(1);
+        }
+        drew50.push('kelp x' + kelp50.length);
+      }
+      window.debugSetPlayer({ x: w50.SPAWN.x, y: w50.SPAWN.y, diving: false, hp: 100 });
+
+      /* PART C: every one of the four wisp windows, driven through the real
+         spawner and then through the real particle draw over live frames.
+         The mote draw path is shared, so this covers it in four colours. */
+      const wispRuns = [[ef50, 0.25], [df50, 0.75], [sm50, 0.02], [ab50, 0.25]];
+      let wispSeen = 0;
+      for (const [tile, dayT] of wispRuns) {
+        if (!tile) continue;
+        window.setSetting('reduceMotion', true);
+        for (let i = 0; i < 240; i++) window.updateParticles(0.05, 2000000 + i * 50);
+        window.setSetting('reduceMotion', false);
+        window.debugSetPlayer({ x: tile[0] + 0.5, y: tile[1] + 0.5,
+                                diving: tile === ab50, hp: 100, breath: 30 });
+        const realD = window.getDayT;
+        window.getDayT = () => dayT;
+        for (let i = 0; i < 90; i++) window.updateParticles(0.05, 2100000 + i * 50);
+        const alive = window.debugLandmarkInfo().particles.filter(p => p.wisp !== null);
+        for (let f = 0; f < 3; f++) { window.render(2200000 + f * 16); n += 1; }
+        window.getDayT = realD;
+        if (alive.length) wispSeen++;
+      }
+      window.setSetting('reduceMotion', true);
+      for (let i = 0; i < 240; i++) window.updateParticles(0.05, 2300000 + i * 50);
+      window.setSetting('reduceMotion', false);
+      window.debugSetPlayer({ x: w50.SPAWN.x, y: w50.SPAWN.y, diving: false, hp: 100 });
+      if (wispSeen < 4) {
+        console.log('COVERAGE GAP: only ' + wispSeen + ' of the 4 wisp windows ever produced one');
+        process.exit(1);
+      }
+      drew50.push('wisps in 4 windows');
+      console.log('v50 landmarks swept —', drew50.join(', '));
+    } else {
+      console.log('COVERAGE GAP: the v50 landmark hooks are missing');
+      process.exit(1);
+    }
+
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {

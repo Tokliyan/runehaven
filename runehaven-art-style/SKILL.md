@@ -53,6 +53,308 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-08-29 (v50 — Magical Biome Landmarks, Ruin Density, Ambient Life)
+
+The direct report was that the magical biomes read as a ground-tile colour
+shift with nothing standing in them, and it was right: `ENCHFOREST`'s shimmer
+is real and correctly coded and it is a floor effect only. Three parts —
+**five landmark objects, one per magical biome**, **RUIN_COUNT 6 -> 10**, and
+**will-o-wisps scoped to four magical windows**. Not one palette entry, biome
+colour, rarity threshold, noise wavelength, cliff-face ratio, `SPECIES_K`,
+`MOB_K`, `MOB_TALL` or silhouette was touched, no species/mob/weapon/class was
+added, and **no SQL update is needed** — nothing this version adds is persisted
+(a proof gate pins the complete table list at the same ten as this morning).
+
+**⚠️ THIS FILE'S CHANGELOG SKIPS v47, v48 AND v49.** They shipped into
+`runehaven.html` (Expansion 4 at `N` 4000, the Adult Golem, the Demon Knight,
+chunked feature loading, the give/redeem panels) as sync commits that never
+wrote an entry here. Nothing was reconstructed for them — this entry is v50's
+alone, and the gap is recorded so nobody reads the v46 entry below as current.
+
+- **All five landmarks anchor to their BIOME, not to a fixed point, and both
+  of the file's existing techniques for that were reused rather than
+  replaced.** `clusterAnchor()` — v29's connected-pocket anchor, generalised
+  by v32 — answers "which pocket is this tile in" for two more biomes, so a
+  Heartwood is simply the tile that IS its pocket's anchor. `calderaSpot()`'s
+  one fixed stream of hashed uniform draws off `worldSeed`, first hit wins,
+  places the single Void Rift. No new placement system, no new pocket system.
+- **The Heartwood Tree is the ordinary enchanted tree at 2.9-3.5x, and that
+  sameness is the point** — the v25 Crystal Golem rule and the v39 Elder rule
+  applied to a plant. Same three-facet tall archetype, the same ENCHFOREST
+  canopy colours (`#6a9086` / `#557a72` / `#3d5c58`) and the same violet-grey
+  trunk (`#4c4258`). The trunk is genuinely THICK (0.5 tiles against an
+  ordinary tree's 0.14): a tall thin trunk reads as a sapling stretched. The
+  only new thing on it is the lit canopy, and it is hard-edged flat fills like
+  everything else — a diamond core in the drifting-mote teal, two flat halo
+  rings, four seams, alpha pulsing on a ~9.4s sine. **No gradient: the light
+  reads through contrast against the deliberately desaturated canopy, which is
+  exactly what v17 desaturated that canopy FOR.**
+- **⚠️ ONE PER POCKET IS THE SPEC'S OWN WORDING AND IT MEANS SOME VERY SMALL
+  POCKETS GET ONE.** Measured on a real 600x600 window of the harness seed:
+  **1,011 ENCHFOREST tiles in 31 pockets, mean 34.7, median 8, max 338**, only
+  5 of them 50 tiles or larger. So roughly half the Heartwoods in the world
+  stand in a pocket of eight tiles or fewer — a great glowing tree in a very
+  small glade. That is following the spec exactly rather than second-guessing
+  it, and it reads defensibly, but **a minimum-pocket-size floor is the first
+  thing to reach for if it starts to feel frequent** and it is one condition
+  in the landmark pass. Sacred Meadow in the same window: **243 tiles in 12
+  pockets**, so obelisks are far sparser than Heartwoods by construction.
+- **The Dawn Obelisk is the Beastmaster Shrine's own stone (`#9a9084` /
+  `#b4ac9e`), reused for the reason v35 reused it for the Oracle** — these are
+  the things in this world that were BUILT by whoever built the Shrine. Three
+  courses, a tapering monolith on the locked facet split, a capstone.
+- **⚠️ Its lit state IS `inDawn()`, the same predicate the Lightfox's own
+  spawn window reads.** `isWildVisible()`'s `dawnOnly` gate compared the raw
+  clock against `DAWN_END` inline; that comparison is now one function with
+  two readers, exactly the shape `inTwilight()` already had for dusk. `run4`
+  drives all 1,000 sample points of the day cycle through both and requires
+  **zero disagreements** — 70/1000 lit, which is `DAWN_END` 0.07 exactly. The
+  visual and the mechanic cannot drift apart now without failing a gate.
+- **The obelisk's ground pool is the light SHAFT's colour, deliberately not a
+  gold one.** v39 made a gold wash pooled on the ground mean Elder and nothing
+  else; a lit monument standing in a biome whose ground is already golden is
+  the one place that read could quietly be lost. `aura(..., "232,182,76", ...)`
+  is still the only canvas call in the file that paints it, and a grep gate
+  proves neither new decor branch reaches for it.
+- **The Void Rift is the Hollow's own palette on end** — the interior's
+  near-black violets (`#120a1e` / `#0a0614`), its exit violet (`#4a3a7a`) and
+  the Void Shard's own `#8a6ade`. Two mirrored facets meeting at a point: the
+  shape language every rock, tree and building here is built from, stood
+  upright. 96px tall, a hole with a violet rim in the sea floor beneath it,
+  five cracks running out of it, a slow ~6.9s breath on the width and flat
+  diamond motes drawn UP into the tear. **Present and on a real `B.ABYSSAL`
+  tile on 6/6 seeds swept.**
+- **⚠️ KELP-CRYSTAL DENSITY WAS MEASURED, AND THE FIRST NUMBER WAS WRONG.**
+  Keyed like the essence nodes at 5 per 26x26 worth of cave it produced **266
+  clusters in one 15,866-floor-tile interior — 19 on a single 1280x720 screen
+  against 13 ore veins in the same window.** That is corridor wallpaper, and
+  more numerous than the resource a player is actually down there for. Keyed
+  instead to this interior's OWN wall-edge count at one per 70 tiles of wall:
+  **74 per interior, 3 on a screen.** The candidate list really is the floor
+  tiles that touch a wall, so the spec's "jutting from cave walls" is
+  structural — `run4` checks every cluster for an adjacent wall tile.
+  Abyssal interiors deliberately get NONE: the Hollow's whole read since v22
+  is that it is the sparser, colder version of this place, and its landmark
+  is the rift outside.
+- **⚠️ THE CALDERA'S OLD "CRACKS" WERE CRACKS IN NAME ONLY, AND THAT IS WHY IT
+  READ AS AN ORANGE OVERLAY.** v22 drew two 6px hashed zigzags per tile;
+  nothing lined up with anything, so at any distance they were speckle on an
+  orange tile. The new fissures are cracks in the GROUND: one enters a tile
+  through a shared edge, runs to the tile centre, and leaves through another.
+  **The whole trick is that the decision belongs to the EDGE, not the tile** —
+  a tile's north-edge key and its northern neighbour's south-edge key are the
+  identical `hash2` call — so two neighbours can never disagree, with no state,
+  no second pass and no order dependence, and the network stops dead at the
+  biome boundary because an edge to a non-Caldera tile is never active. Two
+  strokes per crack: a wide low-alpha ember halo in the locked Lava colour,
+  then the hot core over it. Still hard-edged flat strokes, no gradient.
+- **The heat distortion is now visible, which is the half of that spec line
+  v22 never delivered.** Same v8 lava stroke, same rise cycle, same hash
+  offsets — **three instead of two, at 0.22 alpha instead of 0.13, and each
+  one now wanders sideways as it rises.** A straight translucent line reads as
+  a scratch; a wavering one reads as air moving. No new particle system, and
+  the pale glow overlay above it was deliberately left exactly as it was —
+  the spec asked for cracks and distortion, explicitly *not* another tint.
+- **⚠️ TEN RUINS COST NOT ONE SEPARATION CONSTANT, AND THE SIX THAT WERE
+  ALREADY THERE DID NOT MOVE.** `RUIN_SEP` 664, `ZONE_SEP` 664,
+  `RUIN_ZONE_SEP` 400, `RUIN_FOOT` 76 and `ZONE_R` 136 are all exactly what
+  they were, pinned as literals by a gate so a future pass cannot buy density
+  by shrinking one. The accept condition depends only on the candidate and the
+  already-accepted list, so the first six accepted are a deterministic prefix —
+  **verified empirically against the pre-change file on three seeds: the six
+  Ruins are byte-identical, positions and `mtn` tag alike.**
+- **The real six-seed sweep (six genuine boots, six real world seeds, not six
+  calls to a no-op): 10/10 Ruins and 4/4 Safe Zones on every seed.** Minimum
+  Ruin-to-Ruin **667-678** against a 664 bar; Ruin-to-Zone **401-428** against
+  400; Zone-to-Zone **759-1,418** against 664. **⚠️ Ruin-to-Zone is now the
+  binding constraint and it clears by as little as ONE TILE.** It is not a
+  failure — every seed places — but it is the number that would break first if
+  `RUIN_COUNT` were raised again, and it is the reason the sweep counts zones
+  as carefully as it counts ruins.
+- **⚠️ The Safe Zones MOVED, on 2 of the 3 seeds compared like for like.**
+  That is the honest cost of PART B: a zone now has ten clusters to clear at
+  `RUIN_ZONE_SEP` instead of six, so the same hash stream lands on different
+  spots. Nothing is lost — four zones on 6/6 seeds — but a world regenerated
+  from an existing seed puts its rest points somewhere new.
+- **Three world counts moved as a measured consequence, all re-measured and
+  none relaxed.** Dark Forest **244,534 -> 242,044** tiles (four more RUINB
+  carves out of the same moisture band — the same shape of re-measurement v20
+  made at 875 -> 763). Underwater Cave pockets **3,438 -> 3,421** and Abyssal
+  Hollow pockets **2,127 -> 2,121**, with dive reachability **63.4% -> 63.2%**
+  and **65.4% -> 65.2%** by area.
+- **Noted, no action taken (pre-existing, outside this build):** that last one
+  has a cause worth writing down. A Safe Zone's grass clearing exempts
+  `B.PLAINS`, `B.DEEP`, `B.LAVA` and `B.WATER` and **nothing else** — so a
+  coastal zone landing over an Underwater Cave or Abyssal Hollow pocket paints
+  those tiles to grass, because neither is in `BLOCKED` (which is exactly what
+  makes them walkable). It has been true since v20 and this version only moved
+  which zones sit where. Flagged rather than "fixed" in either direction:
+  adding two biomes to that exemption is a worldgen change and would move
+  every one of the counts above again.
+- **A will-o-wisp literally IS a `mote`.** It pushes into the same `particles`
+  array, moves through the same update branch and paints through the same
+  twinkling square-core-plus-halo code — not one line of new particle
+  machinery, which is what the spec asked for. The extra `wisp` field is a
+  marker that records the biome it was spawned over and nothing branches on
+  it; it exists so a gate can ask where each one came from rather than
+  inferring it from a colour or from where it has since drifted.
+- **The exclusion list is the whole design.** Enchanted Forest, Dark Forest at
+  night, Sacred Meadow at dawn, the Abyssal Hollow — and never Plains, Forest
+  or Meadow, so a wisp means "this ground is not ordinary". Both time windows
+  reuse the file's own single predicate (`isNight`, the fireflies' own
+  `nightAlpha() > 0.4`; and `inDawn()`, the Lightfox's). Colours tie each one
+  to something already there: ENCHFOREST keeps its own `#a8f4dc`, the Hollow
+  takes the Void Shard's `#8a6ade`, the dawn meadow takes the obelisk's
+  `#f6e08c`, and the Dark Forest gets `#c0a8f8` — **deliberately violet and
+  deliberately not gold, because gold at night in a forest is a firefly and
+  has been since v6.**
+- **⚠️ THE PROOF GATE FOR THE EXCLUSION HAD TO BE REWRITTEN, AND THE FIRST
+  VERSION OF IT WAS WRONG IN A WAY WORTH REMEMBERING.** "Stand in a Forest and
+  assert no wisp is alive" fails legitimately: the Enchanted Forest is carved
+  out of Forest, so the 28x28 patch the spawner samples around the camera
+  contains enchanted tiles and correctly grows wisps on them. What must never
+  happen is a wisp whose OWN spawn tile was Plains, Forest or Meadow — which
+  is precisely what the marker records, and what is now asserted across all
+  nine pump locations. **0 offenders.**
+- **Wisps are surface-only.** Inside a cave interior `me.x`/`me.y` are the
+  interior's own grid coordinates, so `biomeAt()` there is answering about a
+  surface tile a hundred tiles overhead — the same reason the compass, the
+  breath readout and the minimap all hide in a cave. The guard is on the new
+  branch only; the pre-existing ambient spawners were deliberately not
+  touched, and that inconsistency is flagged rather than quietly widened.
+- **Cost, measured against the pre-change file rather than assumed.** A full
+  25-chunk feature-window rebuild goes **7ms -> 12-15ms**, and walking twelve
+  chunk boundaries through dense Enchanted Forest **375ms -> 480ms** (~9ms per
+  crossing), which is the pocket flood the Heartwood pass runs. **Per-frame
+  cost is unchanged** (30 frames: 363ms -> 349ms at spawn, 397ms -> 399ms in
+  the forest — noise), and login is unchanged. The landmark pass is a second,
+  deliberately separate sweep of each chunk, because the first one exits early
+  on any tile that already grows a feature and an anchor tile very often grows
+  a tree.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus three things it says about
+the file that are not quite true of it. All shipped through the full gate
+(parse clean, **49/49 grep checks** including the preservation half, `run3`
+`CAUGHT ERROR: none`, `run4` **1,227/1,227 with zero FAIL** over two
+consecutive runs, `run5` **1,188** coverage draws clean) plus a genuine
+six-seed worldgen sweep and a like-for-like comparison against the pre-change
+build — refinements to consider, not unfinished work.
+
+1. **⚠️ THE DAWN OBELISK'S COUNT IS UNSTATED, AND IT IS ONE PER SACRED MEADOW
+   POCKET.** The spec says "one per real ENCHFOREST pocket found (not one
+   globally)" for the Heartwood and "Single" for the Void Rift, and says
+   nothing at all for the obelisk. PART A's own preamble is what decided it:
+   these landmarks "anchor to their biome instead, since the biome itself is
+   scattered, not fixed", and the Sacred Meadow is scattered exactly as the
+   Enchanted Forest is. One obelisk in a 16,000,000-tile world would be a
+   landmark nobody ever stands next to, and could not answer the report this
+   whole version exists for. **This is the single most likely call here to
+   want changed, and it is one condition in the landmark pass.**
+2. **⚠️ THE SPEC SAYS TO REUSE "the drifting-particle technique already used
+   for cave ore veins". THE ORE VEINS HAVE NO PARTICLES.** They are
+   `drawIronNode` / `drawRunicNode` and neither emits anything. The drifting
+   particles inside a cave belong to its NODES — `drawEssenceNode()`'s two
+   orbiting motes, what an interior's `aquatic_essence` is drawn with. That is
+   the only technique inside an interior the sentence can mean, so it is the
+   one the Kelp-Crystal clusters reuse: the same two motes on the same clock,
+   in the crystal's own colour. Same shape of call v25 made when its spec said
+   `kind ===` and the chain dispatched on `species`.
+3. **⚠️ "the deepest point already defined for this biome" is not a point that
+   exists.** Nothing in the file names one. What the file does say, twice in
+   as many words — `rawHeight()`'s comment pinning `B.ABYSSAL` to the sea
+   floor, and the interior's own palette note — is that the Abyssal Hollow IS
+   the deepest point in the world. So "deepest" is expressed in this biome's
+   own terms exactly the way v39 expressed "deepest ruins" for the Golem
+   Elder: it is the Hollow, and the rift stands on a real generated tile of
+   it. One rift, deterministic from `worldSeed`, uniform within the biome.
+4. **The spec's proof gate says ambient particles are "scoped only to the five
+   named biomes/conditions"; PART C's own list has four.** Its enumeration is
+   explicit and carries an explicit exclusion list, so the list won over the
+   count. (Five is what PART A names.) Noted rather than silently corrected,
+   the same way Expansion 2a noted its spec's "13 places".
+5. **`KELP_PER_WALL = 70` and the floor of 2.** Unstated. Measured rather than
+   picked — see the 266-vs-74 note above. The floor is what keeps the spec's
+   "multiple per interior" true even in an unusually closed cave.
+6. **`CALDERA_CRACK = 0.46`** — the share of shared edges a fissure crosses.
+   Unstated; picked so most tiles carry a crack and the network is genuinely
+   connected without every tile being a junction. One-line tunable.
+7. **The Heartwood and the Obelisk go into `decor`, not into `features`.** A
+   landmark is scenery, not a resource: `decor` is the file's own
+   non-gatherable list, so `nearestGatherable()`, `removeFeature()` and
+   `minedNodes` never learn about either, and neither can be picked up or
+   mined. They still take the standard sun shadow and the standard `x + y`
+   sort. The Kelp-Crystal clusters are the same decision inside an interior —
+   their own `kelp` render kind, carrying no `taken` and no `type`.
+8. **⚠️ THE v18 RULE THAT DRIFTING MOTES MUST NOT SPREAD TO A THIRD BIOME IS
+   DELIBERATELY EXTENDED BY THIS SPEC, AND THAT IS THE ONE STANDING RULE v50
+   MOVES.** v18 and v21 both wrote it down for a good reason — a mote in plain
+   Forest at night would destroy the "you have found somewhere rare" read.
+   PART C names four windows and an exclusion list, and what protects the read
+   now is those exclusions plus two time gates: Dark Forest only at night,
+   Sacred Meadow only at dawn, and never Plains/Forest/Meadow at all. **The
+   baked speck-and-halo language is untouched** — the cave, Hollow and
+   Enchanted Forest floors are byte-identical, and no cave biome gained a
+   drifting particle, which is the half of the v18 rule that still stands
+   unchanged and is pinned by a grep gate.
+9. **A wisp fires INSTEAD of the mote/firefly chain, not as well as it.** The
+   spawner's four samples a tick are a fixed budget; letting the new branch
+   fall through would have doubled the Enchanted Forest's ambient density as a
+   side effect of a change that is supposed to be about the Dark Forest, the
+   dawn meadow and the Hollow. The v17 motes themselves are untouched.
+10. **`pocketAnchorCache` is a new cache, and `clusterAnchor`'s 6,000-step
+    guard is inherited rather than raised.** The two cheap rejects in front of
+    the flood (a same-pocket neighbour to the north, or to the west) are
+    NECESSARY conditions and not a heuristic, so no anchor can be missed; the
+    cache removes the repeats along a pocket's north-west boundary. **If a
+    pocket ever exceeded 6,000 tiles the guard could let two tiles in it both
+    answer "I am the anchor" and the pocket would get two Heartwoods** — the
+    largest measured on the harness seed is 338, and the guard is v29's own,
+    already relied on by every cave interior in the game. Flagged, not raised.
+11. **PART B's consequence for the Safe Zones was accepted, not engineered
+    around.** Four zones still place on 6/6 seeds and every separation holds;
+    they simply sit somewhere else on most seeds. Nudging the zone stream to
+    reproduce the old positions would have meant touching a placement loop
+    this spec says nothing about.
+12. **Six `run4` literals were updated, not relaxed, and one was
+    re-measured.** The ruin-count, dungeon-entrance, runic-vein, set-piece and
+    well gates now read `info.RUIN_COUNT` / `info.ZONE_COUNT` instead of the
+    literal 6, so the next density change carries them for free; the Dark
+    Forest pin was re-measured 244,534 -> 242,044 the way v20 re-measured
+    875 -> 763. `RUIN_COUNT === 10` is additionally pinned as a bare literal
+    in the v50 block, so the constant itself cannot drift unnoticed.
+13. **`run5` gained a v50 sweep and no coverage list needed extending** — no
+    species, mob, weapon kind or class shipped this version. It draws both
+    Heartwood scales, the obelisk in **both** its lit and unlit states (two
+    genuinely different paintings, only one reachable at any moment of the
+    day), the Void Rift both directly and by diving to it over real frames,
+    real Heartwoods and Obelisks the chunk builder produced, the cracked
+    Caldera tile with both downhill neighbours, twelve real kelp clusters plus
+    the interior pass that draws them, and all four wisp windows through the
+    real spawner. It hard-fails if any of the five was never drawn. 1,084 ->
+    **1,188**.
+14. **`run4` gained 47 gates and the Caldera one is a source check on
+    purpose.** The crack network's correctness is that two neighbours use the
+    *same expression* for the edge between them, and a copy of those
+    expressions inside the harness could agree with itself while the game
+    disagreed — so the four forms are read off the shipped script and each is
+    required to appear exactly once, with the v22 scratch hashes required to
+    be gone rather than layered underneath. Everything else is behavioural.
+15. **The Void Rift, the Heartwood, the Obelisk and the Kelp-Crystals are set
+    dressing inside bible biomes, not new bible content, and are logged as
+    such.** The bible names all five places; it names none of these five
+    objects. They come from the locked spec, exactly as v20's dungeon entrance
+    came from its own ("Ruins — ... dungeon entrances") — no pet, mob, biome,
+    location or lore element was invented, and no creature or resource was
+    added to any of them.
+16. **The push to `main` that the README's step 8 invites was deliberately not
+    attempted.** This session is instructed to develop and push only on its
+    designated branch. The README calls a blocked push to `main` a
+    nice-to-have and explicitly not a failure, so the build lands on the
+    branch as usual and a human can sync it. Same call every version since
+    Expansion 2b has made.
+
 ### 2026-08-25 (v46 — Death Timer, Session Resume, Expansion 3, the real Minimap, block for all, the credit)
 
 Nine parts, and only two of them are rendering: PART D adds a genuinely new
