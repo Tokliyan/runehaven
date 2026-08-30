@@ -153,19 +153,28 @@ advantage in its own situation, not a stat-sheet footnote — and the
 thirteenth is deliberately the outlier, both rarer and stronger,
 something worth quietly hoping for rather than a balanced pick:
 
-1. **The Hollow Choir** — mourners, death-touched. *"We sang before you were born, we'll sing after."* Respawn wait halved.
-2. **Ashbound** — fire and ruin. *"Let it burn, let it teach."* Immune to lava-proximity damage tick (still dies to full lava contact).
-3. **The Drowned Court** — water and secrets. *"What sinks, we keep."* Breath capacity +50% while diving.
-4. **Stormwrought** — storm and mountain. *"The sky owes us nothing, and gives everything."* +20% move speed during any active world event (Blood Moon, Meteor Shower).
-5. **The Quiet Vein** — earth and stone. *"Deep enough, everything is treasure."* Ore and stone gathering yields +1 extra per action.
-6. **Nightglass** — shadow and dark forest. *"We are the shape you almost saw."* Untargetable by wild mob aggro at night specifically (still fully PvP-vulnerable).
-7. **The Gilded Bough** — enchanted forest, growth and luck. *"Every root remembers."* Real, felt bump to rare-pet tame-chance specifically (not spawn density).
-8. **Emberkin** — volcano and forge. *"We were shaped by what should have killed us."* Crafting at any forge costs 10% less material.
-9. **The Salt Wardens** — coasts and open plains. *"Nothing here belongs to anyone."* Take 15% less damage while inside a Plains biome specifically.
-10. **Duskthread** — twilight, in-between things. *"Neither day claims us, nor night."* Double XP during the dawn and dusk transition windows specifically.
-11. **The Bramblewatch** — dark forest, thorn and warning. *"We do not chase. We wait."* +20% damage to any mob that attacked first (not the initiator).
-12. **Frostmere** — shattered peaks, cold and isolation. *"Alone is not the same as lost."* Immune to Storm Dragon's own environmental effects at the peaks specifically.
-13. **The Nameless Tide** — deliberately the outlier. *"Some of us were never meant to be counted."* Rarer assignment odds than the other twelve (propose roughly half as likely), and a genuinely stronger, stacked effect: small passive HP regen at all times AND a smaller version of the Beastmaster Shrine's own taming boost, permanently, without needing to stand at the Shrine. This is meant to feel like a real, quietly-lucky draw — not something any of the other twelve should approach.
+1. **The Hollow Choir** — mourners, death-touched. *"We sang before you were born, we'll sing after."* **Instant respawn — 0 second wait**, revised up from "halved" per direct request: death should cost this guild nothing at all, the sharpest possible identity for a guild built entirely around not fearing it.
+2. **The Drowned Court** — water and secrets. *"What sinks, we keep."* Breath capacity +50% while diving.
+3. **The Quiet Vein** — earth and stone. *"Deep enough, everything is treasure."* Ore and stone gathering yields +1 extra per action.
+4. **The Gilded Bough** — enchanted forest, growth and luck. *"Every root remembers."* Real, felt bump to rare-pet tame-chance specifically (not spawn density).
+5. **The Bramblewatch** — dark forest, thorn and warning. *"We do not chase. We wait."* +20% damage to any mob that attacked first (not the initiator).
+
+**PART F — combat-logout window shortened, 30s -> 15s.** Confirmed live:
+`COMBAT_LOGOUT_MS = 30000`. Change to `15000`. Same mechanism, same
+honest limit already documented (a native browser prompt, not a true
+block) — just a shorter, sharper danger window if someone is actively
+chasing you when you try to leave.
+
+**PART G — guild badges, richer but still nameplate-scale.** These
+render directly beside a player's existing name, the same tiny space
+their username already occupies — not a character-panel portrait. Each
+badge needs genuine, distinct silhouette and color at roughly 14-18px,
+readable at a glance, not a detailed illustration that only reads at
+mockup size. Iterate past the five-icon concept already shown (bell,
+wave, ore vein, leaf, thorned fist) toward slightly more distinctive
+per-guild shapes while keeping every one legible that small — test each
+at the actual render size before calling a shape final, not just at
+preview scale.
 
 Each guild's motto and name render somewhere the player's own identity
 already shows (character panel, alongside class) — reuse that existing
