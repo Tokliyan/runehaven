@@ -116,7 +116,7 @@ existing motes and the new wisps should both be present there, not one
 replacing the other.
 
 **PART B — minimap gets real texture, not flat color blocks.** Confirmed
-live: `renderMinimap()`'s tile loop does a single `fillRect` per tile
+live: `updateMinimap()`'s tile loop does a single `fillRect` per tile
 from a two-color checkerboard palette, nothing else. Add a light texture
 pass on top — small darker flecks for tiles with trees, a small grey
 fleck for rock/mountain tiles, reusing whatever per-tile feature data
@@ -134,30 +134,67 @@ Pet counts (WILD_SPECIES) get a further increase on top of v49's fix,
 specifically for overworld-biome species — this is on top of, not
 instead of, what already shipped.
 
-**PART D — caves inverted: fewer mobs, more pets.** Confirmed live:
-Troll and Dark Wraith (both cave-placed) are the two hostile mobs
-inside cave interiors. Reduce their `count` specifically — caves should
-feel less like a combat gauntlet. In the same pass, increase whatever
-tameable pet species spawn inside cave interiors (Golem, Crystal Golem,
-Glow Moth per the bible's own cave placements) so caves shift toward
-"a place to find companions" rather than "a place full of hostiles" —
-this is a real inversion of current cave identity, treat it as such.
+**PART D — CORRECTED: caves inverted using the real interior-specific
+lever, not the surface `count` field PART C already raises.** Confirmed
+live: `MOBS.troll.count`/`MOBS.dark_wraith.count` govern SURFACE spawns
+only (mountain/peak and dark-forest respectively) — reducing them here
+would undo PART C's own increase to the same field, and would change
+nothing inside caves regardless, since cave-interior Trolls/Wraiths are
+placed separately by `populateInterior()`'s own
+`Math.round(2 * areaK)` multiplier (line ~3684), untouched by `count`.
+Lower THAT multiplier specifically — propose `1.2 * areaK`, down from
+`2 * areaK` — leaving every surface count from PART C fully intact.
 
-**PART E — the Guild system, redesigned with real buffs and a real
-balance philosophy.** Thirteen guilds, assigned deterministically from a
-hash of the username at account creation — never chosen, never
-re-rollable, matching "raw and unpredictable" rather than the bible's
-explicitly-forbidden coordinated clan system. Twelve are meant to feel
-roughly equally desirable to a player — each buff is a genuine, felt
-advantage in its own situation, not a stat-sheet footnote — and the
-thirteenth is deliberately the outlier, both rarer and stronger,
-something worth quietly hoping for rather than a balanced pick:
+For the pet side of the inversion: Golem and Crystal Golem are
+confirmed bible-restricted to "ruins only" / "mountain ruins only" —
+placing either inside a cave interior would be a direct bible
+contradiction, not a tunable, and is dropped from this version
+entirely. The real, bible-compliant lever instead: Glow Moth is
+explicitly "caves and dungeons" per the bible and currently only
+spawns in the surface `UNDERCAVE` band, never inside actual interiors —
+add it to cave-interior generation for real, at a count proportional to
+interior floor area the same way ore/node density already scales.
+Additionally, the cave-hatchling dragon `populateInterior()` already
+places (currently exactly one per cave) becomes the other real anchor
+for "a place to find companions" — do not change its species or
+placement logic, only confirm it remains exactly as it is so PART D's
+"more companions" goal has two real, bible-compliant answers (Glow Moth
+plus the existing dragon) rather than a contradiction.
 
-1. **The Hollow Choir** — mourners, death-touched. *"We sang before you were born, we'll sing after."* **Instant respawn — 0 second wait**, revised up from "halved" per direct request: death should cost this guild nothing at all, the sharpest possible identity for a guild built entirely around not fearing it.
+**PART E — CORRECTED: this was never actually locked at thirteen.**
+The prior version's "thirteen guilds" prose was left over from an
+earlier idea in conversation — it was explicitly narrowed to **five**
+plus a separate, admin-only sixth, and that narrowing was never
+correctly carried into this document before now, which is what caused
+the truncation the build correctly caught. This is the actual, current
+design:
+
+**Five real guilds**, assigned deterministically from a hash of the
+username at account creation — never chosen, never re-rollable, no
+in-game way to know the assignment in advance. At an initial player
+base of roughly 50, five guilds gives roughly ten members each, a real
+felt group size — thirteen would have averaged under four and felt
+empty. Each is a genuine, felt mechanical advantage, not a stat-sheet
+footnote:
+
+1. **The Hollow Choir** — mourners, death-touched. *"We sang before you were born, we'll sing after."* Instant respawn — 0 second wait.
 2. **The Drowned Court** — water and secrets. *"What sinks, we keep."* Breath capacity +50% while diving.
 3. **The Quiet Vein** — earth and stone. *"Deep enough, everything is treasure."* Ore and stone gathering yields +1 extra per action.
 4. **The Gilded Bough** — enchanted forest, growth and luck. *"Every root remembers."* Real, felt bump to rare-pet tame-chance specifically (not spawn density).
 5. **The Bramblewatch** — dark forest, thorn and warning. *"We do not chase. We wait."* +20% damage to any mob that attacked first (not the initiator).
+
+**The Nameless Tide is a separate, sixth, admin-only guild — not part
+of the random assignment pool at all.** No hash outcome can ever
+produce it; it is granted the exact same way admin itself is, by
+editing that player's row directly in Supabase. Effect when granted:
+small passive HP regen at all times, plus a smaller, permanent version
+of the Beastmaster Shrine's own taming boost without needing to stand
+at the Shrine. There is no "rarer roll" language for it anymore — it
+simply is not rollable, which is a cleaner design than the prior
+"rare but possible" framing and was the direction already agreed.
+
+Each guild's name and motto render beside the player's existing name
+display, reusing that exact mechanism — do not invent a second one.
 
 **PART F — combat-logout window shortened, 30s -> 15s.** Confirmed live:
 `COMBAT_LOGOUT_MS = 30000`. Change to `15000`. Same mechanism, same
@@ -174,11 +211,9 @@ mockup size. Iterate past the five-icon concept already shown (bell,
 wave, ore vein, leaf, thorned fist) toward slightly more distinctive
 per-guild shapes while keeping every one legible that small — test each
 at the actual render size before calling a shape final, not just at
-preview scale.
-
-Each guild's motto and name render somewhere the player's own identity
-already shows (character panel, alongside class) — reuse that existing
-display, do not invent a second one.
+preview scale. The Nameless Tide needs its own sixth badge too, even
+though it is never randomly assigned — an admin-granted guild still
+needs a real visual when someone actually has it.
 
 **PART H — ruins, much more, and a real "30-second rule" pass.**
 Confirmed live: `RUIN_COUNT = 10`, already up from 6 in v50. Increase
