@@ -180,6 +180,25 @@ Each guild's motto and name render somewhere the player's own identity
 already shows (character panel, alongside class) — reuse that existing
 display, do not invent a second one.
 
+**PART H — ruins, much more, and a real "30-second rule" pass.**
+Confirmed live: `RUIN_COUNT = 10`, already up from 6 in v50. Increase
+significantly further — propose 20, roughly double again — with the
+same six-seed separation-constant sweep every prior ruin change has
+required, since density this much higher is far more likely to start
+crowding RUIN_SEP/RUIN_ZONE_SEP than the last, smaller jump was.
+
+Beyond ruins specifically: apply a real "should a player see something
+worth noticing within about 30 seconds of walking in any direction"
+standard to the overworld generally, not just ruins. This means
+checking real average spacing — between ruins, between resource nodes,
+between wild pet spawns — against a rough distance a player covers
+walking in 30 seconds at normal speed, and where the gap is
+meaningfully larger than that, increasing density until it isn't. This
+is a real, measured check against actual movement speed and actual
+placement spacing, not a vibe — report the real numbers found and the
+real numbers after, the same discipline as every density change this
+project has made.
+
 **Proof gates:** standard gauntlet plus confirm the wisp fire-chance
 increase and Enchanted Forest's additive layer, confirm minimap texture
 flecks only appear where real feature data says they should, confirm
