@@ -234,6 +234,37 @@ placement spacing, not a vibe — report the real numbers found and the
 real numbers after, the same discipline as every density change this
 project has made.
 
+**PART I — landmark fast travel opened to everyone, no Unicorn Elder
+required.** This is the explicit bible deviation already discussed and
+approved directly: the bible ties fast travel exclusively to the
+Unicorn Elder, and the direct instruction now is to remove that
+requirement entirely for the Places tab, matching what already happened
+for the Players tab. Remove the `ownsUnicornElder()` gate everywhere it
+still applies to landmark travel specifically (distinct from anything
+already correctly gated elsewhere) — every player should see every
+landmark's TRAVEL button enabled, with no ownership check anywhere in
+the execution path, the same standard already applied and verified for
+player-to-player travel.
+
+**PART J — item-giving, already live, real key conflict flagged rather
+than silently overwritten.** Confirmed live: giving an item to a nearby
+player already exists, bound to `E` (same key as gather/interact,
+`openGivePanel()` at line ~8818) — this already works today. The
+request to bind this to `Q` cannot be done as asked: `Q` is already
+`KEYBINDS.ability` (class ability), confirmed live, and rebinding it
+would silently break every class's core ability with no warning. Bind
+giving to a genuinely free key instead — propose `G`, unused in the
+current keybind list — as an additional direct shortcut alongside the
+existing `E` proximity trigger, not a replacement for it.
+
+**PART K — the Fast Travel Players tab auto-refreshes every 10
+seconds.** Currently confirmed to populate once when the panel opens.
+Add a `setInterval` tied to the panel's own open/close state — refresh
+the online-player list every 10 seconds while the panel is visible,
+stop the interval the moment it closes so it never runs in the
+background. This directly solves "someone just came online but I can't
+travel to them without reopening the panel."
+
 **Proof gates:** standard gauntlet plus confirm the wisp fire-chance
 increase and Enchanted Forest's additive layer, confirm minimap texture
 flecks only appear where real feature data says they should, confirm
