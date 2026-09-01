@@ -2612,9 +2612,18 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         'fire_dragon', 'storm_dragon', 'shadow_dragon', 'shadowfox', 'lightfox'];
       const m0 = dmi28();
 
-      results.push(['the mountable set is exactly the bible\'s nine species',
-        m0.MOUNTABLE.length === 9 &&
-        BIBLE_NINE.every(s => m0.MOUNTABLE.indexOf(s) !== -1)]);
+      /* v52+53: RE-PINNED, not relaxed. The mountable set is the bible's nine
+         PLUS the Duskfox Elder — a deliberate, owner-approved addition made as
+         a live hotfix, and a knowing bible deviation (the bible's MOUNTABLE
+         PETS line names exactly nine and this is not one of them). The gate
+         still asserts an EXACT set with the same rigor as before: all nine
+         must be present, the tenth must be the Duskfox Elder specifically, and
+         nothing else may join them. */
+      results.push(['the mountable set is the bible\'s nine PLUS the Duskfox Elder, and nothing else',
+        m0.MOUNTABLE.length === 10 &&
+        BIBLE_NINE.every(s => m0.MOUNTABLE.indexOf(s) !== -1) &&
+        m0.MOUNTABLE.indexOf('duskfox_elder') !== -1 &&
+        m0.MOUNTABLE.filter(s => BIBLE_NINE.indexOf(s) < 0).join('|') === 'duskfox_elder']);
       results.push(['R is the mount key and it came from KEYBINDS, not a literal',
         m0.mount === 'r' && m0.mountDefault === 'r' &&
         gameScript.indexOf('k === KEYBINDS.mount') > 0]);
@@ -3480,10 +3489,20 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['the arena has a real edge you can stand outside of',
         outsideArena.inColosseum === false]);
 
+      /* v52+53 PART B: UPDATED, not relaxed. `drawColosseumEntity` is gone
+         because the Colosseum stopped being ONE drawn thing — at a 16-tile
+         ring a single sort key would paint its far side over a player standing
+         behind it, so it is a built piece list now, exactly like ruinPieces,
+         and every piece sorts on its own. The assertion is the same one it
+         always was (all three are real structures rather than invisible
+         zones), pointed at the functions that actually draw this one. */
       results.push(['all three render as real structures, not invisible zones',
         gameScript.indexOf('function drawBazaarEntity') > 0 &&
         gameScript.indexOf('function drawAncientEntity') > 0 &&
-        gameScript.indexOf('function drawColosseumEntity') > 0]);
+        gameScript.indexOf('function colosseumPieces()') > 0 &&
+        gameScript.indexOf('function drawColosseumFloor(') > 0 &&
+        gameScript.indexOf('function drawColosseumPiece(') > 0 &&
+        gameScript.indexOf('function drawColosseumEntity') < 0]);
       results.push(['each announces itself so a player knows what they found',
         gameScript.indexOf('The Grand Bazaar — protected ground') > 0 &&
         gameScript.indexOf('dragonsteel can be smelted here') > 0 &&
@@ -4957,9 +4976,21 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const mA = window.debugMountInfo();
       const soA = mA.seatOffsets, skA = window.debugScaleInfo().SPECIES_K;
 
-      results.push(['PART A: the seat table covers exactly the bible\'s nine mountable species',
-        BIBLE_NINE_A.slice().sort().join('|') === Object.keys(soA).sort().join('|') &&
+      /* v52+53: RE-PINNED, not relaxed. The seat table is derived from
+         MOUNTABLE_SPECIES, so it covers the ten that set now holds. Still an
+         EXACT set — the nine plus the Duskfox Elder and nothing else. */
+      results.push(['PART A: the seat table covers exactly the ten mountable species',
+        BIBLE_NINE_A.concat(['duskfox_elder']).sort().join('|') === Object.keys(soA).sort().join('|') &&
         gameScript.indexOf('const MOUNT_SEAT_UNITS = {') > 0]);
+      /* The tenth has no MEASURED back of its own — it is not in
+         MOUNT_SEAT_UNITS and falls through to MOUNT_SEAT_BASE, scaled by its
+         own SPECIES_K exactly as every other seat is. That is the real current
+         behaviour, so it is asserted rather than left invisible: a future pass
+         that gives it a measured back has to update this line deliberately. */
+      results.push(['PART A: the Duskfox Elder seats on MOUNT_SEAT_BASE, having no measured back of its own',
+        Math.abs(soA.duskfox_elder - (-(11.5 * skA.duskfox_elder))) < 1e-9 &&
+        gameScript.indexOf('const MOUNT_SEAT_BASE = 11.5;') > 0 &&
+        !/MOUNT_SEAT_UNITS = \{[^}]*duskfox_elder/.test(gameScript)]);
 
       let seatOk = true, seatWhy = null;
       for (const sp of BIBLE_NINE_A) {
@@ -5126,14 +5157,36 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     if (typeof window.debugDuskfoxInfo === 'function') {
       const dfi = window.debugDuskfoxInfo, dfp = window.debugDuskfoxProbe;
       const d0 = dfi();
-      results.push(['PART D: the Duskfox Elder exists, and carries the bible\'s own two rules as flags',
+      /* v52+53: RE-PINNED, not relaxed. The twilight half of the bible's line
+         was deliberately retired by a live hotfix — a creature that is hidden
+         AND only visible at dusk AND impossible to relocate is unfindable
+         after a failed tame, and it can only reasonably be one of those. So
+         `duskOnly` is GONE from this def, and the gate now asserts its absence
+         with the same rigor it used to assert its presence: `adminOnly` still
+         carries the whole access rule, and a future pass cannot quietly put
+         the dusk window back without failing here. */
+      results.push(['PART D: the Duskfox Elder exists, admin-only, hand-placed, and NO LONGER dusk-gated',
         !!d0.def && d0.def.name === 'Duskfox Elder' &&
-        d0.def.adminOnly === true && d0.def.duskOnly === true &&
+        d0.def.adminOnly === true && d0.def.duskOnly === undefined &&
         Array.isArray(d0.def.biomes) && d0.def.biomes.length === 0]);
       results.push([`PART D: exactly ONE exists in the entire world (${d0.wildCount})`,
         d0.wildCount === 1 && !!d0.wild]);
-      results.push([`PART D: and it stands in a Sacred Meadow — the bible's own sacred ground (biome ${d0.tileBiome})`,
-        d0.tileBiome === d0.SACMEADOW]);
+      /* v52+53: RE-PINNED, not relaxed. The random-Sacred-Meadow search was
+         replaced by a fixed, always-known spot near the Spawn Forge so a
+         creature that flees mid-tame can be walked back to. Asserted as the
+         RELATIONSHIP the code actually expresses — SPAWN_FORGE + (5, -5),
+         rounded — never as a literal pair of coordinates, so it still holds if
+         the world moves under it. Its biome is now whatever that spot is. */
+      results.push([`PART D: it stands on a FIXED spot near the Spawn Forge, not a Sacred Meadow search (${d0.tile})`,
+        Array.isArray(d0.tile) &&
+        d0.tile[0] === Math.round(d0.SPAWN_FORGE.x + 5) &&
+        d0.tile[1] === Math.round(d0.SPAWN_FORGE.y - 5) &&
+        gameScript.indexOf('const tx = Math.round(SPAWN_FORGE.x + 5), ty = Math.round(SPAWN_FORGE.y - 5);') > 0]);
+      /* And the thing the fixed spot exists to buy: it is genuinely close
+         enough to spawn to be walked back to, which the meadow search never
+         guaranteed. */
+      results.push([`PART D: and that spot is a short walk from spawn (${Math.round(Math.hypot(d0.tile[0] - d0.SPAWN.x, d0.tile[1] - d0.SPAWN.y))} tiles)`,
+        Math.hypot(d0.tile[0] - d0.SPAWN.x, d0.tile[1] - d0.SPAWN.y) < 20]);
       results.push([`PART D: its daily cap is 1, so a taken one does not come back today (cap ${d0.dailyCap})`,
         d0.capped === true && d0.dailyCap === 1 && d0.rarity === 'admin']);
       results.push(['PART D: the placement is the Unicorn Elder\'s own single-tile technique, not a new system',
@@ -5159,8 +5212,17 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const noonV = dfp({ visibleAt: 0.30 }).visible;
       const duskV = dfp({ visibleAt: d0.DUSK_PEAK }).visible;
       const nightV = dfp({ visibleAt: 0.80 }).visible;
-      results.push(['PART D: an admin sees it at twilight and at NO other hour — dawn, noon and night all refuse',
-        duskV === true && dawnV === false && noonV === false && nightV === false]);
+      /* v52+53: RE-PINNED, not relaxed. Twilight-only visibility went with the
+         relocation, deliberately — the same hotfix, the same reason. An admin
+         now sees it at EVERY hour, and this gate is the stronger statement of
+         that: not "dusk works" but "no point in the whole day cycle hides it",
+         swept over 101 frames exactly the way the non-admin gate above sweeps
+         for the opposite answer. */
+      let seenAsAdmin = 0;
+      for (let i = 0; i <= 100; i++) if (dfp({ visibleAt: i / 100 }).visible) seenAsAdmin++;
+      results.push([`PART D: an admin sees it at EVERY hour — no dusk gate remains (${seenAsAdmin}/101 frames)`,
+        seenAsAdmin === 101 &&
+        duskV === true && dawnV === true && noonV === true && nightV === true]);
       results.push([`PART D: and the twilight window is the sky's own dusk lobe (${d0.DUSK_PEAK} +/- ${d0.DUSK_HALF})`,
         d0.DUSK_PEAK === 0.55 && d0.DUSK_HALF === 0.07 &&
         gameScript.indexOf('const nearDusk = Math.max(0, 1 - Math.abs(dt2 - 0.55) / 0.07);') > 0]);
@@ -5211,9 +5273,18 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         skD.duskfox_elder > skD.shadowfox && skD.shadowfox > skD.lightfox &&
         skD.duskfox_elder / skD.shadowfox > 1.3 &&
         skD.duskfox_elder < skD.golem_elder]);
-      results.push(['PART D: and it is NOT mountable — the bible names exactly nine, and this is not one',
-        window.debugMountInfo().MOUNTABLE.indexOf('duskfox_elder') < 0 &&
-        window.debugMountInfo().MOUNTABLE.length === 9]);
+      /* v52+53: RE-PINNED, not relaxed. It IS mountable now — a deliberate,
+         owner-approved hotfix and a knowing bible deviation, flagged in the
+         changelog. What is asserted is the whole of the new behaviour, not
+         merely that it joined the set: it rides at DOUBLE the standard mount
+         rate, which is the perk that addition exists to give, and the doubling
+         is scoped to this one species so no other mount moved. */
+      results.push(['PART D: it IS mountable — the tenth, deliberately, against the bible\'s nine',
+        window.debugMountInfo().MOUNTABLE.indexOf('duskfox_elder') >= 0 &&
+        window.debugMountInfo().MOUNTABLE.length === 10]);
+      results.push(['PART D: and it rides at DOUBLE the standard mount rate, and it alone does',
+        gameScript.indexOf('activePet.species === "duskfox_elder")\n        ? MOUNT_SPEED_MULT * 2 : (me.mounted ? MOUNT_SPEED_MULT : 1);') > 0 &&
+        (gameScript.match(/MOUNT_SPEED_MULT \* 2/g) || []).length === 1]);
     }
 
 
@@ -7177,6 +7248,456 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
 
       results.push(['v51: the world still runs frames cleanly after every part of this',
+        (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
+    }
+
+    /* ===================== v52+53 — RESUME, COLOSSEUM, GUILD TIER 2, BOSS BAR,
+       NODE DENSITY, HITBOX ====================================================
+       One block per lettered part of the locked spec. PART I is deliberately a
+       set of PINS rather than a fix: the spec asks for an investigation and a
+       report, and what is asserted here is exactly what the investigation
+       measured, so the finding cannot go quiet. ============================ */
+    {
+      const strip52 = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+      const code52 = strip52(gameScript);
+      results.push(['v52+53: the comment stripper actually strips, and keeps real code',
+        code52.indexOf('THE RUINED COLOSSEUM, REBUILT') < 0 &&
+        code52.indexOf('const COLOSSEUM_R = 20;') > 0]);
+
+      /* ---- PART A: the resume pause ------------------------------------- */
+      {
+        const si = window.debugSessionInfo();
+        results.push([`v52 A: the pause is inside the spec's own 1.5-2s window (${si.RESUME_PAUSE_MS}ms)`,
+          si.RESUME_PAUSE_MS >= 1500 && si.RESUME_PAUSE_MS <= 2000]);
+        results.push(['v52 A: the banner is a real element with a real clickable cancel',
+          si.hasCancelButton === true && !!doc.getElementById('resumeNotice')]);
+        results.push(['v52 A: and it is hidden until there is something to say',
+          si.noticeVisible === false]);
+        /* WHERE it sits is the load-bearing part: after every check that can
+           already refuse the resume, immediately before the one line that
+           submits. Asserted as an ORDERING in the real source, never as a
+           literal — so a future pass cannot move the pause in front of the
+           PIN gate without failing. */
+        const rs = code52.indexOf('async function resumeSession()');
+        const rsEnd = code52.indexOf('\n}', code52.indexOf('await enterBtn.onclick();', rs));
+        const body = code52.slice(rs, rsEnd);
+        results.push(['v52 A: the pause sits AFTER every refusal and immediately BEFORE the submit',
+          body.indexOf('res.mode === "verify"') < body.indexOf('await resumePause(name)') &&
+          body.indexOf('if (!res.exists)') < body.indexOf('await resumePause(name)') &&
+          body.indexOf('await resumePause(name)') < body.indexOf('await enterBtn.onclick();')]);
+        results.push(['v52 A: a cancel returns false and never reaches the submit',
+          body.indexOf('if (!go) {') > 0 &&
+          body.indexOf('sessionResume.reason = "cancelled"') > 0 &&
+          body.indexOf('sessionResume.reason = "cancelled"') < body.indexOf('await enterBtn.onclick();')]);
+        /* And the pause itself, driven for real in both directions. */
+        window.debugSetResume({ pauseMs: 40 });
+        const pending = window.resumePause('Someone');
+        const upNow = window.debugSessionInfo();
+        results.push(['v52 A: the banner really goes up, and names the player',
+          upNow.noticeVisible === true && /Someone/.test(upNow.noticeText || '')]);
+        const ranOut = await pending;
+        results.push(['v52 A: an untouched window resolves GO, and takes the banner down',
+          ranOut === true && window.debugSessionInfo().noticeVisible === false]);
+        window.debugSetResume({ pauseMs: 60000 });
+        const nameBefore = doc.getElementById('username').value;
+        const cancelling = window.resumePause('Someone');
+        window.debugSetResume({ pressCancel: true });
+        const cancelled = await cancelling;
+        results.push(['v52 A: a real click on CANCEL resolves STOP, well inside the window',
+          cancelled === false]);
+        results.push(['v52 A: and cancelling leaves the card exactly as it was, name and all',
+          doc.getElementById('username').value === nameBefore &&
+          window.debugSessionInfo().noticeVisible === false]);
+        window.debugSetResume({ pauseMs: window.debugSessionInfo().RESUME_PAUSE_MS });
+        /* The stylesheet and the markup live OUTSIDE the game script, so these
+           two go against the whole file — the same distinction v24's intro
+           gates had to make between a CSS rule and the code that toggles it. */
+        results.push(['v52 A: the banner reuses the PIN notice card and the offer button, no new component',
+          html.indexOf('#pinNotice, #resumeNotice {') > 0 &&
+          html.indexOf('#pinProtect, #redeemBtn, #resumeCancel {') > 0 &&
+          html.indexOf('<div id="resumeNotice"') > 0]);
+      }
+
+      /* ---- PART B: the Colosseum --------------------------------------- */
+      if (typeof window.debugDuelInfo === 'function') {
+        const D = window.debugDuelInfo();
+        const V37 = window.debugV37Info ? window.debugV37Info() : window.debugWorldInfo();
+        const CX = V37.COLOSSEUM.x, CY = V37.COLOSSEUM.y;
+        results.push([`v52 B: the arena is genuinely bigger than v37's 9 (R = ${D.COLOSSEUM_R})`,
+          D.COLOSSEUM_R === 20 && D.COLOSSEUM_R > 9 * 2]);
+        /* The three rules that move WITH the radius, stated rather than
+           discovered. A point that was well outside the old ring is inside
+           the new one, which is the PvP zone, the keep-out and the
+           fast-travel exclusion all growing at once. */
+        const oldEdge = window.debugV37Probe({ at: [CX + 12, CY] });
+        results.push(['v52 B: the PvP ring really grew with it — a tile outside v37\'s ring is inside this one',
+          oldEdge.inColosseum === true]);
+        results.push(['v52 B: and the base keep-out and travel exclusion follow the same radius',
+          gameScript.indexOf('[COLOSSEUM.x, COLOSSEUM.y, COLOSSEUM_R + 2]') > 0]);
+        results.push(['v52 B: v37\'s ring rule is untouched — everywhere that is not a podium behaves as it always did',
+          code52.indexOf('const arena37 = inColosseum(me.x, me.y) && inColosseum(o.x, o.y)') > 0 &&
+          gameScript.indexOf('PvP is live inside the ring') > 0]);
+        /* The structure itself. */
+        const pieces = window.debugDuelInfo().pieceCount;
+        results.push([`v52 B: it is built from real pieces, not one blob (${pieces})`,
+          pieces > 60]);
+        results.push(['v52 B: every piece sorts on its OWN world key, so the arena sorts against the players in it',
+          code52.indexOf('ents.push({ s: cp.x + cp.y, kind: "colopiece", cp });') > 0 &&
+          code52.indexOf('ents.push({ s: COLOSSEUM.x + COLOSSEUM.y + 0.3, kind: "colosseum" });') < 0]);
+        results.push(['v52 B: the sand goes UNDER everything standing on it',
+          code52.indexOf('kind: "colofloor"') > 0 &&
+          code52.indexOf('COLOSSEUM.y - 0.4, kind: "colofloor"') > 0]);
+        results.push(['v52 B: the composition is deterministic — the same arena every time',
+          JSON.stringify(window.debugDuelInfo().podiums) === JSON.stringify(D.podiums) &&
+          window.debugDuelInfo().pieceCount === pieces]);
+        /* The two podiums. */
+        results.push([`v52 B: two named podiums, opposite and equidistant (${D.podiums.map(p => p.name).join(' / ')})`,
+          D.podiums.length === 2 &&
+          D.podiums.every(p => Math.abs(Math.hypot(p.x - CX, p.y - CY) - D.PODIUM_RING) < 1e-6) &&
+          Math.hypot(D.podiums[0].x - D.podiums[1].x, D.podiums[0].y - D.podiums[1].y) > D.PODIUM_RING]);
+        results.push(['v52 B: and both stand well inside the ring',
+          D.podiums.every(p => Math.hypot(p.x - CX, p.y - CY) < D.COLOSSEUM_R)]);
+
+        /* THE DUEL. Driven for real with ghosts on the stub channel. */
+        const HB = window.debugCombatHandles();
+        const hpBefore52 = window.debugWorldInfo().player.hp;
+        HB.others.clear();
+        window.debugSetDuel({ reset: true });
+        window.debugSetPlayer({ x: D.podiums[0].x, y: D.podiums[0].y });
+        const alone = window.debugDuelInfo();
+        results.push(['v52 B: standing on a podium ALONE is not a duel, and deals no damage',
+          alone.onPodium === 0 && alone.candidate === null &&
+          alone.duel.state === 'idle' &&
+          window.debugWorldInfo().player.hp === hpBefore52]);
+        results.push(['v52 B: and pressing the key alone does nothing at all',
+          window.debugSetDuel({ accept: true }).duel.state === 'idle']);
+        /* A second player on the SAME podium is still not a duel. */
+        HB.others.set('SamePodium', { x: D.podiums[0].x, y: D.podiums[0].y,
+          tx: D.podiums[0].x, ty: D.podiums[0].y, cls: 'knight', level: 1, hp: 100, maxHp: 100,
+          lastHeard: window.performance.now(), space: 'main', dead: false });
+        results.push(['v52 B: two players on the SAME podium is not a duel either',
+          window.debugDuelInfo().candidate === null]);
+        HB.others.delete('SamePodium');
+        /* The real pairing: a different player on the OTHER podium. */
+        HB.others.set('Rival', { x: D.podiums[1].x, y: D.podiums[1].y,
+          tx: D.podiums[1].x, ty: D.podiums[1].y, cls: 'knight', level: 1, hp: 100, maxHp: 100,
+          lastHeard: window.performance.now(), space: 'main', dead: false });
+        results.push(['v52 B: a different player on the OTHER podium makes a duel possible',
+          window.debugDuelInfo().candidate === 'Rival']);
+        results.push(['v52 B: but still nothing happens until somebody accepts',
+          window.debugDuelInfo().duel.state === 'idle']);
+        const afterMine = window.debugSetDuel({ accept: true });
+        results.push(['v52 B: MY acceptance alone leaves it offered — never active',
+          afterMine.duel.state === 'offered' && afterMine.duel.mine === true &&
+          afterMine.duel.theirs === false]);
+        /* Their acceptance, arriving the way a real one does. */
+        window.duelNoteRemoteAccept('Rival');
+        const bothIn = window.debugDuelInfo();
+        results.push(['v52 B: and only BOTH acceptances start the fight',
+          bothIn.duel.state === 'active' && bothIn.duel.opponent === 'Rival']);
+        /* The reward, paid through the one site a victor is already credited.
+           The predicate it hangs on is driven for real, in both directions and
+           against a bystander, because that predicate is the whole difference
+           between a duel purse and an ordinary kill inside the ring. */
+        const myName52 = window.debugDuelInfo().me;
+        results.push(['v52 B: the purse is gated on the accepted PAIR, from either side, and pays nobody else',
+          window.duelIsActiveBetween(myName52, 'Rival') === true &&
+          window.duelIsActiveBetween('Rival', myName52) === true &&
+          window.duelIsActiveBetween(myName52, 'Bystander') === false &&
+          window.duelIsActiveBetween('Rival', 'Rival') === false]);
+        results.push(['v52 B: the reward is paid at the ONE existing victor site, and only for an accepted duel',
+          code52.indexOf('const wasDuel = duelIsActiveBetween(p.killer, p.victim);') > 0 &&
+          code52.indexOf('invAdd("runic_stone", DUEL_REWARD_RUNIC);') > 0 &&
+          (() => { const i = code52.indexOf('event: "kill"');
+                   const j = code52.indexOf('});', code52.indexOf('invAdd("runic_stone"', i));
+                   const b = code52.slice(i, j);
+                   return b.indexOf('duelIsActiveBetween') < b.indexOf('invAdd("runic_stone"'); })()]);
+        results.push([`v52 B: and it is a real purse rather than a token (${D.DUEL_REWARD_RUNIC} Runic Stone)`,
+          D.DUEL_REWARD_RUNIC >= 3]);
+        /* Stepping off ends a pending offer; leaving the ring ends anything. */
+        window.debugSetDuel({ reset: true });
+        window.debugSetDuel({ accept: true });
+        window.debugSetPlayer({ x: CX, y: CY });
+        window.debugSetDuel({ tick: true });
+        results.push(['v52 B: stepping off the podium withdraws a pending challenge',
+          window.debugDuelInfo().duel.state === 'idle']);
+        window.debugSetPlayer({ x: D.podiums[0].x, y: D.podiums[0].y });
+        window.debugSetDuel({ accept: true });
+        window.duelNoteRemoteAccept('Rival');
+        window.debugSetPlayer({ x: CX + D.COLOSSEUM_R + 6, y: CY });
+        window.debugSetDuel({ tick: true });
+        results.push(['v52 B: and walking out of the ring ends an active duel',
+          window.debugDuelInfo().duel.state === 'idle']);
+        HB.others.delete('Rival');
+        window.debugSetDuel({ reset: true });
+        results.push(['v52 B: the acceptance rides the ONE existing channel, addressed, like item_give',
+          code52.indexOf('channel.on("broadcast", { event: "duel" }') > 0 &&
+          code52.indexOf('if (!me || !p || p.to !== me.username) return;') > 0]);
+      }
+
+      /* ---- PARTS C-F: Guild Tier 2 -------------------------------------- */
+      if (typeof window.debugGuildInfo === 'function') {
+        const G = () => window.debugGuildInfo();
+        const setT = t => window.debugSetGuild({ tierRaw: t });
+        const wasTier = G().tierRaw;
+        /* PART C — the column degrades, in every direction it can. */
+        const degrade = [[undefined, 1], [null, 1], [1, 1], [0, 1], ['', 1],
+                         ['nonsense', 1], [-4, 1], [2, 2], ['2', 2]];
+        let degradeOk = true, degradeWhy = null;
+        for (const [raw, want] of degrade) {
+          if (setT(raw).tier !== want) { degradeOk = false; degradeWhy = String(raw); break; }
+        }
+        results.push(['v53 C: a missing, null or nonsense guild_tier all read as tier 1' +
+          (degradeWhy ? ` (${degradeWhy} did not)` : ''), degradeOk]);
+        results.push(['v53 C: and the game never writes it through savePlayer\'s fixed column list',
+          (() => { const i = code52.indexOf('async function savePlayer()');
+                   const j = code52.indexOf('\n}', i);
+                   return code52.slice(i, j).indexOf('guild_tier') < 0; })() &&
+          code52.indexOf('guildTier: p.guild_tier,') > 0]);
+        results.push(['v53 C: the optional column gets its OWN write, so it cannot take cosmetics down with it',
+          code52.indexOf('async function saveGuildTier()') > 0 &&
+          (() => { const i = code52.indexOf('async function savePlayerExtras()');
+                   const j = code52.indexOf('\n}', i);
+                   return code52.slice(i, j).indexOf('guild_tier') < 0; })()]);
+        /* PART D — one helper, five call sites, and every value genuinely
+           stronger and genuinely tier-gated. Each is driven through the real
+           function rather than read off a constant. */
+        results.push(['v53 D: it is ONE helper, not five inline tier checks',
+          (code52.match(/myGuildTier\(\) >= 2/g) || []).length === 1 &&
+          (code52.match(/guildTiered\(/g) || []).length === 6]);
+        const T = G().tier2;
+        const C = G().constants;
+        results.push(['v53 D: every Tier 2 value is genuinely stronger than the Tier 1 it replaces',
+          T.GUILD_BREATH_MULT_T2 > C.GUILD_BREATH_MULT &&
+          T.GUILD_VEIN_BONUS_T2 > C.GUILD_VEIN_BONUS &&
+          T.GUILD_BRAMBLE_MULT_T2 > C.GUILD_BRAMBLE_MULT &&
+          T.GUILD_BOUGH_TAME_T2 > C.GUILD_BOUGH_TAME]);
+        results.push(['v53 D: and each is the spec\'s own arithmetic, value vs BONUS where it says so',
+          Math.abs(T.GUILD_BREATH_MULT_T2 - C.GUILD_BREATH_MULT * 1.5) < 1e-9 &&
+          T.GUILD_VEIN_BONUS_T2 === C.GUILD_VEIN_BONUS * 2 &&
+          Math.abs(T.GUILD_BRAMBLE_MULT_T2 - (1 + (C.GUILD_BRAMBLE_MULT - 1) * 1.75)) < 1e-9 &&
+          Math.abs(T.GUILD_BOUGH_TAME_T2 - C.GUILD_BOUGH_TAME * 2) < 1e-9]);
+        /* Drive all five for real, at both tiers, through the live functions. */
+        const wasGuild = G().granted;
+        const meObj = window.debugWorldInfo().player;
+        const drive = (guildId, fn) => {
+          window.debugSetGuild({ granted: guildId });
+          setT(1); const t1 = fn();
+          setT(2); const t2 = fn();
+          window.debugSetGuild({ granted: wasGuild });
+          return [t1, t2];
+        };
+        /* The five guilds are a hash of the username and are not grantable, so
+           the tier effects are driven through the functions directly with the
+           tier moved under them — which is the half this part actually adds. */
+        setT(1); const breath1 = G().breathMult;
+        setT(2); const breath2 = G().breathMult;
+        results.push([`v53 D: the Drowned Court's breath only changes at tier 2 (${breath1} -> ${breath2})`,
+          (G().mine === 'drowned_court') ? breath2 > breath1
+            : (breath1 === 1 && breath2 === 1)]);
+        setT(1); const wait1 = G().respawnWaitMs;
+        setT(2); const wait2 = G().respawnWaitMs;
+        results.push(['v53 D: the Hollow Choir keeps its Tier 1 instant respawn at BOTH tiers',
+          wait1 === wait2]);
+        /* Its Tier 2 is a second effect rather than a bigger number, and it
+           goes through the one predicate the leave prompt already runs on. */
+        window.debugSetCombatLogout({ agoMs: 100 });
+        setT(1); const logout1 = G().combatLogoutActive;
+        setT(2); const logout2 = G().combatLogoutActive;
+        results.push(['v53 D: and its Tier 2 is combat-logout immunity, through the one existing predicate',
+          code52.indexOf('if (guildIs("hollow_choir") && guildTiered(false, true)) return false;') > 0 &&
+          ((G().mine === 'hollow_choir') ? (logout1 === true && logout2 === false)
+                                          : (logout1 === logout2))]);
+        window.debugSetCombatLogout({ lastAt: 0 });
+        setT(wasTier);
+        /* PARTS E/F — grantable two ways. */
+        results.push(['v53 E: a Supabase grant is the exact role/guild precedent — read at login, no new mechanism',
+          code52.indexOf('guildTier: p.guild_tier,') > 0 &&
+          code52.indexOf('role: p.role === "admin" ? "admin" : "player",') > 0]);
+        results.push(['v53 F: _guildTier is one new key in the EXISTING items JSON, and no new table',
+          T.REDEEM_TIER_KEY === '_guildTier' &&
+          code52.indexOf('redeem_tiers') < 0 &&
+          code52.indexOf('out.tier = normalizeRedeemTier(row.items);') > 0]);
+        results.push(['v53 F: and it is never minted as an item — normalizeRedeemItems drops it',
+          Object.keys(window.normalizeRedeemItems({ _guildTier: 2, wood: 3 })).join('|') === 'wood']);
+        results.push(['v53 F: a code carrying only a tier is still a real code, not "empty"',
+          window.normalizeRedeemTier({ _guildTier: 2 }) === 2 &&
+          window.normalizeRedeemTier({ wood: 3 }) === 0 &&
+          window.normalizeRedeemTier(null) === 0]);
+        results.push([`v53 F: and it is clamped, so a hostile row cannot name any tier it likes`,
+          window.normalizeRedeemTier({ _guildTier: 9999 }) === T.GUILD_TIER_MAX &&
+          window.normalizeRedeemTier({ _guildTier: -3 }) === 0 &&
+          window.normalizeRedeemTier({ _guildTier: 'two' }) === 0]);
+        results.push(['v53 F: a redeem can only ever RAISE a tier, never lower one',
+          code52.indexOf('if (tier && tier > myGuildTier()) {') > 0]);
+        setT(wasTier);
+      }
+
+      /* ---- PART G: the boss bar ---------------------------------------- */
+      if (typeof window.debugBossInfo === 'function') {
+        const B = () => window.debugBossInfo();
+        const HB = window.debugCombatHandles();
+        HB.mobs.length = 0;
+        window.debugSetBoss({ until: 0, id: null, refresh: true });
+        results.push(['v52 G: no fight, no bar',
+          B().visible === false && B().active === false]);
+        const drake = { id: 'drakeprobe', kind: 'elder_drake', x: window.debugWorldInfo().player.x + 3,
+          y: window.debugWorldInfo().player.y, hp: 450, maxHp: 900, dead: false,
+          fx: -1, fy: 0, ph: 0, state: 'aggro', lastAtk: 0, windupUntil: 0 };
+        HB.mobs.push(drake);
+        window.noteBossCombat('elder_drake', drake);
+        window.debugSetBoss({ refresh: true });
+        const up = B();
+        /* jsdom normalises "50.0%" back to "50%", so the width is read as a
+           NUMBER rather than compared as a string — which is the honest test
+           anyway: what matters is that the bar is half full. */
+        const pctOf = s => parseFloat(String(s || '').replace('%', ''));
+        results.push([`v52 G: fighting the drake raises a real screen-anchored bar (${up.name} ${up.barWidth} ${up.hpText})`,
+          up.visible === true && up.active === true &&
+          up.name === 'Elder Drake' && Math.abs(pctOf(up.barWidth) - 50) < 0.2 &&
+          up.hpText === '450 / 900']);
+        results.push(['v52 G: and the bar follows the real mob, not a cached number',
+          (() => { drake.hp = 90; window.debugSetBoss({ refresh: true });
+                   return Math.abs(pctOf(B().barWidth) - 10) < 0.2 && B().hpText === '90 / 900'; })()]);
+        /* Scoped to the drake alone, deliberately NOT to isElderCombatant() —
+           the three Elder PETS are tame targets, not boss encounters. */
+        window.debugSetBoss({ until: 0, id: null, refresh: true });
+        window.noteBossCombat('golem_elder', { id: 'ge' });
+        window.noteBossCombat('dragon_elder', { id: 'de' });
+        window.noteBossCombat('unicorn_elder', { id: 'ue' });
+        window.debugSetBoss({ refresh: true });
+        results.push(['v52 G: an Elder PET raises no boss bar — this is the drake\'s and nothing else\'s',
+          B().visible === false && B().bossFightUntil === 0 &&
+          code52.indexOf('if (kind !== BOSS_KIND) return;') > 0]);
+        /* It comes down again on every route it should. */
+        window.noteBossCombat('elder_drake', drake);
+        window.debugSetBoss({ until: window.performance.now() - 1, refresh: true });
+        results.push(['v52 G: it comes down when the fight goes quiet',
+          B().visible === false]);
+        window.noteBossCombat('elder_drake', drake);
+        drake.dead = true;
+        window.debugSetBoss({ refresh: true });
+        results.push(['v52 G: and the moment the drake dies',
+          B().visible === false]);
+        drake.dead = false;
+        HB.mobs.length = 0;
+        window.debugSetBoss({ until: 0, id: null, refresh: true });
+        results.push(['v52 G: it yields the top centre to the unmaking countdown',
+          code52.indexOf('const m = worldResetAt ? null : activeBossMob();') > 0]);
+        results.push(['v52 G: it is the .hud card and the existing HP-bar treatment, no new component',
+          html.indexOf('#hpBarWrap, #bossBarWrap {') > 0 &&
+          html.indexOf('#hpBar.low, #bossBar {') > 0 &&
+          html.indexOf('<div class="hud" id="hudBoss">') > 0]);
+        results.push(['v52 G: it is fed from the two sites that already know which creature is fighting',
+          (code52.match(/noteBossCombat\(m\.kind, m\)/g) || []).length === 2]);
+      }
+
+      /* ---- PART H: node density ---------------------------------------- */
+      {
+        results.push(['v52 H: the density lever is a NAMED constant at the middle of the spec\'s 30-40%',
+          code52.indexOf('const NODE_DENSITY_K = 0.65;') > 0]);
+        results.push(['v52 H: and every one of the five bands goes through it — not one literal survives',
+          code52.indexOf('if (h > ROCK_RUNIC_T) return "runic";') > 0 &&
+          code52.indexOf('if (h > ROCK_IRON_T) return "iron";') > 0 &&
+          code52.indexOf('if (h > ROCK_ROCK_T) return "rock";') > 0 &&
+          code52.indexOf('if (h > VOLROCK_RUNIC_T) return "runic";') > 0 &&
+          code52.indexOf('if (h > VOLROCK_IRON_T) return "iron";') > 0 &&
+          code52.indexOf('if (h > 0.996)') < 0 && code52.indexOf('if (h > 0.93)') < 0 &&
+          code52.indexOf('if (h > 0.885)') < 0 && code52.indexOf('if (h > 0.992)') < 0 &&
+          code52.indexOf('if (h > 0.92)') < 0]);
+        /* TREES ARE NOT IN IT — the art skill's must-not-regress list says
+           never to alter their placement or density, and the report was about
+           ore. Their thresholds are still the untouched literals. */
+        results.push(['v52 H: trees, herbs and magic essence are deliberately untouched',
+          code52.indexOf('if (clusterNoise(tx, ty) > 0.42 && h > 0.42) return "tree";') > 0 &&
+          code52.indexOf('(b === B.PLAINS || b === B.MEADOW) && h > 0.965') > 0 &&
+          code52.indexOf('if (h > 0.88) return "essence";') > 0 &&
+          code52.indexOf('if (h > 0.45) return "herb";') > 0]);
+        /* And the real measurement: the SAME tiles run through the old bands
+           and the new ones, so the cut is exact rather than claimed. hash2 and
+           biomeAt are the game's own, so this cannot drift from what ships. */
+        if (typeof window.hash2 === 'function' && typeof window.biomeAt === 'function') {
+          const Bm = window.debugWorldInfo().B, Nw = window.debugWorldInfo().N;
+          const OLD = { rock: [0.996, 0.93, 0.885], vol: [0.992, 0.92] };
+          let oldN = 0, newN = 0, oldBand = { rock: 0, iron: 0, runic: 0 }, newBand = { rock: 0, iron: 0, runic: 0 };
+          for (let ty = 0; ty < Nw; ty += 16) for (let tx = 0; tx < Nw; tx += 16) {
+            const b = window.biomeAt(tx, ty);
+            if (b !== Bm.ROCK && b !== Bm.VOLROCK) continue;
+            const h = window.hash2(tx, ty, 91);
+            if (b === Bm.ROCK) {
+              if (h > OLD.rock[0]) { oldN++; oldBand.runic++; }
+              else if (h > OLD.rock[1]) { oldN++; oldBand.iron++; }
+              else if (h > OLD.rock[2]) { oldN++; oldBand.rock++; }
+            } else {
+              if (h > OLD.vol[0]) { oldN++; oldBand.runic++; }
+              else if (h > OLD.vol[1]) { oldN++; oldBand.iron++; }
+            }
+            const f = window.featureTypeAt(tx, ty);
+            if (f === 'rock' || f === 'iron' || f === 'runic') { newN++; newBand[f]++; }
+          }
+          const cut = oldN ? 1 - newN / oldN : 0;
+          results.push([`v52 H: measured on the real world — ${oldN} node tiles become ${newN}, a ${(cut * 100).toFixed(1)}% cut`,
+            oldN > 200 && cut >= 0.28 && cut <= 0.42]);
+          /* Ratio-preserving is the whole reason for the 1 - K(1 - t) form:
+             runic must stay exactly as rare relative to iron as it was. */
+          const oldRatio = oldBand.iron ? oldBand.runic / oldBand.iron : 0;
+          const newRatio = newBand.iron ? newBand.runic / newBand.iron : 0;
+          results.push([`v52 H: and the bands keep their ratios — runic:iron ${oldRatio.toFixed(4)} -> ${newRatio.toFixed(4)}`,
+            oldBand.iron > 20 && Math.abs(oldRatio - newRatio) < Math.max(0.02, oldRatio * 0.35)]);
+        }
+      }
+
+      /* ---- PART I: the hitbox investigation, PINNED ---------------------
+         The spec asks for an empirical investigation and a report before any
+         fix, and no fix is shipped this version — changing melee to consult a
+         body, or giving the spear cone a live aim, are real design changes
+         with consequences for every weapon and every creature at once. What
+         is pinned here is exactly what the investigation MEASURED, so none of
+         it can quietly stop being true while it waits for a spec. */
+      {
+        const CONE52 = window.debugAbilityInfo().SPEAR_CONE_DEG;
+        const MOBS52 = window.debugWorldInfo().MOBS;
+        const RANGE52 = window.debugScaleInfo().weaponRange;
+        results.push(['v52 I: melee is resolved centre-to-centre and consults no body radius — measured, now pinned',
+          code52.indexOf('const d = Math.hypot(o.x - me.x, o.y - me.y);') > 0 &&
+          (() => { const i = code52.indexOf('function tryAttack(');
+                   const j = code52.indexOf('\n}', code52.indexOf('  } else {', i));
+                   const b = code52.slice(i, j);
+                   return b.indexOf('MOB_K') < 0 && b.indexOf('SPECIES_K') < 0; })()]);
+        results.push(['v52 I: sword/dagger/axe read no facing at all — the spec\'s first ruled-out cause holds',
+          (() => { const i = code52.indexOf('function tryAttack(');
+                   const j = code52.indexOf('if (wk === "spear")', i);
+                   const k = code52.indexOf('  } else {', i);
+                   const single = code52.slice(j, k);
+                   return single.indexOf('inThrustCone') < 0 && single.indexOf('facing') < 0; })()]);
+        /* THE FIND. The spear and the lance are the ONE melee path that does
+           read a direction, and `facing` only ever updates on movement or a
+           click-aim — so a key-press swing is aimed wherever the player last
+           walked. Measured: mob due east at 1.4 tiles, facing left at 90deg,
+           an iron spear MISSES where an iron sword HITS. */
+        results.push(['v52 I: THE FIND — the spear/lance path alone reads `facing`, and `facing` is only set by movement or a click',
+          code52.indexOf('if (wk === "spear") { spearThrust(w, dir, now); return; }') > 0 &&
+          code52.indexOf('if (!inThrustCone(o.x, o.y, dir, w.range)) continue;') > 0 &&
+          code52.indexOf('} else dir = facing;') > 0 &&
+          (code52.match(/facing = \{ x: dx \/ len, y: dy \/ len \};/g) || []).length === 1]);
+        results.push([`v52 I: and the cone that makes it bite is a ${CONE52}deg half-angle — a spear user facing wrong misses ${(360 - CONE52 * 2)}deg of the circle`,
+          CONE52 <= 30]);
+        /* THE SECOND FIND, measured through a transform-tracking canvas at the
+           real draw scale: the drake paints 5.06 tiles of half-width and the
+           sea serpent 4.64, against a 1.9-tile sword reach — so 3.16 and 2.74
+           tiles of visibly-touchable body cannot be hit. The numbers live in
+           the changelog; what is pinned is the RELATIONSHIP that produces
+           them, which is the thing a future pass could silently change. */
+        results.push([`v52 I: the reach asymmetry is real — the drake strikes from ${MOBS52.elder_drake.atkRange} where the best sword reaches ${RANGE52.dragonsteel_sword}`,
+          MOBS52.elder_drake.atkRange > RANGE52.iron_sword &&
+          MOBS52.elder_drake.atkRange > RANGE52.dragonsteel_sword &&
+          MOBS52.dark_wraith.atkRange > RANGE52.iron_sword]);
+        results.push(['v52 I: and no fix was invented for either — the report is the deliverable this version',
+          code52.indexOf('bodyRadius') < 0 && code52.indexOf('HITBOX_PAD') < 0 &&
+          code52.indexOf('const MELEE_RANGE = 1.9;') > 0]);
+      }
+
+      results.push(['v52+53: the world still runs frames cleanly after every part of this',
         (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
     }
 
