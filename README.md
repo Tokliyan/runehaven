@@ -195,6 +195,41 @@ current one (a redeem should never be able to LOWER someone's tier).
 No new table needed — this is one new recognized key in the existing
 `redeem_codes.items` JSON shape.
 
+**PART G — the Elder Drake gets a real boss-fight sequence, not a
+reskinned mob encounter.** Confirmed live: fighting it uses the exact
+same generic combat HUD as any regular mob — no dedicated boss health
+bar, no special encounter framing. The tension music trigger already
+works correctly and stays as-is. Add a real boss health bar overlay
+(name + a large, visible HP bar, screen-anchored, not the small
+floating text every other mob uses) that appears specifically while in
+combat with `elder_drake` and disappears when the fight ends. This is
+the one thing genuinely missing between "a big mob with a boss-tier
+stat block" and "a boss fight."
+
+**PART H — reduce gathering-node density.** Confirmed by direct report:
+after the recent density passes (v47, v49, v51), ore/resource nodes now
+read as visually cluttered rather than plentiful. Find the real, live
+constant governing ground-feature density (the build has full file
+search, locate it directly rather than guess at a name) and reduce it —
+propose roughly 30-40% down from its current value — with a real
+before/after tile count, the same discipline as every prior density
+change, not a blind number swap.
+
+**PART I — hitbox investigation, genuinely not diagnosed yet, reported
+directly rather than guessed at.** Direct report: combat hit
+registration feels off. Investigated two plausible causes directly and
+ruled both out: standard melee hit-detection is purely radius-based
+(`tryAttack()`, ~line 7861) and does not use facing direction at all,
+so the WASD movement-rotation fix could not have affected it; ranged/
+click-aimed attacks use `screenToWorld(e.clientX, e.clientY)`,
+independent real screen math unrelated to keyboard movement. Neither
+obvious candidate explains the report. Do not guess further blind —
+investigate empirically: test hit registration at various ranges,
+movement states (moving vs stationary, mounted vs not), and weapon
+types, and report exactly what is actually wrong before proposing a
+fix, the same rigor as any other genuinely undiagnosed report this
+project has handled.
+
 **Proof gates:** standard gauntlet plus confirm a fresh account with no
 `guild_tier` set reads as tier 1 with no error, confirm each of the
 five Tier 2 values is genuinely stronger than its Tier 1 counterpart
