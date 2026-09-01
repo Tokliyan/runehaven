@@ -102,7 +102,53 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v53 — Guild Tier 2, Grantable)
+## Confirmed, locked spec for the next build (v52+53 combined — Session Resume, Colosseum Rework & Guild Tier 2)
+
+Two versions combined into one run, per direct request — neither had
+built yet, so this replaces both as a single spec rather than running
+sequentially.
+
+**PART A — session resume gets a real, visible pause.** Confirmed live:
+`resumeSession()` fills the name field and then directly calls `await
+enterBtn.onclick()` with zero pause — a returning player has no chance
+to change settings, pick a different class, or decide not to resume at
+all before they're already in the world. Add a brief, visible
+"Welcome back — entering in a moment" state with a real, clickable
+cancel that stops the auto-enter and returns control to the normal
+login screen, fully filled in as it already is today. Propose a
+1.5-2 second window before auto-submitting, long enough to read and
+react, short enough that it still feels like the seamless resume it
+was built to be for anyone who does nothing.
+
+**PART B — the Ruined Colosseum, reworked into a real structured
+duel.** Confirmed live: currently just `COLOSSEUM_R = 9`, an open PvP
+ring with no structure — the bible's own "open player duels" framing,
+built literally rather than ceremonially. Rebuild as:
+
+- **Visually much larger and more fantastical** — this is meant to be a
+  real landmark people travel to, not a PvP flag on the ground. Reuse
+  the flat-shaded, no-gradient house style, but scale it up
+  significantly from its current footprint and give it real presence —
+  broken columns, a genuine arena bowl shape, something that reads as a
+  destination from a distance the way the Eternal Tower already does.
+- **Two named podiums**, fixed positions inside the ring. A duel only
+  becomes possible when two different players are each standing on a
+  podium at the same time — not simply "both inside the ring" as PvP
+  currently works elsewhere.
+- **A real confirmation step before the fight starts** — both players
+  must explicitly confirm (a prompt each of them accepts) before combat
+  actually becomes live between them; standing on a podium alone must
+  never itself deal damage or force a fight neither player agreed to.
+- **A real reward on winning** — the victor receives Runic Stone,
+  amount left as a build judgment call but should feel like a
+  meaningful, not trivial, reward for a genuine 1v1 someone chose to
+  enter.
+- **Everywhere else inside the ring keeps its existing behavior** — the
+  current "both players inside the ring" PvP-enabled rule stays exactly
+  as it is for anyone not using the podiums; this is an addition, not a
+  replacement.
+
+## PART C onward — Guild Tier 2, Grantable
 
 **Scope, deliberately narrowed:** this version builds Tier 2 as an
 admin/redeem-code-granted upgrade, not an earn-through-play milestone
@@ -112,7 +158,7 @@ specifically what was asked: a way to grant a stronger guild buff
 through Supabase or a code, confirmed against the real, current buff
 implementations before writing new numbers.
 
-**PART A — a real `guild_tier` column, defaulting to 1.**
+**PART C — a real `guild_tier` column, defaulting to 1.**
 ```sql
 alter table players add column guild_tier integer default 1;
 ```
@@ -120,7 +166,7 @@ Degrades gracefully exactly like every other optional column this
 project has ever added — a missing column or a null value must always
 read as tier 1, never throw, never block login.
 
-**PART B — five real Tier 2 upgrades, each confirmed against the live
+**PART D — five real Tier 2 upgrades, each confirmed against the live
 Tier 1 value it replaces, not guessed:**
 
 - **Hollow Choir** (confirmed live: `RESPAWN_SECONDS * 1000` bypassed entirely at Tier 1 — instant respawn already). Tier 2 adds combat-logout immunity: the native leave-warning prompt from `COMBAT_LOGOUT_MS` never fires for this guild at Tier 2, on top of the existing instant respawn.
@@ -134,12 +180,12 @@ be updated to check `myGuildTier() >= 2` and apply the upgraded value
 instead — a single new helper function, not five different inline
 patterns.
 
-**PART C — grantable via Supabase directly.** Setting a player's
+**PART E — grantable via Supabase directly.** Setting a player's
 `guild_tier` to `2` in the `players` table takes effect on next login,
 the same pattern as `role` and `guild` already use — no new mechanism
 invented, this reuses the exact precedent.
 
-**PART D — grantable via redeem code.** Confirmed live:
+**PART F — grantable via redeem code.** Confirmed live:
 `normalizeRedeemItems()` and the redeem flow already parse a JSON
 `items` object per code. Extend the accepted shape with one new
 optional key, `_guildTier` — when present in a code's `items` JSON, in
