@@ -4604,7 +4604,7 @@ function unicornElderTile(seed) {
    sibling is so a harness can sweep seeds. Returns null if the whole budget
    finds no meadow — a legitimate world state, since Sacred Meadow is a rare
    variant of a rare band, and the caller simply places nothing that day. */
-const PET_COUNT_MULT = 2;   // TUNABLE — global pet density lever, doubled for a small early player base
+const PET_COUNT_MULT = 4;   // TUNABLE — quadrupled per direct request, real abundance for a small early player base
 /* CHANGED per direct request: the original "hidden somewhere in a random
    Sacred Meadow tile, only at twilight" placement led to a real, reported
    problem — found once, fled during taming, then genuinely unfindable
