@@ -3076,7 +3076,7 @@ function guildIs(id) { return myGuild() === id; }
 function guildPlateLines(id) {
   const g = GUILDS[id];
   if (!g) return [];
-  return g.motto ? [g.name, g.motto] : [g.name];
+  return [g.name];   // motto removed per direct request - badge + name only, no separate quote line
 }
 
 /* --- the five advantages, plus the sixth ---------------------------------
