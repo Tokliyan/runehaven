@@ -2917,7 +2917,7 @@ const WILD_SPECIES = {
      this creature under "Admin Only", beside the Elder tier and not inside
      it, and every other line here says the same: PET_RARITY "admin",
      ELDER_SPECIES untouched. Flagged in the changelog. */
-  duskfox_elder:   { name: "Duskfox Elder",   base: 0.15, flier: false, biomes: [], adminOnly: true, duskOnly: true, bloodFavored: false, shunnedByBlood: false },
+  duskfox_elder:   { name: "Duskfox Elder",   base: 0.15, flier: false, biomes: [], adminOnly: true, bloodFavored: false, shunnedByBlood: false },
 };
 /* ============ Mob Rarity: THE BIBLE'S RARITY TABLE, TRANSCRIBED =========
    Nothing here is invented — every entry is the tier the bible's "PETS — FULL
@@ -4605,17 +4605,20 @@ function unicornElderTile(seed) {
    finds no meadow — a legitimate world state, since Sacred Meadow is a rare
    variant of a rare band, and the caller simply places nothing that day. */
 const PET_COUNT_MULT = 2;   // TUNABLE — global pet density lever, doubled for a small early player base
-const DUSKFOX_TILE_TRIES = 40000;   // TUNABLE; ~13x the sweep a meadow needs
+/* CHANGED per direct request: the original "hidden somewhere in a random
+   Sacred Meadow tile, only at twilight" placement led to a real, reported
+   problem — found once, fled during taming, then genuinely unfindable
+   again with no way to relocate it. Moved to a fixed, always-known spot
+   near the Spawn Forge instead: guaranteed reachable, no search, and if
+   it flees during a taming attempt the player knows exactly where to
+   walk back to. Twilight-only visibility is intentionally REMOVED along
+   with this change — it is not "hidden AND only visible at dusk" AND
+   "impossible to relocate", it can only reasonably be one of those. */
 function duskfoxElderTile(seed) {
-  for (let a = 0; a < DUSKFOX_TILE_TRIES; a++) {
-    const r = hash2(seed, a, 96011);
-    const idx = Math.min(N * N - 1, Math.floor(r * N * N));
-    const tx = idx % N, ty = Math.floor(idx / N);
-    if (biomeAt(tx, ty) !== B.SACMEADOW) continue;
-    if (BLOCKED.has(B.SACMEADOW)) continue;      // it is not, and never was
-    return [tx, ty];
-  }
-  return null;
+  const tx = Math.round(SPAWN_FORGE.x + 5), ty = Math.round(SPAWN_FORGE.y - 5);
+  if (tx < 2 || ty < 2 || tx >= N - 2 || ty >= N - 2) return null;
+  if (BLOCKED.has(biomeAt(tx, ty))) return null;
+  return [tx, ty];
 }
 /* The twilight window, tuned against the real day curve exactly as v17's
    DAWN_END was. duskGlow() renders its dusk lobe as a peak at t = 0.55
