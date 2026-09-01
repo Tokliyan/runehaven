@@ -801,6 +801,106 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('guild nameplates rendered — five hashed guilds plus the admin-granted sixth');
     }
 
+    /* ===================== v52+53 SWEEP ==================================
+       Three genuinely new render branches this version, and none of them is
+       reachable from the plain five-frame boot: the rebuilt Colosseum stands
+       1000 tiles from the Tower, the boss bar only exists during a drake
+       fight, and the podium glow only lights when a duel is actually
+       possible. No species, mob, weapon kind or class shipped, so the
+       *_LIST arrays above needed nothing — this is a sweep, not a list.
+       ==================================================================== */
+    if (typeof window.debugDuelInfo === 'function') {
+      const d52 = window.debugDuelInfo();
+      const wi52 = window.debugWorldInfo();
+      const v37c = window.debugV37Info ? window.debugV37Info() : null;
+      const CX = v37c ? v37c.COLOSSEUM.x : null, CY = v37c ? v37c.COLOSSEUM.y : null;
+      if (CX === null) { console.log('COVERAGE GAP: no Colosseum to sweep'); process.exit(1); }
+
+      /* Every piece kind, drawn directly at synthetic coordinates first, so a
+         kind that the live camera never happens to frame is still covered. */
+      const kinds52 = {};
+      for (const cp of window.colosseumPieces()) kinds52[cp.k] = (kinds52[cp.k] || 0) + 1;
+      const WANT52 = ['col', 'tier', 'wall', 'rubble', 'podium'];
+      for (const k of WANT52) {
+        if (!kinds52[k]) { console.log('COVERAGE GAP: no Colosseum piece of kind ' + k); process.exit(1); }
+      }
+      for (const cp of window.colosseumPieces()) {
+        try { window.drawColosseumPiece(cp, 1000); } catch (e) { if (!caught) caught = e; }
+        n++;
+      }
+      try { window.drawColosseumFloor(1000); } catch (e) { if (!caught) caught = e; }
+      n++;
+      console.log('colosseum pieces drawn: ' + window.colosseumPieces().length +
+                  ' across ' + WANT52.length + ' kinds (' +
+                  WANT52.map(k => k + ' ' + kinds52[k]).join(', ') + ')');
+
+      /* Then the real thing: stand in the arena and pump real frames, so the
+         pieces go through the live entity sort rather than a direct call. */
+      window.debugSetPlayer({ x: CX, y: CY, hp: 100 });
+      for (let f = 0; f < 4; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n++; }
+
+      /* The podium glow, which only lights when a duel is genuinely possible —
+         so it needs a real challenger standing on the opposite podium. */
+      const oth52 = window.debugCombatHandles().others;
+      window.debugSetPlayer({ x: d52.podiums[0].x, y: d52.podiums[0].y });
+      oth52.set('CoverageRival', { x: d52.podiums[1].x, y: d52.podiums[1].y,
+        tx: d52.podiums[1].x, ty: d52.podiums[1].y, cls: 'Knight', level: 1,
+        hp: 100, maxHp: 100, lastHeard: 1e15, space: 'main', dead: false });
+      if (window.debugDuelInfo().candidate !== 'CoverageRival') {
+        console.log('COVERAGE GAP: the podium pairing never became possible'); process.exit(1);
+      }
+      for (let f = 0; f < 4; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n++; }
+      window.debugSetDuel({ accept: true });
+      window.duelNoteRemoteAccept('CoverageRival');
+      if (window.debugDuelInfo().duel.state !== 'active') {
+        console.log('COVERAGE GAP: the duel never went active'); process.exit(1);
+      }
+      for (let f = 0; f < 4; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n++; }
+      window.debugSetDuel({ reset: true });
+      oth52.delete('CoverageRival');
+      console.log('podiums rendered — idle, offered and active, with the glow live');
+
+      /* PART G: the boss bar, over real frames, at three fill levels plus the
+         empty state either side of it. */
+      const mobs52 = window.debugCombatHandles().mobs;
+      window.debugSetPlayer({ x: wi52.SPAWN.x + wi52.SAFE_RADIUS + 40, y: wi52.SPAWN.y });
+      const wp52 = window.debugWorldInfo().player;
+      const drake52 = { id: 'coverdrake', kind: 'elder_drake', x: wp52.x + 3, y: wp52.y,
+        hp: 900, maxHp: 900, dead: false, fx: -1, fy: 0, ph: 0, state: 'aggro',
+        lastAtk: 0, windupUntil: 0 };
+      mobs52.push(drake52);
+      let barSeen = 0;
+      for (const hp of [900, 500, 40]) {
+        drake52.hp = hp;
+        window.noteBossCombat('elder_drake', drake52);
+        for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n++; }
+        if (window.debugBossInfo().visible) barSeen++;
+      }
+      if (barSeen !== 3) { console.log('COVERAGE GAP: the boss bar did not render at all three fills'); process.exit(1); }
+      window.debugSetBoss({ until: 0, id: null, refresh: true });
+      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n++; }
+      if (window.debugBossInfo().visible) { console.log('COVERAGE GAP: the boss bar outlived its fight'); process.exit(1); }
+      mobs52.length = 0;
+      console.log('boss bar rendered at 100/56/4% and taken down again');
+
+      /* PART A: the resume banner, raised and cancelled for real, so both of
+         its states go through the real DOM path rather than a source grep. */
+      window.debugSetResume({ pauseMs: 30 });
+      const pend52 = window.resumePause('CoverageName');
+      const seen52 = window.debugSessionInfo().noticeVisible;
+      await pend52;
+      window.debugSetResume({ pauseMs: 60000 });
+      const pend53 = window.resumePause('CoverageName');
+      window.debugSetResume({ pressCancel: true });
+      await pend53;
+      if (!seen52 || window.debugSessionInfo().noticeVisible) {
+        console.log('COVERAGE GAP: the resume banner never went up, or never came down'); process.exit(1);
+      }
+      window.debugSetResume({ pauseMs: window.debugSessionInfo().RESUME_PAUSE_MS });
+      n += 2;
+      console.log('resume banner raised and cancelled through the real DOM');
+    }
+
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {

@@ -53,6 +53,326 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-01 (v52+53 — the Colosseum rebuilt, the drake's own bar, a pause before the resume, thinner ore)
+
+Nine parts, and four of them are rendering: PART B rebuilds the Ruined
+Colosseum at more than twice its radius and finally sorts it properly, PART G
+gives the bible's only boss its own health bar, PART A adds one aside card to
+the login screen, and PART H takes a third of the ore nodes off the ground.
+PARTS C-F (Guild Tier 2, the column, the two grant paths) are mechanics and
+live in the commit message. PART I is an investigation and its findings are at
+the bottom of this entry, because two of them are about what a player can see
+and cannot touch.
+
+- **THE COLOSSEUM WAS NEVER A PLACE, AND THE FIX IS SCALE PLUS SORTING.** v37
+  built the bible's "open player duels" line literally — `COLOSSEUM_R = 9` and
+  one 16-column ring, a PvP flag on the ground. **9 → 20** is 2.22x the radius
+  and 4.9x the ground it covers, which is what puts it beside the Eternal Tower
+  as a thing you can see you are walking toward. ⚠️ **Three other rules move
+  with the radius and all three are correct rather than incidental**: the PvP
+  ring itself, the base-building keep-out (`COLOSSEUM_R + 2`) and the
+  fast-travel landing exclusion. None is a new rule; each is the existing one
+  measured against a real arena. The placement search is untouched and still
+  clears the Bazaar, the Ancient Forge and the volcano by 424 tiles, so a
+  radius of 20 cannot bring it into contact with anything.
+- **⚠️ IT IS A PIECE LIST NOW, AND THAT IS THE LOAD-BEARING HALF.** v37 drew
+  the whole structure inside ONE entity at one sort key. At a 7.2-tile ring
+  that survived; at 16.4 it would have painted its far columns over a player
+  standing behind them — this file's own rule is that EVERY entity sorts
+  back-to-front by `x + y`, and it is the most common isometric bug there is.
+  So the composition is built once into `colosseumPieces()` and each piece goes
+  into `ents` on its own key, exactly as `ruinPieces` has since v20. **70
+  pieces across five kinds** on the harness seed (col 22, tier 17, wall 23,
+  rubble 6, podium 2), all swept in `run5`. The sand goes in at
+  `COLOSSEUM.y - 0.4` so it paints UNDER everything standing on it.
+- **The bowl is three concentric courses, and that is what makes it read as an
+  arena rather than a ring of posts.** Tall broken outer stands at 0.82R, a
+  lower seating tier at 0.62R, a low retaining wall at 0.42R holding the sand.
+  Nothing about the language changed — the same ruin-stone greys, the same flat
+  0.72/0.55 facet split through `drawBox`, hard edges, no gradients, no
+  outlines. It is still deliberately RUINED: whole runs of each course are
+  missing at fixed indices (so the silhouette is the same every time, the
+  hand-composed-ruin rule applied to a second structure) and the gaps carry
+  fallen rubble.
+- **The podiums are the Shrine's and the Dragon Elder Altar's own stepped
+  stone, deliberately** — three shrinking courses in `#9a9084 / #a8a094 /
+  #b4ac9e`, because this is now a third thing in the world you walk up to and
+  stand on, and the three should read as one civilisation.
+- **⚠️ The gold pulse on a podium marks a duel that is POSSIBLE, never a podium
+  that exists.** It lights only when there is genuinely someone on the opposite
+  podium. That matters twice: gold on the ground has meant Elder since v39, and
+  this is HUD-grade information rather than a creature, so it is a soft ellipse
+  wash on the step rather than the `aura()` an Elder wears. It commits nobody
+  and deals nothing — the confirmation is a keypress each, and standing on a
+  podium alone can never start a fight.
+- **PART G IS THE `.hud` CARD FOR THE SEVENTH VERSION RUNNING** (v33, v35, v38,
+  v39, Mob Rarity, v46, this), plus the `#hpBarWrap` / `#hpBar` bar treatment
+  reused verbatim underneath it. The only values that are new are a position, a
+  width and a height. **It is RED because v16's rule says red means hostile and
+  gold means friendly**, and `#bossBar` literally joins `#hpBar.low`'s rule —
+  one red bar language in the game, and the boss is simply always wearing it.
+- **⚠️ It sits at the top centre, which the tutorial line and the unmaking
+  countdown also use, and the countdown wins.** The tutorial cannot co-occur
+  (it runs inside the Spawn Safe Zone; the drake stands on the volcano) but a
+  ten-second world-ending countdown genuinely can, and burying the one card in
+  the game that has to be read would be the wrong outcome. One condition:
+  `worldResetAt ? null : activeBossMob()`. The fight is not interrupted; only
+  its bar yields.
+- **The bar is scoped to `elder_drake` alone and deliberately NOT to
+  `isElderCombatant()`.** That predicate also matches the three Elder PETS,
+  which are tame targets — a boss health bar over a Unicorn Elder you are
+  trying to tame would be exactly backwards. Pinned from both directions in
+  `run4`.
+- **PART A's banner is the PIN notice card, reused.** `#resumeNotice` joins
+  `#pinNotice`'s rule and `#resumeCancel` joins `#pinProtect`'s bordered
+  text-button idiom; the two CSS lines this version adds are a display and a
+  margin, so the cancel can sit inside the aside instead of under it. That is
+  the eighth version running to add to a card without inventing a component.
+- **⚠️ PART H IS 35% OF THE ORE OFF THE GROUND, AND IT IS MEASURED.** The
+  report is that nodes read as cluttered rather than plentiful. The first thing
+  that had to be established is that **v47, v49 and v51 are not the cause** —
+  node density has never been a named constant (it was five inline hash
+  thresholds) and `git log -L` shows not one has moved since v46. Those three
+  versions moved pets and mobs. Now one lever, `NODE_DENSITY_K = 0.65`, applied
+  as `t' = 1 - K(1 - t)`, which is ratio-preserving: runic stays exactly as rare
+  relative to iron as v6's "runic nodes too frequent" fix left it.
+  **Measured over a 1,000,000-tile stride-4 census of the real map, before and
+  after:**
+
+  ```
+                 before    after    change
+  rock             2236     1451    -35.1%
+  iron             4990     3224    -35.4%
+  runic             364      231    -36.5%
+  ore total        7590     4906    -35.4%
+  tree            38415    38415     0.0%   <- untouched
+  herb             1608     1608     0.0%   <- untouched
+  magic essence    2207     2207     0.0%   <- untouched
+  ```
+  Extrapolated to the whole 16,000,000-tile map that is roughly **121,000 ore
+  nodes becoming 78,000**.
+- **TREES ARE DELIBERATELY NOT IN IT**, and that is this file's own
+  must-not-regress list speaking: "organic tree clustering (user likes it —
+  never alter placement/density)". It also matches the report's own words
+  ("ore/resource nodes") and the file's existing definition of that set in
+  `GUILD_VEIN_TYPES`. Herbs, magic essence and the Golden Orb are out for the
+  same reason they are out of that set: none of them is ore or stone.
+
+## PART I — THE HITBOX REPORT (an investigation, not a fix)
+
+The spec asks for this to be investigated empirically and **reported before any
+fix is proposed**, and no fix ships this version. Everything below was measured
+by booting the real game and driving real swings, plus a transform-tracking
+canvas that maps every path coordinate through the live CTM. The numbers are
+here; `run4` pins the relationships that produce them so none of it can go
+quiet while it waits for a spec.
+
+**The spec's own two ruled-out causes hold — but its premise is incomplete.**
+It says standard melee "does not use facing direction at all". That is true of
+sword, dagger and axe, and measurement confirms it: with the target due east
+and `facing` left at 0°, 90° or 180°, an iron sword hits every time. It is
+**false for the spear and the lance**, and that is the find.
+
+**FINDING 1 — the spear and lance are the only melee path that reads a
+direction, and the direction it reads is stale.** `tryAttack()` routes them to
+`spearThrust()`, which tests `inThrustCone()` against `dir` — and a key-press
+swing has no aim, so `dir = facing`, which only ever updates when the player
+**moves** or **click-aims**. Measured, target due east at 1.4 tiles:
+
+```
+                    last aimed    key-press swing    click-aimed swing
+iron_sword               0deg     HIT                HIT
+iron_sword              90deg     HIT                HIT
+iron_sword             180deg     HIT                HIT
+iron_spear               0deg     HIT                HIT
+iron_spear              30deg     MISS               HIT
+iron_spear              90deg     MISS               HIT
+iron_spear             180deg     MISS               HIT
+dragonsteel_lance       90deg     MISS               HIT
+```
+`SPEAR_CONE_DEG` is a **25° half-angle**, so 310° of the circle is a guaranteed
+miss for a spear user who last walked the wrong way — with the same key, the
+same target and the same distance as a sword that connects. That is exactly the
+shape of "hit registration feels off": an invisible state deciding it. The cone
+itself is v27's deliberate design and is not the bug; the **stale `facing`
+underneath it** is what makes it read as broken.
+
+**FINDING 2 — hit detection is centre-to-centre and never consults a body, and
+on the two biggest creatures that is a large visible gap.** Painted half-widths
+through the real draw path at real scale, against a 1.9-tile sword reach:
+
+```
+                 MOB_K   half-width          outside sword reach
+elder_drake       4.35   124.5px = 5.06 tiles      3.16 tiles
+sea_serpent       3.42   114.2px = 4.64 tiles      2.74 tiles
+troll             2.33    44.3px = 1.80 tiles      -
+demon_knight      3.80    29.6px = 1.21 tiles      -
+dark_wraith       1.40    22.4px = 0.91 tiles      -
+adult_golem       3.10    20.5px = 0.83 tiles      -
+goblin            1.50    13.5px = 0.55 tiles      -
+bandit            1.85    10.7px = 0.44 tiles      -
+```
+So on a Goblin the silhouette and the reach agree; on the Elder Drake more than
+three tiles of visibly-touching body cannot be hit at all. Note that a good part
+of the drake's width is wing rather than torso — but a player reads the
+silhouette, not the torso.
+
+**FINDING 3 — the reach asymmetry compounds it.** Both numbers are
+centre-to-centre: `dark_wraith` strikes from **4.5** and `elder_drake` from
+**3.5**, where the best melee weapon in the game reaches **2.9** and a sword
+reaches 1.9. Against the drake you must close 1.6 tiles *inside* its range,
+through its own body, to land a sword hit.
+
+**RULED OUT, with measurements.** There is no staleness in the melee path — the
+swing resolves against the live mob object in the same frame. And for PvP,
+rendering and combat both read `o.x`, so what you see is exactly what you swing
+at; the smoothing lag (measured at **0.690 tiles**, 36.3% of the sword reach,
+at `PLAYER_SPEED` 9.2 and `BROADCAST_HZ` 10) is a lag behind the target's truth
+on their own machine, not a mismatch between sight and swing. Movement state and
+mount state change nothing at all.
+
+**WHAT A FIX WOULD BE, and why it is not in this version.** Either candidate is
+a real design change with consequences for every weapon and every creature at
+once — give melee a per-creature body radius (which re-tunes every mob fight in
+the game), or make a key-press spear swing aim at its nearest valid target
+rather than at `facing` (which changes what a spear IS, since v27's whole point
+is that it is a line you point). Under this repo's own rule 5 that is a spec's
+job, not an overnight build's. **The smallest honest first move is Finding 1**,
+because it is one weapon family, it is unambiguous, and nobody chose it.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus the one place its own premise
+turned out to be incomplete. All shipped through the full gate (parse clean,
+`run3` `CAUGHT ERROR: none`, `run4` **1413/1413 with zero FAIL**, `run5` 1,408
+coverage draws clean, 68/68 flat greps including the preservation half) —
+refinements to consider, not unfinished work.
+
+1. **⚠️ THE SIX STALE GATES WERE RE-PINNED, AND TWO OF THEM NOW ENCODE A BIBLE
+   DEVIATION IN WRITING.** This was the blocker that stopped last night's run,
+   and the decision to re-pin came from the owner directly. Both underlying
+   changes were deliberate live hotfixes, so the game was right and only the
+   test record was stale. What is now permanently asserted: **the mountable set
+   is ten, not the bible's nine**, and the tenth is the Duskfox Elder (whose
+   MOUNTABLE PETS line names exactly nine and does not include it); and **the
+   bible's "twilight sacred grove" is retired as proof-gated behaviour** — it
+   stands on a fixed tile near the Spawn Forge and is visible at every hour.
+   Each gate is UPDATED rather than relaxed and several are now stronger than
+   what they replaced: the mountable set is still an exact set (the nine plus
+   that one and nothing else), the visibility gate sweeps all 101 frames of the
+   day for "visible at every hour" where it used to sweep for "dusk only", and
+   the placement is pinned as the RELATIONSHIP `SPAWN_FORGE + (5, -5)` rather
+   than as a coordinate. Three gates were added alongside them: the 2x mount
+   speed, the walk-back distance from spawn, and the fact that the tenth mount
+   seats on `MOUNT_SEAT_BASE` because it has no measured back of its own.
+2. **⚠️ PART I SHIPS NO FIX, DELIBERATELY, AND THE SPEC'S OWN PREMISE WAS
+   INCOMPLETE.** See the report above. The spec rules out facing as a cause;
+   that is true for three of the five melee families and false for the spear and
+   the lance, which is where the find is. No combat number moved this version
+   and `run4` asserts that nothing was smuggled in.
+3. **`RESUME_PAUSE_MS = 1800`, the middle of the spec's own 1.5-2s window.**
+   Long enough to read six words and reach a button, short enough that it still
+   feels like the seamless resume it was built to be for anyone who does
+   nothing. One constant.
+4. **A player pressing ENTER themselves during the pause CANCELS the automatic
+   submit.** The spec does not cover it. Without this the timer would fire on
+   top of their own click and run the whole login twice. Their click still
+   enters the world — only the automatic one stands down.
+5. **Cancelling leaves the stored name in place.** The spec says the cancel
+   "returns control to the normal login screen, fully filled in as it already
+   is today" — so it hands the card back rather than undoing the resume. The
+   key is not forgotten, the class stays picked, and pressing ENTER goes
+   straight in. One line to change if a cancel was meant to be a logout.
+6. **`COLOSSEUM_R` 9 → 20, and `PODIUM_RING` 7.5 / `PODIUM_R` 1.7.** All
+   unstated; the spec says "scale it up significantly" and names no number. 20
+   was picked so the structure spans 40 tiles — roughly two screenfuls, the
+   scale at which the Tower reads as a destination — and so the podiums sit
+   comfortably inside the sand rather than against the wall. Three tunables.
+7. **The podiums are called "North Podium" and "South Podium", and that is
+   deliberately not lore.** The spec asks for "two named podiums"; the bible
+   names the Ruined Colosseum and says nothing about what stands inside it, so
+   compass words are the naming that invents nothing. Flagged as designed
+   content in the code at the site, the same way `void_shard` was in v32.
+8. **`DUEL_REWARD_RUNIC = 5`.** The spec leaves the amount as a build judgment
+   call and asks that it feel meaningful. Sized against what runic stone is
+   worth elsewhere: a Sea Serpent, the hardest non-boss creature in the world,
+   drops 2 at 80%, and the Beastmaster Shrine charges 3 for a blessing. One
+   tunable.
+9. **The duel acceptance is the existing interact key, not a new binding.** The
+   spec asks for "a prompt each of them accepts" and names no key. Every other
+   thing in this world you walk up to and use answers on interact, the prompt
+   card already says what the key will do, and adding a 17th keybind for a rare
+   action would have moved three count assertions for nothing.
+10. **A duel ends on stepping off, on leaving the ring, on the opponent
+    vanishing, and on a 20-second unanswered offer.** All unstated. The
+    alternative — a duel that persists once accepted — would let two players
+    agree to one, walk out, and carry an invisible prize condition around the
+    world with them.
+11. **⚠️ The duel is client-agreed, with no server authority, exactly like every
+    other multiplayer rule in this file.** Both clients must independently see
+    the other on the opposite podium before they will count an acceptance, so a
+    forged packet cannot conjure a duel out of nothing — but two colluding
+    clients could still agree one between themselves and split the purse. That
+    is the same trust model `kill`, `hit` and `item_give` already run on, and
+    changing it is a server-authority decision rather than a tunable.
+12. **Guild Tier 2's four numbers follow the spec's own wording, and it differs
+    between two of them.** The Drowned Court says "1.5x the Tier 1 **value**"
+    (1.5 → 2.25); the Bramblewatch says "1.75x the Tier 1 **bonus**" (+20% →
+    +35%, i.e. 1.35, NOT 1.20 × 1.75). Read both twice before moving either.
+13. **The Hollow Choir's Tier 2 goes through the same helper as the other
+    four,** as `guildTiered(false, true)`, even though it is a boolean rather
+    than a number. The spec is explicit that there must be one helper and not
+    five inline patterns, and an exception for the one guild whose upgrade is
+    not a number would be the first crack in that.
+14. **⚠️ `guild_tier` gets its OWN Supabase write and is deliberately not a
+    third column on `savePlayerExtras()`.** A Postgres update naming a column
+    that does not exist fails as a whole — folding it in would have meant a
+    world which ran the v35 SQL but not this one silently stopped persisting
+    `tutorial_done` and cosmetics too. One optional column per write is what
+    keeps each one's degradation its own. This was caught while writing it, not
+    by a test.
+15. **⚠️ A small SQL update is needed for a granted tier to persist:**
+    `alter table players add column guild_tier integer default 1;` Without it
+    a redeemed tier holds for the session and is gone on the next login, and a
+    tier granted by editing the row (PART E) has nowhere to be granted. Nothing
+    else is affected either way, and every degradation direction is asserted by
+    a real gate. Same shape of note as v25, v33, v34, v38 and v51.
+16. **`GUILD_TIER_MAX = 2`, so a redeem code is clamped.** The spec says a
+    redeem sets the tier "to the given value"; taken literally a fat-fingered
+    or hostile row could name tier 99. It can only ever raise, and only ever as
+    far as the highest tier this version actually builds.
+17. **`NODE_DENSITY_K = 0.65` is the middle of the spec's 30-40%, and the five
+    v46 thresholds are left readable as the ARGUMENTS to it** rather than
+    replaced by five new numbers. What changed is one value, not five, and the
+    original density is still legible in the file.
+18. **⚠️ The Caldera still carries no ore and this pass does not change that.**
+    `featureTypeAt`'s VOLROCK branch has never extended to `B.CALDERA` — v22's
+    own standing note — so thinning the volcanic bands takes nothing further
+    away from it. Restated because a density pass is where somebody will next
+    look for it.
+19. **`run5` gained a v52+53 sweep and no coverage list needed extending** — no
+    species, mob, weapon kind or class shipped, so the `*_LIST` arrays are
+    already complete. What it adds is the three branches a five-frame boot
+    cannot reach: all 70 Colosseum pieces across five kinds (drawn directly and
+    then again through the live entity sort with the camera standing in the
+    arena), the podium glow in all three of its states with a real challenger
+    on the opposite podium, the boss bar at 100/56/4% and taken down again, and
+    the resume banner raised and cancelled through the real DOM. It hard-fails
+    if any piece kind was never built, if the pairing never became possible, if
+    the bar missed a fill, or if the banner outlived its own countdown. 1,315 →
+    **1,408** coverage draws.
+20. **⚠️ `run4`'s "all three render as real structures" gate had to be
+    retargeted, and it is a correction rather than a relaxation.**
+    `drawColosseumEntity` genuinely no longer exists — the structure stopped
+    being one drawn thing — so the gate now names the piece builder and the two
+    functions that actually draw it, AND asserts the old single-entity push is
+    gone. Same shape as v30's three updated assertions.
+21. **The push to `main` that the README's step 8 invites was deliberately not
+    attempted.** This session is instructed to develop and push only on its
+    designated branch. The README calls a blocked push to `main` a nice-to-have
+    and explicitly not a failure, so the build lands on the branch as usual and
+    a human can sync it. Same call every version since Expansion 2b has made.
+
 ### 2026-09-01 (v51 — the wisps made visible, minimap texture, guild badges and nameplates)
 
 Eleven parts, and four of them are rendering: PART A makes the v50 wisps
