@@ -521,7 +521,7 @@
   <div class="mm-title">MINIMAP</div>
   <canvas id="mapCanvas" width="124" height="124"></canvas>
 </div>
-<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character &nbsp;•&nbsp; M fast travel</div>
+<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character &nbsp;•&nbsp; M fast travel &nbsp;•&nbsp; G give item</div>
 <div id="hpBarWrap"><div id="hpBar"></div></div>
 
 <div class="panel" id="invPanel">
@@ -1477,6 +1477,12 @@ function tameChanceFor(w, baited) {
   if (me.cls === "Beastmaster") c += 0.25;
   if (sp.bloodFavored) c += 0.15 * bloodDecayFrac();
   if (Date.now() < tameBuffUntil) c += 0.20;
+  /* v51 PART E: the Gilded Bough's rare-pet bump and the Nameless Tide's
+     permanent half-Shrine, both resolved in guildTameBonus(). They stack
+     with the Shrine blessing above and the Beastmaster's own +0.25, the
+     same way every other term on this line does, and the final clamp to
+     0.95 is unchanged — no guild can make a tame certain. */
+  c += guildTameBonus(w.species);
   return Math.min(0.95, Math.max(0.05, c));
 }
 /* v10 block helper.
@@ -2325,9 +2331,37 @@ const MOBS = {
     moveSpeed: 1.6, count: 1, tameable: false,
     loot: [{ type: "dragonsteel", qty: 1, chance: 1.0 },
            { type: "runic_stone", qty: 3, chance: 1.0 }] },
-  goblin: { name: "Goblin", biomes: [B.FOREST, B.PLAINS], hp: 40, dmg: 6,  atkRange: 1.4, atkCooldownMs: 1400, windupMs: 550, aggroRadius: 5,   leashRadius: 11, moveSpeed: 1.55, count: 9, tameable: false,
+  /* ============ v51 PART C — THE COMBAT MOBS OUTGREW THEIR COUNTS ======
+     Measured off this table before a digit moved, which is the discipline
+     every prior density pass used. The real current spread of the OVERWORLD
+     (surface-spawned) combat roster:
+       goblin 9, bandit 9   — bible tier "Easy"
+       troll 6, wraith 6    — bible tier "Medium"
+       adult_golem 3        — bible tier "Hard"
+     Five creatures, three tiers, and exactly the same shape v47/v49 found in
+     the pet tables: one shared number per tier, spread preserved inside it.
+     So the multipliers are v49 PART D's own ladder, applied to the bible's
+     own difficulty tiers rather than to a rarity table these mobs do not
+     have — most aggressive at the commonest tier, gentlest at the rarest:
+       Easy    x4.5   goblin 9 -> 41, bandit 9 -> 41   (40.5, rounded up)
+       Medium  x4.0   troll 6 -> 24, dark_wraith 6 -> 24
+       Hard    x3.5   adult_golem 3 -> 11              (10.5, rounded up)
+     Both half-values round UP, which is v49's own phoenix precedent (10.5
+     -> 11) rather than a new rule, and rounding both the same way is what
+     keeps goblin equal to bandit.
+
+     ⚠️ WHAT IS DELIBERATELY NOT TOUCHED, and it is the whole reason this is
+     a named five rather than the table: sea_serpent (3) carries biomes: []
+     and lives only inside cave interiors — it is not overworld roster and
+     PART D governs cave interiors, in the other direction. elder_drake (1),
+     demon_knight (2) and golem_elder (1) are hand-placed singletons whose
+     `count` is a flank/instance count, not a density. The four PETS in this
+     table (boar/bear/griffin/phoenix) already took v49's own tier scaling
+     and are untouched here — this part is combat mobs. No hp, dmg, aggro,
+     leash, windup, cooldown or loot rate moves anywhere in this build. */
+  goblin: { name: "Goblin", biomes: [B.FOREST, B.PLAINS], hp: 40, dmg: 6,  atkRange: 1.4, atkCooldownMs: 1400, windupMs: 550, aggroRadius: 5,   leashRadius: 11, moveSpeed: 1.55, count: 41, tameable: false,
     loot: [{ type: "wood", qty: 2, chance: 0.8 }, { type: "stone", qty: 1, chance: 0.5 }, { type: "iron_ore", qty: 1, chance: 0.2 }] },
-  bandit: { name: "Bandit", biomes: [B.PLAINS, B.RUINB], hp: 55, dmg: 9,  atkRange: 1.5, atkCooldownMs: 1600, windupMs: 550, aggroRadius: 6.5, leashRadius: 13, moveSpeed: 1.85, count: 9, tameable: false,
+  bandit: { name: "Bandit", biomes: [B.PLAINS, B.RUINB], hp: 55, dmg: 9,  atkRange: 1.5, atkCooldownMs: 1600, windupMs: 550, aggroRadius: 6.5, leashRadius: 13, moveSpeed: 1.85, count: 41, tameable: false,
     loot: [{ type: "iron_bar", qty: 1, chance: 0.5 }, { type: "wood", qty: 2, chance: 0.6 }, { type: "iron_ore", qty: 1, chance: 0.35 }] },
   /* v14: medium-tier mob — slower and heavier, longer tell so the big hits stay dodgeable */
   /* v47 PART B: 90/14 -> 68/11, the locked spec's own numbers, a ~25% cut on
@@ -2335,7 +2369,7 @@ const MOBS = {
      ROCK/PEAK band, and a cave is where a player meets them with no room to
      back off. Nothing else about the creature moves: the 750ms tell, the
      slow moveSpeed and the loot table are exactly as v14 tuned them. */
-  troll:  { name: "Troll",   biomes: [B.ROCK, B.PEAK],     hp: 68, dmg: 11, atkRange: 1.7, atkCooldownMs: 2000, windupMs: 750, aggroRadius: 7,   leashRadius: 12, moveSpeed: 1.3,  count: 6, tameable: false,
+  troll:  { name: "Troll",   biomes: [B.ROCK, B.PEAK],     hp: 68, dmg: 11, atkRange: 1.7, atkCooldownMs: 2000, windupMs: 750, aggroRadius: 7,   leashRadius: 12, moveSpeed: 1.3,  count: 24, tameable: false,
     loot: [{ type: "stone", qty: 3, chance: 0.9 }, { type: "iron_ore", qty: 2, chance: 0.6 }, { type: "iron_bar", qty: 1, chance: 0.3 }] },
   /* v14: fight-to-tame — hostile until worn below WEARDOWN_THRESHOLD, then the
      v12 taming flow takes over. Killing them drops loot; taming forfeits it.
@@ -2394,7 +2428,7 @@ const MOBS = {
      cut the Troll takes and for the same reason — both are placed inside cave
      interiors. Its RANGED identity is untouched (atkRange 4.5, the 600ms
      tell, the bolt): this is a difficulty change, not a redesign. */
-  dark_wraith: { name: "Dark Wraith", biomes: [B.DARKFOREST], hp: 49, dmg: 9, atkRange: 4.5, atkCooldownMs: 1700, windupMs: 600, aggroRadius: 7.5, leashRadius: 13, moveSpeed: 1.45, count: 6, tameable: false,
+  dark_wraith: { name: "Dark Wraith", biomes: [B.DARKFOREST], hp: 49, dmg: 9, atkRange: 4.5, atkCooldownMs: 1700, windupMs: 600, aggroRadius: 7.5, leashRadius: 13, moveSpeed: 1.45, count: 24, tameable: false,
     loot: [{ type: "runic_stone", qty: 1, chance: 0.75 }, { type: "stone", qty: 2, chance: 0.5 }] },
   /* v21: bible — "Sea Serpent — Underwater — Hard — Rare aquatic loot". The
      framework's standard MELEE shape (nothing about it is ranged), on the
@@ -2442,7 +2476,7 @@ const MOBS = {
      recoloured — see MOB_K.adult_golem and drawMob's own branch. */
   adult_golem: { name: "Adult Golem", biomes: [B.RUINB], hp: 130, dmg: 18, atkRange: 1.8,
     atkCooldownMs: 1900, windupMs: 700, aggroRadius: 7, leashRadius: 12,
-    moveSpeed: 1.3, count: 3, tameable: false,
+    moveSpeed: 1.3, count: 11, tameable: false,
     loot: [{ type: "runic_stone", qty: 2, chance: 0.9 }, { type: "stone", qty: 3, chance: 0.8 }] },
   /* ============ v48 PART C — THE DEMON KNIGHT =======================
      Bible, verbatim, from its own MOBS row: "Demon Knight — Deep dungeons —
@@ -2653,14 +2687,59 @@ function canWearDownTame(m) {
    rather than pet findability. This build's spec makes the call the patch
    deferred: the four PETS in that table are scaled by the same tier
    multipliers used here, and the five pure-combat mobs beside them are NOT
-   touched. The numbers live at MOBS rather than being duplicated here. */
+   touched. The numbers live at MOBS rather than being duplicated here.
+
+   ============ v51 PART C — A FURTHER INCREASE, AND IT IS MEASURED ======
+   ON TOP OF v49's fix, not instead of it, and scoped to OVERWORLD-BIOME
+   species — read as "species with a non-empty `biomes` list", i.e. the ones
+   actually placed on the world grid by the spawn loop. That reading is what
+   excludes water_dragon and shadow_dragon (`biomes: []`, placed one per cave
+   interior by populateInterior): their `count` drives the daily cap and NO
+   density at all, which is the very thing v47 flagged about them as "a cap
+   change wearing a density change's clothes". Not repeating that here is
+   deliberate — their caps stay exactly where v49 put them.
+
+   THE MULTIPLIERS ARE SMALL, AND THAT IS THE MEASUREMENT'S DOING, not
+   timidity. PART H's 30-second rule was run against this table before a
+   digit moved: PLAYER_SPEED 4.6 over 30s is 138 tiles, and the real mean
+   nearest-neighbour spacing between spawns of the SAME species on the
+   harness seed at N=4000 came back
+     sprites 63-77, wolf 108.5, stag 90.9, golem 30.7, unicorn and
+     crystal_golem 19-23, fire and storm dragon 120-128
+   — every overworld species already INSIDE the 138-tile walk, with wolf and
+   the two placed dragons closest to it. So the honest answer was a real but
+   modest bump that pulls the worst cases clear of the limit rather than a
+   multiple that would have turned a Wind Sprite into wallpaper. Same tier
+   ladder shape v49 used, one notch of it:
+     Common     x1.5   all five 315 -> 473   (still one shared number)
+     Uncommon   x1.4   wolf 144 -> 202, stag 144 -> 202, golem 72 -> 101
+     Rare       x1.25  unicorn 56 -> 70, crystal_golem 28 -> 35,
+                       fire_dragon 42 -> 53, storm_dragon 42 -> 53
+   Relative spread inside each tier is preserved EXACTLY: the Common tier is
+   still one number, golem is still half of wolf (101/202), crystal_golem is
+   still half of unicorn (35/70).
+
+   ONE CONVENTION DELIBERATELY BROKEN, and it is the spec's own scoping that
+   breaks it: "the four dragons share one count" cannot survive a part scoped
+   to species that actually spawn somewhere, because only two of the four do.
+   Fire (B.UNDERCAVE) and Storm (B.PEAK) go to 53; Water and Shadow stay at
+   42, where their cap-only number belongs. One-line revert either way.
+
+   EPIC AND ABOVE STAY UNTOUCHED, exactly as in v47 and v49: shadowfox /
+   lightfox / krakenling / salamander_king keep 4/4/4/3 and the Elders and
+   the Duskfox Elder have no `count` at all. Their measured spacing is far
+   outside the 138-tile walk (shadowfox 965, lightfox 332) and that is the
+   design working — a presence roll on top of a time window is what makes
+   them rare, and the 30-second rule was never meant to reach the tier whose
+   whole point is that you may go a session without seeing one. No `base` —
+   the tame chance — moves by a digit anywhere in this build. */
 const WILD_SPECIES = {
-  tree_sprite:  { name: "Tree Sprite",  base: 0.65, flier: true,  alt: 10, count: 315, biomes: [B.FOREST, B.DARKFOREST], bloodFavored: false, shunnedByBlood: false },
-  water_sprite: { name: "Water Sprite", base: 0.65, flier: true,  alt: 10, count: 315, biomes: [B.SHALLOW], bloodFavored: false, shunnedByBlood: false },
-  stone_sprite: { name: "Stone Sprite", base: 0.65, flier: true,  alt: 10, count: 315, biomes: [B.ROCK], bloodFavored: false, shunnedByBlood: false },
-  wind_sprite:  { name: "Wind Sprite",  base: 0.65, flier: true,  alt: 12, count: 315, biomes: [B.PLAINS, B.MEADOW], bloodFavored: false, shunnedByBlood: false },
-  wolf:         { name: "Wolf",         base: 0.50, flier: false, count: 144, biomes: [B.FOREST], bloodFavored: false, shunnedByBlood: false },
-  golem:        { name: "Golem",        base: 0.50, flier: false, count: 72, biomes: [B.RUINB], bloodFavored: false, shunnedByBlood: false },
+  tree_sprite:  { name: "Tree Sprite",  base: 0.65, flier: true,  alt: 10, count: 473, biomes: [B.FOREST, B.DARKFOREST], bloodFavored: false, shunnedByBlood: false },
+  water_sprite: { name: "Water Sprite", base: 0.65, flier: true,  alt: 10, count: 473, biomes: [B.SHALLOW], bloodFavored: false, shunnedByBlood: false },
+  stone_sprite: { name: "Stone Sprite", base: 0.65, flier: true,  alt: 10, count: 473, biomes: [B.ROCK], bloodFavored: false, shunnedByBlood: false },
+  wind_sprite:  { name: "Wind Sprite",  base: 0.65, flier: true,  alt: 12, count: 473, biomes: [B.PLAINS, B.MEADOW], bloodFavored: false, shunnedByBlood: false },
+  wolf:         { name: "Wolf",         base: 0.50, flier: false, count: 202, biomes: [B.FOREST], bloodFavored: false, shunnedByBlood: false },
+  golem:        { name: "Golem",        base: 0.50, flier: false, count: 101, biomes: [B.RUINB], bloodFavored: false, shunnedByBlood: false },
   /* v14 fight-to-tame species — spawn as HOSTILE MOBS (see MOBS), never as
      passive wilds; these entries define tame chance + tamed follower form */
   boar:         { name: "Boar",         base: 0.45, flier: false, biomes: [], fightToTame: true, bloodFavored: false, shunnedByBlood: false },
@@ -2685,8 +2764,8 @@ const WILD_SPECIES = {
      presence roll) but is pinned to Enchanted Forest, not regular Forest.
      Lightfox adds the one new gate — dawnOnly, see DAWN_END — stacked on its
      own presence roll, which is why its tame base is the lowest of the three. */
-  stag:         { name: "Stag",         base: 0.45, flier: false, count: 144, biomes: [B.ENCHFOREST], bloodFavored: false, shunnedByBlood: false },
-  unicorn:      { name: "Unicorn",      base: 0.25, flier: false, count: 56, biomes: [B.ENCHFOREST], nightOnly: true, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
+  stag:         { name: "Stag",         base: 0.45, flier: false, count: 202, biomes: [B.ENCHFOREST], bloodFavored: false, shunnedByBlood: false },
+  unicorn:      { name: "Unicorn",      base: 0.25, flier: false, count: 70, biomes: [B.ENCHFOREST], nightOnly: true, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
   lightfox:     { name: "Lightfox",     base: 0.20, flier: false, count: 4, biomes: [B.SACMEADOW], dawnOnly: true, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
   /* v18: the Underground Caves roster. Both are PASSIVE tames (hold-E channel,
      v12 formula) — the bible names no fight for either. Tame bases are the
@@ -2695,8 +2774,8 @@ const WILD_SPECIES = {
      depth sort and every v16 combat overlay with no special casing; Glow Moth
      hovers like the Sprites. `count` and `alt` are designed tunables, kept
      deliberately low in the same spirit as Part A's density pass. */
-  fire_dragon:  { name: "Fire Dragon",  base: 0.25, flier: false, count: 42, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
-  glow_moth:    { name: "Glow Moth",    base: 0.65, flier: true,  alt: 12, count: 315, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
+  fire_dragon:  { name: "Fire Dragon",  base: 0.25, flier: false, count: 53, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
+  glow_moth:    { name: "Glow Moth",    base: 0.65, flier: true,  alt: 12, count: 473, biomes: [B.UNDERCAVE], bloodFavored: false, shunnedByBlood: false },
   /* v21: the Underwater Caves roster. Bible — "Water Dragon — Deep underwater
      caves, tame as hatchling" — so a PASSIVE tame (hold-E channel, v12
      formula) at the same 0.25 base as its Fire Dragon sibling, and a GROUND
@@ -2736,7 +2815,7 @@ const WILD_SPECIES = {
      it. Griffin is also PEAK-only and deliberately does NOT carry it: it is
      a mob with an 8-tile aggro radius, so it comes down off the peak to you.
      A wild only wanders 0.9 tiles from home and never will. */
-  storm_dragon:  { name: "Storm Dragon",  base: 0.25, flier: false, count: 42, biomes: [B.PEAK],    reachOnFoot: true, bloodFavored: false, shunnedByBlood: false },
+  storm_dragon:  { name: "Storm Dragon",  base: 0.25, flier: false, count: 53, biomes: [B.PEAK],    reachOnFoot: true, bloodFavored: false, shunnedByBlood: false },
   /* v32: moved INSIDE the Abyssal Hollow interiors, same as Water Dragon in
      v29 — biomes:[] means no surface spawn at all. Moved, not duplicated. */
   shadow_dragon: { name: "Shadow Dragon", base: 0.25, flier: false, count: 42, biomes: [], bloodFavored: false, shunnedByBlood: false },
@@ -2767,7 +2846,7 @@ const WILD_SPECIES = {
      same Epic baseline. The feeding half of that sentence is the real new
      mechanic this version — see salamanderHappiness() and salamanderRampage()
      further down. count is a designed tunable, matched to the dragons'. */
-  crystal_golem:   { name: "Crystal Golem",   base: 0.25, flier: false, count: 28, biomes: [B.RUINB],   mountainRuinOnly: true, bloodFavored: false, shunnedByBlood: false },
+  crystal_golem:   { name: "Crystal Golem",   base: 0.25, flier: false, count: 35, biomes: [B.RUINB],   mountainRuinOnly: true, bloodFavored: false, shunnedByBlood: false },
   krakenling:      { name: "Krakenling",      base: 0.20, flier: false, count: 4, biomes: [B.ABYSSAL], dayCycle: 10, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
   salamander_king: { name: "Salamander King", base: 0.20, flier: false, count: 3, biomes: [B.CALDERA], bloodFavored: false, shunnedByBlood: false },
   /* ============ v39 — THE ELDER TRIO =============================
@@ -2884,6 +2963,215 @@ const PET_RARITY = {
    `count`. */
 const CAPPED_RARITIES = new Set(["rare", "epic", "elder", "admin"]);
 function speciesIsCapped(sp) { return CAPPED_RARITIES.has(PET_RARITY[sp]); }
+
+/* =========================================================
+   v51 PART E — THE GUILDS
+
+   FIVE real guilds, assigned deterministically from a hash of the username
+   at account creation. Never chosen, never re-rollable, and there is no
+   in-game way to learn the assignment in advance — the only way to find out
+   which one you are is to make the account. At an initial player base of
+   roughly fifty, five guilds average ten members each, which is a group size
+   you can actually feel; the earlier thirteen-guild sketch would have
+   averaged under four and read as empty.
+
+   ⚠️ THIS IS A DELIBERATE, SPEC-LOCKED DEVIATION FROM THE BIBLE, flagged
+   here rather than shipped quietly. The bible's TEAMING & ALLIANCES section
+   says "No formal guild or clan system exists in the game. All alliances and
+   teaming are organised outside of RuneHaven." What that clause protects is
+   in-game SOCIAL machinery — membership you opt into, rosters, grouping,
+   coordination — and none of that is built here: nothing in this file lets a
+   player join, leave, invite, see a member list, or talk to a guild. What
+   exists is an unchosen birth-house that grants one passive mechanical
+   advantage and renders a name beside your own. Every name, motto and effect
+   below is the locked spec's own text, not invented content. Whether the
+   deviation is wanted is the project owner's call; reverting it is deleting
+   this block and its six call sites.
+
+   Each guild is a real, felt advantage rather than a stat-sheet footnote,
+   and each is implemented at the ONE place in the file that already decides
+   its thing — the respawn deadline, breathMax(), the gather quantity,
+   tameChanceFor(), mobHit(). No effect gets its own subsystem.
+   ========================================================= */
+const GUILDS = {
+  hollow_choir: {
+    name: "The Hollow Choir",
+    motto: "We sang before you were born, we'll sing after.",
+    col: "#d6d0c0", badge: "choir",
+  },
+  drowned_court: {
+    name: "The Drowned Court",
+    motto: "What sinks, we keep.",
+    col: "#3f9ab4", badge: "court",
+  },
+  quiet_vein: {
+    name: "The Quiet Vein",
+    motto: "Deep enough, everything is treasure.",
+    col: "#c8873c", badge: "vein",
+  },
+  gilded_bough: {
+    name: "The Gilded Bough",
+    motto: "Every root remembers.",
+    col: "#b6cc4e", badge: "bough",
+  },
+  bramblewatch: {
+    name: "The Bramblewatch",
+    motto: "We do not chase. We wait.",
+    col: "#b04a5e", badge: "bramble",
+  },
+  /* THE SIXTH IS NOT IN THE POOL. It is granted exactly the way admin itself
+     is — by editing that player's row directly in Supabase — and no hash
+     outcome can ever produce it, which is a cleaner rule than the "rare but
+     possible" framing an earlier draft carried. There is no rarer-roll
+     language anywhere in this file for it, because it is not rollable.
+     ⚠️ It has NO MOTTO, deliberately. The spec gives mottos for the five and
+     none for this one, and writing one would be inventing lore. Its
+     nameplate carries its name and its badge and stops there — see
+     guildPlateLines(). */
+  nameless_tide: {
+    name: "The Nameless Tide",
+    motto: null,
+    admin: true,
+    col: "#8a7ae0", badge: "tide",
+  },
+};
+/* The five, in the fixed order the hash indexes. Adding to this array
+   re-rolls every existing player, so it is deliberately written out rather
+   than derived from Object.keys(GUILDS) — which would silently pull the
+   admin-only sixth into the pool the moment someone reordered the table. */
+const GUILD_POOL = ["hollow_choir", "drowned_court", "quiet_vein",
+                    "gilded_bough", "bramblewatch"];
+/* FNV-1a over the username's code units. Deterministic, stable across
+   sessions and machines, and dependent on nothing but the string — which is
+   what "assigned at account creation, never re-rollable" actually requires:
+   no stored column, nothing to migrate, and the same username always lands
+   in the same guild on every client that ever renders it. */
+function guildHash(username) {
+  const u = String(username == null ? "" : username);
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < u.length; i++) {
+    h = (h ^ u.charCodeAt(i)) >>> 0;
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+function guildForUsername(username) {
+  return GUILD_POOL[guildHash(username) % GUILD_POOL.length];
+}
+/* The granted column can only ever grant an ADMIN guild. That is what keeps
+   both of the spec's sentences true at once: the Nameless Tide is handed out
+   by editing a row, and the five are never chosen and never re-rollable — a
+   row edit cannot move anyone between them. An absent or unknown value falls
+   through to the hash, which is the safe direction. */
+function guildOf(username, granted) {
+  const g = GUILDS[granted];
+  if (g && g.admin) return granted;
+  return guildForUsername(username);
+}
+function myGuild() { return me ? guildOf(me.username, me.guild) : null; }
+function guildDef(id) { return GUILDS[id] || null; }
+function guildIs(id) { return myGuild() === id; }
+/* The one place a nameplate's guild rows are decided, so the canvas never
+   has to know that one guild has no motto. */
+function guildPlateLines(id) {
+  const g = GUILDS[id];
+  if (!g) return [];
+  return g.motto ? [g.name, g.motto] : [g.name];
+}
+
+/* --- the five advantages, plus the sixth ---------------------------------
+   Every number below is a designed TUNABLE: the spec names the SHAPE of each
+   effect ("+50%", "+1 extra", "+20%", "a real felt bump", "small passive
+   regen") and the two it does not quantify are sized against values this
+   file already uses, named at each. */
+const GUILD_BREATH_MULT = 1.5;    // Drowned Court: the spec's own +50%
+const GUILD_VEIN_BONUS = 1;       // Quiet Vein: the spec's own +1 per action
+const GUILD_BRAMBLE_MULT = 1.20;  // Bramblewatch: the spec's own +20%
+/* Gilded Bough: "a real, felt bump to rare-pet tame-chance specifically".
+   0.12 against the Shrine blessing's 0.20 and the Beastmaster's 0.25 — over
+   half a Shrine, permanently, on the tier where it is felt: a Rare dragon's
+   0.25 base becomes 0.37, an Epic's 0.20 becomes 0.32. */
+const GUILD_BOUGH_TAME = 0.12;
+/* Nameless Tide: "a smaller, permanent version of the Beastmaster Shrine's
+   own taming boost without needing to stand at the Shrine". The Shrine is
+   +0.20 for twenty minutes; this is half of it, always, everywhere. */
+const GUILD_TIDE_TAME = 0.10;
+/* Nameless Tide: "small passive HP regen at all times". The Spawn Safe
+   Zone's own regen is 2.5 HP/s, so a fifth of it — a wound closes on a long
+   walk, and it is nowhere near enough to matter inside a fight. */
+const GUILD_TIDE_REGEN = 0.5;
+/* What "ore and stone gathering" means in this file's own vocabulary: the
+   three mined FEATURE types, plus the meteor site, which is literally the
+   bible's "rare ore". Deliberately NOT trees (that is wood), herbs, magic
+   essence or the Golden Orb — none of those are ore or stone and none are
+   mined through node HP. */
+const GUILD_VEIN_TYPES = new Set(["rock", "iron", "runic", "meteor"]);
+
+function guildBreathMult() { return guildIs("drowned_court") ? GUILD_BREATH_MULT : 1; }
+function guildOreBonus(type) {
+  return (guildIs("quiet_vein") && GUILD_VEIN_TYPES.has(type)) ? GUILD_VEIN_BONUS : 0;
+}
+/* Both taming guilds resolve here, and they stack with the Shrine and the
+   Beastmaster rather than replacing either — the same way every other bonus
+   in tameChanceFor() does. "Rare-pet" is the file's OWN definition of
+   rare-and-up (speciesIsCapped, i.e. CAPPED_RARITIES) rather than a second
+   list that could drift away from it. */
+function guildTameBonus(species) {
+  let c = 0;
+  if (guildIs("gilded_bough") && speciesIsCapped(species)) c += GUILD_BOUGH_TAME;
+  if (guildIs("nameless_tide")) c += GUILD_TIDE_TAME;
+  return c;
+}
+function guildRespawnWaitMs() {
+  return guildIs("hollow_choir") ? 0 : RESPAWN_SECONDS * 1000;
+}
+/* Bramblewatch's counterplay rule, and the whole of it: who swung first.
+   One entry per mob id, written exactly once per engagement by whichever of
+   the two events happens first, and cleared when the mob dies so a respawn
+   is a fresh fight rather than an inherited grudge. The bonus applies ONLY
+   when the mob opened — walking up and hitting something is initiating, and
+   an initiator gets nothing. */
+const guildFirstStrike = new Map();          // mob id -> "mob" | "me"
+function noteMobFirstStrike(m) {
+  if (m && m.id !== undefined && !guildFirstStrike.has(m.id)) guildFirstStrike.set(m.id, "mob");
+}
+function noteMyFirstStrike(m) {
+  if (m && m.id !== undefined && !guildFirstStrike.has(m.id)) guildFirstStrike.set(m.id, "me");
+}
+function guildMobDamageMult(m) {
+  return (guildIs("bramblewatch") && m && guildFirstStrike.get(m.id) === "mob")
+    ? GUILD_BRAMBLE_MULT : 1;
+}
+/* Harness hook — GUILDS, the pool, every constant and the first-strike map
+   are top-level and none of them land on window. */
+function debugGuildInfo() {
+  return {
+    guilds: Object.keys(GUILDS).reduce((o, k) => {
+      const g = GUILDS[k];
+      o[k] = { name: g.name, motto: g.motto, admin: !!g.admin, col: g.col, badge: g.badge };
+      return o;
+    }, {}),
+    pool: GUILD_POOL.slice(),
+    mine: myGuild(),
+    granted: me ? (me.guild || null) : null,
+    constants: { GUILD_BREATH_MULT, GUILD_VEIN_BONUS, GUILD_BRAMBLE_MULT,
+                 GUILD_BOUGH_TAME, GUILD_TIDE_TAME, GUILD_TIDE_REGEN,
+                 veinTypes: Array.from(GUILD_VEIN_TYPES) },
+    respawnWaitMs: guildRespawnWaitMs(),
+    breathMult: guildBreathMult(),
+    firstStrike: Array.from(guildFirstStrike.entries()).map(([id, who]) => ({ id, who })),
+  };
+}
+function debugSetGuild(patch) {
+  if (!patch) return debugGuildInfo();
+  /* Writes only what a real row edit or a real fight could produce: the
+     granted column, and the first-strike marker either party can set. */
+  if ("granted" in patch && me) me.guild = patch.granted;
+  if ("clearFirstStrike" in patch) guildFirstStrike.clear();
+  if ("mobStruck" in patch) noteMobFirstStrike({ id: patch.mobStruck });
+  if ("iStruck" in patch) noteMyFirstStrike({ id: patch.iStruck });
+  return debugGuildInfo();
+}
 /* v16: PET COMBAT — the locked spec table (see README "v16"). The bible gives
    pet rarity, taming method and flavour but ZERO combat numbers, so every
    value below is a designed TUNABLE, not bible content. Only species that
@@ -2988,7 +3276,14 @@ function diveBlocked(b) {
 /* v21: the equipped charm's definition, or null. Same shape as ARMORS[me.armor]. */
 function equippedCharm() { return (me && CHARMS[me.charm]) || null; }
 /* v21: breath ceiling — the charm is the only thing that moves it. */
-function breathMax() { const c = equippedCharm(); return c ? c.maxBreath : BREATH_MAX; }
+/* v51 PART E: the Drowned Court's +50% breath, applied here so it composes
+   with the Diver's Charm exactly the way the charm composes with the bare
+   tank — one number, read by updateBreath() every frame, so equipping or
+   unequipping either one is already handled. */
+function breathMax() {
+  const c = equippedCharm();
+  return Math.round((c ? c.maxBreath : BREATH_MAX) * guildBreathMult());
+}
 /* v21: F toggles diving. Surfacing while still standing ON deep water is
    refused rather than allowed: me.diving would go false with the player on a
    BLOCKED tile, and the very next movement check would reject every direction
@@ -3158,7 +3453,16 @@ function placeLandmarks() {
    every seed. The zone loop is the one that tightens (it now has ten
    clusters to clear instead of six, at RUIN_ZONE_SEP each), which is why
    the sweep counts zones as carefully as it counts ruins. */
-const RUIN_COUNT = 10, ZONE_COUNT = 4;
+/* v51 PART H: 10 -> 20, roughly double again, and the spec's own proposal.
+   NOTHING ELSE MOVED — RUIN_SEP, RUIN_ZONE_SEP, ZONE_SEP, RUIN_FOOT and the
+   SPAWN/VOLCANO/MOUNT clearances are exactly what they were, so twenty
+   clusters have to fit inside the constraints ten already respected rather
+   than being bought by relaxing one. That is far more likely to bind at this
+   density than the last jump was (twenty footprints each excluding a
+   RUIN_SEP-radius disc from the next), which is why the six-seed sweep is
+   run again rather than assumed to carry — see the changelog for the real
+   per-seed numbers. */
+const RUIN_COUNT = 20, ZONE_COUNT = 4;
 /* Expansion 3: these two were inline literals in the wilds and mobs spawn
    loops (150 and 175 at N=1000) and are named here because a THIRD number has
    to agree with them, and until this version it silently did not.
@@ -3217,9 +3521,40 @@ const MOB_SPAWN_MIN = 700;    // Expansion 4: 350 * 2 — hostile mobs keep furt
 const MOUNTAIN_RUIN_ELEV = 0.66;
 const RUIN_FOOT = 76;       // carve radius of one Ruin cluster (Expansion 4: 38 * 2)
 const ZONE_R = 136;         // a Safe Zone's grass clearing AND its protected radius (Expansion 4: 68 * 2)
-const RUIN_SEP = 664;       // Ruin-to-Ruin (Expansion 4: 332 * 2)
+/* ============ v51 PART H — THE SWEEP MOVED TWO CONSTANTS =============
+   RUIN_SEP 664 -> 360 and RUIN_ZONE_SEP 400 -> 300, and neither is a guess:
+   both come straight out of the six-seed sweep the spec required, which is
+   exactly the crowding it predicted. Run first with RUIN_COUNT at 20 and
+   these two untouched, the sweep found the constraints simply do not admit
+   twenty clusters — 12/10/10/10/11/11 placed across the six seeds, with the
+   search exhausting rather than the budget running out (confirmed: a 4x
+   budget on the failing seed placed the identical 17).
+
+   Then swept for the LARGEST separation that still fits twenty, so this is
+   the smallest relaxation that works rather than a comfortable one:
+     RUIN_SEP  520 -> 17/20    470 -> 17/20    430 -> 19/20
+               400 -> 20/20 ruins but the ZONES then fail (3/4)
+               380 -> 20/20 ruins, zones 3/4
+               360 -> 20/20 ruins on all six seeds
+     With RUIN_SEP 360 the zone loop is the one that tightens, exactly as
+     v50's note predicted it would — twenty ruins each excluding a
+     RUIN_ZONE_SEP disc left seed 424242 at 3/4 zones and 31337007 at 2/4.
+     RUIN_ZONE_SEP 300 restores 4/4 on both, and 260 was tested and not
+     needed.
+   Final six-seed result at 360/300: 20/20 Ruins and 4/4 Zones on EVERY
+   seed, minimum Ruin-to-Ruin 360.0-370.6 (all clear of RUIN_SEP) and
+   minimum Ruin-to-Zone 300.3-318.7 (all clear of RUIN_ZONE_SEP).
+
+   Both new numbers are geometrically comfortable, not merely feasible:
+   RUIN_FOOT is 76 and ZONE_R is 136, so 360 leaves 208 tiles of open ground
+   between two ruin carves and 300 leaves 88 tiles between a ruin's carve
+   edge and a Safe Zone's grass edge. Nothing overlaps at either value.
+   ZONE_SEP is deliberately NOT touched — the measured Zone-to-Zone minimum
+   is 682-909 across the six seeds, so it was never the binding constraint
+   and relaxing it would have been a change with no reason behind it. */
+const RUIN_SEP = 360;       // v51 PART H: was 664 — see the sweep above
 const ZONE_SEP = 664;       // Zone-to-Zone and Zone-to-SPAWN/TOWER/VOLCANO/MOUNT (Expansion 4: 332 * 2)
-const RUIN_ZONE_SEP = 400;  // Ruin-to-Zone (Expansion 4: 200 * 2)
+const RUIN_ZONE_SEP = 300;  // v51 PART H: was 400 — see the sweep above
 
 /* Land fitness for placement. This MUST use elevRaw() and never biomeAt():
    placeLandmarks() runs before tileCache.clear(), so a biomeAt() call here
@@ -3372,6 +3707,12 @@ const INTERIOR_AREA_K = (INTERIOR_N * INTERIOR_N) / (26 * 26);
    and is unchanged there. 298 is the measured mean above; it is a tunable and
    the one number here worth re-deriving if the generator ever moves. */
 const INTERIOR_FLOOR_26 = 298;
+/* v51 PART D: hostile density INSIDE a cave interior, per 26x26 worth of
+   walkable floor. 2 -> 1.2, the spec's own proposal, and this is the only
+   number in the file that governs it — see the note at its use site in
+   populateInterior(). A pure TUNABLE, and the whole of PART D's downward
+   half: no MOBS entry, no surface count and no stat is touched by it. */
+const INTERIOR_HOSTILE_K = 1.2;
 const IN_WALL = 0, IN_FLOOR = 1, IN_EXIT = 2;
 const interiorCache = new Map();  // spaceId -> { grid, exit, spawnedAt }
 
@@ -3606,6 +3947,9 @@ function populateInterior(spaceId, rec) {
      exactly the reason the four above are — two streams that land on the
      same index land on the same tile in every cave, deterministically. */
   const S_KELP = 40009;
+  /* v51 PART D: the Glow Moth stream, in its own 10,000-wide block for
+     exactly the reason the five above are. */
+  const S_MOTH = 50021;
 
   /* Tuning/Polish PART D: this interior's OWN walkable area against the mean
      a 26x26 interior actually produced — see INTERIOR_FLOOR_26. Every content
@@ -3639,6 +3983,41 @@ function populateInterior(spaceId, rec) {
   const [wx, wy] = pick(907);
   rec.wilds.push({ id: spaceId + ":" + dragonSp, species: dragonSp,
                    x: wx + 0.5, y: wy + 0.5, ph: hash2(2, 2, seed) * 6 });
+  /* ============ v51 PART D — GLOW MOTHS INSIDE A REAL CAVE ============
+     Bible, verbatim, from its own Common row: "Glow Moth — Caves and
+     dungeons, lights up dark areas slightly". Confirmed live before this
+     was written: the species existed only on the SURFACE B.UNDERCAVE band
+     (WILD_SPECIES.glow_moth.biomes) and had never once been placed inside
+     an actual interior — the one place in this game that genuinely is a
+     dark area. Nothing about the creature is invented or changed: same
+     WILD_SPECIES entry, same tame base, same flier `alt`, same art.
+
+     It is the bible-compliant half of the inversion. Golem and Crystal
+     Golem are the pets a cave might otherwise have gained, and both are
+     restricted by the bible to "ruins only" / "mountain ruins only" —
+     putting either underground would be a contradiction, not a tunable, so
+     neither is here. The other real answer is the hatchling dragon placed
+     four lines above, which is deliberately untouched: same species, same
+     `pick(907)`, same single instance per interior.
+
+     The count scales with floor area exactly as the essence nodes and the
+     ore veins already do (`* areaK`), so a big cave holds proportionally
+     more and a cramped one does not fill up. 2-3 per 26x26 worth of cave
+     is the same shape of range the nodes use.
+
+     ⚠️ PRE-EXISTING, NOT INTRODUCED HERE: an interior wild lives in
+     `rec.wilds` and nearestWild() walks the global `wilds` array, so the
+     hatchling dragon has been rendered-but-not-targetable since v29 and a
+     cave Glow Moth inherits exactly that. Making interior wilds tameable
+     is a change to the taming path for every interior creature at once,
+     which is a different version's job — flagged rather than smuggled in
+     under a density part. */
+  const nMoths = Math.round((2 + Math.floor(hash2(5, 5, seed) * 2)) * areaK);
+  for (let i = 0; i < nMoths; i++) {
+    const [mx2, my2] = pick(S_MOTH + i * 3);
+    rec.wilds.push({ id: spaceId + ":glow_moth:" + i, species: "glow_moth",
+                     x: mx2 + 0.5, y: my2 + 0.5, ph: hash2(6 + i, 6, seed) * 6 });
+  }
   rec.mobs = [];
   /* FIX: interior mobs were built with a partial field set — no maxHp, no
      atkAt/winding/dead/respawnAt — and were never added to the `mobs` array
@@ -3681,7 +4060,20 @@ function populateInterior(spaceId, rec) {
   /* Caves should have something to fight beyond one boss-ish creature —
      Glow Moths already belong in caves per the bible, and a couple of
      Golems give the deeper chambers real teeth. */
-  for (let i = 0; i < Math.round(2 * areaK); i++) {
+  /* ============ v51 PART D — THE REAL CAVE-INTERIOR LEVER =============
+     This multiplier, and NOT MOBS.troll.count / MOBS.dark_wraith.count, is
+     what governs how many hostiles a cave interior holds. Those two `count`
+     fields drive the SURFACE spawn loop only (the mountain/peak band and the
+     dark forest respectively) and PART C raises both of them — lowering them
+     here would have undone PART C's own increase and would still have
+     changed nothing inside a cave, because nothing in this function reads
+     `count`. So the inversion happens on the one number that actually
+     applies: 2 * areaK -> INTERIOR_HOSTILE_K * areaK, the spec's own 1.2, a
+     40% cut in interior hostiles with every surface count left intact.
+     The other half of the inversion — more companions down here — is the
+     Glow Moth block below and the cave hatchling dragon that has been
+     placed above since v29, deliberately unchanged. */
+  for (let i = 0; i < Math.round(INTERIOR_HOSTILE_K * areaK); i++) {
     const [gx, gy] = pick(S_TROLL + i * 7);
     rec.mobs.push(mkInteriorMob(isAbyss ? "dark_wraith" : "troll",
       gx + 0.5, gy + 0.5, hash2(4 + i, 4, seed) * 6, i));
@@ -6091,6 +6483,14 @@ async function loginPlayer(username, cls, pinCheck) {
          thing this feeds, so degrading means nobody can execute it, never
          that everybody can. */
       role: p.role === "admin" ? "admin" : "player",
+      /* v51 PART E: the granted guild, read exactly the way `role` above is
+         — read only, never written by the game, granted by editing the row
+         directly in Supabase. An absent column reads as null, which falls
+         through to the username hash in guildOf(), so the five real guilds
+         work with no schema change at all and only the admin-only Nameless
+         Tide needs the small v51 SQL update. Safe direction: degrading means
+         nobody has the admin guild, never that everybody does. */
+      guild: typeof p.guild === "string" ? p.guild : null,
     };
     /* v35 PART B: shown once, ever. The flag is read here, on the row that
        came back from the players table, and written by savePlayerExtras(). */
@@ -6135,7 +6535,7 @@ async function loginPlayer(username, cls, pinCheck) {
         if (pinErr) console.warn("PIN not stored:", pinErr.message || pinErr);
       } catch (e) { console.warn("PIN not stored:", e); }
     }
-    me = { username, cls, x: s.x, y: s.y, level: 1, hp: 100, maxHp: 100, inv: {}, equipped: null, armor: null, lastKillAt: null, shrineCdUntil: null, deadUntil: null, cos: emptyCosmetics(), role: "player" };
+    me = { username, cls, x: s.x, y: s.y, level: 1, hp: 100, maxHp: 100, inv: {}, equipped: null, armor: null, lastKillAt: null, shrineCdUntil: null, deadUntil: null, cos: emptyCosmetics(), role: "player", guild: null };   // v51 PART E: guild is derived from the username, never stored on a new account
     tutorialDone = false;    // v35: a brand new row has never seen it
   }
   /* v21: dive/breath state, set once for BOTH the returning and the new-player
@@ -6194,6 +6594,15 @@ async function loadGroundItems() {
    pos/hp so drift self-corrects. Kills broadcast once by whoever lands them. */
 function mobHit(m, dmg, opts = {}) {
   if (m.dead) return;
+  /* v51 PART E: Bramblewatch. This is the single point every hit the player
+     lands on a mob passes through — melee, projectile, the Mystic's burst,
+     the staff splash — so both halves live here: the first swing of an
+     engagement is recorded (if the mob has not already opened, this player
+     is the initiator and gets nothing), and the multiplier is applied to the
+     damage before anything else reads it, so the number that lands, the
+     number that floats and the number that broadcasts are all the same. */
+  noteMyFirstStrike(m);
+  dmg = Math.round(dmg * guildMobDamageMult(m));
   noteElderCombat(m.kind);   // PART D: a hit landed ON an Elder is an Elder fight
   noteCombatDamage();        // v47 PART E: damage DEALT opens the logout window
   m.hp -= dmg;
@@ -6214,6 +6623,10 @@ function mobHit(m, dmg, opts = {}) {
 
 async function mobKill(m, iKilled) {
   if (m.dead) return;
+  /* v51 PART E: a dead mob's first-strike record dies with it, so the one
+     that respawns on this id later opens a fresh engagement rather than
+     inheriting a grudge from the last one. */
+  guildFirstStrike.delete(m.id);
   m.dead = true;
   m.hp = 0;
   m.respawnAt = Date.now() + mobRespawnMs(m.kind);   // v39: per-kind, see mobRespawnMs
@@ -6394,6 +6807,13 @@ function updateMob(m, dt, t, now) {
         // PART D: and a swing FROM one is too — before the drake's own early
         // return below, so its two special attacks are not the silent case
         noteElderCombat(m.kind);
+        /* v51 PART E: and the mob's swing is the other half of Bramblewatch's
+           record. It sits here, above the drake's own early return, for the
+           same reason noteElderCombat does — this is the one line every mob
+           attack in the game reaches, special attacks included, and a mob
+           that opened on you has opened on you whether the blow landed on
+           you or on your companion. */
+        noteMobFirstStrike(m);
         /* v30: the Elder Drake's three phases. Both special attacks reuse
            v27 combat shapes rather than inventing new ones — the sweep is
            the spear's cone at a wider angle, the breath is the staff's
@@ -6948,6 +7368,10 @@ async function joinRealtime() {
        malformed or hostile payload can only ever resolve to real cosmetic
        ids in their own slots — and never to anything with a stat. */
     o.cs = p.cs ? normalizeCosmetics(p.cs) : null;
+    /* v51 PART E: see the send side. Anything that is not a real admin-only
+       guild id becomes null, which falls through to the username hash — so
+       the worst a malformed or hostile payload can do is nothing at all. */
+    o.gd = (typeof p.gd === "string" && GUILDS[p.gd] && GUILDS[p.gd].admin) ? p.gd : null;
     /* v29: the entire shared-space mechanism. Everyone still receives every
        broadcast on the one channel; we simply do not render or collide with
        anyone standing in a different space. */
@@ -7200,6 +7624,15 @@ function sendMove(force) {
       at: (ARMORS[me.armor] || {}).tier || 0,
       pe: (activePet && activePet.species) || 0,
       cs: me.cos || 0,          // v35: worn cosmetics — visual only, same shape as pe/mo
+      /* v51 PART E: the GRANTED guild only, and only when there is one. The
+         five real guilds are a pure function of the username, so every
+         client already computes a remote player's guild from the name it
+         is about to draw beside — there is nothing to send. The Nameless
+         Tide is the one assignment that is not derivable, so it rides here
+         as one more flag-shaped field beside pe/mo/sp/cs/cb, and it is
+         normalised on arrival so a forged payload can only ever resolve to
+         an admin-granted guild that really exists. */
+      gd: (me.guild && GUILDS[me.guild] && GUILDS[me.guild].admin) ? me.guild : 0,
       mo: me.mounted ? 1 : 0,   // v28: mounted, so others seat us on the pet too
       /* v39: whether this player is in active combat right now — the same
          `combatMusicUntil` the local client already keeps, flattened to a
@@ -7277,7 +7710,12 @@ async function savePlayerExtras() {
    changes hands (applyDamage for taken, dealHit for player-vs-player dealt,
    mobHit for mob damage dealt). Deliberately NOT tryAttack: a swing at empty
    air is not a fight. COMBAT_LOGOUT_MS is a TUNABLE. */
-const COMBAT_LOGOUT_MS = 30000;          // TUNABLE: the spec's 30 seconds
+/* v51 PART F: 30000 -> 15000. Same mechanism, same honest limit already
+   documented above (a native browser prompt, not a true block) — only a
+   shorter, sharper danger window if someone is actively chasing you when you
+   try to leave. Still a TUNABLE, and still the only thing this constant
+   governs. */
+const COMBAT_LOGOUT_MS = 15000;          // v51 PART F: was 30000
 let lastCombatDamageAt = 0;              // performance.now() of the last damage either way
 function noteCombatDamage() { lastCombatDamageAt = performance.now(); }
 function inCombatLogoutWindow() {
@@ -7780,7 +8218,13 @@ function updateBreath(dt) {
 function enterDeath(killer, resumed) {
   dead = true;
   if (!resumed) {
-    me.deadUntil = Date.now() + RESPAWN_SECONDS * 1000;
+    /* v51 PART E: the Hollow Choir's instant respawn. The wait is the only
+       thing that changes — the drop below, the overlay, the broadcast and
+       the save are identical for every guild. A 0ms deadline is already in
+       the past by the time update() next reads it, so respawn() fires on the
+       very next frame through the existing branch rather than through a
+       second code path. */
+    me.deadUntil = Date.now() + guildRespawnWaitMs();
     dropAllItems();
   }
   document.getElementById("deathBy").textContent = killer ? `Slain by ${killer}` : "";
@@ -8051,7 +8495,11 @@ async function doInteract() {
       channel.send({ type: "broadcast", event: "node_mined", payload: { k: g.key } });
       // ore yields more per node since each node is gone once mined
       // v39: the orb is a SINGLE guaranteed drop — never a stack of two.
-      const qty = g.type === "rock" ? 3 : g.type === "orb" ? 1 : 2;
+      /* v51 PART E: the Quiet Vein's extra unit. One place, and it is the
+         one line that already decides how much a mined node hands over —
+         so it covers surface nodes, meteor sites and interior ore veins
+         alike, because all three come through here. */
+      const qty = (g.type === "rock" ? 3 : g.type === "orb" ? 1 : 2) + guildOreBonus(g.type);
       invAdd(got, qty);
       toast(`+${qty} ${ITEM_META[got].name}` + (PICKED.has(g.type) ? "" : " — the vein is spent"));
     } else {
@@ -9009,10 +9457,18 @@ function travelLandingSpot(cx, cy) {
 }
 function fastTravelTo(idx) {
   if (!me || dead) return false;
-  if (!ownsUnicornElder()) {
-    toast("Nothing carries you. This is not a road you can walk onto.");
-    return false;
-  }
+  /* ============ v51 PART I — THE ELDER GATE IS GONE FROM LANDMARKS ====
+     The bible ties fast travel to the Unicorn Elder ("Grants fast travel
+     across the entire world"), and this is the EXPLICIT, directly approved
+     deviation from it — the same call already made and verified for
+     player-to-player travel, now applied to the Places tab so the two
+     halves of one panel stop disagreeing. There is no ownership check
+     anywhere in this execution path any more; the three checks that remain
+     below are the ones that were never about ownership (dead, inside an
+     interior, and nowhere to land).
+     ⚠️ ownsUnicornElder() itself is deliberately NOT deleted: it still
+     feeds unicornElderLuck(), the bible's own "passive luck buff for rare
+     pet spawns", which is untouched by this part. */
   /* Inside a cave the coordinates are the interior's own, not the world's —
      the same reason the v35 compass hides in there. Walk out first. */
   if (inInterior()) { toast("Not from down here — find the way out first."); return false; }
@@ -9177,15 +9633,63 @@ function travelToPlayer(name) {
 }
 
 let travelTab = "places";
+/* ============ v51 PART K — THE PLAYERS TAB REFRESHES ITSELF ==========
+   Confirmed live before this was written: refreshTravelPanel() populated the
+   online-player list exactly once, when the panel opened or a tab was
+   clicked — so someone who came online thirty seconds later was invisible
+   until the panel was closed and reopened, which is precisely "I can't
+   travel to them without reopening the panel".
+
+   The interval is tied to the panel's OWN open/close state and nothing else:
+   it is started by the one function that shows the panel and cleared the
+   moment the panel is not visible, including by the tick itself, so it can
+   never survive an ESC, a closeAllPanels() from another key, a death, or a
+   travel that closes the panel from under it. It is a single timer — a
+   second start while one is live is a no-op — and it never runs in the
+   background, which is the spec's own requirement. */
+const TRAVEL_REFRESH_MS = 10000;        // v51 PART K: the spec's ten seconds
+let travelRefreshTimer = null;
+function travelPanelOpen() {
+  return !!travelPanel && travelPanel.style.display === "block";
+}
+function stopTravelAutoRefresh() {
+  if (travelRefreshTimer === null) return;
+  clearInterval(travelRefreshTimer);
+  travelRefreshTimer = null;
+}
+/* The one call every open/close site makes. Idempotent in both directions,
+   so it is safe to call from anywhere the panel's visibility can change. */
+function syncTravelAutoRefresh() {
+  if (travelPanelOpen() && me) startTravelAutoRefresh();
+  else stopTravelAutoRefresh();
+}
+function startTravelAutoRefresh() {
+  if (travelRefreshTimer !== null) return;
+  travelRefreshTimer = setInterval(() => {
+    /* The panel is the authority, not this timer: if it is gone for any
+       reason at all, the timer stops itself rather than repainting a hidden
+       card forever. */
+    if (!travelPanelOpen() || !me) { stopTravelAutoRefresh(); return; }
+    refreshTravelPanel();
+  }, TRAVEL_REFRESH_MS);
+}
+/* Harness hook — the timer handle and the constant are top-level `let`s and
+   never land on window, and "it stops when the panel closes" is not a thing
+   a source grep can check. */
+function debugTravelRefreshInfo() {
+  return { intervalMs: TRAVEL_REFRESH_MS, running: travelRefreshTimer !== null,
+           panelOpen: travelPanelOpen(), tab: travelTab };
+}
 function refreshTravelPanel() {
   const who = document.getElementById("travelWho");
   const list = document.getElementById("travelList");
   if (!list || !me) return;
-  const owned = ownsUnicornElder();
+  /* v51 PART I: the panel's own copy of the gate, gone with it. There is no
+     `owned` flag in this function any more — the line said "You have no way
+     of travelling like this" to players who now do, and the TRAVEL buttons
+     it disabled are enabled below with no ownership test in their path. */
   if (who) {
-    who.textContent = owned
-      ? "The Unicorn Elder walks with you. Choose a place."
-      : "You have no way of travelling like this.";
+    who.textContent = "The world will fold for you. Choose a place.";
   }
   /* PART C: the tab strip. Both sections are rebuilt on every open and on
      every tab switch, so the cooldown line and the roster are never stale. */
@@ -9204,11 +9708,12 @@ function refreshTravelPanel() {
   list.innerHTML = fastTravelPoints().map((p, i) =>
     `<div class="craft-row">
       <div>${p[0]}</div>
-      <button data-ft="${i}" ${owned ? "" : "disabled"}>TRAVEL</button>
+      <button data-ft="${i}">TRAVEL</button>
     </div>`).join("");
   list.querySelectorAll("button").forEach(b => b.onclick = () => {
     if (fastTravelTo(+b.dataset.ft)) {
       travelPanel.style.display = "none";
+      syncTravelAutoRefresh();                  // v51 PART K
       refreshPanels();
     }
   });
@@ -9282,6 +9787,7 @@ function refreshTravelPanel() {
     btn.onclick = () => {
       if (travelToPlayer(p.name)) {
         travelPanel.style.display = "none";
+        syncTravelAutoRefresh();                // v51 PART K
         refreshPanels();
       } else {
         refreshTravelPanel();
@@ -9468,6 +9974,10 @@ function closeAllPanels(exceptEl) {
   for (const p of [invPanel, craftPanel, petPanel, buildPanel, charPanel, travelPanel, chestPanel, givePanel]) {
     if (p && p !== exceptEl) p.style.display = "none";
   }
+  /* v51 PART K: the Fast Travel panel's 10s refresh is tied to its own open
+     state, so every path that hides it has to be a path that stops it. This
+     is the one that hides it from another panel's key. */
+  syncTravelAutoRefresh();
 }
 addEventListener("keydown", e => {
   const k = e.key.toLowerCase();
@@ -9494,7 +10004,7 @@ addEventListener("keydown", e => {
      The panel OPENS for anyone — it is the travel itself that is gated on
      owning the Unicorn Elder, and a panel that says why is better than a
      key that silently does nothing. */
-  if (k === KEYBINDS.travel) { const now2 = travelPanel.style.display !== "block"; closeAllPanels(); travelPanel.style.display = now2 ? "block" : "none"; refreshTravelPanel(); }
+  if (k === KEYBINDS.travel) { const now2 = travelPanel.style.display !== "block"; closeAllPanels(); travelPanel.style.display = now2 ? "block" : "none"; refreshTravelPanel(); syncTravelAutoRefresh(); }   // v51 PART K
   /* v35 PART B: "Skippable at any point." ESCAPE is deliberately NOT a
      KEYBINDS action — it is the one key v23 made unbindable, so it can never
      be remapped out from under a player who wants out of the tutorial. */
@@ -9502,6 +10012,16 @@ addEventListener("keydown", e => {
   if (k === KEYBINDS.dive && !e.repeat) toggleDive();       // v21: dive toggle
   if (k === KEYBINDS.ability && !e.repeat) tryAbility();    // v27: class ability
   if (k === KEYBINDS.mount && !e.repeat) toggleMount();     // v28: mount/dismount
+  /* v51 PART J: the direct give shortcut. Same target selection the E path
+     already uses (nearestGiveTarget, same GATHER_RANGE), same panel, same
+     open/close discipline as every other panel key — it simply skips the
+     precedence chain in doInteract(), which is the whole point of having it:
+     E gives you whatever is nearest, G always means "hand something over". */
+  if (k === KEYBINDS.give && !e.repeat && !dead) {
+    const gw = nearestGiveTarget();
+    if (gw) openGivePanel(gw);
+    else toast("Nobody close enough to hand anything to");
+  }
   if (k === KEYBINDS.block) sendMove(true);                 // v10: block pose on
 });
 addEventListener("keyup", e => {
@@ -9614,6 +10134,13 @@ function update(dt, t) {
     }
     if (inSafeZone(me.x, me.y) && me.hp < me.maxHp) {
       me.hp = Math.min(me.maxHp, me.hp + 2.5 * dt);
+    }
+    /* v51 PART E: the Nameless Tide's passive regen, beside the safe zone's
+       own and deliberately not inside it — "at all times" is the whole
+       point, and a fifth of the safe zone's rate is what keeps it a slow
+       walk-it-off rather than a second health bar. */
+    if (myGuild() === "nameless_tide" && me.hp < me.maxHp) {
+      me.hp = Math.min(me.maxHp, me.hp + GUILD_TIDE_REGEN * dt);
     }
     updateBreath(dt);          // v21: dive breath / drowning / charm regen
     tutorialTick();            // v35: the tutorial's one proximity step
@@ -9800,6 +10327,14 @@ function burst(wx, wy, col, n, spd) {
   }
 }
 
+/* v51 PART A: the will-o'-wisp fire chance, named rather than inline so the
+   gate can read the real number instead of grepping a literal out of a
+   condition. 0.32 -> 0.55, the spec's own proposal: at 0.32, four samples a
+   frame over a 28x28 window meant a qualifying tile lit up rarely enough that
+   the effect read as "occasionally something flickers" rather than as ambient
+   life. TUNABLE, and it is the single lever for all four windows at once. */
+const WISP_CHANCE = 0.55;              // v51 PART A: was 0.32
+
 function updateParticles(dt, t) {
   const dayT = getDayT();
   const isNight = nightAlpha(dayT) > 0.4;
@@ -9852,12 +10387,25 @@ function updateParticles(dt, t) {
                     : (b === B.DARKFOREST && isNight) ? "#c0a8f8"
                     : (b === B.SACMEADOW && inDawn()) ? "#f6e08c"
                     : null;
-      if (wispCol && !inInterior() && Math.random() < 0.32) {
+      if (wispCol && !inInterior() && Math.random() < WISP_CHANCE) {
         particles.push({ x: tx + Math.random(), y: ty + Math.random(), z: 3 + Math.random() * 13,
           vx: (Math.random() - 0.5) * 0.2, vy: (Math.random() - 0.5) * 0.2, vz: 2 + Math.random() * 3,
           life: 4 + Math.random() * 3, maxLife: 7, col: wispCol, size: 2.6, kind: "mote",
           wisp: b, ph: Math.random() * 9 });
-        continue;
+        /* ============ v51 PART A — THE ENCHANTED FOREST IS ADDITIVE ======
+           The v50 note above is what this fixes, and it is one branch. The
+           `continue` made the wisp MUTUALLY EXCLUSIVE with the mote/firefly
+           chain below, and the Enchanted Forest is the one of the four
+           windows that already had motes there — so v50 gave that biome
+           nothing new at all, it only swapped one particle for another.
+           Only the Enchanted Forest falls through now: its own motes and
+           the new wisps are both present, which is the layer the spec asks
+           for. The other three windows keep the exclusion, because there is
+           nothing underneath them to add to — the Abyssal Hollow, the night
+           Dark Forest and the dawn Sacred Meadow all reach the chain below
+           and either match nothing or (dark forest, night) match the
+           firefly branch, which is the effect the wisp is standing in for. */
+        if (b !== B.ENCHFOREST) continue;
       }
       if (b === B.ENCHFOREST && Math.random() < 0.5) {
         // v17: drifting motes — same particle language as the existing magic
@@ -13694,6 +14242,102 @@ function diveCue(sx, sy, t) {
   }
 }
 
+/* =========================================================
+   v51 PART G — THE GUILD BADGES
+
+   These render in the tiny space a username already occupies — beside a
+   nameplate, not on a character panel — so the ONLY thing that matters is
+   whether the silhouette survives at ~14-18px. Every one of them is
+   therefore built out of shapes whose smallest painted feature is at least
+   ~2.8px wide at 14px, and every one was measured at 14/16/18 for real
+   before being called final (see the changelog's badge table) rather than
+   judged at mockup scale, which is where the earlier five-icon sketch
+   (bell / wave / ore vein / leaf / thorned fist) fell down: a leaf and a
+   fist are the same blob at this size.
+
+   What separates them is SILHOUETTE first and colour second, because colour
+   alone cannot carry it against six ground palettes and a day/night pass:
+     choir   an inverted U — the only hollow shape in the set
+     court   a three-point comb sitting on two solid bars
+     vein    the only downward-pointing triangle
+     bough   the only Y
+     bramble the only radial three-pointed star
+     tide    the only stacked pair of chevrons
+   No two share a silhouette family, so a badge is readable in one glance
+   even where two guild colours are close.
+
+   Flat fills only, hard edges, no gradients and no outline — two facets per
+   badge on the file's own locked shading split, so a badge is lit the same
+   way every building and creature in the world is. */
+const GUILD_BADGE_PX = 14;        // nameplate scale, inside the spec's 14-18
+const GUILD_BADGE_SHADE = 0.62;   // second facet, between the locked 0.72/0.55
+/* Every polygon the last badge pass actually painted, in real pixels.
+   Recorded rather than recomputed so the legibility gate measures what was
+   drawn — the same reason the minimap records its flecks. Bounded: it is
+   cleared by its own debug hook before a measurement run. */
+let guildBadgeTrace = [];
+let guildBadgeTracing = false;
+function drawGuildBadge(id, cx, cy, s) {
+  const g = GUILDS[id];
+  if (!g) return;
+  const lit = g.col, dk = shade(g.col, GUILD_BADGE_SHADE);
+  const poly = (pts, col) => {
+    const out = [];
+    for (let i = 0; i < pts.length; i += 2) out.push(cx + pts[i] * s, cy + pts[i + 1] * s);
+    P(ctx, out, col);
+    if (guildBadgeTracing) guildBadgeTrace.push({ id, badge: g.badge, size: s, col, pts: out });
+  };
+  switch (g.badge) {
+    case "choir":     // an open arch: a bell with its middle missing
+      poly([-0.42, -0.06, -0.19, -0.06, -0.19, 0.42, -0.42, 0.42], lit);
+      poly([0.19, -0.06, 0.42, -0.06, 0.42, 0.42, 0.19, 0.42], dk);
+      poly([-0.42, -0.06, -0.30, -0.34, 0.30, -0.34, 0.42, -0.06], lit);
+      poly([-0.08, -0.48, 0.08, -0.48, 0.08, -0.34, -0.08, -0.34], dk);
+      break;
+    case "court":     // a crown gone under: three points over two water bars
+      poly([-0.42, 0.02, -0.28, -0.40, -0.14, 0.02], lit);
+      poly([-0.11, 0.02, 0.00, -0.47, 0.11, 0.02], lit);
+      poly([0.14, 0.02, 0.28, -0.40, 0.42, 0.02], lit);
+      poly([-0.46, 0.06, 0.46, 0.06, 0.46, 0.26, -0.46, 0.26], dk);
+      poly([-0.34, 0.30, 0.34, 0.30, 0.34, 0.46, -0.34, 0.46], dk);
+      break;
+    case "vein":      // stone, point down, with one bright seam through it
+      poly([-0.44, -0.36, 0.44, -0.36, 0.00, 0.46], dk);
+      poly([-0.22, -0.36, -0.02, -0.36, 0.12, 0.18, 0.02, 0.30], lit);
+      break;
+    case "bough":     // a fork, deliberately asymmetric so it is not a tree
+      poly([-0.11, 0.00, 0.11, 0.00, 0.11, 0.46, -0.11, 0.46], dk);
+      poly([-0.10, 0.02, -0.42, -0.30, -0.28, -0.42, -0.02, -0.12], lit);
+      poly([0.10, 0.10, 0.38, -0.10, 0.46, 0.02, 0.16, 0.26], lit);
+      poly([-0.46, -0.46, -0.30, -0.46, -0.30, -0.32, -0.46, -0.32], dk);
+      break;
+    case "bramble":   // a caltrop: three thorns, no two pointing the same way
+      poly([-0.16, -0.16, 0.16, -0.16, 0.16, 0.16, -0.16, 0.16], dk);
+      poly([-0.15, -0.10, 0.15, -0.10, 0.06, -0.48, -0.06, -0.48], lit);
+      poly([-0.14, -0.02, 0.03, 0.16, -0.36, 0.47, -0.47, 0.35], lit);
+      poly([0.14, -0.02, -0.03, 0.16, 0.36, 0.47, 0.47, 0.35], lit);
+      break;
+    case "tide":      // two chevrons and nothing else — it carries no emblem
+      poly([-0.46, -0.02, 0.00, -0.28, 0.46, -0.02, 0.46, 0.16, 0.00, -0.10, -0.46, 0.16], lit);
+      poly([-0.46, 0.24, 0.00, -0.02, 0.46, 0.24, 0.46, 0.42, 0.00, 0.16, -0.46, 0.42], dk);
+      break;
+  }
+}
+/* Harness hook — the trace, the two constants and drawGuildBadge itself are
+   all top-level and never land on window. `size` lets the gate render each
+   badge at the real nameplate sizes rather than at a convenient one. */
+function debugGuildBadges(patch) {
+  if (patch && "trace" in patch) { guildBadgeTracing = !!patch.trace; guildBadgeTrace = []; }
+  if (patch && "draw" in patch) {
+    for (const id of Object.keys(GUILDS)) {
+      drawGuildBadge(id, 200, 200, patch.size || GUILD_BADGE_PX);
+    }
+  }
+  return { GUILD_BADGE_PX, GUILD_BADGE_SHADE, tracing: guildBadgeTracing,
+           polys: guildBadgeTrace.map(p => ({ id: p.id, badge: p.badge, size: p.size,
+                                              col: p.col, pts: p.pts.slice() })) };
+}
+
 function drawPlayerEntity(p, name, t, isMe) {
   const z = groundZ(p.x, p.y);
   const [sx, sy] = worldToScreen(p.x, p.y, z);
@@ -13817,6 +14461,47 @@ function drawPlayerEntity(p, name, t, isMe) {
   ctx.fillRect(sx - tw / 2 - 4, sy - 38, tw + 8, 13);
   ctx.fillStyle = isMe ? "#e8b64c" : "#dde4ec";
   ctx.fillText(label, sx, sy - 28);
+
+  /* ============ v51 PARTS E + G — THE GUILD ROWS ====================
+     "Beside the player's existing name display, reusing that exact
+     mechanism — do not invent a second one." So this IS that mechanism: the
+     same dark plate, the same Barlow, the same centred text, the same
+     screen anchor, stacked upward so the username row and the HP bar under
+     it do not move by a pixel. Nothing new was built for it.
+
+     A remote player's guild is computed from the name this function was
+     already handed — the five are a pure function of the username — with
+     the one admin-granted guild carried on the broadcast's `gd` field. So
+     no lookup, no roster and no extra sync is needed to draw anyone's.
+
+     ⚠️ THE MOTTO IS VERBOSE OVER A CROWD, and it is the spec's own
+     instruction. At 9px it is 100-190px of plate above every player in
+     sight; in a busy Bazaar that is a lot of text. Dropping to the name row
+     alone is deleting the `lines[1]` block below — one branch — if that
+     turns out to be the read that is wanted. */
+  const gid = isMe ? myGuild() : guildOf(name, p.gd);
+  const gdef = guildDef(gid);
+  if (gdef) {
+    const glines = guildPlateLines(gid);
+    ctx.font = "9px 'Barlow', sans-serif";
+    const gw = ctx.measureText(glines[0]).width;
+    const plateW = gw + GUILD_BADGE_PX + 12;
+    ctx.fillStyle = "rgba(6,9,14,0.62)";
+    ctx.fillRect(sx - plateW / 2, sy - 56, plateW, 16);
+    drawGuildBadge(gid, sx - plateW / 2 + 4 + GUILD_BADGE_PX / 2, sy - 48, GUILD_BADGE_PX);
+    ctx.fillStyle = gdef.col;
+    ctx.textAlign = "left";
+    ctx.fillText(glines[0], sx - plateW / 2 + GUILD_BADGE_PX + 8, sy - 45);
+    ctx.textAlign = "center";
+    if (glines[1]) {
+      const mw = ctx.measureText(glines[1]).width;
+      ctx.fillStyle = "rgba(6,9,14,0.62)";
+      ctx.fillRect(sx - mw / 2 - 4, sy - 71, mw + 8, 13);
+      ctx.fillStyle = "#98a2ae";
+      ctx.fillText(glines[1], sx, sy - 62);
+    }
+    ctx.font = "11px 'Barlow', sans-serif";
+  }
 
   const hp = isMe ? me.hp : (p.hp ?? 100);
   const maxHp = isMe ? me.maxHp : (p.maxHp || 100);
@@ -14809,7 +15494,23 @@ const MAP_CELL = 4;                          // px per tile (v48 PART D: 11 -> 4
 const MAP_PX = (MAP_R * 2 + 1) * MAP_CELL;   // 124 — the canvas is sized to match
 const MAP_SELF_COL = "#e8b64c";              // --gold: you, and only you
 const MAP_DOT = 5, MAP_SELF_DOT = 7;         // hard flat squares, never rings
+/* v51 PART B: the texture pass. MAP_FLECK is 2px inside a 4px cell — half
+   the cell, centred by the +1 offset, which is the largest a mark can be and
+   still read as a mark. MAP_TREE_SHADE reuses the file's own shade() rather
+   than adding a colour: 0.66 sits between the locked 0.72 and 0.55 facet
+   multipliers, so a canopy fleck is the same darkening the world's own side
+   faces use. MAP_ROCK_FLECK is one flat grey, deliberately not the Rock
+   palette entry — that colour IS the ground under a mountain node, and a
+   fleck the colour of its own tile would be invisible. All three tunable. */
+const MAP_FLECK = 2;
+const MAP_TREE_SHADE = 0.66;
+const MAP_ROCK_FLECK = "#7d7568";
 let mapCtx = null;
+/* v51 PART B: what the texture pass ACTUALLY painted on the last frame —
+   recorded at the draw, not recomputed afterwards, so a gate compares the
+   real marks against the real feature index instead of comparing two copies
+   of the same derivation. Same reasoning `groundStats` used. */
+let mapFleckStats = { cells: 0, trees: 0, rocks: 0, marks: [] };
 
 /* World position -> canvas pixel. One place, so the dots and the tiles can
    never disagree about where the window starts. */
@@ -14828,13 +15529,52 @@ function updateWorldMap() {
   if (!c) { el.style.display = "none"; return; }
   const px = Math.floor(me.x), py = Math.floor(me.y);
   c.clearRect(0, 0, MAP_PX, MAP_PX);
+  mapFleckStats = { cells: 0, trees: 0, rocks: 0, marks: [] };
   for (let dy = -MAP_R; dy <= MAP_R; dy++) {
     for (let dx = -MAP_R; dx <= MAP_R; dx++) {
       const tx = px + dx, ty = py + dy;
       const pal = PAL[biomeAt(tx, ty)];
       if (!pal) continue;
+      mapFleckStats.cells++;
+      const cellX = (dx + MAP_R) * MAP_CELL, cellY = (dy + MAP_R) * MAP_CELL;
       c.fillStyle = pal[((tx + ty) % 2 === 0) ? 0 : 1];
-      c.fillRect((dx + MAP_R) * MAP_CELL, (dy + MAP_R) * MAP_CELL, MAP_CELL, MAP_CELL);
+      c.fillRect(cellX, cellY, MAP_CELL, MAP_CELL);
+      /* ============ v51 PART B — A MARK, NOT A REDRAW ==================
+         The tile loop was one fillRect from a two-colour checkerboard and
+         nothing else, so a forest and an empty plain differed only by hue.
+         This is a texture PASS on top: one small fleck where the tile
+         really carries a feature, and no fleck anywhere else.
+
+         ⚠️ THE DATA IS THE FEATURE INDEX, NOT A SECOND BIOME SCAN. The
+         spec's own instruction, and it matters twice over: `featureIndex`
+         is what buildFeatureChunk() already produced for the loaded window
+         (see rebuildFeatureLists), so this costs one Map lookup per cell
+         rather than re-deriving anything, AND it means the card can only
+         ever mark tiles the world genuinely grew something on — a mined
+         node is out of the index and its fleck goes with it. The whole
+         31x31 window sits deep inside the loaded chunk radius (>=128 tiles
+         in every direction), so a lookup here is never asking about ground
+         that has not been built.
+
+         Two marks only, both 2px inside a 4px cell — subtle at this size
+         by construction, since a third of the cell is the most a "mark"
+         can be before it becomes the tile. Trees take a darkened version
+         of the tile's OWN colour, so a fleck reads as canopy shadow on
+         whatever ground it stands on rather than as a foreign green;
+         rock/iron/runic nodes take one flat grey, because stone is stone
+         whatever it is sitting on. Nothing else in the index is marked —
+         herbs, essence, meteors and the orb are deliberately unflagged,
+         for the same reason the card carries no base pieces: a map that
+         points at loot is a map that finds things for you. */
+      const featB = featureIndex.get(tx + "," + ty);
+      if (featB) {
+        const fk = featB.type;
+        if (fk === "tree") { c.fillStyle = shade(pal[0], MAP_TREE_SHADE); mapFleckStats.trees++; }
+        else if (fk === "rock" || fk === "iron" || fk === "runic") { c.fillStyle = MAP_ROCK_FLECK; mapFleckStats.rocks++; }
+        else continue;
+        c.fillRect(cellX + 1, cellY + 1, MAP_FLECK, MAP_FLECK);
+        mapFleckStats.marks.push({ tx, ty, type: fk });
+      }
     }
   }
   /* Other players, in their OWN class colour — the same thing that identifies
@@ -14870,6 +15610,10 @@ function debugMapInfo() {
     dots.push({ name: n, px: mapPixel(o.x, o.y, px, py) });
   }
   return { MAP_R, MAP_CELL, MAP_PX, tiles: (MAP_R * 2 + 1) * (MAP_R * 2 + 1),
+           MAP_FLECK, MAP_TREE_SHADE, MAP_ROCK_FLECK,
+           flecks: { cells: mapFleckStats.cells, trees: mapFleckStats.trees,
+                     rocks: mapFleckStats.rocks,
+                     marks: mapFleckStats.marks.map(m => ({ tx: m.tx, ty: m.ty, type: m.type })) },
            visible: !!el && el.style.display !== "none",
            canvas: (() => { const cv = document.getElementById("mapCanvas");
                             return cv ? { w: cv.width, h: cv.height } : null; })(),
@@ -15073,7 +15817,20 @@ const KEYBIND_DEFAULTS = { up: "w", down: "s", left: "a", right: "d", interact: 
      moves `up` onto T to prove a rebind takes, and a default sitting there
      would make that rebind a duplicate and fail a test that is testing
      something else entirely. Same machinery as every binding above. */
-  travel: "m" };
+  travel: "m",
+  /* ============ v51 PART J — GIVING GETS ITS OWN KEY, AND IT IS NOT Q ==
+     The ask was to bind item-giving to `Q`. That cannot be done: `Q` is
+     already KEYBINDS.ability — every class's core ability, since v27 — and
+     rebinding it would silently break all five classes with no warning
+     anywhere. Confirmed live against this very table before choosing.
+     `G` ("give") is genuinely free in the current list (w/a/s/d/e/space/
+     i/c/p/f/shift/q/r/b/k/m are the sixteen taken) and joins the table the
+     same way every binding since v23 has, so it is remappable,
+     conflict-checked and persisted with no new machinery.
+     It is an ADDITIONAL shortcut, not a replacement: the existing `E`
+     proximity trigger in doInteract() is untouched and still opens the
+     same panel. */
+  give: "g" };
 /* display order + labels for the remapping screen */
 const KEYBIND_LABELS = [
   ["up", "Move up"], ["down", "Move down"], ["left", "Move left"], ["right", "Move right"],
@@ -15081,6 +15838,7 @@ const KEYBIND_LABELS = [
   ["craft", "Crafting"], ["pets", "Companions"], ["dive", "Dive"], ["block", "Block"],
   ["ability", "Class ability"], ["mount", "Mount / dismount"],
   ["build", "Build"], ["character", "Character"], ["travel", "Fast travel"],
+  ["give", "Give item to player"],                                    // v51 PART J
 ];
 let KEYBINDS = Object.assign({}, KEYBIND_DEFAULTS);
 let kbCapture = null;           // action awaiting a keypress, or null
@@ -15451,7 +16209,8 @@ function refreshHelpLine() {
     K("ability") + " class ability" + dot +
     K("build") + " build" + dot +
     K("character") + " character" + dot +   // v35
-    K("travel") + " fast travel";           // v39
+    K("travel") + " fast travel" + dot +
+    K("give") + " give item";                // v51 PART J
 }
 
 /* --- PART B/E: the settings panel ----------------------------------------- */

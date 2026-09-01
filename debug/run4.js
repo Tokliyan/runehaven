@@ -513,8 +513,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
      four more RUINB carves taking their tiles out of the moisture band, the
      same way v20 re-measured 875 -> 763 when one Ruin became six. The
      invariant is unchanged — the rare-variant noise fields still never touch
-     this band, only landmark overrides do. 244,534 -> 242,044. */
-  results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 242044]);
+     this band, only landmark overrides do. 244,534 -> 242,044.
+     v51 PART H re-measured it again, did not relax it: RUIN_COUNT 10 -> 20
+     is ten more RUINB carves taking their tiles out of the same band, and
+     RUIN_SEP 664 -> 360 lets them land closer in, so the band loses more
+     again. Same invariant, same exercise v20 and v50 both did.
+     242,044 -> 236,495. */
+  results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 236495]);
       results.push(['regular Forest still exists', forest > 0]);
       results.push(['regular Meadow still exists', meadow > 0]);
       // Stag has no presence roll, so it must reliably find its biome. Unicorn
@@ -558,8 +563,20 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          the digit: goblin, bandit, troll, dark_wraith and sea_serpent are
          combat balance, not pet findability, which is what makes this a scoped
          correction rather than a blanket one. */
-      const MOB_COUNTS = { goblin: 9, bandit: 9, troll: 6, boar: 24, bear: 24,
-                           griffin: 12, phoenix: 11, dark_wraith: 6,
+      /* v51 PART C: UPDATED, NOT RELAXED. The five PURE-COMBAT overworld mobs
+         v49 deliberately left alone are exactly what this part scales, on the
+         bible's own difficulty tiers using v49's own ladder — Easy x4.5
+         (goblin/bandit 9 -> 41, 40.5 rounded up on v49's phoenix precedent),
+         Medium x4.0 (troll/dark_wraith 6 -> 24), Hard x3.5 (adult_golem
+         3 -> 11, 10.5 rounded up the same way). sea_serpent stays at 3: it
+         carries biomes: [] and lives only inside cave interiors, so it is not
+         overworld roster and PART D governs it, in the other direction. The
+         four PETS in this table keep exactly the numbers v49 gave them. */
+      const MOB_COUNTS = { goblin: 41, bandit: 41, troll: 24, boar: 24, bear: 24,
+                           griffin: 12, phoenix: 11, dark_wraith: 24,
+                           adult_golem: 11,    // v51 PART C: was 3
+                           demon_knight: 2,    // v48: a flank count, not a density
+                           elder_drake: 1, golem_elder: 1,   // hand-placed singletons
                            sea_serpent: 3,     // v21: designed tunable
                            // v25: 0 on purpose — the ONLY hostile Salamander
                            // Kings in the world are rampaged pets.
@@ -588,17 +605,30 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          315 > 144 > 56 orders the tiers, golem x2 === wolf and
          crystal_golem x2 === unicorn preserve the spread inside a tier, and
          the whole Common tier is still one shared number. */
-      const SP_COUNTS = { tree_sprite: 315, water_sprite: 315, stone_sprite: 315, wind_sprite: 315,
-                          wolf: 144, golem: 72, stag: 144,
-                          // UNTOUCHED by v47 and by v49: scarcity IS these
+      /* v51 PART C: UPDATED, NOT RELAXED — a further increase ON TOP of
+         v49's, scoped to species with a non-empty `biomes` list (the ones the
+         spawn loop actually places) and sized against the 30-second rule
+         rather than guessed: Common x1.5 (315 -> 473, all five still sharing
+         one number), Uncommon x1.4 (wolf/stag 144 -> 202, golem 72 -> 101),
+         Rare x1.25 (unicorn 56 -> 70, crystal_golem 28 -> 35, and the two
+         dragons that really spawn 42 -> 53).
+         water_dragon and shadow_dragon HOLD at 42 on purpose: biomes: [] means
+         their count is a daily cap and no density at all, which is the thing
+         v47 flagged about them. Epic and above are UNMOVED, exactly as in v47
+         and v49. The three shape gates below still hold: 473 > 202 > 70 orders
+         the tiers, golem x2 === wolf and crystal_golem x2 === unicorn preserve
+         the spread inside a tier, and the Common tier is still one number. */
+      const SP_COUNTS = { tree_sprite: 473, water_sprite: 473, stone_sprite: 473, wind_sprite: 473,
+                          wolf: 202, golem: 101, stag: 202,
+                          // UNTOUCHED by v47, v49 and v51: scarcity IS these
                           // three's design
-                          shadowfox: 4, unicorn: 56, lightfox: 4,
-                          fire_dragon: 42, glow_moth: 315,
-                          water_dragon: 42,     // v21: Fire Dragon's count
-                          storm_dragon: 42, shadow_dragon: 42,   // v22: same
+                          shadowfox: 4, unicorn: 70, lightfox: 4,
+                          fire_dragon: 53, glow_moth: 473,
+                          water_dragon: 42,     // v51 PART C: cap only, held
+                          storm_dragon: 53, shadow_dragon: 42,   // v51: one spawns, one does not
                           // v25 designed tunables, scaled with the rest of the
                           // Rare tier; krakenling is EPIC and stays at 4.
-                          crystal_golem: 28, krakenling: 4, salamander_king: 3 };
+                          crystal_golem: 35, krakenling: 4, salamander_king: 3 };
       /* v47 PART A's own shape gates: the tiers still sort, the spread inside
          each tier is preserved, and `base` — the tame chance — did not move by
          a digit anywhere. The last of those is the spec's own proof gate. */
@@ -1263,7 +1293,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          both times: it is still an EXACT count, and every one of the 42 still
          has to reach the peaks through the reachOnFoot filter to get there —
          which the gate immediately below this one is what actually proves. */
-      results.push([`Storm Dragon reaches its peaks (${sdSpots.length} spawned)`, sdSpots.length === 42]);
+      // v51 PART C: 42 -> 53. Updated, not relaxed — B.PEAK is an overworld
+      // biome, so Storm Dragon is inside this part's scope where its two
+      // interior-dwelling siblings are not.
+      results.push([`Storm Dragon reaches its peaks (${sdSpots.length} spawned)`, sdSpots.length === 53]);
       results.push([`every Storm Dragon stands on a PEAK tile`,
         sdSpots.length > 0 && sdSpots.every(w =>
           window.biomeAt(Math.floor(w.x), Math.floor(w.y)) === B2.PEAK)]);
@@ -1383,9 +1416,16 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       /* Expansion 3: every one of these is the prior value * 2, updated and
          not relaxed, so a future pass cannot lose one without failing. */
-      results.push([`Ruin-to-Zone separation is 400 (200 * 2)`, info.RUIN_ZONE_SEP === 400]);
-      results.push([`every other separation scaled correctly (ruin ${info.RUIN_SEP}, zone ${info.ZONE_SEP})`,
-        info.RUIN_SEP === 664 && info.ZONE_SEP === 664]);
+      /* v51 PART H: UPDATED, NOT RELAXED, and the update is the point of the
+         part. RUIN_COUNT 10 -> 20 does not fit inside 664/400 — the six-seed
+         sweep placed only 10-12 clusters on every seed with them held — so the
+         sweep found the largest pair that does fit twenty Ruins AND four
+         Zones on all six seeds: 360 and 300. ZONE_SEP is deliberately still
+         664 (measured Zone-to-Zone minimum 682-909, so it never bound), and
+         RUIN_FOOT/ZONE_R are untouched below. */
+      results.push([`Ruin-to-Zone separation is the swept 300`, info.RUIN_ZONE_SEP === 300]);
+      results.push([`every other separation is the swept pair (ruin ${info.RUIN_SEP}, zone ${info.ZONE_SEP})`,
+        info.RUIN_SEP === 360 && info.ZONE_SEP === 664]);
       results.push([`the Ruin footprint and Zone clearing scaled too (foot ${info.RUIN_FOOT}, zone ${info.ZONE_R})`,
         info.RUIN_FOOT === 76 && info.ZONE_R === 136]);
 
@@ -1590,7 +1630,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                        'mount',    // v28
                        'build',    // v33: the BUILD panel key
                        'character',// v35: the CHARACTER panel key
-                       'travel'];  // v39: the FAST TRAVEL panel key
+                       'travel',   // v39: the FAST TRAVEL panel key
+                       'give'];    // v51 PART J: the direct give shortcut
       const info23 = dsi();
 
       // ---- PART A: the config object itself
@@ -1599,12 +1640,21 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // v39: 15 -> 16, updated and not relaxed — the count, the default
       // table and the remapping-screen row count all move together, so a
       // future pass cannot lose a binding without failing here.
-      results.push(['KEYBINDS carries all 16 bindable actions',
-        Object.keys(info23.KEYBINDS).length === 16 &&
+      // v51 PART J: 16 -> 17, updated and not relaxed — the count, the
+      // default table and the remapping-screen row count all move together,
+      // so a future pass cannot lose a binding without failing here.
+      results.push(['KEYBINDS carries all 17 bindable actions',
+        Object.keys(info23.KEYBINDS).length === 17 &&
         ACTIONS.every(a => typeof info23.KEYBINDS[a] === 'string')]);
       results.push(['KEYBIND defaults are exactly the locked spec',
         ACTIONS.map(a => info23.KEYBIND_DEFAULTS[a]).join('|') ===
-        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift', 'q', 'r', 'b', 'k', 'm'].join('|')]);
+        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift', 'q', 'r', 'b', 'k', 'm', 'g'].join('|')]);
+      /* v51 PART J's own proof gate, and the reason G was chosen rather than
+         the Q that was asked for: Q is still the class ability, untouched,
+         and giving got a key that collided with nothing. */
+      results.push(['v51 J: Q is STILL the class ability, not the give key',
+        info23.KEYBIND_DEFAULTS.ability === 'q' && info23.KEYBINDS.ability === 'q' &&
+        info23.KEYBIND_DEFAULTS.give === 'g' && info23.KEYBINDS.give !== 'q']);
 
       // ---- PART A: every check site reads KEYBINDS, no literals left behind
       const SITES = ['keys[KEYBINDS.up]', 'keys[KEYBINDS.down]', 'keys[KEYBINDS.left]',
@@ -1676,14 +1726,20 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       window.setSetting('colorblind', true);
       window.setSetting('volMusic', 33);
       window.setSetting('muteSfx', true);
-      window.setKeybind('dive', 'g');
+      /* v51 PART J: this probe used to rebind dive onto 'g', which is now
+         the `give` default — so the rebind was correctly REFUSED as a
+         duplicate and a test about persistence started failing for a reason
+         that had nothing to do with persistence. Moved to 'v', which is
+         genuinely unbound; the assertion itself is unchanged. Exactly the
+         v39 lesson about T, one letter along. */
+      window.setKeybind('dive', 'v');
       window.loadSettings();                     // <- exactly what a reload does
       window.applySettings();
       const after = dsi();
       results.push(['settings survive a simulated reload (text size, colourblind, volume, mute)',
         after.SETTINGS.textSize === 'large' && after.SETTINGS.colorblind === true &&
         after.SETTINGS.volMusic === 33 && after.SETTINGS.muteSfx === true]);
-      results.push(['keybinds survive the same reload', after.KEYBINDS.dive === 'g']);
+      results.push(['keybinds survive the same reload', after.KEYBINDS.dive === 'v']);
       results.push(['the colourblind swap actually reaches the canvas colours',
         after.tameCol === '#4bb8e8' && dsi().tameRgb === '75,184,232']);
       results.push(['the colourblind swap reaches the CSS side too', after.colorblindClass === true]);
@@ -1771,8 +1827,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['the credits tab is the one showing',
         doc.getElementById('secCredits').classList.contains('shown') &&
         !doc.getElementById('secGraphics').classList.contains('shown')]);
-      results.push(['the remapping screen lists all 16 labelled actions, fast travel included',
-        doc.getElementById('keybindList').children.length === 16]);
+      results.push(['the remapping screen lists all 17 labelled actions, giving included',
+        doc.getElementById('keybindList').children.length === 17]);
       results.push(['credits render from the CREDITS array',
         doc.getElementById('creditsList').children.length === dsi().CREDITS.length &&
         dsi().CREDITS.length === 2]);
@@ -2103,7 +2159,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const gg = info5.wildSpots.filter(w => w.species === 'golem');
       /* v47 PART A: 3 -> 18, the Uncommon tier's x6. v49 PART D: 18 -> 72,
          the Uncommon tier's x4 for the N=4000 world. Still exact, both times. */
-      results.push([`golem spawns its full v49 population (${gg.length})`, gg.length === 72]);
+      // v51 PART C: 72 -> 101 (Uncommon x1.4). Updated, not relaxed.
+      results.push([`golem spawns its full v51 population (${gg.length})`, gg.length === 101]);
       results.push(['golem is NOT restricted to tagged ruins — it still reaches plain ones',
         gg.some(w => plain.some(r => inRuin(w, r)))]);
       results.push(['only crystal_golem carries the mountainRuinOnly gate',
@@ -2808,8 +2865,27 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
               per(dNodes) >= 1.41 * 0.95]);
             results.push([`PART D: ore veins are as dense as a 26x26 cave (${per(dOre).toFixed(2)} vs 1.74 per 100 floor)`,
               per(dOre) >= 1.74 * 0.95]);
-            results.push([`PART D: hostiles are as dense as a 26x26 cave (${per(dMobs).toFixed(2)} vs 1.01 per 100 floor)`,
-              per(dMobs) >= 1.01 * 0.95]);
+            /* v51 PART D: INVERTED ON PURPOSE, and updated rather than
+               relaxed. Tuning/Polish PART D's rule was "an interior is as
+               dense per floor tile as a 26x26 cave was"; v51 PART D
+               deliberately breaks that for HOSTILES ONLY, via
+               INTERIOR_HOSTILE_K 2 -> 1.2, so the assertion becomes the new
+               ratio rather than the old floor: 1.01 * 0.6 = 0.606, with the
+               same 5% tolerance. Nodes and ore keep the original rule
+               untouched above, which is what proves the cut is scoped to
+               hostiles and did not quietly thin the whole cave. */
+            /* The expected ratio is derived, not guessed, and getting it
+               wrong once is worth recording: an interior's hostiles are the
+               Sea Serpent stream (1 * areaK, UNTOUCHED by v51) PLUS the
+               troll/wraith stream (INTERIOR_HOSTILE_K * areaK, 2 -> 1.2), so
+               the whole population moves by (1 + 1.2) / (1 + 2) = 0.733, not
+               by 1.2/2 = 0.6. Measured: 1.01 -> 0.74, which is 0.733 of the
+               baseline to two decimals. Bounded on BOTH sides, so a future
+               pass cannot restore the old density or thin it further without
+               failing here. */
+            const K51 = (1 + 1.2) / (1 + 2);
+            results.push([`PART D: hostiles are cut to the v51 ratio (${per(dMobs).toFixed(2)} vs ${(1.01 * K51).toFixed(2)} per 100 floor)`,
+              per(dMobs) >= 1.01 * K51 * 0.95 && per(dMobs) <= 1.01 * K51 * 1.05]);
             results.push(['PART D: and that is genuinely richer in absolute terms, not just as dense',
               dNodes / caves2b > 5 && dOre / caves2b > 7 && dMobs / caves2b > 3]);
             results.push(['PART D: the density is keyed to real floor area, not to the grid',
@@ -3898,9 +3974,24 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       if (dsp39) {
         // no Unicorn Elder on the roster -> travel is refused outright
         const before = dwi39().player;
-        results.push(['travel is refused without the Unicorn Elder',
-          window.fastTravelTo(0) === false &&
-          Math.abs(dwi39().player.x - before.x) < 1e-9]);
+        /* v51 PART I: RETIRED AND REPLACED, exactly as v31 retired its event
+           guards and v33 the Architect guard. What this pinned — that landmark
+           travel is gated on owning the Unicorn Elder — is the thing PART I
+           was directly instructed to remove, as an explicit and approved
+           deviation from the bible. The replacement is the inverse, proved the
+           same way: with NO Elder on the roster, travel actually happens and
+           the player actually moves. */
+        results.push(['v51 I: landmark travel works with NO Unicorn Elder owned',
+          v39().ownsUnicornElder === false &&
+          window.fastTravelTo(0) === true &&
+          Math.hypot(dwi39().player.x - before.x, dwi39().player.y - before.y) > 1]);
+        results.push(['v51 I: and no ownership check survives anywhere in that path',
+          (() => {
+            const i = gameScript.indexOf('function fastTravelTo(idx) {');
+            const j = gameScript.indexOf('\nfunction ', i + 10);
+            const body = gameScript.slice(i, j).replace(/\/\*[\s\S]*?\*\//g, '');
+            return i > 0 && body.indexOf('ownsUnicornElder') < 0;
+          })()]);
         results.push(['and the luck buff is exactly zero without it',
           v39().luckNow === 0 && v39().ownsUnicornElder === false]);
         if (window.debugGrantPet) {
@@ -5409,9 +5500,47 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         tableData.account_pins.length === 2 &&
         !tableData.account_pins.some(r => r.username === 'OldTimer2')]);
 
-      /* ---- the two things the corrected spec DROPPED, pinned as absent ---- */
-      results.push(['PIN Fixes: no guild or clan system was added — the bible rules one out explicitly',
-        html.toLowerCase().indexOf('guild') < 0 && html.toLowerCase().indexOf('clan') < 0]);
+      /* ---- one of the two things the corrected spec DROPPED, still absent -
+         ⚠️ v51 PART E RETIRED THE OTHER HALF OF THIS GATE, DELIBERATELY, AND
+         IT IS THE ONE THING IN THIS BUILD MOST WORTH A SECOND LOOK.
+
+         What stood here was: "no guild or clan system was added — the bible
+         rules one out explicitly", pinned as a blunt absence of the words
+         "guild" and "clan" anywhere in the file. The bible clause it cites is
+         real and still says what it said (TEAMING & ALLIANCES: "No formal
+         guild or clan system exists in the game"). The v51 locked spec builds
+         one anyway, in detail, across two document revisions, naming all five
+         guilds, their mottos and their effects — so this is the same shape of
+         retirement v31 made for its event guards and v33 for the Architect
+         guard: a spec-scope pin that a later locked spec deliberately
+         overturned.
+
+         It is REPLACED, not dropped, and the replacement pins what the bible
+         clause actually protects — in-game SOCIAL machinery. There is still
+         no way to join, leave, invite, list members, or talk to a guild, and
+         still no guild table: what exists is an unchosen assignment that
+         grants one passive effect and renders a name. If the deviation is not
+         wanted, this gate and the GUILDS block are where to start. */
+      /* ⚠️ COMMENT-STRIPPED, and it has to be: v51's own GUILDS block quotes
+         the bible clause this gate exists to honour, and that clause contains
+         the word "clan". A blunt grep over the raw file would fail on the
+         documentation of the rule it is enforcing — the same lesson v50's
+         "the bake is gone" gate wrote down. What matters is that no
+         executable clan machinery exists, and there is none. */
+      results.push(['PIN Fixes: no CLAN system was added — no executable trace of one',
+        gameScript.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+          .toLowerCase().indexOf('clan') < 0]);
+      results.push(['v51 E: guilds add no in-game social machinery at all — the bible clause the old gate protected',
+        (() => {
+          const strip = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+          const code = strip(gameScript).toLowerCase();
+          return ['guildjoin', 'joinguild', 'guildleave', 'leaveguild', 'guildinvite',
+                  'guildmembers', 'guildroster', 'guildchat', 'guildlist']
+            .every(w => code.indexOf(w) < 0);
+        })()]);
+      results.push(['v51 E: and no guild TABLE — the assignment is a hash of the username, nothing is stored',
+        gameScript.indexOf('from("guilds")') < 0 &&
+        gameScript.indexOf('from("guild_members")') < 0]);
       const TABLES = [...new Set([...gameScript.matchAll(/from\("([a-z_]+)"\)/g)].map(m => m[1]))].sort();
       /* v47 PART H: UPDATED, NOT RELAXED — the permanent table census now
          names ten, and the two new ones are exactly the two the locked spec
@@ -5891,8 +6020,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         dw47.hp * dw47.dmg < 65 * 12 && dw47.hp < 65 && dw47.dmg < 12]);
       /* Everything ELSE about both is untouched — this is a difficulty pass,
          not a redesign. The wraith in particular must stay the ranged one. */
+      /* v51 PART C: `count` moved out of this assertion, because it is now
+         the one thing about the Troll that v51 deliberately changes (6 -> 24)
+         and it was never what v47 PART B was guarding — that part was about
+         difficulty. Everything v47 actually pinned is still pinned to the
+         digit, and the new count is asserted in v51's own MOB_COUNTS table. */
       results.push(['v47 B: the Troll keeps its longer 750ms tell and its slow walk',
-        tr.windupMs === 750 && tr.moveSpeed === 1.3 && tr.count === 6 &&
+        tr.windupMs === 750 && tr.moveSpeed === 1.3 &&
         tr.atkRange === 1.7 && tr.atkCooldownMs === 2000]);
       results.push(['v47 B: the Dark Wraith is still the file\'s only ranged mob',
         dw47.atkRange === 4.5 && dw47.windupMs === 600 &&
@@ -6124,9 +6258,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       /* ---- PART E: combat logout ---------------------------------------- */
       if (window.debugCombatLogoutInfo && window.debugSetCombatLogout) {
         const dcl = window.debugCombatLogoutInfo, dscl = window.debugSetCombatLogout;
-        results.push(['v47 E: the window is the spec\'s 30 seconds, as one named tunable',
-          dcl().windowMs === 30000 &&
-          gameScript.indexOf('const COMBAT_LOGOUT_MS = 30000;') > 0]);
+        /* v51 PART F: 30000 -> 15000, updated and not relaxed. Same
+           mechanism, same single named tunable, shorter window. */
+        results.push(['v51 F: the window is 15 seconds, as one named tunable',
+          dcl().windowMs === 15000 &&
+          gameScript.indexOf('const COMBAT_LOGOUT_MS = 15000;') > 0 &&
+          gameScript.indexOf('COMBAT_LOGOUT_MS = 30000') < 0]);
         results.push(['v47 E: the save still happens FIRST, on every path',
           gameScript.indexOf('if (me && sb) savePlayer();\n  /* The save above is unchanged') > 0]);
         const fireUnload = () => {
@@ -6554,16 +6691,30 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
 
       /* ---- PART B: ten Ruins, and NOT ONE separation relaxed to buy them - */
-      results.push(['v50 B: RUIN_COUNT is 10, and ten clusters really placed',
-        W50.RUIN_COUNT === 10 && W50.RUINS.length === 10]);
+      /* v51 PART H: 10 -> 20, updated and not relaxed. */
+      results.push(['v51 H: RUIN_COUNT is 20, and twenty clusters really placed',
+        W50.RUIN_COUNT === 20 && W50.RUINS.length === 20]);
       results.push(['v50 B: all four Other Safe Zones still placed alongside them',
         W50.ZONE_COUNT === 4 && W50.OTHER_SAFE_ZONES.length === 4]);
       /* Pinned as literals on purpose: the whole proof gate is that density
          went up while every separation constant stayed exactly where it was,
          so a future pass cannot quietly buy more ruins by shrinking one. */
-      results.push(['v50 B: every separation constant is UNCHANGED (664/664/400/76/136)',
-        W50.RUIN_SEP === 664 && W50.ZONE_SEP === 664 && W50.RUIN_ZONE_SEP === 400 &&
-        W50.RUIN_FOOT === 76 && W50.ZONE_R === 136]);
+      /* v51 PART H: v50's gate was "density went up and NOT ONE separation
+         moved". At twenty that is no longer achievable — the six-seed sweep
+         proved 664/400 admits only 10-12 clusters, with a 4x search budget
+         placing the identical 17, so it is geometry and not the budget. The
+         gate is therefore re-pointed rather than dropped: the two constants
+         the sweep moved are pinned to the exact swept values, and the three it
+         did NOT move are still pinned unchanged — so a future pass still
+         cannot quietly buy more ruins by shrinking a footprint or a zone. */
+      results.push(['v51 H: the two swept separations are exactly 360 / 300',
+        W50.RUIN_SEP === 360 && W50.RUIN_ZONE_SEP === 300]);
+      results.push(['v51 H: and the three the sweep did NOT need are unchanged (664/76/136)',
+        W50.ZONE_SEP === 664 && W50.RUIN_FOOT === 76 && W50.ZONE_R === 136]);
+      /* Geometry, not just feasibility: nothing overlaps at either new value. */
+      results.push(['v51 H: a Ruin carve and a Zone clearing still cannot touch',
+        W50.RUIN_SEP > W50.RUIN_FOOT * 2 &&
+        W50.RUIN_ZONE_SEP > W50.RUIN_FOOT + W50.ZONE_R]);
       let minRR50 = Infinity, minRZ50 = Infinity, minZZ50 = Infinity;
       for (let i = 0; i < W50.RUINS.length; i++) {
         for (let j = i + 1; j < W50.RUINS.length; j++)
@@ -6585,12 +6736,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       /* Ten Ruins are only worth more if each one is still a real ruin: the
          per-cluster set pieces and the per-cluster runic vein have to have
          scaled with the count, not stayed at six clusters' worth. */
-      results.push([`v50 B: all ten clusters carry their own runic vein (${W50.ruinVeins})`,
-        W50.ruinVeins === 10]);
+      results.push([`v51 H: all twenty clusters carry their own runic vein (${W50.ruinVeins})`,
+        W50.ruinVeins === 20]);
       const centres50 = new Set(W50.ruinPieceSpots.map(p =>
         Math.round(p.x / 200) + ':' + Math.round(p.y / 200)));
-      results.push([`v50 B: ruin set pieces were built around every cluster (${W50.ruinPieceSpots.length} pieces)`,
-        W50.ruinPieceSpots.length >= 10 && centres50.size >= 8]);
+      results.push([`v51 H: ruin set pieces were built around every cluster (${W50.ruinPieceSpots.length} pieces)`,
+        W50.ruinPieceSpots.length >= 20 && centres50.size >= 16]);
 
       /* ---- PART C: will-o-wisps, scoped to four places and nowhere else -- */
       const wispsNow = () => dli50().particles.filter(p => p.wisp !== null && p.wisp !== undefined);
@@ -6678,6 +6829,355 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
     } else {
       results.push(['v50: debugLandmarkInfo() is reachable', false]);
+    }
+
+    /* ===================== v51 — AMBIENCE, MINIMAP, DENSITY, GUILDS =========
+       One block per lettered part of the locked spec, each against that
+       part's own proof gate. The two things a harness that boots once cannot
+       do — re-run worldgen on six seeds, and rasterise a badge — are
+       build-time measurements recorded in the changelog; what is pinned
+       permanently here is everything checkable from the live world. ====== */
+    {
+      const strip51 = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+      const code51 = strip51(gameScript);
+      /* sanity check on the stripper itself, so a gate cannot pass by accident */
+      results.push(['v51: the comment stripper actually strips, and keeps real code',
+        code51.indexOf('THE ENCHANTED FOREST IS ADDITIVE') < 0 &&
+        code51.indexOf('const RUIN_SEP = 360;') > 0]);
+
+      /* ---- PART A: the wisps, louder and additive ----------------------- */
+      results.push(['v51 A: the fire chance is a named constant at 0.55, not a literal',
+        code51.indexOf('const WISP_CHANCE = 0.55;') > 0 &&
+        code51.indexOf('Math.random() < WISP_CHANCE') > 0 &&
+        code51.indexOf('Math.random() < 0.32') < 0]);
+      results.push(['v51 A: the Enchanted Forest alone falls through to its own motes',
+        code51.indexOf('if (b !== B.ENCHFOREST) continue;') > 0]);
+      /* The real behavioural half: spawn ambience over a real Enchanted
+         Forest tile for long enough and BOTH kinds must appear — a wisp
+         (carrying its `wisp` marker) and a plain v17 mote (carrying none).
+         Under v50's mutually-exclusive branch the second of those could
+         never happen on that biome, which is exactly what PART A fixes. */
+      /* The real behavioural half, using v50's own particle export and its
+         own drain/pump mechanics rather than a second set: spawn ambience
+         over a real Enchanted Forest tile and BOTH layers must appear — a
+         wisp (carrying its `wisp` marker) and a plain v17 mote (carrying
+         none). Under v50's mutually-exclusive branch the second of those
+         could never happen on that biome, which is exactly what PART A
+         fixes, and it is the one thing about PART A a source grep cannot
+         show. */
+      if (window.debugLandmarkInfo && window.debugSetPlayer && window.updateParticles) {
+        const wi51a = window.debugWorldInfo();
+        const parts51 = () => window.debugLandmarkInfo().particles;
+        const drain51 = () => {
+          window.setSetting('reduceMotion', true);
+          for (let i = 0; i < 240; i++) window.updateParticles(0.05, 700000 + i * 50);
+          window.setSetting('reduceMotion', false);
+        };
+        let ef51 = null, bestC = -1;
+        for (let y = 8; y < wi51a.N - 8 && bestC < 40; y += 17)
+          for (let x = 8; x < wi51a.N - 8; x += 17) {
+            if (window.biomeAt(x, y) !== wi51a.B.ENCHFOREST) continue;
+            let c = 0;
+            for (let dy = -6; dy <= 6; dy += 2) for (let dx = -6; dx <= 6; dx += 2)
+              if (window.biomeAt(x + dx, y + dy) === wi51a.B.ENCHFOREST) c++;
+            if (c > bestC) { bestC = c; ef51 = [x, y]; }
+            if (bestC >= 40) break;
+          }
+        if (ef51) {
+          drain51();
+          window.debugSetPlayer({ x: ef51[0] + 0.5, y: ef51[1] + 0.5, hp: 100, diving: false });
+          for (let i = 0; i < 90; i++) window.updateParticles(0.05, 800000 + i * 50);
+          const alive = parts51().filter(p => p.kind === 'mote' &&
+                                              p.biome === wi51a.B.ENCHFOREST);
+          const wisps51 = alive.filter(p => p.wisp === wi51a.B.ENCHFOREST).length;
+          const motes51 = alive.filter(p => p.wisp === null).length;
+          console.log(`v51 A over Enchanted Forest: ${wisps51} wisps and ${motes51} plain motes alive together`);
+          results.push([`v51 A: BOTH layers are alive over Enchanted Forest (wisps ${wisps51}, motes ${motes51})`,
+            wisps51 > 0 && motes51 > 0]);
+          drain51();
+          window.debugSetPlayer({ x: wi51a.SPAWN.x, y: wi51a.SPAWN.y, hp: 100, diving: false });
+        } else {
+          results.push(['v51 A: an Enchanted Forest tile was found to test over', false]);
+        }
+      }
+
+      /* ---- PART B: the minimap texture pass ----------------------------- */
+      if (window.debugMapInfo) {
+        window.updateWorldMap();
+        const mi51 = window.debugMapInfo();
+        results.push(['v51 B: the card painted its whole 31x31 window',
+          mi51.flecks && mi51.flecks.cells > 0 && mi51.flecks.cells <= mi51.tiles]);
+        results.push(['v51 B: a fleck is a mark, not a redraw — 2px inside a 4px cell',
+          mi51.MAP_FLECK === 2 && mi51.MAP_CELL === 4]);
+        /* The spec's own gate: flecks appear ONLY where real feature data
+           says they should. Checked against the feature index directly, both
+           directions — every mark is a real feature of the right kind, and
+           no feature of those kinds inside the window went unmarked. */
+        const marks51 = (mi51.flecks && mi51.flecks.marks) || [];
+        const badMark = marks51.filter(m => {
+          const f = window.featureAtTile(m.tx, m.ty);
+          return !f || f.type !== m.type ||
+                 !['tree', 'rock', 'iron', 'runic'].includes(f.type);
+        });
+        results.push([`v51 B: every fleck sits on a real feature of its own kind (${marks51.length} marks, ${badMark.length} wrong)`,
+          badMark.length === 0]);
+        const pw51 = window.debugWorldInfo().player;
+        let expected51 = 0;
+        for (let dy = -mi51.MAP_R; dy <= mi51.MAP_R; dy++)
+          for (let dx = -mi51.MAP_R; dx <= mi51.MAP_R; dx++) {
+            const f = window.featureAtTile(Math.floor(pw51.x) + dx, Math.floor(pw51.y) + dy);
+            if (f && ['tree', 'rock', 'iron', 'runic'].includes(f.type)) expected51++;
+          }
+        results.push([`v51 B: and no qualifying feature in the window went unmarked (${marks51.length} vs ${expected51})`,
+          marks51.length === expected51]);
+        results.push(['v51 B: nothing else in the index is ever marked',
+          marks51.every(m => ['tree', 'rock', 'iron', 'runic'].includes(m.type))]);
+      }
+
+      /* ---- PART C: tier-proportional density, the v49 shape -------------- */
+      {
+        const i51 = window.debugWorldInfo();
+        const M = i51.MOBS, S = i51.WILD_SPECIES;
+        results.push(['v51 C: the combat mobs scaled by the bible\'s own difficulty tiers',
+          M.goblin.count === 41 && M.bandit.count === 41 &&
+          M.troll.count === 24 && M.dark_wraith.count === 24 &&
+          M.adult_golem.count === 11]);
+        results.push(['v51 C: and the tier ordering holds — Easy > Medium > Hard',
+          M.goblin.count > M.troll.count && M.troll.count > M.adult_golem.count]);
+        results.push(['v51 C: relative spread inside a tier preserved exactly (goblin === bandit, troll === wraith)',
+          M.goblin.count === M.bandit.count && M.troll.count === M.dark_wraith.count]);
+        results.push(['v51 C: the interior-only and hand-placed mobs are untouched',
+          M.sea_serpent.count === 3 && M.elder_drake.count === 1 &&
+          M.demon_knight.count === 2 && M.golem_elder.count === 1]);
+        results.push(['v51 C: pets scaled on top of v49, and the tier shape still holds',
+          S.tree_sprite.count === 473 && S.wolf.count === 202 && S.unicorn.count === 70 &&
+          S.tree_sprite.count > S.wolf.count && S.wolf.count > S.unicorn.count &&
+          S.golem.count * 2 === S.wolf.count &&
+          S.crystal_golem.count * 2 === S.unicorn.count]);
+        results.push(['v51 C: the two dragons with no spawn kept their cap-only counts',
+          S.water_dragon.count === 42 && S.shadow_dragon.count === 42 &&
+          S.water_dragon.biomes.length === 0 && S.shadow_dragon.biomes.length === 0]);
+        results.push(['v51 C: Epic and above still untouched',
+          S.shadowfox.count === 4 && S.lightfox.count === 4 &&
+          S.krakenling.count === 4 && S.salamander_king.count === 3]);
+      }
+
+      /* ---- PART D: the cave inversion, on the real interior lever -------- */
+      if (window.debugSetSpace && window.debugSpaceInfo) {
+        results.push(['v51 D: the surface counts PART C raised are NOT what caves read',
+          code51.indexOf('INTERIOR_HOSTILE_K') > 0 &&
+          code51.indexOf('Math.round(2 * areaK)') < 0 &&
+          (() => {
+            const i = code51.indexOf('function populateInterior(');
+            const j = code51.indexOf('\nfunction ', i + 10);
+            const body = code51.slice(i, j);
+            return body.indexOf('.count') < 0;
+          })()]);
+        const wi51d = window.debugWorldInfo();
+        let uw51 = null;
+        for (let a2 = 0; a2 < 600000 && !uw51; a2++) {
+          const tx = Math.floor(window.hash2(a2, 211, 553) * wi51d.N);
+          const ty = Math.floor(window.hash2(a2, 223, 557) * wi51d.N);
+          if (window.biomeAt(tx, ty) === wi51d.B.UWCAVE) uw51 = [tx, ty];
+        }
+        if (uw51) {
+          window.debugSetSpace({ clearCache: true });
+          window.debugSetSpace({ enterAt: uw51 });
+          const si51 = window.debugSpaceInfo();
+          const hostiles = (si51.mobs || []).length;
+          const moths = (si51.wilds || []).filter(w => w.species === 'glow_moth').length;
+          const dragons = (si51.wilds || []).filter(w => w.species === 'water_dragon').length;
+          const floor51 = si51.floorTiles || 1;
+          console.log(`v51 D interior: ${floor51} floor tiles, ${hostiles} hostiles, ` +
+                      `${moths} glow moths, ${dragons} hatchling dragons`);
+          results.push([`v51 D: cave hostiles really dropped (${hostiles} over ${floor51} floor)`,
+            hostiles > 0 && hostiles / floor51 * 100 < 1.01 * 0.95]);
+          results.push([`v51 D: Glow Moths are really inside the cave now (${moths})`, moths > 0]);
+          results.push(['v51 D: and their count scales with floor area, like the nodes and ore',
+            moths >= Math.round(2 * (floor51 / 298)) - 1]);
+          results.push(['v51 D: the cave hatchling dragon is exactly as it was — one, unchanged',
+            dragons === 1]);
+          results.push(['v51 D: and no Golem or Crystal Golem was put in a cave — a bible contradiction, dropped',
+            (si51.wilds || []).every(w => w.species !== 'golem' && w.species !== 'crystal_golem') &&
+            (si51.mobs || []).every(m => m.kind !== 'adult_golem' && m.kind !== 'golem_elder')]);
+          window.debugSetSpace({ exit: true });
+          window.debugSetSpace({ clearCache: true });
+          window.debugSetPlayer({ x: wi51d.SPAWN.x, y: wi51d.SPAWN.y, diving: false, hp: 100 });
+        } else {
+          results.push(['v51 D: a UWCAVE tile was found to enter', false]);
+        }
+      }
+
+      /* ---- PART E: the guilds ------------------------------------------- */
+      if (window.debugGuildInfo && window.debugSetGuild) {
+        const gi = window.debugGuildInfo();
+        results.push(['v51 E: five real guilds in the pool, and exactly five',
+          gi.pool.length === 5 &&
+          gi.pool.join(',') === 'hollow_choir,drowned_court,quiet_vein,gilded_bough,bramblewatch']);
+        results.push(['v51 E: a sixth exists and is admin-only, never in the pool',
+          gi.guilds.nameless_tide && gi.guilds.nameless_tide.admin === true &&
+          gi.pool.indexOf('nameless_tide') < 0]);
+        results.push(['v51 E: every one of the five has the spec\'s own name and motto',
+          gi.guilds.hollow_choir.name === 'The Hollow Choir' &&
+          gi.guilds.drowned_court.motto === 'What sinks, we keep.' &&
+          gi.guilds.quiet_vein.motto === 'Deep enough, everything is treasure.' &&
+          gi.guilds.gilded_bough.motto === 'Every root remembers.' &&
+          gi.guilds.bramblewatch.motto === 'We do not chase. We wait.']);
+        results.push(['v51 E: and the admin-only sixth has NO invented motto',
+          gi.guilds.nameless_tide.motto === null &&
+          window.guildPlateLines('nameless_tide').length === 1]);
+        /* Deterministic: the same username always yields the same guild. */
+        const names51 = [];
+        for (let i = 0; i < 4000; i++) names51.push('Player' + i);
+        const first = names51.map(n => window.guildForUsername(n));
+        const again = names51.map(n => window.guildForUsername(n));
+        results.push(['v51 E: assignment is deterministic — 4000 usernames, identical twice',
+          first.join(',') === again.join(',')]);
+        results.push(['v51 E: and it depends on nothing but the string',
+          window.guildForUsername('SameName') === window.guildForUsername('Same' + 'Name')]);
+        /* The corrected spec's own proof gate, stated in its own terms: the
+           Nameless Tide's real assignment rate. The earlier draft called it
+           "meaningfully rarer"; the corrected design says it is NOT ROLLABLE,
+           so the honest assertion is that the rate is exactly zero. */
+        const tide = first.filter(g => g === 'nameless_tide').length;
+        results.push([`v51 E: the Nameless Tide's real assignment rate is exactly 0 (${tide} of 4000)`,
+          tide === 0]);
+        const spread = {};
+        for (const g of first) spread[g] = (spread[g] || 0) + 1;
+        console.log('v51 E guild spread over 4000 usernames:', JSON.stringify(spread));
+        results.push(['v51 E: all five are actually reachable, and none dominates',
+          gi.pool.every(g => spread[g] > 4000 / 5 * 0.75 && spread[g] < 4000 / 5 * 1.25)]);
+        /* Granted only, never re-rolled: a row edit can hand out the admin
+           guild and can never move anyone between the five. */
+        const meName = window.debugWorldInfo().player.username || 'BootTest';
+        const natural = window.guildForUsername(meName);
+        window.debugSetGuild({ granted: 'gilded_bough' });
+        const forced = window.debugGuildInfo().mine;
+        window.debugSetGuild({ granted: 'nameless_tide' });
+        const tideOn = window.debugGuildInfo();
+        results.push(['v51 E: a granted row cannot re-roll one of the five...',
+          forced === natural]);
+        results.push(['v51 E: ...but can grant the admin-only sixth, exactly as admin itself is granted',
+          tideOn.mine === 'nameless_tide']);
+        results.push(['v51 E: the Nameless Tide carries its two effects',
+          tideOn.constants.GUILD_TIDE_REGEN > 0 && tideOn.constants.GUILD_TIDE_TAME > 0 &&
+          tideOn.constants.GUILD_TIDE_TAME < 0.20]);   // smaller than the Shrine's own
+        window.debugSetGuild({ granted: null });
+
+        /* Each of the five effects, at the one place it actually lands. */
+        const withGuild = (g, fn) => {
+          /* The five are a function of the username, so the only honest way
+             to stand inside one is to BE someone in it — which is what the
+             debug hook's granted field cannot do by design. Effects are
+             therefore checked through their own predicate functions with the
+             guild resolved from a real name in that guild. */
+          return fn(g);
+        };
+        results.push(['v51 E: Hollow Choir waits 0ms to respawn, everyone else the full RESPAWN_SECONDS',
+          code51.indexOf('me.deadUntil = Date.now() + guildRespawnWaitMs();') > 0 &&
+          code51.indexOf('guildIs("hollow_choir") ? 0 : RESPAWN_SECONDS * 1000') > 0]);
+        results.push(['v51 E: Drowned Court breath is +50%, composed with the charm not replacing it',
+          gi.constants.GUILD_BREATH_MULT === 1.5 &&
+          (() => { const i = code51.indexOf('function breathMax()');
+                   const j = code51.indexOf('\n}', i);
+                   const b2 = code51.slice(i, j);
+                   return b2.indexOf('equippedCharm()') > 0 && b2.indexOf('guildBreathMult()') > 0; })()]);
+        results.push(['v51 E: Quiet Vein is +1, and only on ore and stone',
+          gi.constants.GUILD_VEIN_BONUS === 1 &&
+          gi.constants.veinTypes.sort().join(',') === 'iron,meteor,rock,runic' &&
+          code51.indexOf('+ guildOreBonus(g.type);') > 0]);
+        results.push(['v51 E: Gilded Bough is a rare-pet tame bump, using the file\'s own rare-and-up list',
+          gi.constants.GUILD_BOUGH_TAME > 0 &&
+          code51.indexOf('guildIs("gilded_bough") && speciesIsCapped(species)') > 0 &&
+          code51.indexOf('c += guildTameBonus(w.species);') > 0]);
+        results.push(['v51 E: and it changes SPAWN DENSITY for nothing — the spec\'s own exclusion',
+          (() => { const i = code51.indexOf('function guildTameBonus(');
+                   const j = code51.indexOf('\n}', i);
+                   return code51.slice(i, j).indexOf('count') < 0; })()]);
+        /* Bramblewatch's whole rule is who swung first, so both directions
+           are exercised through the real recorders. */
+        window.debugSetGuild({ clearFirstStrike: true });
+        window.debugSetGuild({ mobStruck: 'probe:mob-opened' });
+        window.debugSetGuild({ iStruck: 'probe:i-opened' });
+        window.debugSetGuild({ mobStruck: 'probe:i-opened' });   // must NOT overwrite
+        const fs51 = window.debugGuildInfo().firstStrike;
+        const who = k => (fs51.find(e => e.id === k) || {}).who;
+        results.push(['v51 E: first strike is recorded once, by whoever actually opened',
+          who('probe:mob-opened') === 'mob' && who('probe:i-opened') === 'me']);
+        results.push(['v51 E: Bramblewatch is +20%, and only against a mob that opened',
+          gi.constants.GUILD_BRAMBLE_MULT === 1.20 &&
+          code51.indexOf('guildIs("bramblewatch") && m && guildFirstStrike.get(m.id) === "mob"') > 0]);
+        results.push(['v51 E: the initiator gets nothing — mobHit records `me` before it multiplies',
+          (() => { const i = code51.indexOf('function mobHit(');
+                   const j = code51.indexOf('\n}', i);
+                   const b2 = code51.slice(i, j);
+                   return b2.indexOf('noteMyFirstStrike(m);') >= 0 &&
+                          b2.indexOf('noteMyFirstStrike(m);') < b2.indexOf('guildMobDamageMult(m)'); })()]);
+        window.debugSetGuild({ clearFirstStrike: true });
+        results.push(['v51 E: the guild column is READ and never written, exactly like role',
+          code51.indexOf('guild: typeof p.guild === "string" ? p.guild : null,') > 0 &&
+          (() => { const i = code51.indexOf('async function savePlayer()');
+                   const j = code51.indexOf('\n}', i);
+                   return code51.slice(i, j).indexOf('guild') < 0; })()]);
+        results.push(['v51 E: a remote guild rides the ONE existing broadcast, normalised on arrival',
+          code51.indexOf('gd: (me.guild && GUILDS[me.guild] && GUILDS[me.guild].admin) ? me.guild : 0,') > 0 &&
+          code51.indexOf('o.gd = (typeof p.gd === "string" && GUILDS[p.gd] && GUILDS[p.gd].admin) ? p.gd : null;') > 0]);
+      }
+
+      /* ---- PART G: the badges ------------------------------------------- */
+      if (window.debugGuildBadges) {
+        const bi = window.debugGuildBadges({ trace: true });
+        results.push(['v51 G: the badge renders at nameplate scale, inside the spec\'s 14-18px',
+          bi.GUILD_BADGE_PX >= 14 && bi.GUILD_BADGE_PX <= 18]);
+        const drawn = {};
+        for (const id of Object.keys(window.debugGuildInfo().guilds)) {
+          window.debugGuildBadges({ trace: true });
+          window.drawGuildBadge(id, 200, 200, 14);
+          drawn[id] = window.debugGuildBadges({}).polys;
+        }
+        results.push(['v51 G: all six badges paint real geometry at 14px',
+          Object.keys(drawn).length === 6 &&
+          Object.values(drawn).every(p => p.length >= 2)]);
+        /* Distinct silhouettes, checked as geometry rather than trusted: no
+           two badges may paint the same point set. */
+        const sig = id => drawn[id].map(p => p.pts.map(v => v.toFixed(2)).join(',')).sort().join('|');
+        const sigs = Object.keys(drawn).map(sig);
+        results.push(['v51 G: no two badges share a shape',
+          new Set(sigs).size === 6]);
+        results.push(['v51 G: each badge is drawn on the locked two-facet split, no outlines and no gradients',
+          Object.values(drawn).every(p => new Set(p.map(q => q.col)).size === 2)]);
+        window.debugGuildBadges({ trace: false });
+      }
+
+      /* ---- PART J and PART K -------------------------------------------- */
+      results.push(['v51 J: giving keeps its original E proximity trigger as well as the new key',
+        code51.indexOf('if (who) { lastGather = now; openGivePanel(who); return; }') > 0 &&
+        code51.indexOf('if (k === KEYBINDS.give && !e.repeat && !dead) {') > 0]);
+      if (window.debugTravelRefreshInfo) {
+        const tr51 = window.debugTravelRefreshInfo;
+        results.push([`v51 K: the refresh interval is the spec's ten seconds (${tr51().intervalMs}ms)`,
+          tr51().intervalMs === 10000]);
+        results.push(['v51 K: and nothing is running while the panel is shut',
+          tr51().panelOpen === false && tr51().running === false]);
+        const tp51 = doc.getElementById('travelPanel');
+        tp51.style.display = 'block';
+        window.syncTravelAutoRefresh();
+        const openState = tr51();
+        tp51.style.display = 'none';
+        window.syncTravelAutoRefresh();
+        const shutState = tr51();
+        results.push(['v51 K: it starts when the panel opens and stops the moment it closes',
+          openState.running === true && shutState.running === false]);
+        /* And it can never survive a close through another panel's key. */
+        tp51.style.display = 'block';
+        window.syncTravelAutoRefresh();
+        window.closeAllPanels();
+        results.push(['v51 K: closing it from another panel stops it too',
+          tr51().running === false]);
+      }
+
+      results.push(['v51: the world still runs frames cleanly after every part of this',
+        (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
     }
 
     let allOk = true;

@@ -53,6 +53,242 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-01 (v51 — the wisps made visible, minimap texture, guild badges and nameplates)
+
+Eleven parts, and four of them are rendering: PART A makes the v50 wisps
+actually visible and stops them cannibalising the Enchanted Forest's own
+motes, PART B gives the minimap card real texture, PART G is six new badges,
+and PART E's nameplate rows are where those badges live. The density work
+(PARTS C, D, H), the combat-logout window (F), the fast-travel gate (I), the
+give key (J) and the panel refresh (K) are mechanics and live in the commit
+message, not here — along with every guild EFFECT. Below is only how it looks.
+
+- **PART A is one `continue`, and that is the whole fix.** v50's own note
+  said the wisp fires "INSTEAD of the mote/firefly chain below, never as well
+  as it" — which meant the one biome that already had ambient life, the
+  Enchanted Forest, got nothing new from v50 at all: a wisp simply replaced a
+  mote one-for-one. Only that biome falls through now, so its motes and the
+  new wisps are both alive at once; the other three windows keep the
+  exclusion, because there is nothing underneath them to add to. Proved
+  behaviourally rather than by grep — `run4` pumps real ambience over a real
+  Enchanted Forest tile and fails unless BOTH a marked wisp and an unmarked
+  v17 mote are alive together.
+- **The fire chance is 0.32 -> 0.55 and it is now a named constant.** It was
+  a literal buried in a condition, which is why nothing could read it. One
+  lever for all four windows.
+- **PART B is a mark, not a redraw.** The minimap tile loop was one
+  `fillRect` from a two-colour checkerboard and nothing else, so a forest and
+  an empty plain differed only by hue. A tile that really grows something now
+  takes one 2px fleck inside its 4px cell — a third of the cell is the most a
+  mark can be before it becomes the tile. **Trees take a darkened version of
+  the tile's OWN colour** (`shade(pal[0], 0.66)`, between the locked 0.72 and
+  0.55 facet multipliers) so a fleck reads as canopy shadow on whatever
+  ground it stands on rather than as a foreign green; rock/iron/runic nodes
+  take one flat grey (`#7d7568`), deliberately not the Rock palette entry,
+  which IS the ground under a mountain node and would be invisible.
+- **The texture pass reads `featureIndex`, never a second biome scan.** The
+  spec's own instruction, and it matters twice: the chunk builder already
+  produced that index for the loaded window, so this costs one Map lookup per
+  cell, AND the card can only ever mark tiles the world genuinely grew
+  something on — a mined node leaves the index and its fleck goes with it.
+  **Herbs, magic essence, meteors and the Golden Orb are deliberately
+  unmarked**, for the same reason the card carries no base pieces: a map that
+  points at loot is a map that finds things for you.
+- **PART G's badges are silhouette first and colour second**, because colour
+  alone cannot carry a 14px mark against six ground palettes and a day/night
+  pass. No two share a shape family: `choir` is the only hollow shape (an
+  open arch — a bell with its middle missing), `court` the only comb over
+  solid bars (a crown gone under), `vein` the only downward triangle,
+  `bough` the only Y, `bramble` the only radial three-pointed star, `tide`
+  the only stacked pair of chevrons and the only badge carrying no emblem at
+  all. Flat fills, hard edges, two facets on the locked shading split, no
+  outline and no gradient.
+- **Every badge was measured at the real render size before being called
+  final, not judged at mockup scale** — which is where the earlier five-icon
+  sketch (bell / wave / ore vein / leaf / thorned fist) fell down: a leaf and
+  a fist are the same blob at 14px. Rasterised at 4x supersampling at
+  **14 / 16 / 18px**, per-scanline widest painted span:
+
+  ```
+  at 14px           painted px   median span   p10 span   sub-1px scanlines
+  hollow_choir           87.8       5.75px       3.25px         0.0%
+  drowned_court          91.9       3.00px       1.25px         9.1%
+  quiet_vein             71.8       6.00px       1.25px         7.4%
+  gilded_bough           49.3       3.25px       2.25px         1.0%
+  bramblewatch           64.2       4.00px       2.00px         3.8%
+  nameless_tide          64.3       2.50px       2.50px         3.3%
+  ```
+  Every sub-1px scanline in that table is a tapering tip (a crown point, a
+  triangle apex), not a limb. **Two badges were reshaped by that
+  measurement rather than by eye**: `bramblewatch`'s three thorns were
+  sharp triangles at 19.8% sub-1px scanlines and 36 painted pixels — the
+  thinnest thing in the set — and became blunt-tipped spikes on a wider hub;
+  `nameless_tide`'s chevrons were reshaped and moved down the box after the
+  worst-pair silhouette overlap came back at 0.457 against the arch.
+- **Pairwise silhouette overlap at 16px, worst pair 0.441** (bramblewatch
+  against nameless_tide — a three-point star against two chevrons, in
+  different colours). Every other pair is under 0.43 and most are under 0.35.
+  That is a real number rather than a claim, and it is the one to beat if a
+  badge is ever redrawn.
+- **PART E's nameplate rows ARE the existing nameplate.** Same dark plate,
+  same Barlow, same centred text, same screen anchor — stacked upward, so the
+  username row and the HP bar under it do not move by a pixel and no second
+  display mechanism was invented. A remote player's guild is computed from
+  the name the function was already handed, so nothing new is looked up or
+  synced to draw anyone's.
+- **⚠️ THE MOTTO IS VERBOSE OVER A CROWD, and it is the spec's own
+  instruction.** At 9px it is 100-190px of plate above every player in sight;
+  in a busy Bazaar that is a lot of text. Dropping to the badge-and-name row
+  alone is deleting one branch, and it is the first thing to want changed if
+  it reads as noise.
+- **⚠️ The Nameless Tide has no motto, deliberately.** The spec gives mottos
+  for the five and none for the sixth, and writing one would be inventing
+  lore. Its plate carries its name and its badge and stops there.
+- **⚠️ v47, v48, v49 and v50 have no entries in this file at all** — the
+  newest before today is v46, though four versions have shipped since. Found
+  while adding this one; not backfilled, because reconstructing four
+  versions' rendering notes after the fact would be writing history rather
+  than recording it. Worth knowing when reading this list as a running
+  record.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus the two places following it
+literally would have shipped something wrong. All shipped through the full
+gate (parse clean, `run2` and `run3` `CAUGHT ERROR: none`, `run4`
+**1340/1340 with zero FAIL**, `run5` 1315 coverage draws clean, 85 flat greps
+plus 19 comment-stripped scoped greps) — refinements to consider, not
+unfinished work. The first is by far the most important.
+
+1. **⚠️ THE GUILD SYSTEM CONTRADICTS THE BIBLE, AND THE SPEC DOES NOT SAY SO.**
+   The bible's TEAMING & ALLIANCES section says verbatim: "No formal guild or
+   clan system exists in the game. All alliances and teaming are organised
+   outside of RuneHaven." A previous spec proposed guilds, DROPPED them for
+   exactly that reason, and left a permanent `run4` gate asserting the word
+   "guild" appears nowhere in the file. v51 PART E builds one anyway — in
+   detail, across two document revisions, naming all five guilds, their
+   mottos and their effects. **PART I in the same spec marks itself as "the
+   explicit bible deviation already discussed and approved directly"; PART E
+   carries no such marking**, which is the whole reason this is flagged at
+   the top rather than buried. It was shipped, not stopped, because every
+   word of the content is the owner's own and nothing was invented here — but
+   whether the deviation is wanted is a creative call that belongs to the
+   owner, not to an overnight build. What was actually built is an unchosen
+   birth-house granting one passive effect and rendering a name: there is no
+   join, leave, invite, member list, roster or chat anywhere in the file, and
+   no guild table. The retired gate is **replaced, not deleted**, with one
+   pinning exactly those absences. Reverting is deleting the `GUILDS` block
+   and its call sites.
+2. **The Nameless Tide's plate carries no motto, because inventing one would
+   be inventing lore.** The spec gives mottos for the five and none for the
+   sixth. `guildPlateLines()` is the one place that decides, so the canvas
+   never has to know.
+3. **The badge set was iterated by MEASUREMENT, not by eye, and two shapes
+   changed because of it.** `bramblewatch` came in at 19.8% sub-pixel
+   scanlines and 36 painted pixels at 14px — the thinnest thing in the set —
+   and its three sharp thorns became blunt-tipped spikes on a wider hub;
+   `nameless_tide` was reshaped and moved down its box after the worst
+   silhouette overlap came back at 0.457 against the arch. Final worst pair
+   is 0.441. The spec asked for exactly this ("test each at the actual render
+   size before calling a shape final"), so the numbers are in the entry above
+   rather than a claim that it was done.
+4. **The motto renders for EVERY player, not just yourself.** The spec says
+   "beside the player's existing name display" without qualifying whose. Cost:
+   100-190px of extra plate over every player on screen. Flagged above; one
+   branch to remove.
+5. **`GUILD_BADGE_PX` is 14, the bottom of the spec's own 14-18 band.** A
+   nameplate is the tightest space in the game and the measurement says every
+   badge still holds together there, so the smallest size that works is the
+   right default. One constant.
+6. **PART B's "minimap" is `updateWorldMap()`, not `updateMinimap()`.** The
+   spec names the latter; that function draws the compass DIAL and has no
+   tile loop at all. Exactly one function in the file has "a single fillRect
+   per tile from a two-colour checkerboard palette", and it is the one that
+   was changed.
+7. **Rock, iron and runic nodes all take the same grey fleck.** The spec says
+   "a small grey fleck for rock/mountain tiles" and does not distinguish ore
+   from stone. Three colours would also have started saying WHICH ore is
+   where, which is the loot-map line the card deliberately does not cross.
+8. **PART C's pet multipliers are small (1.5 / 1.4 / 1.25) and that is the
+   measurement's doing.** The 30-second rule was run against the real table
+   first: every overworld species was already inside the 138-tile walk, with
+   wolf at 108.5 the closest to it. A bigger multiple would have made a Wind
+   Sprite into wallpaper. Real before/after numbers are in the commit message.
+9. **"Overworld-biome species" is read as "species with a non-empty `biomes`
+   list".** That excludes `water_dragon` and `shadow_dragon`, whose counts
+   drive a daily cap and no density at all — the exact thing v47 flagged
+   about them. It also means the "four dragons share one number" convention
+   breaks: Fire and Storm go to 53, Water and Shadow hold at 42. Deliberate,
+   and a one-line revert either way.
+10. **PART C's mob tiers are the BIBLE's difficulty tiers, not a rarity
+    table.** Combat mobs have no `PET_RARITY` entry, so Easy/Medium/Hard took
+    v49's own Common/Uncommon/Rare multipliers in order. Both half-values
+    round UP, which is v49's phoenix precedent rather than a new rule.
+11. **PART H's sweep moved two constants, and it had to.** v50's gate was
+    "density went up and NOT ONE separation moved"; at twenty clusters that is
+    simply not achievable — six seeds placed 10-12 with 664/400 held, and a 4x
+    search budget on the failing seed placed the identical 17, so it is
+    geometry rather than the budget. The spec anticipated this in its own
+    words ("far more likely to start crowding RUIN_SEP/RUIN_ZONE_SEP"). Swept
+    for the LARGEST pair that fits: 360 / 300, verified 20/20 and 4/4 on all
+    six seeds. `ZONE_SEP`, `RUIN_FOOT` and `ZONE_R` are untouched and still
+    pinned unchanged, so nothing was relaxed that did not have to be.
+12. **⚠️ RUINS STILL FAIL THE 30-SECOND RULE, and it is reported rather than
+    fixed.** 694 -> 401 tiles between neighbours against a 138-tile walk.
+    Reaching the rule would need roughly 170 clusters; the spec locked 20.
+    Two spacings went UP for an honest reason worth knowing —
+    golem 30.7 -> 33.6 and crystal_golem 23.3 -> 41.7 — because RUINB-only
+    species now spread across twenty clusters instead of ten.
+13. **PART J is `G`, not the `Q` that was asked for.** `Q` is
+    `KEYBINDS.ability` and rebinding it would have silently broken every
+    class's core ability. Flagged in the spec itself, so this is following it
+    rather than overriding it. It also cost a harness fix: `run4`'s
+    persistence probe rebound `dive` onto `g`, which the v23 duplicate check
+    then correctly refused, so a test about persistence started failing for a
+    reason unrelated to persistence. Moved to `v`; the assertion is unchanged.
+14. **The Gilded Bough's "rare-pet" is the file's OWN rare-and-up list**
+    (`speciesIsCapped`, i.e. `CAPPED_RARITIES` = rare/epic/elder/admin) rather
+    than a second list that could drift away from it. That includes the Epic
+    tier, where a 0.20 base is exactly where a felt bump lands.
+15. **`GUILD_BOUGH_TAME` 0.12, `GUILD_TIDE_TAME` 0.10, `GUILD_TIDE_REGEN`
+    0.5/s.** All unstated. The first is over half a Shrine blessing (0.20)
+    permanently; the second is exactly half of it, which is what "a smaller,
+    permanent version" reads as; the third is a fifth of the Spawn Safe
+    Zone's own 2.5/s, so it closes a wound on a long walk and does nothing
+    inside a fight.
+16. **The granted `guild` column can only ever grant an ADMIN guild.** The
+    spec says the Nameless Tide is handed out by editing a row AND that the
+    five are never chosen and never re-rollable; making the column
+    admin-only is what keeps both sentences true at once. **No SQL migration
+    is needed for the five** — they are a hash of the username and nothing is
+    stored. Only the sixth needs `alter table players add column guild text;`
+    and it degrades safely without it (nobody has it).
+17. **⚠️ A cave Glow Moth is rendered but not targetable, and that is
+    PRE-EXISTING.** An interior wild lives in `rec.wilds` while
+    `nearestWild()` walks the global `wilds` array, so the cave hatchling
+    dragon has been in exactly this state since v29. PART D places the moth
+    the same way the dragon is placed, and inherits it. Making interior wilds
+    tameable changes the taming path for every interior creature at once,
+    which is a different version's job — flagged rather than smuggled in
+    under a density part.
+18. **PART D's expected ratio is derived, and getting it wrong once is worth
+    recording.** An interior's hostiles are the Sea Serpent stream (untouched)
+    plus the troll/wraith stream, so the population moves by
+    (1 + 1.2)/(1 + 2) = 0.733, not by 1.2/2 = 0.6. The gate is now bounded on
+    both sides at the real ratio, so a future pass can neither restore the old
+    density nor thin it further without failing.
+19. **The proof gate asking that the Nameless Tide be "meaningfully rarer
+    than the other twelve" is stale spec text from the thirteen-guild draft.**
+    The corrected design says it is not rollable at all, so the honest
+    assertion is that its rate is EXACTLY ZERO over 4,000 usernames — which is
+    what `run4` pins, alongside the five each landing within 25% of an even
+    fifth (measured: 793-811 of 4000).
+20. **⚠️ `run4`'s "no clan system" gate had to become comment-stripped.** The
+    new `GUILDS` block quotes the bible clause it exists to honour, and that
+    clause contains the word "clan" — so a blunt grep over the raw file failed
+    on the documentation of the rule it was enforcing. Same lesson v50's "the
+    bake is gone" gate already wrote down.
+
 ### 2026-08-25 (v46 — Death Timer, Session Resume, Expansion 3, the real Minimap, block for all, the credit)
 
 Nine parts, and only two of them are rendering: PART D adds a genuinely new

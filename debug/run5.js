@@ -733,6 +733,74 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         console.log('minimap hide/show swept — interior and surface');
       }
     }
+    /* ================= v51 — GUILD BADGES AND GUILD NAMEPLATES ==========
+       PART G's six badges are six new draw branches that a plain 5-frame
+       boot can never reach: nobody in the harness world has a guild
+       nameplate on screen. Swept twice over — once through drawGuildBadge
+       directly at all three of the real nameplate sizes, and once through
+       the REAL drawPlayerEntity path, with five remote players whose
+       usernames actually hash to the five different guilds plus the local
+       player granted the admin-only sixth. It hard-fails if any badge drew
+       nothing, if the five real guilds were not all reached, or if the
+       Nameless Tide's no-motto branch never ran. */
+    if (window.debugGuildBadges && window.debugGuildInfo) {
+      const gi51 = window.debugGuildInfo();
+      const ids51 = Object.keys(gi51.guilds);
+      for (const size of [14, 16, 18]) {
+        for (const id of ids51) {
+          window.debugGuildBadges({ trace: true });
+          window.drawGuildBadge(id, 200, 200, size);
+          const polys = window.debugGuildBadges({}).polys;
+          if (!polys.length) {
+            console.log('COVERAGE GAP: badge ' + id + ' painted nothing at ' + size + 'px');
+            process.exit(1);
+          }
+          n += polys.length;
+        }
+      }
+      window.debugGuildBadges({ trace: false });
+      console.log('guild badges drawn: ' + ids51.length + ' at 14/16/18px');
+
+      /* One username per guild, found through the real assignment function
+         rather than hardcoded — a change to GUILD_POOL or to the hash moves
+         these names with it instead of silently un-covering a badge. */
+      const byGuild51 = {};
+      for (let i = 0; i < 4000 && Object.keys(byGuild51).length < gi51.pool.length; i++) {
+        const nm = 'GuildProbe' + i;
+        const g = window.guildForUsername(nm);
+        if (!byGuild51[g]) byGuild51[g] = nm;
+      }
+      if (Object.keys(byGuild51).length !== gi51.pool.length) {
+        console.log('COVERAGE GAP: could not reach all five guilds by username');
+        process.exit(1);
+      }
+      const oth51 = window.debugCombatHandles ? window.debugCombatHandles().others : null;
+      const wi51 = window.debugWorldInfo();
+      window.debugSetPlayer({ x: wi51.SPAWN.x, y: wi51.SPAWN.y, hp: 100 });
+      if (oth51) {
+        let k = 0;
+        for (const g of gi51.pool) {
+          oth51.set(byGuild51[g], { x: wi51.SPAWN.x + 1 + (k % 3), y: wi51.SPAWN.y + 1 + Math.floor(k / 3),
+                                    cls: 'Mystic', hp: 100, maxHp: 100, lastHeard: 1e15, space: 'main' });
+          k++;
+        }
+        for (let f = 0; f < 3; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+        for (const g of gi51.pool) oth51.delete(byGuild51[g]);
+      }
+      /* The admin-only sixth, on the local player, which is also the only
+         path through guildPlateLines()' no-motto branch. */
+      const grantedBefore = window.debugGuildInfo().granted;
+      window.debugSetGuild({ granted: 'nameless_tide' });
+      const tideLines = window.guildPlateLines('nameless_tide');
+      if (window.debugGuildInfo().mine !== 'nameless_tide' || tideLines.length !== 1) {
+        console.log('COVERAGE GAP: the Nameless Tide grant or its no-motto plate did not take');
+        process.exit(1);
+      }
+      for (let f = 0; f < 3; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      window.debugSetGuild({ granted: grantedBefore });
+      console.log('guild nameplates rendered — five hashed guilds plus the admin-granted sixth');
+    }
+
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {
