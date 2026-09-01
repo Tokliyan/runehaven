@@ -787,7 +787,7 @@ const N = 4000;
 const IW2 = 22, IH2 = 11;
 const HZ = 16;                       // taller steps: cliffs must READ
 const DAY_LENGTH = 600;
-const PLAYER_SPEED = 4.6;
+const PLAYER_SPEED = 9.2;   // doubled from 4.6, per direct request
 const SAFE_RADIUS = 452;   // Expansion 4: 226 * 2
 const BROADCAST_HZ = 10;
 const SAVE_EVERY = 5000;
@@ -11806,7 +11806,7 @@ function dragonV2(sx, sy, PAL, t, variant, S) {
 const MOUNTABLE_SPECIES = new Set(["stag", "griffin", "crystal_golem",
   "water_dragon", "fire_dragon", "storm_dragon", "shadow_dragon",
   "shadowfox", "lightfox"]);
-const MOUNT_SPEED_MULT = 1.6;   // TUNABLE
+const MOUNT_SPEED_MULT = 3.2;   // TUNABLE — doubled from 1.6, per direct request
 
 /* Seat height scales with the mount's own art ratio rather than one flat
    number — a lightfox (1.05) and a shadowfox (1.66) genuinely do not sit
