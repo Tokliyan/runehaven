@@ -234,17 +234,20 @@ placement spacing, not a vibe — report the real numbers found and the
 real numbers after, the same discipline as every density change this
 project has made.
 
-**PART I — landmark fast travel opened to everyone, no Unicorn Elder
-required.** This is the explicit bible deviation already discussed and
-approved directly: the bible ties fast travel exclusively to the
-Unicorn Elder, and the direct instruction now is to remove that
-requirement entirely for the Places tab, matching what already happened
-for the Players tab. Remove the `ownsUnicornElder()` gate everywhere it
-still applies to landmark travel specifically (distinct from anything
-already correctly gated elsewhere) — every player should see every
-landmark's TRAVEL button enabled, with no ownership check anywhere in
-the execution path, the same standard already applied and verified for
-player-to-player travel.
+**PART I — landmark fast travel opened to everyone, exact locations
+confirmed by direct code search, not a general instruction.** This is
+the explicit, approved bible deviation. Two real gates found, both must
+go:
+
+1. `fastTravelTo(idx)` (line ~9012) — `if (!ownsUnicornElder()) { toast(...); return false; }` at the top of the actual execution function. Remove this check entirely; keep the `inInterior()` check below it, which is unrelated and correct.
+2. `refreshTravelPanel()` (line ~9184) — `const owned = ownsUnicornElder();` drives both the panel's header text ("Nothing carries you...") and each button's `disabled` attribute in the Places list. Change the header to always read as available, and remove `${owned ? "" : "disabled"}` from the button markup so every landmark button is always enabled.
+
+Both must change together — fixing only one leaves the same
+button-says-yes-function-says-no bug already found and fixed once for
+player travel. Grep the live file for every remaining
+`ownsUnicornElder()` call site after this change and confirm none of
+them still apply to landmark travel specifically (calls elsewhere, e.g.
+`unicornElderLuck()`, are unrelated and correct to leave untouched).
 
 **PART J — item-giving, already live, real key conflict flagged rather
 than silently overwritten.** Confirmed live: giving an item to a nearby
