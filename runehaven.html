@@ -4604,6 +4604,7 @@ function unicornElderTile(seed) {
    sibling is so a harness can sweep seeds. Returns null if the whole budget
    finds no meadow — a legitimate world state, since Sacred Meadow is a rare
    variant of a rare band, and the caller simply places nothing that day. */
+const PET_COUNT_MULT = 2;   // TUNABLE — global pet density lever, doubled for a small early player base
 const DUSKFOX_TILE_TRIES = 40000;   // TUNABLE; ~13x the sweep a meadow needs
 function duskfoxElderTile(seed) {
   for (let a = 0; a < DUSKFOX_TILE_TRIES; a++) {
@@ -4995,7 +4996,12 @@ function buildFeatureList() {
        that has to hold, and at 12000 the rare-biome species (cave, ruin) fell
        short of their counts purely because the search ran out, not by design.
        Costs ~12ms of boot. Still a search budget, still not a design number. */
-    for (let a = 0; a < 576000 && placed < Math.min(def.count || 3, spawnBudget); a++) {
+    /* PET_COUNT_MULT: a single, real global lever instead of touching every
+       one of the dozens of individual species counts by hand — doubled per
+       direct request, kept high deliberately while the player base is small
+       so pets stay genuinely easy to find; this is the one number to lower
+       later, not dozens. */
+    for (let a = 0; a < 576000 && placed < Math.min(Math.round((def.count || 3) * PET_COUNT_MULT), spawnBudget); a++) {
       const tx = Math.floor(hash2(a, 21 + placed, worldSeed + spSeed) * N);
       const ty = Math.floor(hash2(a, 37 + placed, worldSeed + spSeed * 3) * N);
       if (!def.biomes.includes(biomeAt(tx, ty))) continue;
@@ -10098,8 +10104,13 @@ function update(dt, t) {
       const len = Math.hypot(dx, dy);
       facing = { x: dx / len, y: dy / len };
       const here = biomeAt(Math.floor(me.x), Math.floor(me.y));
+      /* Duskfox Elder rides at double the standard mount rate — a real,
+         distinct perk for an admin-exclusive, one-of-a-kind companion,
+         not just the same speed as every other mount. */
+      const mountMult = (me.mounted && activePet && activePet.species === "duskfox_elder")
+        ? MOUNT_SPEED_MULT * 2 : (me.mounted ? MOUNT_SPEED_MULT : 1);
       const spd = PLAYER_SPEED * (SLOW.has(here) ? 0.55 : 1) * (isBlocking() ? 0.5 : 1)
-                * (me.mounted ? MOUNT_SPEED_MULT : 1);   // v28
+                * mountMult;   // v28, v52 hotfix: Duskfox Elder 2x
       const nx = me.x + (dx / len) * spd * dt;
       const ny = me.y + (dy / len) * spd * dt;
       /* v21: the one movement gate the dive toggle touches — diveBlocked()
@@ -11803,10 +11814,10 @@ function dragonV2(sx, sy, PAL, t, variant, S) {
    The bible's "Mountable Pets" line, exactly — nine species, no more.
    Deferred five times (v16/v17/v18/v19/v21) because it needed real design
    rather than a bolt-on; this is that design. */
-const MOUNTABLE_SPECIES = new Set(["stag", "griffin", "crystal_golem",
+const MOUNTABLE_SPECIES = new Set(["stag", "griffin", "crystal_golem", "duskfox_elder",
   "water_dragon", "fire_dragon", "storm_dragon", "shadow_dragon",
   "shadowfox", "lightfox"]);
-const MOUNT_SPEED_MULT = 3.2;   // TUNABLE — doubled from 1.6, per direct request
+const MOUNT_SPEED_MULT = 1.6;   // TUNABLE — halved back from 3.2, per direct request: it was genuinely too fast
 
 /* Seat height scales with the mount's own art ratio rather than one flat
    number — a lightfox (1.05) and a shadowfox (1.66) genuinely do not sit
