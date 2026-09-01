@@ -102,181 +102,56 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
 
-## Confirmed, locked spec for the next build (v51 — Ambience Fix, Minimap Texture, Density Rebalance & Guilds)
+## Confirmed, locked spec for the next build (v52 — Session Resume Confirmation & Colosseum Duel Rework)
 
-**PART A — the wisp effect, made genuinely visible.** Confirmed live: it
-fires at a 0.32 chance per qualifying tile, and by its own documented
-design it fires INSTEAD of the existing mote/firefly chain for
-Enchanted Forest specifically — meaning that biome got nothing NEW from
-v50, only Dark Forest (night), Sacred Meadow (dawn), and the Abyssal
-Hollow did. Fix: raise the fire chance to something clearly noticeable
-(propose 0.55) across all four conditions, and give Enchanted Forest its
-own additive wisp layer instead of the mutually-exclusive fallback — the
-existing motes and the new wisps should both be present there, not one
-replacing the other.
+**PART A — session resume gets a real, visible pause.** Confirmed live:
+`resumeSession()` fills the name field and then directly calls `await
+enterBtn.onclick()` with zero pause — a returning player has no chance
+to change settings, pick a different class, or decide not to resume at
+all before they're already in the world. Add a brief, visible
+"Welcome back — entering in a moment" state with a real, clickable
+cancel that stops the auto-enter and returns control to the normal
+login screen, fully filled in as it already is today. Propose a
+1.5-2 second window before auto-submitting, long enough to read and
+react, short enough that it still feels like the seamless resume it
+was built to be for anyone who does nothing.
 
-**PART B — minimap gets real texture, not flat color blocks.** Confirmed
-live: `updateMinimap()`'s tile loop does a single `fillRect` per tile
-from a two-color checkerboard palette, nothing else. Add a light texture
-pass on top — small darker flecks for tiles with trees, a small grey
-fleck for rock/mountain tiles, reusing whatever per-tile feature data
-`buildFeatureList()`'s chunking already tracks rather than re-scanning
-biomes from scratch. Keep it subtle at this cell size (4px) — a mark,
-not a redraw of the whole tile.
+**PART B — the Ruined Colosseum, reworked into a real structured
+duel.** Confirmed live: currently just `COLOSSEUM_R = 9`, an open PvP
+ring with no structure — the bible's own "open player duels" framing,
+built literally rather than ceremonially. Rebuild as:
 
-**PART C — overworld density, up across pets, ruins, and mobs together.**
-Ruins already went 6→10 in v50. Increase overworld MOBS.count values
-(Goblin/Bandit currently 9, Troll currently 6, and the rest of the
-non-cave roster) by roughly the same proportion applied to pets in v49
-(tier-scaled, not flat) — measure the real current spread before
-picking multipliers, the same discipline every prior density pass used.
-Pet counts (WILD_SPECIES) get a further increase on top of v49's fix,
-specifically for overworld-biome species — this is on top of, not
-instead of, what already shipped.
+- **Visually much larger and more fantastical** — this is meant to be a
+  real landmark people travel to, not a PvP flag on the ground. Reuse
+  the flat-shaded, no-gradient house style, but scale it up
+  significantly from its current footprint and give it real presence —
+  broken columns, a genuine arena bowl shape, something that reads as a
+  destination from a distance the way the Eternal Tower already does.
+- **Two named podiums**, fixed positions inside the ring. A duel only
+  becomes possible when two different players are each standing on a
+  podium at the same time — not simply "both inside the ring" as PvP
+  currently works elsewhere.
+- **A real confirmation step before the fight starts** — both players
+  must explicitly confirm (a prompt each of them accepts) before combat
+  actually becomes live between them; standing on a podium alone must
+  never itself deal damage or force a fight neither player agreed to.
+- **A real reward on winning** — the victor receives Runic Stone,
+  amount left as a build judgment call but should feel like a
+  meaningful, not trivial, reward for a genuine 1v1 someone chose to
+  enter.
+- **Everywhere else inside the ring keeps its existing behavior** — the
+  current "both players inside the ring" PvP-enabled rule stays exactly
+  as it is for anyone not using the podiums; this is an addition, not a
+  replacement.
 
-**PART D — CORRECTED: caves inverted using the real interior-specific
-lever, not the surface `count` field PART C already raises.** Confirmed
-live: `MOBS.troll.count`/`MOBS.dark_wraith.count` govern SURFACE spawns
-only (mountain/peak and dark-forest respectively) — reducing them here
-would undo PART C's own increase to the same field, and would change
-nothing inside caves regardless, since cave-interior Trolls/Wraiths are
-placed separately by `populateInterior()`'s own
-`Math.round(2 * areaK)` multiplier (line ~3684), untouched by `count`.
-Lower THAT multiplier specifically — propose `1.2 * areaK`, down from
-`2 * areaK` — leaving every surface count from PART C fully intact.
-
-For the pet side of the inversion: Golem and Crystal Golem are
-confirmed bible-restricted to "ruins only" / "mountain ruins only" —
-placing either inside a cave interior would be a direct bible
-contradiction, not a tunable, and is dropped from this version
-entirely. The real, bible-compliant lever instead: Glow Moth is
-explicitly "caves and dungeons" per the bible and currently only
-spawns in the surface `UNDERCAVE` band, never inside actual interiors —
-add it to cave-interior generation for real, at a count proportional to
-interior floor area the same way ore/node density already scales.
-Additionally, the cave-hatchling dragon `populateInterior()` already
-places (currently exactly one per cave) becomes the other real anchor
-for "a place to find companions" — do not change its species or
-placement logic, only confirm it remains exactly as it is so PART D's
-"more companions" goal has two real, bible-compliant answers (Glow Moth
-plus the existing dragon) rather than a contradiction.
-
-**PART E — CORRECTED: this was never actually locked at thirteen.**
-The prior version's "thirteen guilds" prose was left over from an
-earlier idea in conversation — it was explicitly narrowed to **five**
-plus a separate, admin-only sixth, and that narrowing was never
-correctly carried into this document before now, which is what caused
-the truncation the build correctly caught. This is the actual, current
-design:
-
-**Five real guilds**, assigned deterministically from a hash of the
-username at account creation — never chosen, never re-rollable, no
-in-game way to know the assignment in advance. At an initial player
-base of roughly 50, five guilds gives roughly ten members each, a real
-felt group size — thirteen would have averaged under four and felt
-empty. Each is a genuine, felt mechanical advantage, not a stat-sheet
-footnote:
-
-1. **The Hollow Choir** — mourners, death-touched. *"We sang before you were born, we'll sing after."* Instant respawn — 0 second wait.
-2. **The Drowned Court** — water and secrets. *"What sinks, we keep."* Breath capacity +50% while diving.
-3. **The Quiet Vein** — earth and stone. *"Deep enough, everything is treasure."* Ore and stone gathering yields +1 extra per action.
-4. **The Gilded Bough** — enchanted forest, growth and luck. *"Every root remembers."* Real, felt bump to rare-pet tame-chance specifically (not spawn density).
-5. **The Bramblewatch** — dark forest, thorn and warning. *"We do not chase. We wait."* +20% damage to any mob that attacked first (not the initiator).
-
-**The Nameless Tide is a separate, sixth, admin-only guild — not part
-of the random assignment pool at all.** No hash outcome can ever
-produce it; it is granted the exact same way admin itself is, by
-editing that player's row directly in Supabase. Effect when granted:
-small passive HP regen at all times, plus a smaller, permanent version
-of the Beastmaster Shrine's own taming boost without needing to stand
-at the Shrine. There is no "rarer roll" language for it anymore — it
-simply is not rollable, which is a cleaner design than the prior
-"rare but possible" framing and was the direction already agreed.
-
-Each guild's name and motto render beside the player's existing name
-display, reusing that exact mechanism — do not invent a second one.
-
-**PART F — combat-logout window shortened, 30s -> 15s.** Confirmed live:
-`COMBAT_LOGOUT_MS = 30000`. Change to `15000`. Same mechanism, same
-honest limit already documented (a native browser prompt, not a true
-block) — just a shorter, sharper danger window if someone is actively
-chasing you when you try to leave.
-
-**PART G — guild badges, richer but still nameplate-scale.** These
-render directly beside a player's existing name, the same tiny space
-their username already occupies — not a character-panel portrait. Each
-badge needs genuine, distinct silhouette and color at roughly 14-18px,
-readable at a glance, not a detailed illustration that only reads at
-mockup size. Iterate past the five-icon concept already shown (bell,
-wave, ore vein, leaf, thorned fist) toward slightly more distinctive
-per-guild shapes while keeping every one legible that small — test each
-at the actual render size before calling a shape final, not just at
-preview scale. The Nameless Tide needs its own sixth badge too, even
-though it is never randomly assigned — an admin-granted guild still
-needs a real visual when someone actually has it.
-
-**PART H — ruins, much more, and a real "30-second rule" pass.**
-Confirmed live: `RUIN_COUNT = 10`, already up from 6 in v50. Increase
-significantly further — propose 20, roughly double again — with the
-same six-seed separation-constant sweep every prior ruin change has
-required, since density this much higher is far more likely to start
-crowding RUIN_SEP/RUIN_ZONE_SEP than the last, smaller jump was.
-
-Beyond ruins specifically: apply a real "should a player see something
-worth noticing within about 30 seconds of walking in any direction"
-standard to the overworld generally, not just ruins. This means
-checking real average spacing — between ruins, between resource nodes,
-between wild pet spawns — against a rough distance a player covers
-walking in 30 seconds at normal speed, and where the gap is
-meaningfully larger than that, increasing density until it isn't. This
-is a real, measured check against actual movement speed and actual
-placement spacing, not a vibe — report the real numbers found and the
-real numbers after, the same discipline as every density change this
-project has made.
-
-**PART I — landmark fast travel opened to everyone, exact locations
-confirmed by direct code search, not a general instruction.** This is
-the explicit, approved bible deviation. Two real gates found, both must
-go:
-
-1. `fastTravelTo(idx)` (line ~9012) — `if (!ownsUnicornElder()) { toast(...); return false; }` at the top of the actual execution function. Remove this check entirely; keep the `inInterior()` check below it, which is unrelated and correct.
-2. `refreshTravelPanel()` (line ~9184) — `const owned = ownsUnicornElder();` drives both the panel's header text ("Nothing carries you...") and each button's `disabled` attribute in the Places list. Change the header to always read as available, and remove `${owned ? "" : "disabled"}` from the button markup so every landmark button is always enabled.
-
-Both must change together — fixing only one leaves the same
-button-says-yes-function-says-no bug already found and fixed once for
-player travel. Grep the live file for every remaining
-`ownsUnicornElder()` call site after this change and confirm none of
-them still apply to landmark travel specifically (calls elsewhere, e.g.
-`unicornElderLuck()`, are unrelated and correct to leave untouched).
-
-**PART J — item-giving, already live, real key conflict flagged rather
-than silently overwritten.** Confirmed live: giving an item to a nearby
-player already exists, bound to `E` (same key as gather/interact,
-`openGivePanel()` at line ~8818) — this already works today. The
-request to bind this to `Q` cannot be done as asked: `Q` is already
-`KEYBINDS.ability` (class ability), confirmed live, and rebinding it
-would silently break every class's core ability with no warning. Bind
-giving to a genuinely free key instead — propose `G`, unused in the
-current keybind list — as an additional direct shortcut alongside the
-existing `E` proximity trigger, not a replacement for it.
-
-**PART K — the Fast Travel Players tab auto-refreshes every 10
-seconds.** Currently confirmed to populate once when the panel opens.
-Add a `setInterval` tied to the panel's own open/close state — refresh
-the online-player list every 10 seconds while the panel is visible,
-stop the interval the moment it closes so it never runs in the
-background. This directly solves "someone just came online but I can't
-travel to them without reopening the panel."
-
-**Proof gates:** standard gauntlet plus confirm the wisp fire-chance
-increase and Enchanted Forest's additive layer, confirm minimap texture
-flecks only appear where real feature data says they should, confirm
-overworld density increases hold tier-proportionality the same way
-v49's pet fix did, confirm cave Troll/Dark Wraith counts genuinely drop
-while cave-biome pet counts genuinely rise, confirm guild assignment is
-deterministic (same username always yields the same guild) and that
-the Nameless Tide's real assignment rate is meaningfully rarer than the
-other twelve, not just described as such.
+**Proof gates:** standard gauntlet plus confirm the session-resume
+cancel genuinely stops auto-enter and returns to a normal, fully-filled
+login screen, confirm a duel cannot start unless both podiums are
+occupied by two different real players, confirm neither player takes
+damage before both have explicitly confirmed, confirm the winner's
+Runic Stone reward is real and only the winner receives it, confirm
+existing open-ring PvP behavior for non-podium combat is byte-identical
+to before this version.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
