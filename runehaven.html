@@ -69,7 +69,13 @@
      language again — same card, same hairline, same dim body text — sized down
      so it reads as an aside beside the name field rather than as a second
      question. Never blocking: it is a line of text and an X. */
-  #pinNotice {
+  /* v52+53 PART A: the resume banner is the SAME aside card as the PIN notice
+     — same panel fill, same hairline, same dim body text, same negative pull
+     into the login card's gap. A returning player is being told something and
+     offered one way out of it, which is exactly the shape this rule already
+     draws; inventing a second aside language for it would be a different
+     program bolted onto the card. */
+  #pinNotice, #resumeNotice {
     display: none; align-items: center; gap: 10px;
     background: var(--panel); border: 1px solid var(--panel-edge);
     color: var(--text-dim); font-size: 12px; letter-spacing: 0.6px;
@@ -85,13 +91,18 @@
   /* PIN Fixes PART B: the retroactive opt-in. The login card's own bordered
      text-button idiom (#settingsBtn), one step quieter — it is an offer, and
      an offer must never look like the thing you came here to press. */
-  #pinProtect, #redeemBtn {
+  #pinProtect, #redeemBtn, #resumeCancel {
     display: none; background: none; border: 1px solid var(--panel-edge);
     color: var(--text-dim); font-family: inherit; font-size: 12px;
     letter-spacing: 1.2px; padding: 5px 14px; cursor: pointer;
     border-radius: 3px; margin-top: -12px;
   }
-  #pinProtect:hover, #redeemBtn:hover { border-color: var(--gold-dim); color: var(--gold); }
+  #pinProtect:hover, #redeemBtn:hover, #resumeCancel:hover { border-color: var(--gold-dim); color: var(--gold); }
+  /* v52+53 PART A: the cancel lives INSIDE the resume aside rather than under
+     it, so the two layout values that rule carries for a standalone row — its
+     own hiding, and the negative pull into the card's gap — are the only
+     things it needs to unlearn. Everything else about it is the idiom above. */
+  #resumeCancel { display: inline-block; margin-top: 0; white-space: nowrap; }
   /* v47 PART H: the redeem row. The field and the button are the two rules
      above, extended by one selector each; everything here is layout — a row,
      a width, and the display this button needs (the PIN offer is hidden until
@@ -172,7 +183,10 @@
   .hud .hpnum { color: #7fc96b; }
   .hud .hpnum.low { color: var(--danger); }
 
-  #hpBarWrap {
+  /* v52+53 PART G: #bossBarWrap joins this rule for its fill, its hairline,
+     its radius and its overflow clip, and unlearns only the corner position
+     further down the sheet — one bar treatment, two places it is used. */
+  #hpBarWrap, #bossBarWrap {
     /* hotfix: was centred bottom, directly over the hint bar text — which
        grew to 10 keybinds across v23/v27/v28 and now runs the full width.
        Moved to the bottom-right corner, clear of it entirely. */
@@ -180,8 +194,11 @@
     width: 270px; height: 16px; background: rgba(8,10,16,0.85);
     border: 1px solid var(--panel-edge); z-index: 5; border-radius: 8px; overflow: hidden;
   }
-  #hpBar { height: 100%; width: 100%; background: linear-gradient(90deg, #4e8f3a, #7fce5a); transition: width .2s ease; }
-  #hpBar.low { background: linear-gradient(90deg, #8f3a2e, #d0604c); }
+  #hpBar, #bossBar { height: 100%; width: 100%; background: linear-gradient(90deg, #4e8f3a, #7fce5a); transition: width .2s ease; }
+  /* v52+53 PART G: the boss bar takes the hostile red the player's own bar
+     wears when it is in trouble — same treatment, so there is exactly one red
+     bar language in the game and the boss is simply always wearing it. */
+  #hpBar.low, #bossBar { background: linear-gradient(90deg, #8f3a2e, #d0604c); }
 
   /* ---------- PANELS (unchanged) ---------- */
   .panel {
@@ -456,6 +473,32 @@
     font-family: 'Almendra Display', serif;
   }
   #hudUnmaking .un-count { color: var(--text-dim); font-size: 12px; letter-spacing: 2px; }
+  /* ---------- v52+53 PART G: the Elder Drake's own bar ----------
+     The one thing genuinely missing between "a big mob with a boss-tier stat
+     block" and "a boss fight". It is the `.hud` card for the seventh version
+     running (v33, v35, v38, v39, Mob Rarity, v46, this) and the #hpBarWrap /
+     #hpBar bar treatment reused verbatim underneath it — the only values that
+     are new here are a position, a width and a height.
+
+     It is RED, and that is v16's rule rather than a colour choice: red means
+     hostile and gold means friendly, everywhere in this game. It also sits at
+     the top centre, where the tutorial line and the unmaking countdown sit —
+     the tutorial cannot co-occur (it runs inside the Spawn Safe Zone, the
+     drake stands on the volcano) but the countdown genuinely can, and that
+     one wins, in code, below. */
+  #hudBoss {
+    top: 12px; left: 50%; transform: translateX(-50%); display: none;
+    width: 460px; max-width: 62vw; text-align: center;
+    border-color: rgba(200,72,56,0.55);
+  }
+  #hudBoss .boss-name {
+    color: var(--danger); font-size: 15px; letter-spacing: 3px;
+    font-family: 'Almendra Display', serif; margin-bottom: 6px;
+  }
+  #hudBoss .boss-hp { color: var(--text-dim); font-size: 11px; letter-spacing: 2px; margin-top: 5px; }
+  /* The two overrides the shared bar rule needs to stop being a fixed corner
+     element and start being a row inside a card. Nothing else about it moves. */
+  #bossBarWrap { position: relative; bottom: auto; right: auto; width: 100%; height: 14px; }
 </style>
 </head>
 <body>
@@ -492,6 +535,11 @@
     </div>
   </details>
 
+  <!-- v52+53 PART A: the resume pause. It sits immediately above the button it
+       is about to press on the player's behalf, because that is the thing it is
+       talking about. Hidden in the markup, exactly as #pinInput and #pinNotice
+       are, so the DOM and the JS agree from the very first frame. -->
+  <div id="resumeNotice" style="display:none"><span id="resumeText">Welcome back — entering in a moment…</span><button id="resumeCancel">CANCEL</button></div>
   <div id="loginError"></div>
   <button id="enterBtn">ENTER THE WORLD</button>
   <!-- v47 PART H: the redeem field, below the ENTER button exactly as the
@@ -513,6 +561,13 @@
 <div class="hud" id="hudPrompt"></div>
 <div class="hud" id="hudTutorial"></div>
 <div class="hud" id="hudUnmaking"></div>
+<!-- v52+53 PART G: the Elder Drake's boss bar. Hidden in the markup, like every
+     other conditional HUD card, so the DOM and the JS agree from frame one. -->
+<div class="hud" id="hudBoss">
+  <div class="boss-name" id="bossName"></div>
+  <div id="bossBarWrap"><div id="bossBar"></div></div>
+  <div class="boss-hp" id="bossHp"></div>
+</div>
 <div class="hud" id="hudMinimap">
   <div class="mm-title">COMPASS</div>
   <div id="mmDial"><div class="mm-centre"></div></div>
@@ -1428,7 +1483,50 @@ const BAZAAR_R = 10;     // its own safe radius — the bible puts it INSIDE a s
 const BAZAAR_RING = 5.5; // tiles from centre to the stall ring
 const BAZAAR_STALLS = 9; // the spec's 8-10, taken at the middle
 const ANCIENT_R = 4;     // crafting proximity, matching SPAWN_FORGE's own 4
-const COLOSSEUM_R = 9;   // the arena floor
+/* ============ v52+53 PART B — THE RUINED COLOSSEUM, REBUILT ==============
+   Confirmed live before a line was written: this was `COLOSSEUM_R = 9` and one
+   16-column ring — the bible's "open player duels" framing built LITERALLY (a
+   PvP flag on the ground) rather than ceremonially. It read as a roadside ring
+   rather than as somewhere you travel to.
+
+   9 -> 20 is 2.22x the radius and just under 5x the ground it covers, which
+   puts it beside the Eternal Tower as a thing you can see you are heading for.
+   ⚠️ THREE OTHER RULES MOVE WITH IT, and all three are correct but should be
+   said out loud rather than discovered:
+     - the PvP zone itself grows (inColosseum() is the arena rule),
+     - the base-building keep-out grows (LANDMARK_KEEPOUT, COLOSSEUM_R + 2),
+     - the fast-travel landing exclusion grows with the same radius.
+   None of those is a new rule; each is the existing one measured against a
+   bigger arena, which is what "a real landmark" has to mean.
+
+   The placement search is untouched and still clears the Bazaar, the Ancient
+   Forge and the volcano by 424 tiles and spawn by SAFE_RADIUS + 26, so a
+   radius of 20 cannot bring it into contact with anything. */
+const COLOSSEUM_R = 20;       // the arena floor — v37's 9, rebuilt as a landmark
+const COLOSSEUM_STAND_RING = 0.82;   // broken outer stands, as a fraction of R
+const COLOSSEUM_TIER_RING  = 0.62;   // the seating bowl's middle course
+const COLOSSEUM_WALL_RING  = 0.42;   // the low retaining wall around the sand
+const COLOSSEUM_COLS = 28;    // outer columns, up from v37's 16
+/* The two podiums. Their positions are FIXED and opposite, so an approaching
+   player can see both and read what the place is for without being told, and
+   so neither has a positional advantage over the other.
+   ⚠️ Their names are DESIGNED, not bible content — the bible names the Ruined
+   Colosseum and says nothing about what stands inside it. They are deliberately
+   plain compass words rather than invented lore for exactly that reason. */
+const PODIUM_RING = 7.5;      // tiles from the centre to each podium
+const PODIUM_R = 1.7;         // how close counts as standing on one — TUNABLE
+const PODIUMS = [
+  { id: 0, name: "North Podium", dx: 0, dy: -PODIUM_RING },
+  { id: 1, name: "South Podium", dx: 0, dy:  PODIUM_RING },
+];
+/* The victor's purse. The bible sets no number; this is sized against what
+   runic stone is actually worth elsewhere — a Sea Serpent, the hardest
+   non-boss creature in the world, drops 2 at 80%, and the Beastmaster Shrine
+   charges 3 for a blessing. Five is a real haul for a fight someone chose to
+   enter and had to be accepted into, and it is nowhere near an economy break.
+   TUNABLE. */
+const DUEL_REWARD_RUNIC = 5;
+const DUEL_OFFER_MS = 20000;  // how long an unanswered acceptance stands — TUNABLE
 /* ============ v39 PART B — THE DRAGON ELDER ALTAR ================
    Bible (PETS, Elder): "Dragon Elder — Retrieve the Golden Orb from top of
    the Eternal Tower, bring to the Dragon Elder Altar to awaken."
@@ -2006,6 +2104,12 @@ function debugDuskfoxInfo() {
     tile: duskfoxElderTile(worldSeed),
     tileBiome: (() => { const s = duskfoxElderTile(worldSeed); return s ? biomeAt(s[0], s[1]) : null; })(),
     SACMEADOW: B.SACMEADOW,
+    /* v52+53: the fixed placement is a RELATIONSHIP to the Spawn Forge, not a
+       coordinate, so the gate that pins it has to be able to see both ends of
+       that relationship rather than a literal pair of tiles. Copies, exactly
+       like every other top-level const this hook exports. */
+    SPAWN_FORGE: { x: SPAWN_FORGE.x, y: SPAWN_FORGE.y },
+    SPAWN: { x: SPAWN.x, y: SPAWN.y },
     wild: dw ? { x: dw.x, y: dw.y, id: dw.id } : null,
     wildCount: wilds.filter(w => w.species === "duskfox_elder").length,
     visible: dw ? isWildVisible(dw) : null,
@@ -3107,9 +3211,53 @@ const GUILD_TIDE_REGEN = 0.5;
    mined through node HP. */
 const GUILD_VEIN_TYPES = new Set(["rock", "iron", "runic", "meteor"]);
 
-function guildBreathMult() { return guildIs("drowned_court") ? GUILD_BREATH_MULT : 1; }
+/* ============ v52+53 PARTS C-F — GUILD TIER 2 ============================
+   SCOPE, DELIBERATELY NARROW, and this is the spec's own narrowing: Tier 2 is
+   an admin/redeem-GRANTED upgrade, not an earn-through-play milestone. Real
+   per-guild progress tracking is a bigger feature and a different spec.
+
+   Every Tier 2 number below was confirmed against the LIVE Tier 1 value it
+   replaces rather than guessed, and the spec's wording is deliberately
+   different between two of the five, so the arithmetic differs too:
+
+     Drowned Court — "roughly 1.5x the Tier 1 VALUE". The constant is 1.5,
+       so 2.25. A full tank and a half again.
+     Bramblewatch — "roughly 1.75x the Tier 1 BONUS". The constant is 1.20,
+       i.e. a +20% bonus; 1.75 x 20% is +35%, so 1.35 — NOT 1.20 x 1.75.
+     Quiet Vein — "doubles this flat bonus": +1 becomes +2.
+     Gilded Bough — "roughly doubles this bonus": +0.12 becomes +0.24.
+     Hollow Choir — its Tier 1 already bypasses the respawn wait entirely
+       (guildRespawnWaitMs() returns 0), so there is no number to raise. Tier 2
+       gives it a SECOND effect instead, which is what the spec asks for:
+       combat-logout immunity — the native leave-warning never fires for them.
+
+   All four numbers are TUNABLES, exactly as their Tier 1 counterparts are. */
+const GUILD_BREATH_MULT_T2 = 2.25;   // Drowned Court: 1.5x the Tier 1 value
+const GUILD_VEIN_BONUS_T2 = 2;       // Quiet Vein: the flat bonus, doubled
+const GUILD_BRAMBLE_MULT_T2 = 1.35;  // Bramblewatch: +20% bonus -> +35%
+const GUILD_BOUGH_TAME_T2 = 0.24;    // Gilded Bough: the tame bonus, doubled
+
+/* PART C. The column degrades exactly like `role` (v39) and `guild` (v51) —
+   read only, never written by savePlayer()'s fixed column list, and an absent
+   column, a null, a string, a nonsense value or a number below 1 all read as
+   tier 1. That is the safe direction in the only sense that matters here:
+   degrading means nobody has the upgrade, never that everybody does. */
+function myGuildTier() {
+  const t = me ? Math.floor(+me.guildTier) : 1;
+  return (isFinite(t) && t >= 2) ? t : 1;
+}
+/* PART D's single helper, and the whole of it. The spec is explicit that the
+   five call sites must not each grow their own inline tier check, so this is
+   the one place a tier ever decides between two values — five uses, one
+   pattern, and one line to read if the tiering is ever questioned. */
+function guildTiered(tier1, tier2) { return myGuildTier() >= 2 ? tier2 : tier1; }
+
+function guildBreathMult() {
+  return guildIs("drowned_court") ? guildTiered(GUILD_BREATH_MULT, GUILD_BREATH_MULT_T2) : 1;
+}
 function guildOreBonus(type) {
-  return (guildIs("quiet_vein") && GUILD_VEIN_TYPES.has(type)) ? GUILD_VEIN_BONUS : 0;
+  return (guildIs("quiet_vein") && GUILD_VEIN_TYPES.has(type))
+    ? guildTiered(GUILD_VEIN_BONUS, GUILD_VEIN_BONUS_T2) : 0;
 }
 /* Both taming guilds resolve here, and they stack with the Shrine and the
    Beastmaster rather than replacing either — the same way every other bonus
@@ -3118,7 +3266,7 @@ function guildOreBonus(type) {
    list that could drift away from it. */
 function guildTameBonus(species) {
   let c = 0;
-  if (guildIs("gilded_bough") && speciesIsCapped(species)) c += GUILD_BOUGH_TAME;
+  if (guildIs("gilded_bough") && speciesIsCapped(species)) c += guildTiered(GUILD_BOUGH_TAME, GUILD_BOUGH_TAME_T2);
   if (guildIs("nameless_tide")) c += GUILD_TIDE_TAME;
   return c;
 }
@@ -3140,7 +3288,7 @@ function noteMyFirstStrike(m) {
 }
 function guildMobDamageMult(m) {
   return (guildIs("bramblewatch") && m && guildFirstStrike.get(m.id) === "mob")
-    ? GUILD_BRAMBLE_MULT : 1;
+    ? guildTiered(GUILD_BRAMBLE_MULT, GUILD_BRAMBLE_MULT_T2) : 1;
 }
 /* Harness hook — GUILDS, the pool, every constant and the first-strike map
    are top-level and none of them land on window. */
@@ -3157,8 +3305,17 @@ function debugGuildInfo() {
     constants: { GUILD_BREATH_MULT, GUILD_VEIN_BONUS, GUILD_BRAMBLE_MULT,
                  GUILD_BOUGH_TAME, GUILD_TIDE_TAME, GUILD_TIDE_REGEN,
                  veinTypes: Array.from(GUILD_VEIN_TYPES) },
+    /* v52+53 PARTS C-F. The Tier 2 constants, the raw column value and what
+       myGuildTier() makes of it — a gate has to be able to tell "unset" from
+       "explicitly 1" from "a nonsense value that degraded", and only the raw
+       field and the predicate together can say that. */
+    tier2: { GUILD_BREATH_MULT_T2, GUILD_VEIN_BONUS_T2, GUILD_BRAMBLE_MULT_T2,
+             GUILD_BOUGH_TAME_T2, GUILD_TIER_MAX, REDEEM_TIER_KEY },
+    tierRaw: me ? me.guildTier : undefined,
+    tier: myGuildTier(),
     respawnWaitMs: guildRespawnWaitMs(),
     breathMult: guildBreathMult(),
+    combatLogoutActive: inCombatLogoutWindow(),
     firstStrike: Array.from(guildFirstStrike.entries()).map(([id, who]) => ({ id, who })),
   };
 }
@@ -3167,6 +3324,11 @@ function debugSetGuild(patch) {
   /* Writes only what a real row edit or a real fight could produce: the
      granted column, and the first-strike marker either party can set. */
   if ("granted" in patch && me) me.guild = patch.granted;
+  /* v52+53 PART C/E: the guild_tier column, written the way the LOGIN writes
+     it — straight from the row, unvalidated, so a gate can push a null, a
+     string or a nonsense number through and see myGuildTier() degrade for
+     real rather than being handed an already-clean value. */
+  if ("tierRaw" in patch && me) me.guildTier = patch.tierRaw;
   if ("clearFirstStrike" in patch) guildFirstStrike.clear();
   if ("mobStruck" in patch) noteMobFirstStrike({ id: patch.mobStruck });
   if ("iStruck" in patch) noteMyFirstStrike({ id: patch.iStruck });
@@ -4439,6 +4601,43 @@ function heightAt(tx, ty) {
 /* ---------- Features: organic clusters, finite ore nodes ---------- */
 function clusterNoise(tx, ty) { return valueNoise(tx / 9, ty / 9, worldSeed + 301); }
 
+/* ============ v52+53 PART H — ONE LEVER OVER NODE DENSITY ==============
+   Reported directly: after the v47/v49/v51 density passes the ore and stone
+   nodes read as visually CLUTTERED rather than plentiful.
+
+   The first thing that had to be established is what actually governs it,
+   because the report names those three versions and they are not the cause.
+   Node density has never been a named constant — it is the five inline hash
+   thresholds below — and `git log -L` over each of them shows not one has
+   moved since v46. What v47, v49 and v51 moved was PETS and MOBS. So this is
+   a genuinely untouched lever, and the clutter is v46's numbers seen at the
+   pet/mob densities those three versions since produced.
+
+   `hash2` is uniform on [0,1), so a band that runs from `t` to the next
+   threshold up covers exactly `(1 - t)` of that biome minus whatever sits
+   above it. That makes the cut exact and, more importantly, RATIO-PRESERVING:
+
+       t' = 1 - K * (1 - t)
+
+   scales every band by the same K at once, so runic stays exactly as rare
+   relative to iron as it has been since v6's "runic nodes too frequent" fix,
+   and no band can quietly overtake another. K = 0.65 is a true 35% cut, the
+   middle of the spec's own 30-40% window.
+
+   TREES ARE DELIBERATELY NOT IN THIS.** The art skill's must-not-regress list
+   says in as many words: "organic tree clustering (user likes it — never
+   alter placement/density)". It also matches the report's own words ("ore/
+   resource nodes") and the file's own definition of that set in
+   GUILD_VEIN_TYPES. Herbs, magic essence and the Golden Orb are out for the
+   same reason they are out of GUILD_VEIN_TYPES: none of them is ore or stone.
+
+   The five arguments below are v46's own values, left readable as the
+   arguments they are, so what changed is one number and not five. TUNABLE. */
+const NODE_DENSITY_K = 0.65;
+const nodeCut = t => 1 - NODE_DENSITY_K * (1 - t);
+const ROCK_RUNIC_T = nodeCut(0.996), ROCK_IRON_T = nodeCut(0.93), ROCK_ROCK_T = nodeCut(0.885);
+const VOLROCK_RUNIC_T = nodeCut(0.992), VOLROCK_IRON_T = nodeCut(0.92);
+
 function featureTypeAt(tx, ty) {
   const b = biomeAt(tx, ty);
   const h = hash2(tx, ty, 91);
@@ -4464,13 +4663,13 @@ function featureTypeAt(tx, ty) {
   }
   if ((b === B.PLAINS || b === B.MEADOW) && h > 0.965) return "tree";
   if (b === B.ROCK) {
-    if (h > 0.996) return "runic";     // far rarer (2026-07-11 fix)
-    if (h > 0.93) return "iron";
-    if (h > 0.885) return "rock";
+    if (h > ROCK_RUNIC_T) return "runic";     // far rarer (2026-07-11 fix), v52+53: thinned 35% with its band
+    if (h > ROCK_IRON_T) return "iron";
+    if (h > ROCK_ROCK_T) return "rock";
   }
   if (b === B.VOLROCK) {
-    if (h > 0.992) return "runic";
-    if (h > 0.92) return "iron";
+    if (h > VOLROCK_RUNIC_T) return "runic";
+    if (h > VOLROCK_IRON_T) return "iron";
   }
   // RUINB: no per-tile scatter — the ruin is a hand-composed set piece now
   return null;
@@ -6189,10 +6388,32 @@ function normalizeRedeemItems(raw) {
   else if (raw && typeof raw === "object") Object.entries(raw).forEach(([t, q]) => add(t, q));
   return out;
 }
+/* v52+53 PART F. One new recognised key in the EXISTING redeem_codes.items
+   JSON shape — no new table, no new column on that table, no second code
+   system. It is read separately from the items rather than through add()
+   above, because it is not an item: add() drops anything ITEM_META does not
+   know, which is exactly what should happen to a stray key, and quietly
+   minting a "_guildTier" item would be the wrong outcome either way.
+
+   The leading underscore is deliberate and is what keeps the two vocabularies
+   from ever colliding: no ITEM_META key starts with one, so a code can carry
+   real items AND this in the same object, which is the shape the spec asks
+   for ("in addition to any real items also in that code").
+
+   Returns 0 when the key is absent or nonsense. Clamped, so a hostile or
+   fat-fingered row can only ever name a sane tier. */
+const REDEEM_TIER_KEY = "_guildTier";
+const GUILD_TIER_MAX = 2;    // TUNABLE — the highest tier this version builds
+function normalizeRedeemTier(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return 0;
+  const n = Math.floor(+raw[REDEEM_TIER_KEY]);
+  if (!isFinite(n) || n < 1) return 0;
+  return Math.min(GUILD_TIER_MAX, n);
+}
 /* One answer, and it can never throw. States: "no-system" (either table is
    absent or unreachable), "no-code", "spent", "claimed", "empty", "ok". */
 async function redeemLookup(code, username) {
-  const out = { code, username, state: "no-system", items: null, usesLeft: null };
+  const out = { code, username, state: "no-system", items: null, usesLeft: null, tier: 0 };
   if (!code || !username) { out.state = "no-code"; return out; }
   if (!sb) { try { connectSupabase(); } catch (e) { out.state = "no-system"; return out; } }
   let row = null;
@@ -6218,7 +6439,11 @@ async function redeemLookup(code, username) {
   out.usesLeft = typeof row.uses_left === "number" ? row.uses_left : null;
   if (out.usesLeft !== null && out.usesLeft <= 0) { out.state = "spent"; return out; }
   out.items = normalizeRedeemItems(row.items);
-  out.state = Object.keys(out.items).length ? "ok" : "empty";
+  /* v52+53 PART F: a code carrying ONLY a tier is a real code, not an empty
+     one — "empty" means "that code carries nothing this world knows about",
+     and a tier grant is something this world now knows about. */
+  out.tier = normalizeRedeemTier(row.items);
+  out.state = (Object.keys(out.items).length || out.tier) ? "ok" : "empty";
   return out;
 }
 async function submitRedeem() {
@@ -6230,10 +6455,15 @@ async function submitRedeem() {
   const res = await redeemLookup(code, username);
   lastRedeemState = res.state;
   if (res.state === "ok") {
-    pendingRedeem = { code, items: res.items, usesLeft: res.usesLeft };
+    pendingRedeem = { code, items: res.items, usesLeft: res.usesLeft, tier: res.tier };
     const list = Object.entries(res.items)
       .map(([t, q]) => `${ITEM_META[t].name} ×${q}`).join(", ");
-    redeemSay(`Code accepted — ${list} will be waiting when you enter.`);
+    /* v52+53 PART F: the tier is named beside the items rather than instead of
+       them, because a code can legitimately carry both — and a code that
+       carries only a tier still has to say what it is about to give. */
+    const tierBit = res.tier >= 2 ? `a Tier ${res.tier} guild standing` : "";
+    const both = [list, tierBit].filter(Boolean).join(" and ");
+    redeemSay(`Code accepted — ${both} will be waiting when you enter.`);
   } else {
     pendingRedeem = null;
     redeemSay({
@@ -6259,7 +6489,7 @@ if (redeemInputEl) redeemInputEl.onkeydown = e => {
    "you keep your code", never "you got it twice". */
 async function grantPendingRedeem() {
   if (!pendingRedeem || !me || !sb) return false;
-  const { code, items, usesLeft } = pendingRedeem;
+  const { code, items, usesLeft, tier } = pendingRedeem;
   pendingRedeem = null;
   try {
     const { error } = await sb.from("redeem_claims").insert({ code, username: me.username });
@@ -6277,6 +6507,20 @@ async function grantPendingRedeem() {
   if (usesLeft !== null) {
     try { sb.from("redeem_codes").update({ uses_left: usesLeft - 1 }).eq("code", code); } catch (e) {}
   }
+  /* v52+53 PART F: the tier grant. It can only ever RAISE — a redeem must
+     never be able to lower someone's standing, which is the spec's own rule
+     and is why this is a comparison and not an assignment. Applied in memory
+     first so it is live for this session either way, then written through
+     savePlayerExtras() rather than savePlayer(): the column is optional, and
+     savePlayer()'s fixed column list must never learn about a column that
+     might not be there. If the write fails (no column yet) the upgrade holds
+     for the session and is gone on the next login — the same honest, safe
+     degradation every optional column in this file has. */
+  if (tier && tier > myGuildTier()) {
+    me.guildTier = tier;
+    saveGuildTier();
+    names.push(`Tier ${tier} guild standing`);
+  }
   lastRedeemState = "granted";
   savePlayer();
   toast(`Code redeemed — ${names.join(", ")}`);
@@ -6288,7 +6532,8 @@ function debugRedeemInfo() {
   return { max: REDEEM_CODE_MAX, state: lastRedeemState,
            pending: pendingRedeem ? { code: pendingRedeem.code,
                                       items: Object.assign({}, pendingRedeem.items),
-                                      usesLeft: pendingRedeem.usesLeft } : null,
+                                      usesLeft: pendingRedeem.usesLeft,
+                                      tier: pendingRedeem.tier || 0 } : null,   // v52+53 PART F
            field: redeemInputEl ? redeemInputEl.value : null,
            msg: redeemMsgEl ? redeemMsgEl.textContent : null };
 }
@@ -6338,6 +6583,66 @@ function storedSessionName() {
    the same reason every other debug hook in this file exists. */
 let sessionResume = { stored: "", filled: false, submitted: false, reason: "idle" };
 
+/* ============ v52+53 PART A — THE RESUME PAUSE ==========================
+   Until this version `resumeSession()` filled the name field and then called
+   `enterBtn.onclick()` on the very next line, with nothing in between: a
+   returning player had no chance to change a setting, pick a different class,
+   redeem a code or simply decide not to go in before they were already
+   standing in the world.
+
+   The window is deliberately short. The resume was built to be seamless and
+   it still is for anyone who does nothing — this only has to be long enough
+   to read six words and reach a button, and any longer would turn a seamless
+   resume into a confirmation dialog with extra steps.
+
+   Two things are worth knowing about where the pause sits. It is AFTER every
+   check that can already refuse the resume (PIN required / no such account /
+   lookup unavailable), so the only thing it can ever interrupt is a submit
+   that was genuinely about to happen. And cancelling changes nothing else at
+   all: the name stays typed, the class stays picked, the stored key is NOT
+   forgotten, and the card is left in precisely the state it was already in —
+   "returns control to the login screen, fully filled in", not "starts over".
+   ========================================================================= */
+const RESUME_PAUSE_MS = 1800;    // TUNABLE — the spec's own 1.5-2s window
+const resumeNoticeEl = document.getElementById("resumeNotice");
+const resumeTextEl = document.getElementById("resumeText");
+const resumeCancelEl = document.getElementById("resumeCancel");
+let resumePauseMs = RESUME_PAUSE_MS;   // harness override only; never written by the game
+let resumeCancelled = false;
+function hideResumeNotice() {
+  if (resumeNoticeEl) resumeNoticeEl.style.display = "none";
+}
+/* Shows the banner and resolves TRUE if the window ran out untouched, FALSE if
+   the player took it back. Both exits leave the card usable — the banner goes
+   away either way, since a notice that outlived its own countdown would be
+   telling the player something that has stopped being true. */
+function resumePause(name) {
+  return new Promise(resolve => {
+    resumeCancelled = false;
+    if (resumeTextEl) resumeTextEl.textContent = `Welcome back, ${name} — entering in a moment…`;
+    if (resumeNoticeEl) resumeNoticeEl.style.display = "flex";
+    let settled = false;
+    const finish = (go) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (resumeCancelEl) resumeCancelEl.removeEventListener("click", onCancel);
+      if (enterBtn) enterBtn.removeEventListener("click", onEnter);
+      hideResumeNotice();
+      resolve(go);
+    };
+    /* The player pressing ENTER themselves during the window is a cancel of
+       the AUTOMATIC submit and nothing else — their own click is already
+       entering the world, and letting the timer fire as well would run the
+       whole login twice. */
+    const onEnter = () => { resumeCancelled = true; finish(false); };
+    const onCancel = () => { resumeCancelled = true; finish(false); };
+    if (resumeCancelEl) resumeCancelEl.addEventListener("click", onCancel);
+    if (enterBtn) enterBtn.addEventListener("click", onEnter);
+    const timer = setTimeout(() => finish(true), Math.max(0, resumePauseMs));
+  });
+}
+
 async function resumeSession() {
   const name = storedSessionName();
   sessionResume = { stored: name, filled: false, submitted: false, reason: "no stored name" };
@@ -6367,6 +6672,18 @@ async function resumeSession() {
     if (res.mode === "create") forgetSession();
     return false;
   }
+  /* v52+53 PART A: the pause goes exactly here — after the last check that
+     could still refuse, immediately before the one line that used to submit
+     with no warning at all. */
+  sessionResume.reason = "waiting";
+  const go = await resumePause(name);
+  if (!go) {
+    /* Cancelled. The name field, the class, the PIN state and the stored key
+       are all left exactly as they are — this hands the card back, it does
+       not undo the resume. */
+    sessionResume.reason = "cancelled";
+    return false;
+  }
   sessionResume.submitted = true;
   sessionResume.reason = "resumed";
   await enterBtn.onclick();
@@ -6375,7 +6692,24 @@ async function resumeSession() {
 function debugSessionInfo() {
   return { key: LS_LAST_USER, stored: storedSessionName(),
            nameField: nameInput ? nameInput.value : null,
-           resume: Object.assign({}, sessionResume) };
+           resume: Object.assign({}, sessionResume),
+           /* v52+53 PART A. The pause length, whether the banner is actually
+              up, and what it says — all top-level or DOM state a harness has
+              no other way to see. */
+           RESUME_PAUSE_MS, pauseMs: resumePauseMs,
+           cancelled: resumeCancelled,
+           noticeVisible: !!resumeNoticeEl && resumeNoticeEl.style.display !== "none",
+           noticeText: resumeTextEl ? resumeTextEl.textContent : null,
+           hasCancelButton: !!resumeCancelEl };
+}
+/* Harness setter, in the v24 debugSetMusicState pattern and for the same
+   reason: a gate must be able to prove both branches without spending two
+   real seconds per run, and must be able to press the cancel for real. */
+function debugSetResume(patch) {
+  if (!patch) return debugSessionInfo();
+  if ("pauseMs" in patch) resumePauseMs = Math.max(0, +patch.pauseMs || 0);
+  if (patch.pressCancel && resumeCancelEl) resumeCancelEl.click();
+  return debugSessionInfo();
 }
 
 enterBtn.onclick = async () => {
@@ -6500,6 +6834,15 @@ async function loginPlayer(username, cls, pinCheck) {
          Tide needs the small v51 SQL update. Safe direction: degrading means
          nobody has the admin guild, never that everybody does. */
       guild: typeof p.guild === "string" ? p.guild : null,
+      /* v52+53 PART C/E: the guild tier, read exactly the way `role` (v39) and
+         `guild` (v51) above are — read only here, granted by editing the row
+         directly in Supabase, and taking effect on the next login. That is
+         PART E in full: no new mechanism was invented for it, it reuses the
+         exact precedent those two set. An absent column, a null or anything
+         that is not a number >= 2 all read as tier 1 through myGuildTier(),
+         so a world that has never run the small SQL update plays precisely as
+         it did before this version. */
+      guildTier: p.guild_tier,
     };
     /* v35 PART B: shown once, ever. The flag is read here, on the row that
        came back from the players table, and written by savePlayerExtras(). */
@@ -6544,7 +6887,7 @@ async function loginPlayer(username, cls, pinCheck) {
         if (pinErr) console.warn("PIN not stored:", pinErr.message || pinErr);
       } catch (e) { console.warn("PIN not stored:", e); }
     }
-    me = { username, cls, x: s.x, y: s.y, level: 1, hp: 100, maxHp: 100, inv: {}, equipped: null, armor: null, lastKillAt: null, shrineCdUntil: null, deadUntil: null, cos: emptyCosmetics(), role: "player", guild: null };   // v51 PART E: guild is derived from the username, never stored on a new account
+    me = { username, cls, x: s.x, y: s.y, level: 1, hp: 100, maxHp: 100, inv: {}, equipped: null, armor: null, lastKillAt: null, shrineCdUntil: null, deadUntil: null, cos: emptyCosmetics(), role: "player", guild: null, guildTier: 1 };   // v51 PART E: guild is derived from the username, never stored on a new account. v52+53 PART C: and every new account starts at tier 1
     tutorialDone = false;    // v35: a brand new row has never seen it
   }
   /* v21: dive/breath state, set once for BOTH the returning and the new-player
@@ -6613,6 +6956,7 @@ function mobHit(m, dmg, opts = {}) {
   noteMyFirstStrike(m);
   dmg = Math.round(dmg * guildMobDamageMult(m));
   noteElderCombat(m.kind);   // PART D: a hit landed ON an Elder is an Elder fight
+  noteBossCombat(m.kind, m); // v52+53 PART G: and a hit landed on the DRAKE is a boss fight
   noteCombatDamage();        // v47 PART E: damage DEALT opens the logout window
   m.hp -= dmg;
   m.flash = performance.now();
@@ -6816,6 +7160,7 @@ function updateMob(m, dt, t, now) {
         // PART D: and a swing FROM one is too — before the drake's own early
         // return below, so its two special attacks are not the silent case
         noteElderCombat(m.kind);
+        noteBossCombat(m.kind, m);   // v52+53 PART G: the drake's own swing, specials included
         /* v51 PART E: and the mob's swing is the other half of Bramblewatch's
            record. It sits here, above the drake's own early return, for the
            same reason noteElderCombat does — this is the one line every mob
@@ -7401,13 +7746,39 @@ async function joinRealtime() {
     projectiles.push({ x: p.x, y: p.y, dx: p.dx, dy: p.dy, col: p.col, pk: p.pk || "arrow", dist: 0, max: p.rng, visual: true });
   });
 
+  /* v52+53 PART B: the duel handshake. One addressed broadcast on the one
+     existing channel, the same shape `item_give` (v47) already uses, so
+     every other client ignores it. It carries no damage and no authority —
+     it is one player saying "I accept", and the receiver decides for itself
+     whether that is true of the world it can see (both on podiums, opposite
+     ones, same space) before it counts. */
+  channel.on("broadcast", { event: "duel" }, ({ payload: p }) => {
+    if (!me || !p || p.to !== me.username) return;
+    if (p.act === "accept") duelNoteRemoteAccept(p.from);
+  });
+
   channel.on("broadcast", { event: "kill" }, ({ payload: p }) => {
     if (p.killer === me.username) {
       me.level += 1;
       me.lastKillAt = Date.now();     // v12: blood window opens
-      toast(`You struck down ${p.victim} — Level ${me.level}!`);
+      /* v52+53 PART B: the victor's purse. This is the single existing site
+         where a victor is already credited, so the duel reward belongs here
+         and nowhere else — one branch on top of the levelling that already
+         happens, paid only for a duel BOTH players accepted, and never for an
+         ordinary kill inside the ring. */
+      const wasDuel = duelIsActiveBetween(p.killer, p.victim);
+      if (wasDuel) {
+        invAdd("runic_stone", DUEL_REWARD_RUNIC);
+        toast(`You won the duel — ${DUEL_REWARD_RUNIC} Runic Stone, and Level ${me.level}!`);
+        duelReset("won");
+      } else {
+        toast(`You struck down ${p.victim} — Level ${me.level}!`);
+      }
       savePlayer();
       sendMove(true);
+    } else if (duelIsActiveBetween(p.killer, p.victim)) {
+      /* The other side of the same duel. No prize, and the duel is over. */
+      duelReset("lost");
     }
   });
 
@@ -7699,6 +8070,30 @@ async function savePlayerExtras() {
     }).eq("username", me.username);
   } catch (e) { /* ignore — see above */ }
 }
+/* v52+53 PART F: the guild tier's own write, and deliberately NOT a third
+   column on savePlayerExtras() above. A Postgres update naming a column that
+   does not exist fails as a whole — so folding `guild_tier` into that call
+   would mean a world which ran the v35 SQL but not this version's silently
+   stopped persisting tutorial_done and cosmetics as well. One optional column
+   per write is what keeps each one's degradation its own.
+
+   It is the ONE place the game ever writes this column. The login path only
+   ever reads it, exactly as it reads `role` and `guild`, and the only caller
+   here is a redeem that has already checked it is raising rather than
+   lowering. Un-awaited discipline, error-swallowing, same as every optional
+   write in this file.
+
+   ⚠️ A small SQL update is needed for a redeemed tier to survive a relog:
+     alter table players add column guild_tier integer default 1;
+   Without it the grant holds for the session and is gone on the next login;
+   nothing else is affected either way, and a tier granted by editing the row
+   directly (PART E) needs the column to exist in the first place. */
+async function saveGuildTier() {
+  if (!me || !sb) return;
+  try {
+    await sb.from("players").update({ guild_tier: myGuildTier() }).eq("username", me.username);
+  } catch (e) { /* ignore — see above */ }
+}
 /* =========================================================
    v47 PART E — COMBAT LOGOUT, SCOPED TO WHAT A BROWSER CAN ACTUALLY ENFORCE
 
@@ -7728,6 +8123,13 @@ const COMBAT_LOGOUT_MS = 15000;          // v51 PART F: was 30000
 let lastCombatDamageAt = 0;              // performance.now() of the last damage either way
 function noteCombatDamage() { lastCombatDamageAt = performance.now(); }
 function inCombatLogoutWindow() {
+  /* v52+53 PART D: the Hollow Choir's Tier 2 second effect. Its Tier 1 already
+     bypasses the respawn wait entirely, so there was no number left to raise —
+     the spec gives it combat-logout immunity instead, and this is the single
+     predicate every path in front of that prompt already runs through, so one
+     condition here covers all of them and nothing else had to learn about it.
+     Deliberately through the same helper as the other four. */
+  if (guildIs("hollow_choir") && guildTiered(false, true)) return false;
   return !!lastCombatDamageAt && (performance.now() - lastCombatDamageAt) < COMBAT_LOGOUT_MS;
 }
 /* Harness hook, the same shape and the same reason as every other one in this
@@ -7848,6 +8250,150 @@ function inSafeZone(x, y) {
    generated overlapping it. */
 function inColosseum(x, y) {
   return Math.hypot(x - COLOSSEUM.x, y - COLOSSEUM.y) < COLOSSEUM_R;
+}
+
+/* ============ v52+53 PART B — THE PODIUM DUEL ============================
+   Everything below is an ADDITION and never a replacement. The v37 rule above
+   is untouched: two players anywhere inside the ring can still fight, exactly
+   as they always could, and that is what happens to anyone not using the
+   podiums. What the podiums add is a CEREMONY — a fight both people agreed to,
+   with a real prize on it.
+
+   The one rule that matters most here is a negative one: standing on a podium
+   never itself deals damage and never forces a fight. It only ever makes an
+   OFFER possible. Both players have to accept, each on their own machine, on
+   the interact key they already use for every other thing in this world you
+   walk up to and use. Until both have, nothing has changed for either of them
+   beyond what the ring already did.
+   ========================================================================= */
+function podiumPos(i) {
+  const p = PODIUMS[i];
+  return p ? { x: COLOSSEUM.x + p.dx, y: COLOSSEUM.y + p.dy } : null;
+}
+/* Which podium (0 or 1) is this position standing on, or null. */
+function podiumAt(x, y) {
+  for (let i = 0; i < PODIUMS.length; i++) {
+    const p = podiumPos(i);
+    if (Math.hypot(x - p.x, y - p.y) <= PODIUM_R) return i;
+  }
+  return null;
+}
+/* One duel at a time, and only ever with one person. `state` is "idle" while
+   nothing is happening, "offered" once THIS client has accepted and is waiting,
+   and "active" once both have. Nothing here is stored server-side and nothing
+   is authoritative: it is the same derive-locally, agree-over-the-channel
+   discipline v31's world events and v28's mounting already use. */
+let duel = { state: "idle", opponent: null, mine: false, theirs: false, myPodium: null, at: 0, why: "" };
+function duelReset(why) {
+  duel = { state: "idle", opponent: null, mine: false, theirs: false, myPodium: null, at: 0, why: why || "" };
+}
+/* The opponent a duel is currently POSSIBLE with: a different player, standing
+   on the OTHER podium, in this space, right now. Returns their name or null. */
+function duelCandidate() {
+  if (!me || dead) return null;
+  const mine = podiumAt(me.x, me.y);
+  if (mine === null) return null;
+  for (const [name, o] of others) {
+    if (name === me.username || o.dead) continue;
+    if ((o.space || "main") !== (me.space || "main")) continue;
+    const theirs = podiumAt(o.x, o.y);
+    if (theirs !== null && theirs !== mine) return name;
+  }
+  return null;
+}
+/* Is this pair the duel that is actually live right now? Both directions,
+   because the `kill` broadcast can arrive from either side of it. */
+function duelIsActiveBetween(a, b) {
+  if (duel.state !== "active" || !me) return false;
+  const pair = [me.username, duel.opponent];
+  return pair.indexOf(a) >= 0 && pair.indexOf(b) >= 0 && a !== b;
+}
+/* THE ACCEPTANCE. Called from doInteract(), so it is the same key every other
+   walk-up-and-use thing in this world answers on and no new binding was
+   invented for it. Accepting twice does nothing; accepting after the other
+   player already has is what starts the duel. */
+function duelAccept() {
+  const other = duelCandidate();
+  if (!other) return false;
+  if (duel.state === "active") { toast("You are already in a duel."); return false; }
+  if (duel.opponent !== other) duelReset("new opponent");
+  if (duel.mine) { toast(`Still waiting for ${other} to accept…`); return false; }
+  duel.opponent = other;
+  duel.mine = true;
+  duel.myPodium = podiumAt(me.x, me.y);
+  duel.state = "offered";
+  if (!duel.at) duel.at = performance.now();
+  channel.send({ type: "broadcast", event: "duel",
+                 payload: { from: me.username, to: other, act: "accept" } });
+  if (duel.theirs) duelBegin(other);
+  else toast(`You step up. Waiting for ${other} to accept…`);
+  return true;
+}
+/* The other half, from the channel. Records THEIR acceptance and starts the
+   duel only if this client has already given its own — which is what makes
+   the confirmation genuinely mutual rather than one player pressing a key at
+   somebody else. */
+function duelNoteRemoteAccept(from) {
+  if (!me || from === me.username) return;
+  const other = duelCandidate();
+  if (other !== from) return;          // not on the opposite podium: nothing to accept
+  if (duel.state === "active") return;
+  if (duel.opponent !== from) duelReset("new opponent");
+  duel.opponent = from;
+  duel.theirs = true;
+  duel.state = "offered";
+  if (!duel.at) duel.at = performance.now();
+  if (duel.mine) duelBegin(from);
+  else toast(`${from} has stepped up. Press ${(KEYBINDS.interact || "e").toUpperCase()} to accept the duel.`);
+}
+function duelBegin(other) {
+  duel.state = "active";
+  duel.opponent = other;
+  duel.mine = duel.theirs = true;
+  duel.at = performance.now();
+  toast(`THE DUEL BEGINS — ${me.username} against ${other}`);
+}
+/* Checked every frame from update(). A duel is a thing you agreed to while
+   standing somewhere; walking away from the podiums, dying, leaving the ring
+   or leaving the space all end it. A pending offer also simply expires. */
+function duelTick() {
+  if (duel.state === "idle") return;
+  if (dead || !inColosseum(me.x, me.y)) { duelReset("left the ring"); return; }
+  const o = others.get(duel.opponent);
+  if (!o || o.dead || (o.space || "main") !== (me.space || "main")) {
+    duelReset("opponent gone"); return;
+  }
+  if (duel.state === "offered" && podiumAt(me.x, me.y) === null) {
+    duelReset("stepped off"); return;
+  }
+  if (duel.state === "offered" && duel.at > 0 &&
+      performance.now() - duel.at > DUEL_OFFER_MS) {
+    duelReset("offer expired");
+    toast("The challenge went unanswered.");
+  }
+}
+/* Harness hook — every value above is top-level and none of it lands on
+   window, and the podium positions are derived from a landmark a gate cannot
+   otherwise see. Copies. */
+function debugDuelInfo() {
+  return {
+    COLOSSEUM_R, PODIUM_RING, PODIUM_R, DUEL_REWARD_RUNIC, DUEL_OFFER_MS,
+    podiums: PODIUMS.map((p, i) => Object.assign({ name: p.name }, podiumPos(i))),
+    me: me ? me.username : null,
+    onPodium: me ? podiumAt(me.x, me.y) : null,
+    candidate: duelCandidate(),
+    duel: Object.assign({}, duel),
+    inRing: me ? inColosseum(me.x, me.y) : null,
+    pieceCount: colosseumPieces().length,
+  };
+}
+function debugSetDuel(patch) {
+  if (!patch) return debugDuelInfo();
+  if (patch.accept) duelAccept();
+  if (patch.reset) duelReset("harness");
+  if (patch.tick) duelTick();
+  if ("offerAgeMs" in patch && duel.at > 0) duel.at = performance.now() - (+patch.offerAgeMs || 0);
+  return debugDuelInfo();
 }
 
 function tryAttack(aimX, aimY) {
@@ -8374,6 +8920,17 @@ async function doInteract() {
   if (now - lastGather < GATHER_COOLDOWN) return;
   /* ⚠️ DEV-ONLY (v9): unlimited supply chest — refills all materials on every
      use, incl. Dragonsteel, for testing. Remove/gate before live launch. */
+  /* v52+53 PART B: the duel acceptance answers on the same interact key every
+     other walk-up-and-use thing in this world answers on — the Shrine, the
+     Oracle, the Altar, a chest — so no new binding was invented for it and the
+     prompt card already says what the key will do. Checked first among them
+     because standing on a podium is an unambiguous place to be: nothing else
+     in the game is within reach of one. */
+  if (duelCandidate()) {
+    lastGather = now;
+    duelAccept();
+    return;
+  }
   if (nearShrine()) {
     lastGather = now;
     tryActivateShrine();
@@ -10158,6 +10715,7 @@ function update(dt, t) {
     }
     updateBreath(dt);          // v21: dive breath / drowning / charm regen
     tutorialTick();            // v35: the tutorial's one proximity step
+    duelTick();                // v52+53 PART B: a duel only lasts while both still stand for it
   } else if (me.deadUntil && Date.now() >= me.deadUntil) {
     respawn();
   }
@@ -12838,25 +13396,111 @@ function drawAncientEntity(t) {
   }
 }
 
-function drawColosseumEntity(t) {
+/* ============ v52+53 PART B — THE COLOSSEUM, BUILT AS PIECES ============
+   v37 drew the whole structure inside ONE entity at one sort key. At a
+   7.2-tile ring that was survivable; at 16.4 it is not — this skill's own
+   rule is that EVERY drawn entity sorts back-to-front by world x + y, and a
+   40-tile-wide structure sharing a single key would paint its far columns
+   over a player standing behind them. So the composition is built once into
+   a piece list, exactly as `ruinPieces` has been since v20, and every piece
+   sorts on its own. The hand-composed ruin's own rule still holds: this
+   composition is deliberately deterministic and identical every time, so the
+   place reads as one built thing rather than a scatter.
+
+   The look is unchanged in language and only bigger in scale: the same
+   ruin-stone greys, the same flat 0.72/0.55 facet split through drawBox, hard
+   edges, no gradients, no outlines. What is new is a genuine BOWL — three
+   concentric courses (tall broken outer stands, a lower seating tier, a low
+   retaining wall) around the sand, which is the shape that reads as an arena
+   from outside it rather than as a ring of posts. It is still deliberately
+   RUINED: whole runs of each course are missing and the gaps carry fallen
+   rubble, per the bible's own word for it. */
+let _coloPieces = null, _coloKey = "";
+function colosseumPieces() {
+  const key = COLOSSEUM.x + "," + COLOSSEUM.y + "," + COLOSSEUM_R;
+  if (_coloPieces && _coloKey === key) return _coloPieces;
+  const out = [];
+  const R = COLOSSEUM_R;
+  const ringAt = (frac) => R * frac;
+  /* Outer stands: the tall broken columns you see first. Three collapsed runs,
+     at fixed indices so the silhouette is the same every time. */
+  const gapsOuter = new Set([5, 6, 7, 17, 18, 25]);
+  for (let i = 0; i < COLOSSEUM_COLS; i++) {
+    if (gapsOuter.has(i)) continue;
+    const a = (i / COLOSSEUM_COLS) * Math.PI * 2;
+    out.push({ k: "col", x: COLOSSEUM.x + Math.cos(a) * ringAt(COLOSSEUM_STAND_RING),
+               y: COLOSSEUM.y + Math.sin(a) * ringAt(COLOSSEUM_STAND_RING),
+               w: 1.5, d: 1.3, h: 20 + (i % 3) * 7, c: i % 2 ? "#a89880" : "#96866e" });
+  }
+  /* The seating bowl's middle course — lower, wider blocks, its own gaps, so
+     the two courses do not collapse into one thick wall. */
+  const tierN = Math.round(COLOSSEUM_COLS * 0.75);
+  const gapsTier = new Set([2, 9, 10, 15]);
+  for (let i = 0; i < tierN; i++) {
+    if (gapsTier.has(i)) continue;
+    const a = ((i + 0.5) / tierN) * Math.PI * 2;
+    out.push({ k: "tier", x: COLOSSEUM.x + Math.cos(a) * ringAt(COLOSSEUM_TIER_RING),
+               y: COLOSSEUM.y + Math.sin(a) * ringAt(COLOSSEUM_TIER_RING),
+               w: 2.0, d: 1.7, h: 9 + (i % 2) * 3, c: i % 2 ? "#9c8c74" : "#8e7f68" });
+  }
+  /* The low retaining wall the sand is held in. Almost continuous — this is
+     the course that makes the middle read as a floor rather than a clearing. */
+  const wallN = Math.round(COLOSSEUM_COLS * 0.9);
+  for (let i = 0; i < wallN; i++) {
+    if (i % 11 === 4) continue;                       // the two ways in
+    const a = (i / wallN) * Math.PI * 2;
+    out.push({ k: "wall", x: COLOSSEUM.x + Math.cos(a) * ringAt(COLOSSEUM_WALL_RING),
+               y: COLOSSEUM.y + Math.sin(a) * ringAt(COLOSSEUM_WALL_RING),
+               w: 1.7, d: 1.5, h: 4, c: "#8f8878" });
+  }
+  /* Fallen rubble, in the gaps the collapsed runs left. */
+  for (const i of gapsOuter) {
+    const a = (i / COLOSSEUM_COLS) * Math.PI * 2;
+    out.push({ k: "rubble", x: COLOSSEUM.x + Math.cos(a) * ringAt(COLOSSEUM_STAND_RING - 0.09),
+               y: COLOSSEUM.y + Math.sin(a) * ringAt(COLOSSEUM_STAND_RING - 0.09),
+               w: 1.1, d: 0.9, h: 3, c: "#7e7060" });
+  }
+  // the two podiums, as pieces, so they sort with everything else
+  for (let i = 0; i < PODIUMS.length; i++) {
+    const p = podiumPos(i);
+    out.push({ k: "podium", x: p.x, y: p.y, id: i });
+  }
+  _coloKey = key; _coloPieces = out;
+  return out;
+}
+/* The sand. Drawn as its own entity, at the centre's own sort key, because it
+   is flat ground and must go UNDER everything standing on it. */
+function drawColosseumFloor(t) {
   const [sx, sy] = worldToScreen(COLOSSEUM.x, COLOSSEUM.y, groundZ(COLOSSEUM.x, COLOSSEUM.y));
-  drawShadow(sx, sy, 74, 52);
-  /* A broken ring of tiered stone — deliberately RUINED, with gaps, so it
-     reads as the bible's "Ruined Colosseum" and not a clean stadium. */
-  for (let i = 0; i < 16; i++) {
-    if (i === 3 || i === 4 || i === 11) continue;                  // collapsed sections
-    const a = (i / 16) * Math.PI * 2;
-    const bx = COLOSSEUM.x + Math.cos(a) * 7.2, by = COLOSSEUM.y + Math.sin(a) * 7.2;
-    const h = 9 + (i % 3) * 3;
-    drawBox(bx, by, 0.7, 0.6, h, i % 2 ? "#a89880" : "#96866e");
+  const rx = COLOSSEUM_R * COLOSSEUM_WALL_RING * IW2 * 2;
+  const ry = COLOSSEUM_R * COLOSSEUM_WALL_RING * IH2 * 2;
+  ctx.fillStyle = "rgba(198,178,138,0.55)";            // packed sand inside the wall
+  ctx.beginPath(); ctx.ellipse(sx, sy, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "rgba(160,60,40,0.16)";              // and the stain it has never lost
+  ctx.beginPath(); ctx.ellipse(sx, sy, rx * 0.72, ry * 0.72, 0, 0, Math.PI * 2); ctx.fill();
+}
+/* One piece. `drawBox` carries the locked facet split, so nothing here picks
+   its own shading. A podium is three shrinking courses — the Shrine's and the
+   Dragon Elder Altar's own stepped-stone language, deliberately, because this
+   is a third thing in the world you walk up to and stand on — and it lights
+   gold only while a duel can actually be struck on it. */
+function drawColosseumPiece(cp, t) {
+  if (cp.k !== "podium") { drawBox(cp.x, cp.y, cp.w, cp.d, cp.h, cp.c); return; }
+  const [sx, sy] = worldToScreen(cp.x, cp.y, groundZ(cp.x, cp.y));
+  drawShadow(sx, sy, 22, 14);
+  drawBox(cp.x, cp.y, 1.5, 1.3, 3, "#9a9084");        // base course
+  drawBox(cp.x, cp.y, 1.15, 1.0, 3, "#a8a094", 3);    // middle course
+  drawBox(cp.x, cp.y, 0.85, 0.75, 2, "#b4ac9e", 6);   // the step you stand on
+  /* The only light this place ever shows, and it is deliberately conditional:
+     it marks a duel that is genuinely POSSIBLE right now (someone on each
+     podium), never merely a podium that exists. Nothing about it deals damage
+     or commits anybody — it is the place saying the offer is available. */
+  const live = duel.state !== "idle" || duelCandidate();
+  if (live) {
+    const pulse = 0.22 + 0.16 * Math.sin(t / 260);
+    ctx.fillStyle = `rgba(232,182,76,${pulse.toFixed(3)})`;
+    ctx.beginPath(); ctx.ellipse(sx, sy - 8, 15, 8, 0, 0, Math.PI * 2); ctx.fill();
   }
-  for (let i = 0; i < 3; i++) {                                    // fallen rubble in the gaps
-    const a = ((3.5 + i * 3.7) / 16) * Math.PI * 2;
-    const bx = COLOSSEUM.x + Math.cos(a) * 6.4, by = COLOSSEUM.y + Math.sin(a) * 6.4;
-    drawBox(bx, by, 0.5, 0.4, 2, "#7e7060");
-  }
-  ctx.fillStyle = "rgba(160,60,40,0.18)";                          // stained arena floor
-  ctx.beginPath(); ctx.ellipse(sx, sy, 46, 26, 0, 0, Math.PI * 2); ctx.fill();
 }
 
 /* ============ v39 PART B — the Dragon Elder Altar ============
@@ -14956,7 +15600,17 @@ function render(t) {
   if (!inInterior()) {
     ents.push({ s: BAZAAR.x + BAZAAR.y + 0.3, kind: "bazaar" });
     ents.push({ s: ANCIENT.x + ANCIENT.y + 0.3, kind: "ancient" });
-    ents.push({ s: COLOSSEUM.x + COLOSSEUM.y + 0.3, kind: "colosseum" });
+    /* v52+53 PART B: the sand goes in at the centre's own key (it is flat
+       ground and must paint under everything standing on it), and every
+       structural piece goes in on ITS OWN key so the arena sorts against the
+       players inside it. Culled by the same viewport bounds as the ruin
+       pieces above, so a colosseum on the far side of the world costs one
+       comparison per piece and draws none of them. */
+    ents.push({ s: COLOSSEUM.x + COLOSSEUM.y - 0.4, kind: "colofloor" });
+    for (const cp of colosseumPieces()) {
+      if (cp.x < minX - 3 || cp.x > maxX + 4 || cp.y < minY - 3 || cp.y > maxY + 4) continue;
+      ents.push({ s: cp.x + cp.y, kind: "colopiece", cp });
+    }
     ents.push({ s: DRAGON_ALTAR.x + DRAGON_ALTAR.y + 0.3, kind: "altar" });   // v39
     /* v50 PART A: the Void Rift. Surface only, like every entity in this
        block — the Hollow's floor IS the surface here, reached by diving —
@@ -15074,7 +15728,8 @@ function render(t) {
     else if (e.kind === "tutdummy") drawTutorialDummy(t);     // v35 PART B
     else if (e.kind === "bazaar") drawBazaarEntity(t);
     else if (e.kind === "ancient") drawAncientEntity(t);
-    else if (e.kind === "colosseum") drawColosseumEntity(t);
+    else if (e.kind === "colofloor") drawColosseumFloor(t);          // v52+53 PART B
+    else if (e.kind === "colopiece") drawColosseumPiece(e.cp, t);    // v52+53 PART B
     else if (e.kind === "altar") drawDragonAltarEntity(t);    // v39 PART B
     else if (e.kind === "voidrift") drawVoidRift(t);         // v50 PART A
     else if (e.kind === "orb") drawOrbNode(e.f, t);           // v39 PART B
@@ -15684,6 +16339,7 @@ function updateHUD(dayT) {
   updateMinimap();                     // v35 PART A — the compass dial
   updateWorldMap();                    // v46 PART D — the rendered minimap
   updateUnmakingHud();                 // v39 PART D
+  updateBossHud();                     // v52+53 PART G
   hpBar.style.width = (me.hp / me.maxHp * 100) + "%";
   hpBar.classList.toggle("low", me.hp / me.maxHp < 0.35);
 
@@ -15711,6 +16367,19 @@ function updateHUD(dayT) {
      not a keypress); the Ancient Forge tells you what it unlocks. */
   else if (nearAncient()) { hudPrompt.textContent = "The Ancient Forge — dragonsteel can be smelted here, and nowhere else"; hudPrompt.style.display = "block"; }
   else if (Math.hypot(me.x - BAZAAR.x, me.y - BAZAAR.y) < BAZAAR_R) { hudPrompt.textContent = "The Grand Bazaar — protected ground. Trade item-for-item, at your own risk"; hudPrompt.style.display = "block"; }
+  /* v52+53 PART B: the arena's own three states, ahead of the plain ring line
+     so the more specific thing always wins. The last of the three is v37's
+     original line, unchanged — everywhere inside the ring that is not a podium
+     behaves exactly as it always has. */
+  else if (duel.state === "active") { hudPrompt.textContent = `DUEL — ${me.username} against ${duel.opponent}`; hudPrompt.style.display = "block"; }
+  else if (duelCandidate()) {
+    const other = duelCandidate();
+    hudPrompt.textContent = duel.mine
+      ? `Waiting for ${other} to accept the duel…`
+      : `[${(KEYBINDS.interact || "e").toUpperCase()}] Accept a duel with ${other} — victor takes ${DUEL_REWARD_RUNIC} Runic Stone`;
+    hudPrompt.style.display = "block";
+  }
+  else if (me && podiumAt(me.x, me.y) !== null) { hudPrompt.textContent = `${PODIUMS[podiumAt(me.x, me.y)].name} — a duel needs a challenger on the other podium`; hudPrompt.style.display = "block"; }
   else if (inColosseum(me.x, me.y)) { hudPrompt.textContent = "The Ruined Colosseum — PvP is live inside the ring"; hudPrompt.style.display = "block"; }
   else if (nearChest()) { hudPrompt.textContent = "[E] Dev Supply Chest — stock all materials"; hudPrompt.style.display = "block"; }
   else if (nearBaseChest()) { hudPrompt.textContent = "[E] Storage Chest — open"; hudPrompt.style.display = "block"; }
@@ -16080,6 +16749,90 @@ function isElderCombatant(kind) {
 function noteElderCombat(kind) {
   if (!isElderCombatant(kind)) return;
   elderMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;
+}
+
+/* ============ v52+53 PART G — THE ELDER DRAKE'S BOSS BAR ==================
+   Confirmed live before a line was written: fighting the bible's only
+   boss-tier creature uses the exact same generic combat HUD as a Goblin. It
+   wears the same small red floating bar above its head that every mob wears,
+   and nothing else on screen says a boss fight is happening. The tension-music
+   cue already works correctly and is deliberately untouched.
+
+   This is that cue's TWIN, and deliberately not a second detection system:
+   a linger timestamp pushed forward by the fight itself, from the same two
+   call sites that already know which creature is in it (a hit landed ON a
+   mob, and a mob's own swing — the latter sitting above the drake's own early
+   return, so its two special attacks are not the silent case). The one thing
+   it needs that the music cue does not is WHICH drake, so the bar can read a
+   live HP off the real mob rather than caching a number that would go stale
+   the moment the fight moved on.
+
+   It is deliberately scoped to `elder_drake` alone, NOT to isElderCombatant().
+   That predicate also matches the three Elder PETS, which are companions and
+   tame targets rather than boss encounters — a boss bar over a Unicorn Elder
+   you are trying to tame would be exactly wrong. The drake is the only thing
+   in the world the bible calls boss-tier, and this is its bar.
+   ========================================================================= */
+const BOSS_KIND = "elder_drake";
+let bossFightUntil = 0, bossFightId = null;
+function noteBossCombat(kind, m) {
+  if (kind !== BOSS_KIND) return;
+  bossFightUntil = performance.now() + COMBAT_MUSIC_LINGER;
+  if (m && m.id !== undefined) bossFightId = m.id;
+}
+/* The live drake this bar is about, or null. Re-resolved every frame off the
+   real mobs array by id, so a drake that dies, despawns or is simply no
+   longer the one being fought takes its bar with it — nothing about the bar
+   outlives the creature it describes. */
+function activeBossMob() {
+  if (performance.now() >= bossFightUntil || bossFightId === null) return null;
+  const m = mobs.find(x => x.id === bossFightId && x.kind === BOSS_KIND);
+  return (m && !m.dead && m.hp > 0) ? m : null;
+}
+function updateBossHud() {
+  const el = document.getElementById("hudBoss");
+  if (!el) return;
+  /* The unmaking countdown owns the top centre when it is running. It is ten
+     seconds long, it is the only thing that matters while it runs, and a boss
+     bar stacked on top of it would bury the one card in the game that has to
+     be read. The fight is not interrupted — only its bar yields. */
+  const m = worldResetAt ? null : activeBossMob();
+  if (!m) { el.style.display = "none"; return; }
+  const def = MOBS[BOSS_KIND];
+  const max = m.maxHp || (def && def.hp) || m.hp;
+  const pct = Math.max(0, Math.min(1, m.hp / max));
+  const nameEl = document.getElementById("bossName");
+  const barEl = document.getElementById("bossBar");
+  const hpEl = document.getElementById("bossHp");
+  if (nameEl) nameEl.textContent = (def && def.name) || "Elder Drake";
+  if (barEl) barEl.style.width = (pct * 100).toFixed(1) + "%";
+  if (hpEl) hpEl.textContent = `${Math.max(0, Math.ceil(m.hp))} / ${max}`;
+  el.style.display = "block";
+}
+/* Harness hook — every value above is a top-level `let` or a DOM read, and
+   none of them land on window. Copies, plus the setter a gate needs to place
+   a linger window without driving a six-second fight. */
+function debugBossInfo() {
+  const el = document.getElementById("hudBoss");
+  const m = activeBossMob();
+  return {
+    BOSS_KIND, bossFightUntil, bossFightId,
+    lingerMs: COMBAT_MUSIC_LINGER,
+    active: !!m,
+    mobHp: m ? m.hp : null,
+    visible: !!el && el.style.display !== "none",
+    name: (document.getElementById("bossName") || {}).textContent || null,
+    barWidth: (document.getElementById("bossBar") || { style: {} }).style.width || null,
+    hpText: (document.getElementById("bossHp") || {}).textContent || null,
+    yieldsToUnmaking: !!worldResetAt,
+  };
+}
+function debugSetBoss(patch) {
+  if (!patch) return debugBossInfo();
+  if ("until" in patch) bossFightUntil = +patch.until;
+  if ("id" in patch) bossFightId = patch.id;
+  if (patch.refresh) updateBossHud();
+  return debugBossInfo();
 }
 
 /* v24: harness hook — the playlist state is top-level `let`s, which never land
