@@ -278,6 +278,36 @@ and implement a random interpretation; this part is a placeholder until
 a real clarification is given, and should be dropped from the build
 entirely if no clarification arrives before this version starts.
 
+**PART D — hit-detection fixes, both real findings from the prior
+version's diagnosis, not guessed at.**
+
+1. **Spear and lance ignore this on purpose (25° facing cone) while
+   every other melee weapon is pure distance — this asymmetry is the
+   bug, not the cone itself.** Facing only updates on movement or
+   click-aim, so a stationary player who hasn't recently moved/aimed
+   can have spear/lance attacks miss a target directly in front of
+   them. Fix: refresh `facing` from the aim/target direction at the
+   moment of the swing itself for spear/lance specifically (the same
+   way ranged weapons already compute aim direction fresh every shot),
+   so the cone is always centered on where the swing is actually aimed,
+   not stale movement history.
+2. **Add real body radius to hit checks**, sized per-creature rather
+   than a single global constant — reuse each creature's existing
+   `MOB_TALL`/`SPECIES_K` scale value the render code already has,
+   converted to a hit radius, so a full-sized Elder Drake or Sea
+   Serpent doesn't have several tiles of its own painted body that are
+   simply unhittable. Small creatures keep an effectively small radius,
+   this is not a flat buff to every hitbox.
+
+**PART E — the Volcano gets the same real ambient treatment the
+Caldera already has, confirmed live it currently has none.** The
+Caldera's glowing-crack technique (`ctx.strokeStyle =
+"rgba(255,232,150,0.7)"`) exists and works — reuse it directly for
+Volcano-adjacent `VOLROCK`/`LAVA` tiles rather than inventing a new
+effect, so the actual Volcano (home to the Elder Drake, the Ancient
+Forge, and the world's most central landmark cluster) doesn't read as
+visually flatter than a smaller, more remote biome next to it.
+
 **Proof gates:** standard gauntlet plus confirm the spawn ambience
 effect is genuinely concentrated within SAFE_RADIUS and distinct from
 the general wisp effect elsewhere, confirm Plains decorative features
