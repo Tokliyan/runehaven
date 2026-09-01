@@ -1,1 +1,5 @@
-Build exactly per "Confirmed, locked spec for the next build — v52+53 combined — Session Resume, Colosseum Rework & Guild Tier 2" in README.md.
+Build exactly per the v52+53 combined spec in README.md, resuming from branch claude/dazzling-planck-av9w5k.
+
+DECISION on the six stale gates: yes, re-pin them to the new, deliberate behavior. Both underlying changes (Duskfox Elder mountable at 2x speed; Duskfox Elder relocated to a fixed spot near Spawn Forge, visible at all hours) were my own conscious, deliberate live hotfixes earlier this session, not accidental drift - the game is correct, only the test record was stale. Update all six gates to match: ten mountable species (not nine), Duskfox Elder's real fixed position near Spawn Forge (not a Sacred Meadow search), no duskOnly flag, visible at all hours. This is an update, not a relaxation - the six gates should assert the real current behavior with the same rigor as before, just pointed at the right facts.
+
+All nine parts (A-I) were already confirmed unblocked against the live file, per BUILD_FAILED.md on the branch above - proceed with the full build once the six gates are corrected.
