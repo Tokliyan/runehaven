@@ -240,3 +240,48 @@ applies the upgraded buff.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
+
+---
+
+## QUEUED FOR AFTER v52+53 — do not build this until the spec above ships.
+## Confirmed, locked spec for the version after next (Spawn Ambience & Empty-Biome Visual Pass)
+
+**PART A — real ambience concentrated at spawn specifically, not just
+scattered globally.** New players spend their first real minutes inside
+the Spawn Safe Zone — that's the one place a genuine "wow" moment
+matters most and currently has none beyond standard biome color. Add a
+real visual anchor at the safe zone itself: propose a soft, ambient
+particle effect (motes/light, reusing the existing wisp technique from
+v50/v51 rather than inventing a new one) concentrated specifically
+within `SAFE_RADIUS`, distinct in density or color from anywhere else
+in the world, so the very first thing a player sees reads as
+unmistakably magical.
+
+**PART B — Plains gets real landmark-scale visual variety, not just
+ground color.** Confirmed live: Plains has real mob/pet density
+(Goblin, Bandit, Boar, Wind Sprite, all genuine counts) but zero
+decorative world features — only a flat two-color ground palette
+(`[B.PLAINS]: ["#8fb562", "#8cb25f"]`). This is why it reads as visually
+barren despite being mechanically populated. Add scattered, sparse
+decorative features to Plains specifically — standing stones, small
+rock formations, wildflower patches — reusing the same feature-
+placement technique other biomes' decorations already use. Keep density
+low and scattered, not a redesign of the biome's open character (Plains
+is deliberately open for PvP per the bible) — this is visual interest
+added to open space, not a removal of the openness itself.
+
+**PART C — "shift up the map," needs one clarifying detail before this
+can be built.** This instruction is not specific enough to act on
+safely — it could mean repositioning a landmark, adjusting the overall
+map's vertical/visual framing, or something else entirely. Do not guess
+and implement a random interpretation; this part is a placeholder until
+a real clarification is given, and should be dropped from the build
+entirely if no clarification arrives before this version starts.
+
+**Proof gates:** standard gauntlet plus confirm the spawn ambience
+effect is genuinely concentrated within SAFE_RADIUS and distinct from
+the general wisp effect elsewhere, confirm Plains decorative features
+are sparse and do not block movement or combat sightlines (defeating
+the biome's own PvP-openness purpose), confirm Part C either has a real
+clarification to build from or is explicitly dropped, not guessed at.
+
