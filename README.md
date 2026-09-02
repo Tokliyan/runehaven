@@ -315,3 +315,120 @@ are sparse and do not block movement or combat sightlines (defeating
 the biome's own PvP-openness purpose), confirm Part C either has a real
 clarification to build from or is explicitly dropped, not guessed at.
 
+
+---
+
+## QUEUED, AFTER EVERYTHING ELSE ALREADY QUEUED — do not build until prior specs ship.
+## Confirmed, locked spec for a future version (The Lighting & Atmosphere Pass)
+
+**Read this whole section before touching anything — it is written as
+one continuous player session, in order, because that is the actual
+point of it: every touch here is judged by what a real person sees in
+the moment they see it, not as an isolated feature.** No new rendering
+technology, no gradients, no texture files — this is explicitly a
+harder push on the exact technique already proven in the wisp system
+and the Volcano's glowing cracks: layered flat, semi-transparent shapes
+doing the work gradients would normally do. Every part reuses a real,
+existing primitive — `nightAlpha()`, `burst()`, `aura()`, the wisp
+particle stream — not a new system per part.
+
+**PART A — the moment of first login.** A new player's very first
+frame is the Spawn Safe Zone. Right now it is biome-colored ground and
+nothing else. Add a soft, warm ambient glow using the same layered-
+transparency technique as the mockup already shown — a large, low-
+opacity radial suggestion of light (built from concentric flat circles,
+not a CSS gradient) centered on the zone, plus a slightly denser wisp
+stream than anywhere else in the world specifically inside
+`SAFE_RADIUS`. This is a player's first five seconds; it should not
+look identical to open plains a thousand tiles away.
+
+**PART B — real time-of-day lighting, not just a night/day biome tint.**
+Confirmed live: `nightAlpha(dayT)` already exists and drives whether
+wisps fire. Extend its use to a genuine directional-light illusion: at
+dawn and dusk specifically, add a warm, low-opacity wash from one
+screen edge using the same layered-shape technique, and at full night,
+darken non-lit tiles slightly more than they currently are while
+letting anything already emissive (lava, wisps, Dragonsteel's aura, a
+base's own torches if any exist) read as brighter by contrast — light
+feels real when there is real darkness around it, not from the light
+itself being stronger.
+
+**PART C — every creature gets a rim-light pass, not just new ones.**
+Confirmed live: creature bodies are drawn with flat `P()`/poly-style
+fills and no light-direction cue at all. Add one shared helper — a
+thin, brighter-toned outline traced along the upper-left edge of a
+creature's main body shape, reusing its own existing palette (a
+lightened version of its base fill, not a new color) — and call it from
+every creature's draw function already using the shared body-shape
+functions, so this is one helper touching many call sites, not dozens
+of one-off edits. This is the single highest-leverage change in the
+whole spec: every single creature in the game gets a free depth boost
+from one function.
+
+**PART D — combat gets real light, not just a flash.** Confirmed live:
+`burst()` already exists and is the shared particle-spawn function
+every hit effect already calls. A weapon connecting should scatter a
+handful of dim embers along the direction of the swing rather than only
+a hit-flash; a staff's spell impact should leave a faint, fading glow
+circle at the impact point for a beat after the particles disperse
+(reuse `aura()`, shortened lifetime, not a new draw call). The Elder
+Drake's new boss bar moment deserves the same treatment on a bigger
+scale — a brief, dramatic light pulse across the whole visible area the
+instant the fight actually starts, not just the bar appearing.
+
+**PART E — taming, the one moment the game currently under-sells.**
+Successfully taming something is one of the biggest emotional beats in
+the whole game and currently gets the same generic feedback as any
+other action. Add a real, brief burst of the creature's own palette
+color radiating outward the instant a tame succeeds (reuse `burst()`
+with the target's own colors, not a generic white flash) — this should
+feel different taming a Tree Sprite than a Fire Dragon, because the
+colors are different, at zero new system cost.
+
+**PART F — caves, where darkness should mean something.** Confirmed
+these are currently lit evenly regardless of distance from an actual
+light source. Ore veins and the new Kelp-Crystal clusters already glow
+— extend that glow to genuinely light the floor tiles immediately
+around them (a soft, layered-circle falloff, same technique as
+everywhere else in this spec) so a cave reads as dark BETWEEN light
+sources, not uniformly lit with some glowing decorations scattered in
+it. This is what will make a torch, a crystal, or lava actually feel
+like they are casting light rather than just being bright objects.
+
+**PART G — a player's own base, seen from a distance, especially at
+night.** A base currently has no way to read as "someone lives here"
+from outside interaction range. Add a small, warm light source
+rendered at any base with a Forge or Generator piece, visible from a
+real distance at night specifically — this turns "I found a base" into
+a genuine discovery moment from far away, not just something you walk
+directly into.
+
+**PART H — fast travel and the Elders each deserve their own signature
+effect, not a shared generic one.** A teleport currently should feel
+different depending on how it happened — landmark travel, player travel,
+and (if built) each Elder's own presence should each carry a distinct,
+reused-but-recolored version of the same burst/aura primitives, so a
+Unicorn Elder's travel effect reads as unmistakably different from a
+plain landmark jump, without inventing three separate systems.
+
+**PART I — the world-ending event, if it is ever near, must look like
+it.** This is the rarest, most legendary moment this game can produce,
+and currently has zero unique visual buildup. If the Golem Elder and
+Dragon Elder ever enter proximity combat, the screen for anyone nearby
+should carry an unmistakable, escalating visual signature — reuse the
+Blood Moon's existing red-tint technique but pushed further, plus a
+dense wisp storm — building for the full duration of the trigger
+window, so that if this ever actually happens, everyone watching knows
+immediately that something enormous is happening, before any patch
+notes or forum post could ever tell them.
+
+**Proof gates:** standard gauntlet plus confirm every part reuses a
+named existing primitive rather than introducing a parallel system,
+confirm PART C's rim-light helper is called from every creature sharing
+the body-shape functions (a real grep count of call sites, not a
+sample), confirm nothing in this spec adds an actual CSS/canvas
+gradient anywhere (the house style's no-gradient rule stays intact
+throughout), confirm frame cost stays within the existing per-frame
+particle budget rather than silently regressing performance the same
+way the feature-list eager-load issue once did.
+
