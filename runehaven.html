@@ -1819,6 +1819,15 @@ function debugLandmarkInfo(wx, wy, rad) {
     heartwood: mark("heartwood"),
     obelisk: mark("obelisk"),
     decorKinds: near ? [...new Set(near.dec.map(d => d.kind))] : null,
+    /* v54 PART B: the three Plains set pieces, with the biome each is
+       standing on — so "sparse, scattered and on Plains" is checked against
+       the real builder's output rather than against the source. */
+    plainsDecor: !near ? null : near.dec
+      .filter(d => d.kind === "standing_stone" || d.kind === "rock_cluster" || d.kind === "wildflowers")
+      .map(d => ({ kind: d.kind, x: d.x, y: d.y,
+                   biome: biomeAt(Math.floor(d.x), Math.floor(d.y)) })),
+    PLAINS_DECOR_T,
+    SPAWN_AMB_CHANCE, SPAWN_AMB_COL, WISP_CHANCE, SAFE_RADIUS,
     DAWN_END,
     inDawnNow: inDawn(),
     dayT: getDayT(),
@@ -1826,8 +1835,14 @@ function debugLandmarkInfo(wx, wy, rad) {
        wisp and the biome of the tile it is drifting over — which is how
        "scoped to these four, absent from Plains/Forest/Meadow" is checked
        against real particles rather than against the source. */
+    /* v54 PART A adds the second marker and the one number a gate needs to
+       show the spawn ambience really is CONCENTRATED rather than merely
+       present: each particle's own distance from SPAWN. Both are additive —
+       every field the v50/v51 gates read is unchanged. */
     particles: particles.map(pt => ({ kind: pt.kind, col: pt.col,
                                       wisp: pt.wisp === undefined ? null : pt.wisp,
+                                      spawnAmb: pt.spawnAmb === true,
+                                      sd: Math.hypot(pt.x - SPAWN.x, pt.y - SPAWN.y),
                                       biome: biomeAt(Math.floor(pt.x), Math.floor(pt.y)) })),
   };
 }
@@ -1906,11 +1921,19 @@ function debugAbilityInfo() {
     rings: abilityRings.map(r => ({ x: r.x, y: r.y, r: r.r })),
     GUARD_BREAK_REDUCE, MARKED_SHOT_MULT, RALLY_MULT, RALLY_HITS,
     ARCANE_BURST_R, STAFF_SPLASH_R, SPEAR_CONE_DEG,
+    /* v54 PART D1: `facing` is a top-level `let` written by the movement
+       block and by a click-aim, and from this version also by the spear's
+       own swing. A gate cannot see whether the thrust really turned toward
+       its target without it, and cannot set up the stale-facing case the
+       fix exists for without the setter below. Both are a copy and a write
+       of a field the game already writes every frame. */
+    facing: { x: facing.x, y: facing.y },
     cls: (me && me.cls) || null, equipped: (me && me.equipped) || null,
   };
 }
 function debugSetAbility(patch) {
   if (!patch) return debugAbilityInfo();
+  if ("facing" in patch && patch.facing) facing = { x: patch.facing.x, y: patch.facing.y };
   if ("lastAbility" in patch) lastAbility = patch.lastAbility;
   if ("lastAttack" in patch) lastAttack = patch.lastAttack;
   if ("guardBreakUntil" in patch) guardBreakUntil = patch.guardBreakUntil;
@@ -1932,6 +1955,12 @@ function debugScaleInfo() {
     MOB_TALL: Object.assign({}, MOB_TALL),
     mobThreat: Object.fromEntries(Object.keys(MOBS).map(k => [k, MOBS[k].hp * MOBS[k].dmg])),
     weaponRange: Object.fromEntries(Object.keys(WEAPONS).map(k => [k, WEAPONS[k].range])),
+    /* v54 PART D2: the conversion constant and the radius it produces for
+       every creature the file knows about. A gate that read the literal
+       would only prove a line was typed; this is the relationship. */
+    BODY_R_PER_K,
+    bodyHitR: Object.fromEntries(
+      [...new Set([...Object.keys(MOB_K), ...Object.keys(SPECIES_K)])].map(k => [k, bodyHitR(k)])),
   };
 }
 /* Tuning/Polish PART C hooks. `playerTpAt` and `travelTab` are top-level
@@ -3901,6 +3930,14 @@ function clusterAnchor(tx, ty, biomeConst) {
 /* kept as a thin alias so nothing that already called it breaks */
 function uwcaveClusterAnchor(tx, ty) { return clusterAnchor(tx, ty, B.UWCAVE); }
 
+/* v54 PART B: the share of PLAINS tiles that grow one of the three new
+   decorative set pieces. 0.25% of tiles, against the 3.5% of them that
+   already grow a tree — sparse by an order of magnitude, which is what
+   keeps the bible's deliberately open PvP field open. ONE TUNABLE for all
+   three kinds; raising it toward 0.99 is what to do if Plains still reads
+   empty, and it is the only number here that decides how busy it looks. */
+const PLAINS_DECOR_T = 0.9975;
+
 /* ============ v50 PART A — ONE LANDMARK PER REAL BIOME POCKET ==========
    The Enchanted Forest and the Sacred Meadow are scattered pockets, not
    fixed points, so their landmarks cannot anchor to SPAWN the way the
@@ -4976,6 +5013,52 @@ function buildFeatureChunk(cx, cy) {
   for (let ty = ty0; ty < ty1; ty++) {
     for (let tx = tx0; tx < tx1; tx++) {
       const bl = biomeAt(tx, ty);
+      /* ============ v54 PART B — PLAINS GETS SOMETHING TO LOOK AT ======
+         Plains carries real mob and pet density (Goblin, Bandit, Boar,
+         Wind Sprite) and, until now, three decorative kinds it shares
+         with four other biomes: a pebble, a bush and a three-stem
+         flower clump, none of them taller than a few pixels. Nothing in
+         it reads at any distance, which is why an open field with a
+         genuine population still looks barren.
+
+         These three do read at a distance, and they are placed by the
+         file's OWN feature-placement technique — one hash2 against one
+         threshold, a second hash choosing the kind, a jitter off the
+         tile centre — rather than a new placement system. They go into
+         `dec`, so like the v50 pocket landmarks they are scenery and
+         nothing else: `decor` is read by exactly one place in the file
+         (the render pass's entity list), never by nearestGatherable(),
+         removeFeature(), minedNodes or any collision or line-of-sight
+         test. THE BIBLE'S OPEN PVP PLAINS IS UNTOUCHED — nothing here
+         can block a step or a swing, by construction rather than by
+         tuning.
+
+         ⚠️ The density is the whole design, and it is deliberately an
+         order of magnitude under the trees Plains already grows: a
+         Plains tree fires at hash > 0.965 (3.5% of tiles), this fires
+         at 0.25%, so a screenful of open field carries roughly ten of
+         these against roughly a hundred and fifty trees in a forest.
+         Scattered punctuation in open space, which is what the spec
+         asks for — not a redesign of the biome's openness.
+
+         The three keepouts are the ones the file already uses on its
+         other growth: the Bazaar's cleared radius (Mount/Bazaar Polish
+         PART B), the Tower and the Spawn Forge, plus the one
+         deliberate Spawn->Forge trail, which is the single intentional
+         path in the world and must not have a monolith standing in it. */
+      if (bl === B.PLAINS) {
+        if (hash2(tx, ty, 617) <= PLAINS_DECOR_T) continue;
+        if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) continue;
+        if (Math.hypot(tx - TOWER.x, ty - TOWER.y) < 3.5) continue;
+        if (Math.hypot(tx - SPAWN_FORGE.x, ty - SPAWN_FORGE.y) < 2.5) continue;
+        if (distToSeg(tx + 0.5, ty + 0.5, SPAWN.x, SPAWN.y, SPAWN_FORGE.x, SPAWN_FORGE.y) < 1.6) continue;
+        const pv = hash2(tx, ty, 619);
+        dec.push({ kind: pv < 0.38 ? "standing_stone" : pv < 0.72 ? "rock_cluster" : "wildflowers",
+                   x: tx + 0.5 + (hash2(tx, ty, 621) - 0.5) * 0.6,
+                   y: ty + 0.5 + (hash2(tx, ty, 623) - 0.5) * 0.6,
+                   h: hash2(tx, ty, 627) });
+        continue;
+      }
       if (bl !== B.ENCHFOREST && bl !== B.SACMEADOW) continue;
       if (!isPocketAnchor(tx, ty, bl)) continue;
       dec.push({ kind: bl === B.ENCHFOREST ? "heartwood" : "obelisk",
@@ -6009,6 +6092,80 @@ function drawGroundTile(c, tx, ty) {
       c.fillRect(gxk - 1.5, gyk - 1.5, 5, 5);
       c.fillStyle = "#fff2d2";
       c.fillRect(gxk, gyk, 2, 2);
+    }
+  }
+
+  /* ============ v54 PART E — THE VOLCANO GETS ITS OWN CRACKS ==========
+     Confirmed live before this version: `B.VOLROCK` had NO ground
+     treatment at all. Not a crack, not a glint, not a shadow pool — the
+     home of the Elder Drake, the Ancient Forge and the world's most
+     central landmark cluster was two flat shades of #5c3c3c, while the
+     Sunforge Caldera, a rare pocket carved out of that same rock a few
+     tiles away, carries a connected fissure network, an inner pool, ember
+     flakes and a wandering heat shimmer. The most important place in the
+     world read flatter than the smaller, remoter one beside it.
+
+     This is the Caldera's own v50 crack network, reused rather than
+     reinvented: the decision belongs to the EDGE, each of the four edges
+     hashed by the tile PAIR that shares it (a tile's north edge and its
+     northern neighbour's south edge are the same hash2 call), so two
+     neighbours can never disagree about whether a fissure crosses between
+     them, with no state and no order dependence. Same two-pass stroke —
+     a wide low-alpha ember halo in the locked Lava colour, then the hot
+     core over it. Same junction wander. Hard-edged flat strokes, no
+     gradient.
+
+     Three deliberate differences from the Caldera, all of them saying
+     "this is cooling rock, not a blinding crust":
+       - The threshold is HIGHER (0.62 against 0.46), so a little over a
+         third of edges carry a fissure instead of a little over a half —
+         cracked volcanic rock, not shattered.
+       - The core is dimmer and redder (0.55 alpha against 0.75, and the
+         locked Lava #ff7a3c rather than the Caldera's near-white
+         #ffecc4), because VOLROCK is dark and a white-hot core on it
+         would read as the Caldera and undo the pocket's own identity.
+       - There is no inner pool and no ember flake. The cracks are the
+         whole treatment.
+
+     ⚠️ AN EDGE TO A LAVA NEIGHBOUR IS ACTIVE, and that is the spec's
+     "VOLROCK/LAVA" read the only way it makes sense: lava is already the
+     brightest emissive ground in the game, so a glowing crack painted ON
+     a lava tile is invisible by construction. What the pairing has to
+     mean is that the network REACHES the lava rather than stopping dead
+     at the rim — the fissures run out of the lava core and into the rock
+     around it, which is the direction the heat actually travels. See
+     JUDGMENT CALLS. */
+  if (b === B.VOLROCK) {
+    const VOL_CRACK = 0.62;                                  // TUNABLE: share of edges a fissure crosses
+    const vhot = (nx, ny) => {
+      const nb = biomeAt(nx, ny);
+      return nb === B.VOLROCK || nb === B.LAVA;
+    };
+    const vek = [
+      hash2(tx, ty, 280) > VOL_CRACK && vhot(tx, ty - 1),          // shared N/S edge
+      hash2(tx, ty, 282) > VOL_CRACK && vhot(tx - 1, ty),          // shared W/E edge
+      hash2(tx, ty + 1, 280) > VOL_CRACK && vhot(tx, ty + 1),
+      hash2(tx + 1, ty, 282) > VOL_CRACK && vhot(tx + 1, ty),
+    ];
+    if (vek[0] || vek[1] || vek[2] || vek[3]) {
+      const vmx = [cx + IW2 * 0.5, cx - IW2 * 0.5, cx - IW2 * 0.5, cx + IW2 * 0.5];
+      const vmy = [cy - IH2 * 0.5, cy - IH2 * 0.5, cy + IH2 * 0.5, cy + IH2 * 0.5];
+      const vcx = cx + (hash2(tx, ty, 284) - 0.5) * IW2 * 0.34;    // the junction wanders
+      const vcy = cy + (hash2(tx, ty, 286) - 0.5) * IH2 * 0.34;
+      for (let pass = 0; pass < 2; pass++) {
+        c.strokeStyle = pass ? "rgba(255,122,60,0.55)" : "rgba(255,122,60,0.18)";
+        c.lineWidth = pass ? 1.0 : 3.2;
+        for (let k = 0; k < 4; k++) {
+          if (!vek[k]) continue;
+          const kx = (vcx + vmx[k]) / 2 + (hash2(tx, ty, 288 + k) - 0.5) * 4;
+          const ky = (vcy + vmy[k]) / 2 + (hash2(tx, ty, 292 + k) - 0.5) * 3;
+          c.beginPath();
+          c.moveTo(vcx, vcy);
+          c.lineTo(kx, ky);
+          c.lineTo(vmx[k], vmy[k]);
+          c.stroke();
+        }
+      }
     }
   }
 
@@ -8396,6 +8553,76 @@ function debugSetDuel(patch) {
   return debugDuelInfo();
 }
 
+/* ============ v54 PART D2 — CREATURES HAVE BODIES ====================
+   Confirmed live by v52 PART I and pinned by its own gate: every melee and
+   projectile hit check in this file resolved centre to centre, so a
+   creature's painted body counted for nothing. That is invisible on a
+   Goblin and enormous on the two largest things in the world — the Elder
+   Drake and the Sea Serpent both paint several tiles of body that a swing
+   landing squarely on them could not touch.
+
+   The radius is per-creature and it reuses the value the RENDER code
+   already has: `MOB_K[kind] || SPECIES_K[kind] || 1`, character for
+   character the expression drawMob() itself uses to size the body. That is
+   the spec's own instruction, with one correction — the spec offers
+   `MOB_TALL` as the alternative and MOB_TALL is not a scale at all, it is
+   the PIXEL offset the "!" tell and the HP bar are drawn at (Tuning/Polish
+   spent a paragraph on exactly that trap). See JUDGMENT CALLS.
+
+   BODY_R_PER_K is MEASURED, not guessed. A transform-tracking canvas
+   recorder mapped every painted path coordinate of all 34 creatures
+   through the live CTM; the compact-bodied ones, whose painted extent
+   genuinely IS their body rather than a tail, a wing or a wisp trail, come
+   in at 6.6 px of half-width per unit of scale (young Golem, Crystal
+   Golem and Goblin all land on that number independently). A world tile
+   spans IW2 * sqrt(2) = 31.1 px along the screen-horizontal axis, so
+   6.6 / 31.1 = 0.21 tiles per unit of scale.
+
+   Realised radii: Elder Drake 0.91 tiles, Sea Serpent 0.72, Golem Elder
+   0.85, Troll 0.49, Goblin 0.32, Glow Moth 0.08 — the two giants gain
+   most of a tile each and the small end gains effectively nothing, which
+   is the spec's own "not a flat buff to every hitbox".
+
+   ⚠️ OTHER PLAYERS DELIBERATELY KEEP A RADIUS OF ZERO. Players carry no
+   SPECIES_K, every player is the same size, and giving PvP reach a body
+   radius is a combat-balance change rather than a hit-registration fix.
+   PvP is byte-for-byte what it was this morning. */
+const BODY_R_PER_K = 0.21;             // TUNABLE: tiles of hit radius per unit of render scale
+function bodyHitR(kind) {
+  if (!kind) return 0;
+  const k = MOB_K[kind] || SPECIES_K[kind] || 0;
+  return k * BODY_R_PER_K;
+}
+/* The gap between the player and a target's BODY, rather than between the
+   two centres. Every melee check below compares this against the weapon's
+   range, so one function decides what "in reach" means and a future weapon
+   cannot quietly go back to centre-to-centre. */
+function edgeDist(o, kind) {
+  return Math.max(0, Math.hypot(o.x - me.x, o.y - me.y) - bodyHitR(kind));
+}
+/* v54 PART D1's aim: the direction of the nearest thing genuinely inside
+   `range` of the player, mobs and players alike, or null if the swing is
+   at empty air. Deliberately the same edgeDist() the swing itself will
+   use, so the thing the thrust turns toward is never something it then
+   turns out not to reach. */
+function nearestHitDir(range) {
+  let bd = range, bx = 0, by = 0, got = false;
+  for (const [, o] of others) {
+    if (o.dead) continue;
+    const d = edgeDist(o, null);
+    if (d <= bd) { bd = d; bx = o.x - me.x; by = o.y - me.y; got = true; }
+  }
+  for (const m of mobs) {
+    if (m.dead) continue;
+    const d = edgeDist(m, m.kind);
+    if (d <= bd) { bd = d; bx = m.x - me.x; by = m.y - me.y; got = true; }
+  }
+  if (!got) return null;
+  const l = Math.hypot(bx, by);
+  if (l < 1e-6) return null;
+  return { x: bx / l, y: by / l };
+}
+
 function tryAttack(aimX, aimY) {
   if (dead) return;
   const w = equippedWeapon();
@@ -8424,18 +8651,48 @@ function tryAttack(aimX, aimY) {
        run through the SAME crit and knockback logic the single-target path
        below already uses — looped, not rewritten, and with no damage bonus for
        hitting more than one. The value of a spear is reach and positioning. */
+    /* ============ v54 PART D1 — THE SPEAR AIMS WHEN IT SWINGS =========
+       v52 PART I's find, fixed. Every other melee weapon is pure
+       distance; spear and lance alone run through a 25 degree half-angle
+       cone centred on `facing`, and `facing` is written in exactly two
+       places — the movement block, and a click-aim. So a player who
+       stopped walking north and pressed the attack key at something
+       standing due south missed it, with no feedback and nothing on
+       screen to explain why: 310 degrees of the circle were dead.
+
+       The fix is the spec's own: refresh the aim at the moment of the
+       swing, the way a ranged shot already computes its direction fresh
+       every time it fires. A click already supplies one (`aimX` above),
+       so this covers the keyboard swing — it takes the direction of the
+       nearest thing actually inside the weapon's reach and points the
+       thrust at it. Nothing in reach leaves `facing` exactly as it was,
+       so a swing at empty air still goes where the player was looking.
+
+       ⚠️ It writes `facing`, deliberately, rather than only the local
+       `dir`: the swing ANIMATION and the cone must agree, or the fix
+       trades a silent miss for a hit that visibly came out of the
+       player's back. */
+    if (wk === "spear" && aimX === undefined) {
+      const aim = nearestHitDir(w.range);
+      if (aim) { dir = aim; facing = aim; }
+    }
     if (wk === "spear") { spearThrust(w, dir, now); return; }
+    /* v54 PART D2: `edgeDist` in place of the bare centre-to-centre
+       `Math.hypot` these two loops used. A player still has no body
+       radius, so PvP target selection is unchanged; a creature is now
+       measured to its body. The comparison against `w.range`, the tie
+       rule and the ordering below are all exactly as they were. */
     let best = null, bestD = w.range, bestO = null;
     for (const [name, o] of others) {
       if (o.dead) continue;
-      const d = Math.hypot(o.x - me.x, o.y - me.y);
+      const d = edgeDist(o, null);
       if (d <= bestD) { best = name; bestD = d; bestO = o; }
     }
     // v13: mobs compete with players as melee targets — nearest wins
     let bestM = null, bestMD = bestD;
     for (const m of mobs) {
       if (m.dead) continue;
-      const d = Math.hypot(m.x - me.x, m.y - me.y);
+      const d = edgeDist(m, m.kind);
       if (d <= bestMD) { bestM = m; bestMD = d; }
     }
     /* v34: structures are a third melee target, same key, no confirmation
@@ -8529,10 +8786,14 @@ function addFloat(wx, wy, txt, col, big = false) {
 /* Is (tx, ty) inside the thrust cone — within `range` of the player and no
    more than SPEAR_CONE_DEG off the aim direction? A narrow cone rather than a
    circle is what makes this a thrust and not a spin attack. */
-function inThrustCone(tx, ty, dir, range) {
+function inThrustCone(tx, ty, dir, range, bodyR = 0) {
   const dx = tx - me.x, dy = ty - me.y;
   const d = Math.hypot(dx, dy);
-  if (d > range) return false;
+  /* v54 PART D2: the REACH test now measures to the target's body, the
+     same way the single-target melee path above does. The cone itself is
+     untouched — a thrust is still a line and still refuses everything
+     more than SPEAR_CONE_DEG off the aim. */
+  if (d - bodyR > range) return false;
   if (d < 1e-6) return true;                       // standing on top of us
   return (dx / d) * dir.x + (dy / d) * dir.y >= SPEAR_CONE_COS;
 }
@@ -8555,7 +8816,7 @@ function spearThrust(w, dir, now) {
   }
   for (const m of mobs) {
     if (m.dead) continue;
-    if (!inThrustCone(m.x, m.y, dir, w.range)) continue;
+    if (!inThrustCone(m.x, m.y, dir, w.range, bodyHitR(m.kind))) continue;
     const al = Math.hypot(m.x - me.x, m.y - me.y) || 1;
     const ndx = (m.x - me.x) / al, ndy = (m.y - me.y) / al;
     const mcrit = (ndx * m0f(m.fx) + ndy * m0f(m.fy)) > 0.4;
@@ -10805,7 +11066,13 @@ function update(dt, t) {
       if (!gone) {
         for (const m of mobs) {
           if (m.dead) continue;
-          if (Math.hypot(m.x - p.x, m.y - p.y) < 0.8) {
+          /* v54 PART D2: a projectile is a hit check too, and the flat 0.8
+             tiles it used was the same centre-to-centre assumption the
+             melee path carried — an arrow passing straight through a Sea
+             Serpent's painted coils resolved as a miss. The player-side
+             check above keeps its 0.7 unchanged, for the same reason
+             players carry no body radius anywhere else in this version. */
+          if (Math.hypot(m.x - p.x, m.y - p.y) < 0.8 + bodyHitR(m.kind)) {
             const msm = markedShotBonus(p.dmg);                       // v27
             mobHit(m, msm.dmg, { kx: p.dx, ky: p.dy, kb: 0.25 });
             if (p.wk === "staff") staffSplash(p, msm.dmg, null, m);   // v27 PART C
@@ -10907,6 +11174,43 @@ function burst(wx, wy, col, n, spd) {
    life. TUNABLE, and it is the single lever for all four windows at once. */
 const WISP_CHANCE = 0.55;              // v51 PART A: was 0.32
 
+/* ============ v54 PART A — THE SPAWN SAFE ZONE'S OWN AMBIENCE ========
+   A new player's first real minutes are spent inside the Spawn Safe
+   Zone, and until now that ground carried nothing beyond the PLAINS
+   palette every other open field in the world wears — the safe zone is
+   a FULL biome override to plain grass (`dS < SAFE_RADIUS + 6`), so it
+   is by construction the least distinctive ground in the game.
+
+   This is the v50/v51 wisp technique a second time and not one line of
+   new particle machinery: the same `particles` array, the same
+   `kind: "mote"` update branch, the same twinkling square-core-plus-halo
+   paint. Only three things separate it from a wisp — WHERE it fires
+   (inside SAFE_RADIUS of SPAWN, and nowhere else in the world), how
+   OFTEN (SPAWN_AMB_CHANCE, deliberately above WISP_CHANCE so the zone
+   reads denser than any wisp window), and its own colour.
+
+   ⚠️ IT IS ADDITIVE, and that is v51 PART A's lesson taken the first
+   time rather than the second. There is no `continue` behind it, so the
+   safe zone's existing daytime bug/butterfly ambience is still alive
+   underneath — a wisp that REPLACES what a tile already had gives that
+   tile nothing, which is exactly what v50 did to the Enchanted Forest
+   and v51 had to undo.
+
+   The `spawnAmb` marker is a marker and nothing else: nothing branches
+   on it, and it exists so a proof gate can ask where a mote came from
+   instead of inferring it from a colour. */
+const SPAWN_AMB_CHANCE = 0.85;         // TUNABLE: denser than WISP_CHANCE 0.55, deliberately
+/* Pale lilac, and it is the one colour in the ambient set that nothing
+   else has claimed. Checked against every particle colour in the file:
+   the four wisps (#a8f4dc teal, #8a6ade violet, #c0a8f8 pale violet,
+   #f6e08c warm gold), the two v17 motes (#a8f4dc, #ffeeb0), the
+   firefly (#ffe89a), the ember (#ffa050) and the snowflake (#f2f5f8).
+   Lilac is the file's own magic family (runes, magic essence, the
+   Arcane Burst ring) and reads hard against the PLAINS #8fb562 the
+   safe zone is paved with, which is what "unmistakably magical" has to
+   mean on grass. */
+const SPAWN_AMB_COL = "#e8d8ff";
+
 function updateParticles(dt, t) {
   const dayT = getDayT();
   const isNight = nightAlpha(dayT) > 0.4;
@@ -10920,6 +11224,19 @@ function updateParticles(dt, t) {
       const tx = Math.floor(cam.x - 14 + Math.random() * 28);
       const ty = Math.floor(cam.y - 14 + Math.random() * 28);
       const b = biomeAt(tx, ty);
+      /* v54 PART A: the spawn ambience, concentrated inside SAFE_RADIUS
+         and nowhere else. Surface-only for the same reason the wisps
+         below are: inside an interior me.x/me.y are the interior's own
+         grid coordinates, so a distance from SPAWN measured there is a
+         distance in a different space. No `continue` — see the note on
+         SPAWN_AMB_CHANCE. */
+      if (!inInterior() && Math.random() < SPAWN_AMB_CHANCE &&
+          Math.hypot(tx + 0.5 - SPAWN.x, ty + 0.5 - SPAWN.y) < SAFE_RADIUS) {
+        particles.push({ x: tx + Math.random(), y: ty + Math.random(), z: 2 + Math.random() * 16,
+          vx: (Math.random() - 0.5) * 0.16, vy: (Math.random() - 0.5) * 0.16, vz: 2.5 + Math.random() * 3.5,
+          life: 4 + Math.random() * 3, maxLife: 7, col: SPAWN_AMB_COL, size: 2.6, kind: "mote",
+          spawnAmb: true, ph: Math.random() * 9 });
+      }
       /* ============ v50 PART C — WILL-O-WISPS ========================
          Ambient life for the magical biomes specifically, and the whole
          design is the exclusion list. The spec names four places and
@@ -11589,6 +11906,54 @@ function drawDecor(d, t) {
       ctx.fillRect(fx - 0.5, fy - 3, 1, 3);
       ctx.fillStyle = cols[Math.floor(hash2(i, 3, d.h * 1000) * cols.length)];
       ctx.fillRect(fx - 1.5, fy - 5, 3, 3);
+    }
+  } else if (d.kind === "standing_stone") {
+    /* ============ v54 PART B — THE STANDING STONE ====================
+       The tallest of the three and the one that carries the read at
+       distance: a single leaning monolith, ~1.6-2.1 tiles high, on the
+       locked 0.72/0.55 facet split through drawBox like every other
+       built thing in the world since v33. The lean is a second, much
+       shorter box offset off the first rather than a rotation — this
+       file has no rotated drawBox and inventing one for a decoration
+       would be a new drawing path for no gain.
+
+       ⚠️ Its stone is the RUIN stone (#8f8878), deliberately, and not a
+       new palette entry: a monolith standing in an open field should
+       read as the same lost civilisation the Ruins are made of. */
+    const sh = 18 + d.h * 8;
+    drawShadow(sx, sy, 9, sh);
+    drawBox(d.x, d.y, 0.22, 0.18, sh, "#8f8878");
+    drawBox(d.x + 0.05, d.y - 0.04, 0.15, 0.12, sh * 0.34, "#9c9484", sh * 0.94);
+  } else if (d.kind === "rock_cluster") {
+    /* Three worn boulders at hashed offsets, the tallest barely half a
+       standing stone — the low, wide member of the set, so the three
+       kinds differ in silhouette and not only in colour. Plain Rock
+       palette (#b3a993), the biome colour rock nodes already use, so a
+       cluster in a field reads as stone that belongs to this world. */
+    drawShadow(sx, sy, 13, 7);
+    for (let i = 0; i < 3; i++) {
+      const ox = (hash2(i, 1, d.h * 1000) - 0.5) * 0.5;
+      const oy = (hash2(i, 2, d.h * 1000) - 0.5) * 0.5;
+      const bh = 4 + hash2(i, 3, d.h * 1000) * 6;
+      drawBox(d.x + ox, d.y + oy, 0.2 + hash2(i, 4, d.h * 1000) * 0.12,
+              0.17, bh, i === 1 ? "#ada38d" : "#b3a993");
+    }
+  } else if (d.kind === "wildflowers") {
+    /* The wide patch, and deliberately NOT the existing `flowers` decor
+       at a bigger number: that one is three stems on one tile centre,
+       this is nine spread across most of a tile with taller stems, so a
+       patch reads as ground cover rather than as a bouquet. Same four
+       bloom colours the v6 flowers already use — no new palette entry —
+       and the same hard flat 3px squares. */
+    const cols = ["#e8e0a0", "#e0a8c8", "#f0f0f0", "#e8b64c"];
+    for (let i = 0; i < 9; i++) {
+      const fx = sx + (hash2(i, 5, d.h * 1000) - 0.5) * 26;
+      const fy = sy + (hash2(i, 6, d.h * 1000) - 0.5) * 13;
+      const st = 3 + hash2(i, 7, d.h * 1000) * 3;
+      ctx.fillStyle = "#4e7d38";
+      ctx.fillRect(fx - 0.5, fy - st, 1, st);
+      ctx.fillStyle = cols[Math.floor(hash2(i, 8, d.h * 1000) * cols.length)];
+      ctx.fillRect(fx - 1.5, fy - st - 2, 3, 3);
     }
   } else if (d.kind === "pebble") {
     drawBox(d.x, d.y, 0.16, 0.13, 3, "#a89c86");
