@@ -1,1 +1,1 @@
-Build exactly per "Confirmed, locked spec for the version after next — Spawn Ambience & Empty-Biome Visual Pass" in README.md.
+Build exactly per "Confirmed, locked spec for a future version — The Lighting & Atmosphere Pass" in README.md.
