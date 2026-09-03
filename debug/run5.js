@@ -426,6 +426,85 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         }
       }
     }
+    /* ============ v54 — THE DECOR SWEEP ==============================
+       Every `decor` kind the file draws, through the real drawDecor()
+       branch chain at real world coordinates. It exists because v54 PART B
+       adds three kinds that a 5-frame boot standing at SPAWN is not
+       guaranteed to have on camera: they fire on 0.25% of PLAINS tiles, so
+       the nearest one can easily be a screen or two away.
+
+       EXTEND DECOR_LIST whenever another decor kind ships. */
+    if (window.drawDecor && window.debugWorldInfo) {
+      const DECOR_LIST = ['bush', 'flowers', 'pebble', 'fence', 'sign', 'torch',
+                          'heartwood', 'obelisk',                       // v50
+                          'standing_stone', 'rock_cluster', 'wildflowers'];  // v54 PART B
+      const info54 = window.debugWorldInfo();
+      const bx = info54.SPAWN.x + 3, by = info54.SPAWN.y + 3;
+      for (const k of DECOR_LIST) {
+        for (const h of [0.05, 0.5, 0.95]) {           // the hash drives size, lean and colour
+          window.drawDecor({ kind: k, x: bx + 0.4, y: by + 0.6, h, dir: h > 0.5 ? 'x' : 'y' }, 900);
+          n += 1;
+        }
+      }
+      /* And the live world's own: walk to a real Plains window, load its
+         chunks through the real builder and draw every set piece it grew,
+         at its real coordinates, over real frames. This is the half that
+         would catch a placement that produces nothing at all. */
+      if (window.debugLandmarkInfo && window.debugSetPlayer) {
+        const B54 = info54.B;
+        /* A coarse sweep of the whole map rather than rings out from SPAWN:
+           Plains is 26% of the land but it is scattered, and the densest
+           window on the harness seed sits 1,391 tiles out on a bearing no
+           small set of rays happens to pass through. */
+        let spot = null;
+        for (let y = 60; y < info54.N - 60 && !spot; y += 60) {
+          for (let x = 60; x < info54.N - 60; x += 60) {
+            if (window.biomeAt(x, y) !== B54.PLAINS) continue;
+            let c54 = 0;
+            for (let dy = -20; dy <= 20; dy += 5) for (let dx = -20; dx <= 20; dx += 5)
+              if (window.biomeAt(x + dx, y + dy) === B54.PLAINS) c54++;
+            if (c54 >= 70) { spot = [x, y]; break; }
+          }
+        }
+        if (!spot) { console.log('COVERAGE GAP: no open Plains window to draw v54 PART B in'); process.exit(1); }
+        const pd = (window.debugLandmarkInfo(spot[0] + 0.5, spot[1] + 0.5, 140).plainsDecor) || [];
+        if (!pd.length) { console.log('COVERAGE GAP: Plains grew no v54 set pieces at all'); process.exit(1); }
+        for (const d of pd) { window.drawDecor({ kind: d.kind, x: d.x, y: d.y, h: 0.4 }, 900); n += 1; }
+        window.debugSetPlayer({ x: spot[0] + 0.5, y: spot[1] + 0.5, hp: 100 });
+        for (let f = 0; f < 3; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+        window.debugSetPlayer({ x: info54.SPAWN.x, y: info54.SPAWN.y, hp: 100 });
+      }
+    }
+    /* v54 PART E: the Volcano's own glowing cracks are a VOLROCK ground
+       branch, and the boot camera stands at SPAWN — hundreds of tiles from
+       any volcanic rock — so nothing in the 5-frame boot reaches it. Stand
+       on the volcano and pump real frames. */
+    if (window.debugSetPlayer && window.debugWorldInfo && window.biomeAt) {
+      const w54e = window.debugWorldInfo();
+      let vr = null;
+      for (let r = 20; r < 400 && !vr; r += 6) {
+        for (let a = 0; a < 12; a++) {
+          const x = Math.floor(w54e.VOLCANO.x + Math.cos(a * 0.523) * r);
+          const y = Math.floor(w54e.VOLCANO.y + Math.sin(a * 0.523) * r);
+          if (window.biomeAt(x, y) === w54e.B.VOLROCK) { vr = [x, y]; break; }
+        }
+      }
+      if (!vr) { console.log('COVERAGE GAP: the world grew no VOLROCK to draw v54 PART E on'); process.exit(1); }
+      window.debugSetPlayer({ x: vr[0] + 0.5, y: vr[1] + 0.5, hp: 5000 });
+      for (let f = 0; f < 4; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      window.debugSetPlayer({ x: w54e.SPAWN.x, y: w54e.SPAWN.y, hp: 100 });
+    }
+    /* v54 PART A: the spawn ambience is a particle branch, so it needs the
+       spawner pumped standing inside SAFE_RADIUS, then real frames drawn
+       while its motes are alive. */
+    if (window.updateParticles && window.debugSetPlayer && window.debugWorldInfo) {
+      const w54a = window.debugWorldInfo();
+      window.debugSetPlayer({ x: w54a.SPAWN.x, y: w54a.SPAWN.y, hp: 100, diving: false });
+      for (let i = 0; i < 60; i++) window.updateParticles(0.05, 980000 + i * 50);
+      const amb = (window.debugLandmarkInfo().particles || []).filter(p => p.spawnAmb);
+      if (!amb.length) { console.log('COVERAGE GAP: no spawn-ambience mote was ever alive'); process.exit(1); }
+      for (let f = 0; f < 3; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+    }
     /* v27: the ability AOE ring. It is drawn in render()'s own pass from
        `abilityRings`, which is empty for the whole 5-frame boot — so the
        aura() call that draws it is unreachable there. Cast each of the five

@@ -53,6 +53,242 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-03 (v54 — Spawn Ambience & the Empty-Biome Visual Pass)
+
+Four parts built of the spec's five, and three of them are rendering: PART A
+gives the Spawn Safe Zone its own ambience, PART B gives Plains something to
+look at, and PART E finally gives the Volcano the treatment the Caldera has
+had since v22. PART D is the two hit-detection fixes v52 diagnosed and did
+not ship — that is combat, and it lives in the commit message. **PART C was
+DROPPED, on the spec's own instruction** (see JUDGMENT CALLS 1). Not one
+palette entry, biome colour, cliff-face ratio, `SPECIES_K`, `MOB_K`,
+`MOB_TALL`, landmark or silhouette was touched, and no gradient entered the
+file: `createRadialGradient` is on 9 lines and `createLinearGradient` on 3,
+exactly as it was this morning.
+
+- **PART A is the wisp technique a second time, and the whole design is
+  WHERE it fires.** The safe zone is a full biome override to plain grass
+  (`dS < SAFE_RADIUS + 6`), so by construction it is the least distinctive
+  ground in the game — a new player's first five seconds look identical to
+  open plains a thousand tiles away. A mote now fires anywhere inside
+  `SAFE_RADIUS` of `SPAWN` and nowhere else in the world, through the same
+  `particles` array, the same `kind: "mote"` update branch and the same
+  twinkling square-core-plus-halo paint the v17 motes and the v50 wisps
+  already use. **Not one line of new particle machinery**, exactly as v50
+  managed, and the `spawnAmb` marker is a marker and nothing else.
+- **It is DENSER and it is a colour nothing else has.** `SPAWN_AMB_CHANCE`
+  0.85 against `WISP_CHANCE` 0.55, so the zone reads busier than any of the
+  four wisp windows; `SPAWN_AMB_COL` is `#e8d8ff`, a pale lilac checked
+  against every ambient colour in the file — the four wisps (`#a8f4dc`,
+  `#8a6ade`, `#c0a8f8`, `#f6e08c`), the two v17 motes (`#a8f4dc`,
+  `#ffeeb0`), the firefly `#ffe89a`, the ember `#ffa050` and the snowflake
+  `#f2f5f8`. Lilac is this file's own magic family (runes, magic essence,
+  the Arcane Burst ring) and it reads hard against the `#8fb562` PLAINS the
+  safe zone is paved with, which is what "unmistakably magical" has to mean
+  on grass.
+- **⚠️ IT IS ADDITIVE, and that is v51 PART A's lesson taken the first time
+  rather than the second.** There is no `continue` behind it. v50's wisp
+  fired INSTEAD of the chain below it, which is why the one biome that
+  already had ambient life got nothing from v50 at all and v51 had to spend
+  a version undoing it. `run4` pins the absence of that `continue` rather
+  than pinning a 0.12-chance bug particle, which would have been a coin
+  flip dressed as a gate.
+- **PART B: Plains had three decorative kinds and none of them read.** The
+  spec says Plains has "zero decorative world features"; it has a pebble, a
+  bush and a three-stem flower clump, shared with four other biomes and
+  none taller than a few pixels (see JUDGMENT CALLS 3). What it did not
+  have is anything with a silhouette. It now grows three set pieces: a
+  **standing stone** (a leaning monolith 18-26px tall, in the RUIN stone
+  `#8f8878` / `#9c9484` — a monolith in an open field should read as the
+  same lost civilisation the Ruins are made of), a **rock cluster** (three
+  worn boulders in the plain Rock palette `#b3a993` / `#ada38d`, low and
+  wide, so the set differs in silhouette and not only in colour), and a
+  **wildflower patch** (nine taller stems spread across most of a tile,
+  deliberately NOT the existing three-stem `flowers` at a bigger number, in
+  the v6 flowers' own four bloom colours). **No new palette entry.**
+- **The density is the whole design, and it was MEASURED rather than
+  claimed.** `PLAINS_DECOR_T` = 0.9975 is one lever for all three kinds.
+  Over a real 121x121 window of the densest open Plains in the world:
+  **9,840 Plains tiles carry 28 set pieces (0.28%) against 353 trees** — an
+  order of magnitude sparser than the trees Plains already grows (3.5% of
+  tiles), which is what keeps the bible's deliberately open PvP field open.
+  `run4` recomputes and prints those three numbers on every run, so the
+  density can never go quiet, and it hard-fails above 0.6% or if the set
+  pieces ever come within 6x of the tree count.
+- **Nothing about it can block a step or a swing, by construction rather
+  than by tuning.** They go into `decor`, and `decor` is read by exactly
+  one place in the whole file — the render pass's entity list. Neither
+  `update()` nor `tryAttack()` nor `nearestGatherable()` mentions it, and
+  `run4` greps all three.
+- **PART E: the Volcano had NO ground treatment at all.** Not a crack, not
+  a glint, not a shadow pool — the home of the Elder Drake, the Ancient
+  Forge and the world's most central landmark cluster was two flat shades
+  of `#5c3c3c`, while the Sunforge Caldera, a rare pocket carved out of
+  that same rock a few tiles away, carries a connected fissure network, an
+  inner pool, ember flakes and a wandering heat shimmer. The most important
+  place in the world read flatter than the smaller, remoter one beside it.
+- **It is v50's own edge-hashed crack network, reused verbatim in shape.**
+  The decision belongs to the EDGE, not the tile: each of the four edges is
+  hashed by the tile PAIR that shares it, so a tile's north edge and its
+  northern neighbour's south edge are the same `hash2` call and two
+  neighbours can never disagree about whether a fissure crosses between
+  them — no state, no second pass, no order dependence. Same two-pass
+  stroke (a wide low-alpha ember halo, then the hot core over it), same
+  wandering junction, same hard-edged flat strokes and no gradient.
+- **Three deliberate differences from the Caldera's, all of them saying
+  "cooling rock, not blinding crust":** the threshold is 0.62 against 0.46
+  (a little over a third of edges carry a fissure instead of a little over
+  a half — cracked, not shattered); the core is `rgba(255,122,60,0.55)`,
+  the locked Lava colour, against the Caldera's near-white
+  `rgba(255,236,196,0.75)`, because a white-hot core on dark VOLROCK would
+  read as the Caldera and undo the rare pocket's own identity; and there is
+  no inner pool and no ember flake — the cracks are the whole treatment.
+- **⚠️ AN EDGE TO A LAVA NEIGHBOUR IS ACTIVE, AND NO CRACK IS EVER PAINTED
+  ON A LAVA TILE.** The spec pairs `VOLROCK`/`LAVA`; lava is already the
+  brightest emissive ground in the game, so a glowing crack drawn on it is
+  invisible by construction. What the pairing has to mean is that the
+  network REACHES the lava rather than stopping dead at the rim. See
+  JUDGMENT CALLS 5.
+- **⚠️ NONE OF THIS HAS BEEN SEEN.** Every claim above is from the code and
+  from the harnesses; the canvas is stubbed in all three, so the lilac
+  against grass, the monolith's lean at real scale and the volcano's crack
+  density are exactly the three things worth a screenshot. `PLAINS_DECOR_T`
+  and `VOL_CRACK` are the two numbers most likely to want moving after one.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus three places where what it
+asserts about the file is not quite true. All shipped through the full gate
+(parse clean, `run3` `CAUGHT ERROR: none`, `run4` **1,443/1,443 with zero
+FAIL**, `run5` 1,467 coverage draws clean, 53/53 greps including the
+preservation half) — these are refinements to consider, not unfinished work.
+
+1. **⚠️ PART C IS DROPPED, AND THAT IS THE SPEC'S OWN INSTRUCTION, NOT A
+   DECISION.** "Shift up the map" is marked in the spec as a placeholder
+   that "should be dropped from the build entirely if no clarification
+   arrives before this version starts." No clarification exists anywhere in
+   the repo — not in `NEXT_BUILD.md`, not in the README, not in this file —
+   so it is dropped and said out loud rather than guessed at. **If a
+   clarification does arrive, it is a fresh spec, not an unfinished part of
+   this one.**
+2. **This ships as v54.** The spec is unnumbered and the last thing to ship
+   was v52+53, so v54 is where it lands. Same call v38 made when its own
+   spec was labelled v35.
+3. **⚠️ PART B says Plains has "zero decorative world features". It has
+   three.** `buildFeatureChunk`'s decor branch covers PLAINS and grows a
+   pebble, a bush or a flower clump at `hash2 > 0.90`. The diagnosis is
+   still right about the SYMPTOM — none of the three reads at any distance,
+   which is why a populated biome looks barren — so the part was built as
+   written; the claim is corrected here rather than silently, since the
+   spec offered it as evidence it had checked.
+4. **⚠️ PART E quotes `ctx.strokeStyle = "rgba(255,232,150,0.7)"` as the
+   Caldera's glowing-crack technique. That line is the STONE SPRITE's.**
+   It is a 0.8px crack on a creature's body in `drawSpecies`. The Caldera's
+   real technique is v50's edge-hashed fissure network at
+   `rgba(255,236,196,0.75)` / `rgba(255,122,60,0.30)`, and that is what was
+   reused — the spec's instruction was "reuse it directly", and the
+   literal it quotes would have imported a decoration rather than a
+   network. Same call v46 made when its spec named `canBlock()`.
+5. **A LAVA tile carries no crack of its own; a lava NEIGHBOUR keeps a
+   VOLROCK edge alive.** The spec says "Volcano-adjacent `VOLROCK`/`LAVA`
+   tiles" and gives no split. Only one reading is sensible: lava is
+   `#ff7a3c` and already emissive, so a `rgba(255,122,60,...)` crack on it
+   is invisible. Making the edge active is what lets the network run out of
+   the core into the rock around it, which is the direction the heat
+   actually travels. **One line (`vhot`) to change if cracks on lava were
+   genuinely meant.**
+6. **⚠️ PART D2 offers `MOB_TALL` as a scale to convert. It is not one.**
+   `MOB_TALL` is the PIXEL offset the "!" tell and the HP bar are drawn at
+   — Tuning/Polish and the Mob Rarity build each spent a paragraph on that
+   exact trap. The file's real body scale is
+   `MOB_K[kind] || SPECIES_K[kind] || 1`, character for character the
+   expression `drawMob()` itself uses, and that is what `bodyHitR()` reuses.
+7. **`BODY_R_PER_K` = 0.21 tiles per unit of scale, and it is MEASURED.**
+   A transform-tracking canvas recorder mapped every painted path
+   coordinate of all 34 creatures through the live CTM at real draw scale.
+   Painted half-width per unit of scale ranges from 4.4px (Stag) to 33.4px
+   (Sea Serpent) — the wide end is tails, wings and wisp trails, not body —
+   and the **compact-bodied creatures, whose painted extent genuinely IS
+   their body, all land independently on 6.6px**: young Golem, Crystal
+   Golem and Goblin. A world tile spans `IW2 * sqrt(2)` = 31.1px along the
+   screen-horizontal axis, so 6.6 / 31.1 = 0.21. Calibrating on those
+   rather than on the 11.0px median is the conservative direction on
+   purpose: at the median an iron sword would out-reach the Elder Drake's
+   own 3.5-tile strike, which is not what a sword should do to a boss.
+   Realised radii: **Elder Drake 0.91, Golem Elder 0.85, Sea Serpent 0.72,
+   Troll 0.49, Goblin 0.32, Glow Moth 0.08** tiles.
+8. **⚠️ It still does not give the two giants their whole body, and that is
+   deliberate.** The Elder Drake paints 4.2 tiles of half-width; it gets
+   0.91. The rest of that number is a raised tail and a wingspan, and a
+   wingtip is not a hitbox. One constant to raise if a boss should be
+   hittable from further out.
+9. **Other players keep a radius of ZERO, everywhere.** Players carry no
+   `SPECIES_K`, every player is the same size, and giving PvP reach a body
+   radius is a combat-balance change rather than a hit-registration fix.
+   PvP melee, the PvP half of the thrust cone and the 0.7-tile PvP
+   projectile check are byte-for-byte what they were this morning, and
+   `run4` pins all three.
+10. **Mob-to-player reach is untouched too.** A creature's body makes it
+    easier for the PLAYER to hit; it does not extend the creature's own
+    `atkRange`. The report was about hit registration, and making every
+    large mob strike from further away is a difficulty change nobody asked
+    for. **`applyDamage`'s callers are where to look if the symmetry is
+    ever wanted.**
+11. **PART D1 writes `facing`, not just the local `dir`.** The spec says
+    refresh the aim at the moment of the swing; it does not say whether the
+    swing ANIMATION follows. If it did not, the fix would trade a silent
+    miss for a hit that visibly comes out of the player's back.
+12. **It fires only when there is no click-aim and only for spear/lance.**
+    A click already supplies a fresh direction, and every other melee
+    weapon is pure distance and never needed one — `run4` proves a sword
+    swing still does not re-aim. A thrust at genuinely empty air leaves
+    `facing` exactly where the player was looking, which is also pinned.
+13. **⚠️ Four gates were UPDATED, not relaxed — three from v52, one from
+    v50.** v52 shipped no
+    fix and pinned what it had measured — "melee is resolved centre-to-
+    centre", "sword/dagger/axe read no facing", "no fix was invented" —
+    which are precisely the states this version was asked to change. Each
+    is now a behavioural gate on the FIXED behaviour (a sword landing on a
+    drake at 2.45 tiles and missing a goblin at the same distance; a
+    key-press thrust landing on a mob behind the player). The two v52
+    findings that are still facts about the world — the 25 degree cone and
+    the drake's reach advantage — are untouched. Same call v24 made on
+    v23's `playMusic` pin. The fourth is v50's "the ordinary decor around
+    SPAWN is untouched", whose allow-list was the complete decor roster at
+    the time; it grows by exactly PART B's three kinds and by nothing else,
+    so a fourth unexpected kind near spawn still fails, and a SECOND gate
+    was added beside it asserting the original three all still grow there —
+    which is what that list was really carrying.
+14. **The projectile half of PART D2 is pinned by grep, not by flying an
+    arrow.** Resolving a real shot needs `update()` pumped for a third of a
+    second, which also runs the mob AI — a target that drifts while the
+    arrow is in the air turns a hit/miss pair into a coin flip. What
+    changed is exact (`< 0.8` became `< 0.8 + bodyHitR(m.kind)`) and the
+    melee gates already prove the radius end to end.
+15. **`run5` gained a `DECOR_LIST` and two standing sweeps.** Step 7 of the
+    standard process asks for coverage of anything new: every decor kind
+    the file draws now goes through the real `drawDecor()` chain at three
+    hash values each, then every set piece the LIVE world grew in a real
+    Plains window at its real coordinates over real frames — plus a stand
+    on the volcano for PART E's ground branch and a stand at SPAWN with the
+    particle spawner pumped for PART A. All three hard-fail rather than
+    quietly covering nothing. **1,315 -> 1,467 coverage draws.** No
+    species, mob, weapon kind or class was added, so the existing `*_LIST`
+    arrays needed nothing.
+16. **The harness gained three hooks and they are all copies of what the
+    game already writes.** `debugScaleInfo()` exports `BODY_R_PER_K` and
+    every creature's realised `bodyHitR` (so the gate reads a RELATIONSHIP
+    rather than a literal); `debugLandmarkInfo()` exports each particle's
+    `spawnAmb` marker and its distance from SPAWN, plus the Plains set
+    pieces and the three new constants; `debugAbilityInfo()`/
+    `debugSetAbility()` gained `facing`, without which the stale-facing
+    case PART D1 exists for cannot be set up from outside.
+17. **The push to `main` that the README's step 8 invites was deliberately
+    not attempted.** This session is instructed to develop and push only on
+    its designated branch. The README calls a blocked push to `main` a
+    nice-to-have and explicitly not a failure. Same call every version
+    since Expansion 2b has made.
+
 ### 2026-09-01 (v51 — the wisps made visible, minimap texture, guild badges and nameplates)
 
 Eleven parts, and four of them are rendering: PART A makes the v50 wisps

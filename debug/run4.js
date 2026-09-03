@@ -6606,8 +6606,21 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const cSp50 = dli50(W50.SPAWN.x, W50.SPAWN.y, 160);
       results.push(['v50 A: neither landmark appears on the plain grass around SPAWN',
         cSp50.heartwood.length === 0 && cSp50.obelisk.length === 0]);
-      results.push(['v50 A: the ordinary decor around SPAWN is untouched by this version',
-        cSp50.decorKinds.every(k => ['pebble', 'bush', 'flowers', 'fence', 'sign', 'torch'].includes(k))]);
+      /* ⚠️ UPDATED BY v54, NOT RELAXED. What this gate protects is that a
+         LANDMARK never leaks onto ordinary ground — the line above is that
+         assertion and it is untouched. Its allow-list was the complete decor
+         roster at the time, and v54 PART B deliberately adds three Plains
+         kinds, which the spawn safe zone (a full override to plain grass) is
+         made of. The list grows by exactly those three and by nothing else,
+         so a fourth unexpected kind appearing near spawn still fails. */
+      results.push(['v50 A: the decor around SPAWN is still only the roster, now including v54\'s three Plains set pieces',
+        cSp50.decorKinds.every(k => ['pebble', 'bush', 'flowers', 'fence', 'sign', 'torch',
+                                     'standing_stone', 'rock_cluster', 'wildflowers'].includes(k))]);
+      /* And the half the v50 list was really carrying: the ORIGINAL three are
+         all still there, so PART B added to the spawn ground rather than
+         replacing what grew on it. */
+      results.push(['v50 A: and the original three ordinary kinds all still grow there',
+        ['pebble', 'bush', 'flowers'].every(k => cSp50.decorKinds.includes(k))]);
       /* ONE PER POCKET, proven as a relationship rather than as a count:
          every Heartwood is its own pocket's anchor, and no two of them
          resolve to the same pocket. */
@@ -7647,54 +7660,316 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         }
       }
 
-      /* ---- PART I: the hitbox investigation, PINNED ---------------------
-         The spec asks for an empirical investigation and a report before any
-         fix, and no fix is shipped this version — changing melee to consult a
-         body, or giving the spear cone a live aim, are real design changes
-         with consequences for every weapon and every creature at once. What
-         is pinned here is exactly what the investigation MEASURED, so none of
-         it can quietly stop being true while it waits for a spec. */
+      /* ---- v52 PART I's findings, and v54 PART D's FIX for both ---------
+         v52 investigated the hitbox report and shipped no fix, pinning what
+         it had MEASURED so none of it could quietly stop being true while it
+         waited for a spec. v54 PART D is that spec, so three of those pins
+         describe a state this version was asked to change — they are
+         UPDATED, not relaxed: each one now pins the fixed behaviour with a
+         behavioural gate rather than a grep, and the two findings that are
+         still facts about the world (the cone half-angle, the drake's reach)
+         are untouched. Same call v24 made when it turned v23's "playMusic is
+         called from nowhere" into "playMusic is called from exactly two
+         places". */
       {
         const CONE52 = window.debugAbilityInfo().SPEAR_CONE_DEG;
         const MOBS52 = window.debugWorldInfo().MOBS;
-        const RANGE52 = window.debugScaleInfo().weaponRange;
-        results.push(['v52 I: melee is resolved centre-to-centre and consults no body radius — measured, now pinned',
-          code52.indexOf('const d = Math.hypot(o.x - me.x, o.y - me.y);') > 0 &&
-          (() => { const i = code52.indexOf('function tryAttack(');
-                   const j = code52.indexOf('\n}', code52.indexOf('  } else {', i));
-                   const b = code52.slice(i, j);
-                   return b.indexOf('MOB_K') < 0 && b.indexOf('SPECIES_K') < 0; })()]);
-        results.push(['v52 I: sword/dagger/axe read no facing at all — the spec\'s first ruled-out cause holds',
-          (() => { const i = code52.indexOf('function tryAttack(');
-                   const j = code52.indexOf('if (wk === "spear")', i);
-                   const k = code52.indexOf('  } else {', i);
-                   const single = code52.slice(j, k);
-                   return single.indexOf('inThrustCone') < 0 && single.indexOf('facing') < 0; })()]);
-        /* THE FIND. The spear and the lance are the ONE melee path that does
-           read a direction, and `facing` only ever updates on movement or a
-           click-aim — so a key-press swing is aimed wherever the player last
-           walked. Measured: mob due east at 1.4 tiles, facing left at 90deg,
-           an iron spear MISSES where an iron sword HITS. */
-        results.push(['v52 I: THE FIND — the spear/lance path alone reads `facing`, and `facing` is only set by movement or a click',
-          code52.indexOf('if (wk === "spear") { spearThrust(w, dir, now); return; }') > 0 &&
-          code52.indexOf('if (!inThrustCone(o.x, o.y, dir, w.range)) continue;') > 0 &&
-          code52.indexOf('} else dir = facing;') > 0 &&
-          (code52.match(/facing = \{ x: dx \/ len, y: dy \/ len \};/g) || []).length === 1]);
-        results.push([`v52 I: and the cone that makes it bite is a ${CONE52}deg half-angle — a spear user facing wrong misses ${(360 - CONE52 * 2)}deg of the circle`,
+        const SC54 = window.debugScaleInfo();
+        const RANGE52 = SC54.weaponRange;
+        /* The two v52 findings that are still true and still worth guarding. */
+        results.push([`v52 I: the spear cone is still a ${CONE52}deg half-angle — the asymmetry v54 D1 had to fix, not remove`,
           CONE52 <= 30]);
-        /* THE SECOND FIND, measured through a transform-tracking canvas at the
-           real draw scale: the drake paints 5.06 tiles of half-width and the
-           sea serpent 4.64, against a 1.9-tile sword reach — so 3.16 and 2.74
-           tiles of visibly-touchable body cannot be hit. The numbers live in
-           the changelog; what is pinned is the RELATIONSHIP that produces
-           them, which is the thing a future pass could silently change. */
         results.push([`v52 I: the reach asymmetry is real — the drake strikes from ${MOBS52.elder_drake.atkRange} where the best sword reaches ${RANGE52.dragonsteel_sword}`,
           MOBS52.elder_drake.atkRange > RANGE52.iron_sword &&
           MOBS52.elder_drake.atkRange > RANGE52.dragonsteel_sword &&
           MOBS52.dark_wraith.atkRange > RANGE52.iron_sword]);
-        results.push(['v52 I: and no fix was invented for either — the report is the deliverable this version',
-          code52.indexOf('bodyRadius') < 0 && code52.indexOf('HITBOX_PAD') < 0 &&
-          code52.indexOf('const MELEE_RANGE = 1.9;') > 0]);
+
+        /* ---- v54 PART D2: creatures have bodies, sized per creature ---- */
+        results.push(['v54 D2: the body radius is one derived constant, not a per-site literal',
+          typeof SC54.BODY_R_PER_K === 'number' && SC54.BODY_R_PER_K > 0 &&
+          code52.indexOf('const BODY_R_PER_K = 0.21;') > 0 &&
+          code52.indexOf('function bodyHitR(kind)') > 0]);
+        /* Per-creature, and in the right ORDER — pinned as a relationship
+           rather than as literals, exactly the way every Elder scale gate in
+           this file is written, so a future resize carries its own hitbox. */
+        const BR = SC54.bodyHitR;
+        results.push([`v54 D2: it is genuinely per-creature — Elder Drake ${BR.elder_drake.toFixed(2)} > Sea Serpent ${BR.sea_serpent.toFixed(2)} > Troll ${BR.troll.toFixed(2)} > Goblin ${BR.goblin.toFixed(2)} > Glow Moth ${BR.glow_moth.toFixed(2)} tiles`,
+          BR.elder_drake > BR.sea_serpent && BR.sea_serpent > BR.troll &&
+          BR.troll > BR.goblin && BR.goblin > BR.glow_moth]);
+        results.push(['v54 D2: and it is the RENDER scale it reuses, not a second size table',
+          Math.abs(BR.elder_drake - SC54.MOB_K.elder_drake * SC54.BODY_R_PER_K) < 1e-9 &&
+          Math.abs(BR.glow_moth - SC54.SPECIES_K.glow_moth * SC54.BODY_R_PER_K) < 1e-9]);
+        results.push([`v54 D2: the two giants gain most of a tile and the small end gains nothing that matters (moth ${BR.glow_moth.toFixed(2)})`,
+          BR.elder_drake > 0.8 && BR.sea_serpent > 0.6 && BR.glow_moth < 0.12]);
+
+        /* THE BEHAVIOURAL HALF. A real Elder Drake stood in the live mob
+           array at a distance that is beyond a sword's centre-to-centre
+           reach but INSIDE its own painted body — the exact case v52
+           measured as unhittable — and the swing has to land. A goblin at
+           the same distance must still be a miss, or this is a flat range
+           buff rather than a body radius. */
+        const H54 = window.debugCombatHandles();
+        const setP54 = window.debugSetPlayer, W54 = window.debugWorldInfo();
+        let spot54 = null;
+        for (let r = 40; r < W54.N / 2 - 12 && !spot54; r += 3) {
+          for (const [ox, oy] of [[r, 0], [0, r], [-r, 0], [0, -r], [r, r], [-r, -r]]) {
+            const x = Math.floor(W54.SPAWN.x + ox), y = Math.floor(W54.SPAWN.y + oy);
+            if (x < 10 || y < 10 || x > W54.N - 12 || y > W54.N - 12) continue;
+            const b = window.biomeAt(x, y);
+            if (b !== W54.B.PLAINS && b !== W54.B.MEADOW && b !== W54.B.FOREST) continue;
+            if ([[0, 0], [5, 0], [-5, 0], [0, 5], [0, -5]].some(([dx, dy]) =>
+                window.inSafeZone(x + 0.5 + dx, y + 0.5 + dy))) continue;
+            if (H54.mobs.some(m => !m.dead && Math.hypot(m.x - x, m.y - y) < 12)) continue;
+            spot54 = [x + 0.5, y + 0.5]; break;
+          }
+        }
+        results.push(['v54 D: a clear walkable non-safe-zone spot for the hit tests exists', !!spot54]);
+        if (spot54) {
+          const [QX, QY] = spot54;
+          const made54 = [];
+          const stand54 = (kind, x, y) => {
+            const m = { id: 'v54:' + kind, kind, x, y, hx: x, hy: y, hp: 9000, maxHp: 9000,
+                        state: 'idle', winding: false, flash: 0, fx: 0, fy: 1,
+                        dead: false, target: null, ph: 1 };
+            H54.mobs.push(m); made54.push(m); return m;
+          };
+          const clear54 = () => {
+            for (const m of made54) { const i = H54.mobs.indexOf(m); if (i >= 0) H54.mobs.splice(i, 1); }
+            made54.length = 0;
+          };
+          const swing54 = (kind, dist, weapon, aimed) => {
+            clear54();
+            setP54({ x: QX, y: QY, hp: 5000, armor: null, equipped: weapon });
+            window.debugSetAbility({ lastAttack: -1e9 });
+            const m = stand54(kind, QX + dist, QY);
+            const hp0 = m.hp;
+            if (aimed) window.tryAttack(m.x, m.y); else window.tryAttack();
+            const hit = m.hp < hp0;
+            clear54();
+            return hit;
+          };
+          const swordR = RANGE52.iron_sword;
+          /* Just past a sword's centre-to-centre reach, and comfortably
+             inside the drake's own body radius. */
+          const D54 = swordR + BR.elder_drake * 0.6;
+          results.push([`v54 D2: THE FIX — a sword at ${D54.toFixed(2)} tiles now lands on an Elder Drake (reach ${swordR} + body ${BR.elder_drake.toFixed(2)})`,
+            swing54('elder_drake', D54, 'iron_sword', true) === true]);
+          results.push(['v54 D2: and a Goblin at the very same distance is still a clean MISS — a body, not a range buff',
+            swing54('goblin', D54, 'iron_sword', true) === false]);
+          /* The projectile half is pinned structurally rather than by flying
+             a real arrow: resolving one needs update() pumped for a third of
+             a second, which also runs the mob AI, and a target that drifts
+             while the arrow is in the air turns a hit/miss pair into a coin
+             flip. What changed is exact and unambiguous. */
+          results.push(['v54 D2: the projectile check learned the same body — a flat 0.8 tiles became 0.8 plus the creature\'s own',
+            code52.indexOf('if (Math.hypot(m.x - p.x, m.y - p.y) < 0.8 + bodyHitR(m.kind)) {') > 0 &&
+            code52.indexOf('if (Math.hypot(m.x - p.x, m.y - p.y) < 0.8) {') < 0]);
+          /* ---- v54 PART D1: the spear aims when it swings -------------- */
+          results.push(['v54 D1: THE FIX — a KEY-PRESS spear thrust at a mob behind the player now lands',
+            (() => {
+              clear54();
+              setP54({ x: QX, y: QY, hp: 5000, armor: null, equipped: 'iron_spear' });
+              window.debugSetAbility({ lastAttack: -1e9 });
+              /* Walk the player west so `facing` is stale and pointing away
+                 from the target — the exact state v52 measured a miss in. */
+              window.debugSetAbility({ facing: { x: -1, y: 0 } });
+              const m = stand54('goblin', QX + 1.4, QY);
+              const hp0 = m.hp;
+              window.tryAttack();                    // no aim: the keyboard swing
+              const hit = m.hp < hp0;
+              clear54();
+              return hit;
+            })()]);
+          results.push(['v54 D1: and the swing animation agrees — `facing` turned with the thrust, so no hit comes out of the player\'s back',
+            (() => {
+              clear54();
+              setP54({ x: QX, y: QY, hp: 5000, armor: null, equipped: 'iron_spear' });
+              window.debugSetAbility({ lastAttack: -1e9 });
+              window.debugSetAbility({ facing: { x: -1, y: 0 } });
+              const m = stand54('goblin', QX + 1.4, QY);
+              window.tryAttack();
+              const f = window.debugAbilityInfo().facing;
+              clear54();
+              return f.x > 0.9;
+            })()]);
+          results.push(['v54 D1: a thrust at genuinely empty air still goes where the player was looking — nothing in reach changes nothing',
+            (() => {
+              clear54();
+              setP54({ x: QX, y: QY, hp: 5000, armor: null, equipped: 'iron_spear' });
+              window.debugSetAbility({ lastAttack: -1e9 });
+              window.debugSetAbility({ facing: { x: -1, y: 0 } });
+              window.tryAttack();
+              const f = window.debugAbilityInfo().facing;
+              return f.x < -0.9;
+            })()]);
+          results.push(['v54 D1: it is scoped to spear/lance — a SWORD swing never re-aims, and never needed to',
+            (() => {
+              clear54();
+              setP54({ x: QX, y: QY, hp: 5000, armor: null, equipped: 'iron_sword' });
+              window.debugSetAbility({ lastAttack: -1e9 });
+              window.debugSetAbility({ facing: { x: -1, y: 0 } });
+              const m = stand54('goblin', QX + 1.2, QY);
+              window.tryAttack();
+              const f = window.debugAbilityInfo().facing;
+              const hit = m.hp < 9000;               // distance-only, so it lands anyway
+              clear54();
+              return hit && f.x < -0.9;
+            })()]);
+          results.push(['v54 D2: OTHER PLAYERS deliberately keep a radius of zero — PvP reach is byte-for-byte unchanged',
+            code52.indexOf('const d = edgeDist(o, null);') > 0 &&
+            code52.indexOf('if (!inThrustCone(o.x, o.y, dir, w.range)) continue;') > 0 &&
+            code52.indexOf('if (Math.hypot(o.x - p.x, o.y - p.y) < 0.7) {') > 0]);
+          clear54();
+          setP54({ x: W54.SPAWN.x, y: W54.SPAWN.y, hp: 100 });
+        }
+      }
+
+      /* ---- v54 PART A: the spawn safe zone's own ambience --------------- */
+      {
+        const dli54 = window.debugLandmarkInfo;
+        const L54 = dli54();
+        results.push([`v54 A: the spawn ambience is denser than any wisp window (${L54.SPAWN_AMB_CHANCE} vs ${L54.WISP_CHANCE})`,
+          L54.SPAWN_AMB_CHANCE > L54.WISP_CHANCE]);
+        results.push(['v54 A: and its colour is claimed by nothing else in the ambient set',
+          [...'#a8f4dc #8a6ade #c0a8f8 #f6e08c #ffeeb0 #ffe89a #ffa050 #f2f5f8'.split(' ')]
+            .every(c => c !== L54.SPAWN_AMB_COL)]);
+        results.push(['v54 A: it reuses the mote, so no new particle kind was invented',
+          code52.indexOf('col: SPAWN_AMB_COL, size: 2.6, kind: "mote"') > 0]);
+        const drain54 = () => {
+          window.setSetting('reduceMotion', true);
+          for (let i = 0; i < 240; i++) window.updateParticles(0.05, 900000 + i * 50);
+          window.setSetting('reduceMotion', false);
+        };
+        const pumpAmb54 = (x, y) => {
+          drain54();
+          window.debugSetPlayer({ x, y, hp: 100, diving: false });
+          for (let i = 0; i < 90; i++) window.updateParticles(0.05, 950000 + i * 50);
+          return dli54().particles;
+        };
+        const W54b = window.debugWorldInfo();
+        const atSpawn = pumpAmb54(W54b.SPAWN.x + 0.5, W54b.SPAWN.y + 0.5);
+        const ambSpawn = atSpawn.filter(p => p.spawnAmb);
+        results.push([`v54 A: standing at SPAWN the zone is genuinely alive (${ambSpawn.length} motes of ${atSpawn.length})`,
+          ambSpawn.length > 0]);
+        /* ADDITIVE, and pinned structurally rather than behaviourally: the
+           safe zone's own daytime bug ambience is a 0.12 chance behind a
+           hashed tile test, so a behavioural gate on it would be a coin
+           flip. What actually matters is that no `continue` sits between
+           the spawn push and the wisp chain below it — v51 PART A spent a
+           whole version undoing exactly that `continue`. */
+        results.push(['v54 A: and it is ADDITIVE — no `continue` stands between it and the ambience underneath',
+          (() => { const i = code52.indexOf('spawnAmb: true');
+                   const j = code52.indexOf('const wispCol', i);
+                   return i > 0 && j > i && code52.slice(i, j).indexOf('continue') < 0; })()]);
+        results.push([`v54 A: every one of them is inside SAFE_RADIUS (${L54.SAFE_RADIUS}), which is the whole point`,
+          ambSpawn.length > 0 && ambSpawn.every(p => p.sd < L54.SAFE_RADIUS)]);
+        /* The other half, and the one that makes it CONCENTRATION rather
+           than presence: a long way out, the same pump produces none. */
+        const far54 = pumpAmb54(W54b.SPAWN.x + L54.SAFE_RADIUS + 260, W54b.SPAWN.y + 0.5);
+        results.push([`v54 A: and a long way from spawn the effect is completely absent (${far54.filter(p => p.spawnAmb).length})`,
+          far54.filter(p => p.spawnAmb).length === 0]);
+        drain54();
+        window.debugSetPlayer({ x: W54b.SPAWN.x, y: W54b.SPAWN.y, hp: 100 });
+      }
+
+      /* ---- v54 PART B: Plains stops being empty ------------------------- */
+      {
+        const W54c = window.debugWorldInfo();
+        const B54 = W54c.B;
+        /* A real Plains window, read out of the real chunk builder. */
+        /* A coarse sweep of the whole map, not rings out from SPAWN: Plains
+           is scattered, and the densest window on the harness seed sits
+           1,391 tiles out on a bearing no small set of rays passes through. */
+        let px54 = null;
+        for (let y = 60; y < W54c.N - 60 && !px54; y += 60) {
+          for (let x = 60; x < W54c.N - 60; x += 60) {
+            if (window.biomeAt(x, y) !== B54.PLAINS) continue;
+            let n = 0;
+            for (let dy = -20; dy <= 20; dy += 5) for (let dx = -20; dx <= 20; dx += 5)
+              if (window.biomeAt(x + dx, y + dy) === B54.PLAINS) n++;
+            if (n >= 70) { px54 = [x, y]; break; }
+          }
+        }
+        results.push(['v54 B: a real open Plains window exists to measure', !!px54]);
+        if (px54) {
+          const L54b = window.debugLandmarkInfo(px54[0] + 0.5, px54[1] + 0.5, 140);
+          const pd = L54b.plainsDecor || [];
+          results.push([`v54 B: Plains genuinely grows the three new set pieces now (${pd.length} in a 140-tile disc)`,
+            pd.length > 0]);
+          results.push(['v54 B: and all three kinds are reachable, not one kind wearing three names',
+            new Set(pd.map(d => d.kind)).size >= 2]);
+          results.push(['v54 B: every one of them is standing on PLAINS — this is not a world-wide decor pass',
+            pd.length > 0 && pd.every(d => d.biome === B54.PLAINS)]);
+          /* SPARSE is the requirement the bible's open-PvP field depends on:
+             an order of magnitude under the trees Plains already grows. */
+          let tiles54 = 0, dec54 = 0, tree54 = 0;
+          for (let ty = px54[1] - 60; ty <= px54[1] + 60; ty++)
+            for (let tx = px54[0] - 60; tx <= px54[0] + 60; tx++) {
+              if (window.biomeAt(tx, ty) !== B54.PLAINS) continue;
+              tiles54++;
+              if (window.hash2(tx, ty, 617) > L54b.PLAINS_DECOR_T) dec54++;
+              if (window.featureTypeAt(tx, ty) === 'tree') tree54++;
+            }
+          const share = tiles54 ? dec54 / tiles54 : 1;
+          results.push([`v54 B: measured on ${tiles54} real Plains tiles — ${dec54} set pieces (${(share * 100).toFixed(2)}%) against ${tree54} trees`,
+            tiles54 > 3000 && share > 0 && share < 0.006 && dec54 * 6 < tree54]);
+          /* And the structural half of "does not block movement or combat":
+             `decor` is read by the render pass and by nothing else. */
+          const decUses = (code52.match(/\bdecor\b/g) || []).length;
+          results.push(['v54 B: it cannot block a step or a swing — decor is scenery the collision and gather paths never read',
+            code52.indexOf('for (const d of decor) {') > 0 &&
+            code52.indexOf('nearestGatherable') > 0 &&
+            (() => { const i = code52.indexOf('function nearestGatherable');
+                     const j = code52.indexOf('\n}', i);
+                     return code52.slice(i, j).indexOf('decor') < 0; })() &&
+            (() => { const i = code52.indexOf('function update(dt, t) {');
+                     const j = code52.indexOf('\n}', i);
+                     return i > 0 && code52.slice(i, j).indexOf('decor') < 0; })() &&
+            (() => { const i = code52.indexOf('function tryAttack(');
+                     const j = code52.indexOf('\n}', i);
+                     return i > 0 && code52.slice(i, j).indexOf('decor') < 0; })() &&
+            decUses > 0]);
+        }
+      }
+
+      /* ---- v54 PART E: the Volcano gets the Caldera's own cracks -------- */
+      {
+        results.push(['v54 E: VOLROCK carries the Caldera\'s edge-hashed fissure network, reused rather than reinvented',
+          code52.indexOf('const VOL_CRACK = 0.62;') > 0 &&
+          code52.indexOf('hash2(tx, ty, 280) > VOL_CRACK && vhot(tx, ty - 1)') > 0 &&
+          code52.indexOf('hash2(tx, ty + 1, 280) > VOL_CRACK && vhot(tx, ty + 1)') > 0]);
+        results.push(['v54 E: the edge decision belongs to the tile PAIR, so two neighbours can never disagree',
+          code52.indexOf('hash2(tx, ty, 282) > VOL_CRACK && vhot(tx - 1, ty)') > 0 &&
+          code52.indexOf('hash2(tx + 1, ty, 282) > VOL_CRACK && vhot(tx + 1, ty)') > 0]);
+        results.push(['v54 E: a LAVA neighbour keeps an edge alive, so the network reaches the core instead of stopping at the rim',
+          code52.indexOf('return nb === B.VOLROCK || nb === B.LAVA;') > 0]);
+        results.push(['v54 E: it is dimmer and redder than the Caldera\'s, so the rare pocket keeps its own identity',
+          code52.indexOf('"rgba(255,122,60,0.55)" : "rgba(255,122,60,0.18)"') > 0 &&
+          code52.indexOf('"rgba(255,236,196,0.75)" : "rgba(255,122,60,0.30)"') > 0 &&
+          code52.indexOf('const CALDERA_CRACK = 0.46;') > 0]);
+        results.push(['v54 E: and it is flat hard-edged strokes — no gradient entered the ground pass',
+          (() => { const i = code52.indexOf('if (b === B.VOLROCK) {\n    const VOL_CRACK');
+                   if (i < 0) return false;
+                   const s = code52.slice(i, i + 2200);
+                   return s.indexOf('Gradient') < 0 && s.indexOf('shadowBlur') < 0; })()]);
+        /* The real world, not the source: VOLROCK exists, and a real window
+           of it draws through the real ground pass without throwing. */
+        const W54d = window.debugWorldInfo();
+        let vr54 = null;
+        for (let r = 20; r < 400 && !vr54; r += 6) {
+          for (let a = 0; a < 12; a++) {
+            const x = Math.floor(W54d.VOLCANO.x + Math.cos(a * 0.523) * r);
+            const y = Math.floor(W54d.VOLCANO.y + Math.sin(a * 0.523) * r);
+            if (window.biomeAt(x, y) === W54d.B.VOLROCK) { vr54 = [x, y]; break; }
+          }
+        }
+        results.push(['v54 E: the world really has VOLROCK for this to land on', !!vr54]);
+        if (vr54) {
+          window.debugSetPlayer({ x: vr54[0] + 0.5, y: vr54[1] + 0.5, hp: 5000 });
+          results.push(['v54 E: and a real frame standing on the volcano draws cleanly',
+            (() => { for (let f = 0; f < 4; f++) window.render(f * 16); return !caught; })()]);
+          window.debugSetPlayer({ x: W54d.SPAWN.x, y: W54d.SPAWN.y, hp: 100 });
+        }
       }
 
       results.push(['v52+53: the world still runs frames cleanly after every part of this',
