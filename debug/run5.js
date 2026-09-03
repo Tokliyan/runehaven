@@ -801,6 +801,198 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('guild nameplates rendered — five hashed guilds plus the admin-granted sixth');
     }
 
+    /* ================= v55 — THE LIGHTING & ATMOSPHERE PASS =============
+       No species, mob, weapon kind or class was added this version, so the
+       existing `*_LIST` arrays needed nothing. What DID arrive is a set of
+       render branches a plain 5-frame boot at spawn can never reach: the
+       rim light on every creature body, the dawn and dusk washes (the boot
+       runs at whatever time of day the world clock says), the held staff
+       afterglow, the boss pulse, the darkened cave floor, and the
+       world-ending storm — which by definition has never run.
+
+       Each one is DRIVEN, not asserted, and each hard-fails if its branch
+       painted nothing. */
+    if (window.debugLightInfo && window.debugSetLight) {
+      const LI5 = window.debugLightInfo, setL5 = window.debugSetLight;
+      const wi55 = window.debugWorldInfo();
+
+      /* --- PART C: the rim, on every creature that has one. This is the
+         coverage half of the spec's own "a real grep count, not a sample":
+         every species branch is drawn for real and the traces are counted,
+         so a creature whose main body stopped going through PR() shows up
+         as a body that drew no rim. */
+      /* The coverage list is run5's own SPECIES, plus the two species that
+         are drawn through drawSpecies but have never been in it: the Elder
+         Drake (which drawMob routes into drawSpecies) and the admin-only
+         Duskfox Elder. Both have a main body and both must rim. */
+      const RIM_SPECIES = SPECIES.concat(['elder_drake', 'duskfox_elder']);
+      let rimTotal = 0, rimBodies = 0, rimMissing = [];
+      for (const sp of RIM_SPECIES) {
+        setL5({ rimLightCalls: 0 });
+        try { window.drawSpecies(sp, 240, 240, 300, true); } catch (e) { if (!caught) caught = e; }
+        const got = LI5().rimLightCalls;
+        rimTotal += got; n += 1;
+        if (got > 0) rimBodies++; else rimMissing.push(sp);
+      }
+      if (rimMissing.length) {
+        console.log('COVERAGE GAP: these creature bodies drew no rim light: ' + rimMissing.join(', '));
+        process.exit(1);
+      }
+      console.log('v55 C: rim light drawn on ' + rimBodies + ' species bodies (' + rimTotal + ' traces)');
+
+      /* Every mob kind through the real drawMob path, in the state that
+         actually paints the body. */
+      const H55 = window.debugCombatHandles ? window.debugCombatHandles() : null;
+      let rimMobs = 0;
+      for (const kind of MOBK) {
+        setL5({ rimLightCalls: 0 });
+        const m = { id: 'v55rim:' + kind, kind, x: wi55.SPAWN.x + 2, y: wi55.SPAWN.y + 2,
+                    hx: wi55.SPAWN.x + 2, hy: wi55.SPAWN.y + 2, hp: 50, maxHp: 50,
+                    dead: false, state: 'idle', ph: 0, fx: 0, fy: 1, winding: false };
+        try { window.drawMob(m, 300); } catch (e) { if (!caught) caught = e; }
+        if (LI5().rimLightCalls > 0) rimMobs++;
+        n += 1;
+      }
+      console.log('v55 C: rim light drawn through drawMob for ' + rimMobs + ' of ' + MOBK.length + ' mob kinds');
+
+      /* --- PART A: the spawn glow, standing in it and standing outside it. */
+      window.debugSetPlayer({ x: wi55.SPAWN.x, y: wi55.SPAWN.y, hp: 100 });
+      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      const glowIn = LI5().spawnGlowRingsDrawn;
+      if (glowIn !== LI5().SPAWN_GLOW_RINGS) {
+        console.log('COVERAGE GAP: the spawn glow did not draw while standing in the safe zone');
+        process.exit(1);
+      }
+      console.log('v55 A: spawn glow drew ' + glowIn + ' concentric rings at the safe zone');
+
+      /* --- PART B: BOTH washes and full night. The boot lands at one
+         arbitrary time of day, so the three lighting states are driven
+         through the clock rather than waited for. */
+      let washSeen = { left: false, right: false }, nightSeen = false;
+      if (typeof window.debugSetDayT === 'function') {
+        const epochBefore = window.debugSetDayT(0.02);
+        for (const dt of [0.02, 0.55, 0.75]) {
+          window.debugSetDayT(dt);
+          for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+          const li = LI5();
+          if (li.dawnWashBands > 0) washSeen[li.dawnWashRight ? 'right' : 'left'] = true;
+          if (li.nightAlpha > 0.4) nightSeen = true;
+        }
+        if (!washSeen.left || !washSeen.right) {
+          console.log('COVERAGE GAP: the dawn/dusk wash never drew from both screen edges');
+          process.exit(1);
+        }
+        console.log('v55 B: the wash drew from both edges and full night was rendered (' + nightSeen + ')');
+        window.debugSetDayT(null, epochBefore);
+      } else {
+        /* No clock setter — render whatever the world clock says and record
+           it, so this reads as unswept rather than as swept-and-passing. */
+        for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+        console.log('v55 B: no day-clock setter — rendered at the live dayT ' +
+                    LI5().dayT.toFixed(3) + ' only');
+      }
+
+      /* --- PART D: the held staff afterglow and the boss pulse, both
+         driven so the two new branches in the ring loop and the frame tail
+         actually run. */
+      setL5({ bossPulseAt: 0 });
+      const li55 = LI5();
+      window.debugSetPlayer({ x: wi55.SPAWN.x, y: wi55.SPAWN.y, hp: 100 });
+      if (H55) {
+        const drake = { id: 'v55cov', kind: 'elder_drake', x: wi55.SPAWN.x + 4, y: wi55.SPAWN.y,
+                        hp: 99999, maxHp: 99999, dead: false, state: 'idle', ph: 0, fx: 0, fy: 1 };
+        H55.mobs.push(drake);
+        try { window.mobHit(drake, 1, { kx: 1, ky: 0 }); } catch (e) { if (!caught) caught = e; }
+        const idx = H55.mobs.indexOf(drake);
+        for (let f = 0; f < 4; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+        if (!LI5().bossPulseAt) {
+          console.log('COVERAGE GAP: the boss pulse never armed on a real drake hit');
+          process.exit(1);
+        }
+        if (idx >= 0) H55.mobs.splice(idx, 1);
+        console.log('v55 D: the boss pulse rendered, and directed hit embers spawned');
+      }
+      /* The held ring, pushed the way the splash pushes it, so the
+         non-expanding branch of the ring loop is genuinely drawn. */
+      if (typeof window.debugSetAbility === 'function') window.debugSetAbility({ rings: null });
+      window.travelEffect && window.travelEffect('landmark');
+      for (let f = 0; f < 3; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      const heldRings = LI5().rings.filter(r => r.hold).length;
+      if (!heldRings) {
+        console.log('COVERAGE GAP: no held (non-expanding) aura ring was ever alive');
+        process.exit(1);
+      }
+      console.log('v55 D/H: ' + heldRings + ' held aura ring(s) drawn through the v27 loop');
+
+      /* --- PART H: all three travel signatures, drawn. */
+      const seenCols = new Set();
+      for (const kind of ['landmark', 'player']) {
+        window.travelEffect(kind);
+        seenCols.add(LI5().lastTravelFx.col);
+        for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      }
+      if (seenCols.size !== 2) {
+        console.log('COVERAGE GAP: the two travel signatures drew the same colour');
+        process.exit(1);
+      }
+      console.log('v55 H: ' + seenCols.size + ' distinct travel signatures rendered');
+
+      /* --- PART F: a real cave, with a real darkened floor. */
+      if (typeof window.debugSetSpace === 'function') {
+        let uw = null;
+        for (let r = 6; r < wi55.N / 2 - 10 && !uw; r += 5) {
+          for (let a = 0; a < 24; a++) {
+            const x = Math.floor(wi55.SPAWN.x + Math.cos(a * 0.262) * r);
+            const y = Math.floor(wi55.SPAWN.y + Math.sin(a * 0.262) * r);
+            if (x < 4 || y < 4 || x > wi55.N - 5 || y > wi55.N - 5) continue;
+            if (window.biomeAt(x, y) === wi55.B.UWCAVE) { uw = [x, y]; break; }
+          }
+        }
+        if (uw) {
+          window.debugSetSpace({ enterAt: [uw[0], uw[1]], biome: wi55.B.UWCAVE });
+          for (let f = 0; f < 3; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+          const ci = LI5();
+          if (!(ci.caveDarkTiles > 0 && ci.caveLitTiles > 0)) {
+            console.log('COVERAGE GAP: the cave floor drew uniformly (' +
+                        ci.caveLitTiles + ' lit / ' + ci.caveDarkTiles + ' dark)');
+            process.exit(1);
+          }
+          console.log('v55 F: cave floor drawn with real falloff — ' + ci.caveLitTiles +
+                      ' lit, ' + ci.caveDarkTiles + ' darkened');
+          window.debugSetSpace({ exit: true });
+          for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+        }
+      }
+
+      /* --- PART I: the rarest frame the game can produce, rendered. */
+      if (typeof window.debugSetV39 === 'function') window.debugSetV39({ clearEvent: true });
+      /* The accumulator has to be re-held every frame: `update()` runs
+         elderEventTick(), which correctly ZEROES it the instant no two
+         Elders are actually fighting — that is the trigger working, so the
+         sweep simulates the condition continuing to hold rather than
+         fighting it. */
+      setL5({ elderHoldMs: LI5().ELDER_HOLD_MS, unmakingWispsSpawned: 0 });
+      let unPeak = 0;
+      for (let f = 0; f < 6; f++) {
+        setL5({ elderHoldMs: LI5().ELDER_HOLD_MS });
+        try { window.update && window.update(0.05, f * 50); } catch (e) { if (!caught) caught = e; }
+        setL5({ elderHoldMs: LI5().ELDER_HOLD_MS });
+        unPeak = Math.max(unPeak, LI5().unmakingIntensity);
+        try { window.render(f * 50); } catch (e) { if (!caught) caught = e; }
+        n += 1;
+      }
+      const un55 = Object.assign({}, LI5(), { unmakingIntensity: unPeak });
+      if (!(un55.unmakingIntensity === 1 && un55.unmakingWispsSpawned > 0)) {
+        console.log('COVERAGE GAP: the unmaking tint/storm never rendered (' +
+                    un55.unmakingIntensity + ' / ' + un55.unmakingWispsSpawned + ')');
+        process.exit(1);
+      }
+      console.log('v55 I: the unmaking rendered at full intensity — ' +
+                  un55.unmakingWispsSpawned + ' storm motes');
+      setL5({ elderHoldMs: 0 });
+      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+    }
+
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {

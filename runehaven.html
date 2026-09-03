@@ -896,6 +896,19 @@ const STAFF_SPLASH_KB    = 0.15;
    aura(), which wants an "r,g,b" triplet rather than a css colour. */
 const ABILITY_RING_RGB   = "150,112,220";
 const ABILITY_RING_MS    = 520;
+/* v55 PART D: the held afterglow a staff orb leaves at its impact point.
+   Same helper, same array, same violet — only the lifetime and the opacity
+   are its own. See the push site in the splash for why this is LONGER than
+   the ring rather than shorter. */
+const STAFF_GLOW_MS      = 900;    // TUNABLE
+const STAFF_GLOW_A       = 0.5;    // TUNABLE: half the expanding ring's opacity
+/* v55 PART D: the Elder Drake's fight-start pulse. One full-screen flat
+   fill that fades, in the drake's own ember — the hitFlash technique the
+   file has used since v9, aimed at the one moment in the game that is
+   supposed to feel like an event rather than an encounter. */
+const BOSS_PULSE_MS      = 620;    // TUNABLE
+const BOSS_PULSE_A       = 0.30;   // TUNABLE: peak alpha, decays to zero
+const BOSS_PULSE_RGB     = "255,122,60";   // #ff7a3c — the drake's own ember
 
 const ITEM_META = {
   wood:         { name: "Wood",          color: "#a06a34" },
@@ -7126,6 +7139,7 @@ function mobHit(m, dmg, opts = {}) {
     if (!BLOCKED.has(biomeAt(Math.floor(m.x), Math.floor(ny)))) m.y = ny;
   }
   burst(m.x, m.y, opts.crit ? "#ffb340" : "#ffd8a0", opts.crit ? 10 : 6, 2);
+  hitEmbers(m.x, m.y, opts.kx, opts.ky);   // v55 PART D
   addFloat(m.x, m.y, opts.crit ? `-${dmg}!` : `-${dmg}`, opts.crit ? "#ffb340" : "#ffe9b0", !!opts.crit);
   channel.send({ type: "broadcast", event: "mob_hit", payload: { id: m.id, dmg, kx: opts.kx || 0, ky: opts.ky || 0 } });
   if (m.hp <= 0) mobKill(m, true);
@@ -7436,7 +7450,16 @@ async function resolveTaming() {
       myPets.push(data);
       await setActivePet(data);
       toast(`${petName} tamed — it follows you now!`);
-      burst(w.x, w.y, "#7fd45a", 10, 2.2);
+      /* ============ v55 PART E — THE TAME LANDS IN ITS OWN COLOUR ====
+         The one generic green that fired here served every creature in
+         the game identically, which meant the biggest emotional beat the
+         game has looked the same for a Tree Sprite and a Fire Dragon.
+         Same `burst()`, same call shape, same spot — the colour is now
+         the creature's own (see SPECIES_COL, which is the roster's own
+         table rather than a second one), and the count and speed are up
+         because the spec's complaint is specifically that this moment is
+         under-sold. Zero new systems, zero new colours. */
+      burst(w.x, w.y, tameBurstCol(w.species), TAME_BURST_N, TAME_BURST_SPD);
     }
   } else if (Math.random() < 0.5) {
     // v12: flee branch — gone for good this session (weakened mobs despawn
@@ -7770,6 +7793,40 @@ function elderEventTick(dtMs) {
   if (elderHoldMs >= ELDER_HOLD_MS) { elderHoldMs = 0; confirmElderTrigger(); }
   return elderHoldMs;
 }
+
+/* ============ v55 PART I — HOW CLOSE THE WORLD IS TO ENDING ==========
+   One number, 0..1, and every visual half of PART I reads it and nothing
+   else. It is `elderHoldMs` as a fraction of the window it is climbing
+   toward, which means the escalation is the accumulator: it builds over
+   the full four seconds, and — the half that actually matters — it
+   collapses to zero on the same frame the accumulator does, because the
+   trigger is defined as a CONTINUOUS hold and anything that decayed
+   gently would be telling the player a lie about whether the condition
+   still holds.
+
+   It stays at 1 for the countdown itself (`worldResetAt`), because a
+   world with ten seconds left is not less far along than a world four
+   seconds into a hold. `worldResetDone` puts it back to zero: the reset
+   has happened, this is a new world, and nothing is ending any more.
+
+   ⚠️ ANYONE NEARBY SEES IT, and that is by construction rather than by a
+   new broadcast. `elderEventTick` runs on every client each frame and
+   `elderCompanionsNow()` already collects OTHER players' Elder companions
+   off the move broadcast's existing `pe`/`cb` fields — so a bystander
+   watching two Elders fight has the same accumulator climbing on their
+   own machine as the two owners do. No new channel, no new field, no new
+   authority. */
+function unmakingIntensity() {
+  if (worldResetDone) return 0;
+  if (worldResetAt) return 1;
+  return Math.max(0, Math.min(1, elderHoldMs / ELDER_HOLD_MS));
+}
+const UNMAKING_TINT_RGB = "168,26,26";   // TUNABLE: deeper than the hit flash's 200,40,30
+const UNMAKING_TINT_A   = 0.72;          // TUNABLE: peak, reached only at full intensity
+const UNMAKING_WISP_N   = 6;             // TUNABLE: storm motes spawned per frame at full
+const UNMAKING_WISP_CAP = 420;           // TUNABLE: its own ceiling, above ambience's 160
+const UNMAKING_WISP_COL = "#e8506a";     // the tint's own family, so the storm belongs to it
+let unmakingWispsSpawned = 0;            // harness — see debugLightInfo()
 
 function confirmElderTrigger() {
   if (worldResetArmed || worldResetDone) return false;
@@ -8765,6 +8822,7 @@ function dealHit(targetName, dmg, opts = {}) {
   noteCombatDamage();           // v47 PART E: damage DEALT opens the logout window
   o.flash = performance.now();
   burst(o.x, o.y, opts.crit ? "#ffb340" : "#ffd8a0", opts.crit ? 12 : 8, 2.2);
+  hitEmbers(o.x, o.y, opts.kx, opts.ky);   // v55 PART D
   // v10: crits read amber with an "!" — unmistakably not a normal hit
   addFloat(o.x, o.y, opts.crit ? `-${dmg}!` : `-${dmg}`, opts.crit ? "#ffb340" : "#ffe9b0", opts.crit);
 }
@@ -8857,6 +8915,29 @@ function staffSplash(p, dmg, hitName, hitMob) {
   /* A 2-tile area effect with no visible cause is the v18 wraith-bolt lesson
      again — the ring is what tells the player why a second creature died. */
   abilityRings.push({ x: p.x, y: p.y, t0: performance.now(), r: STAFF_SPLASH_R });
+  /* ============ v55 PART D — WHAT THE SPELL LEAVES BEHIND ============
+     The expanding ring above is v27's and is untouched. This is the
+     second half of the spec's line: after the ring has travelled outward
+     and the sparks have gone, a faint glow stays a beat at the point the
+     orb actually landed, so a spell impact has an afterimage the way a
+     real light does rather than vanishing on the frame it resolved.
+
+     It is the SAME `aura()` through the SAME loop — one more entry in
+     `abilityRings`, marked `hold` so it does not expand, at half the
+     splash radius, at STAFF_GLOW_A of the ring's opacity, with no rising
+     motes (motes are the cast; this is the embers settling). No new
+     array, no new draw call, no new effect system.
+
+     ⚠️ ITS LIFETIME IS LONGER THAN THE RING'S, NOT SHORTER, and the spec
+     says "shortened lifetime". Both readings of that phrase were tried:
+     an aura shorter than ABILITY_RING_MS is gone BEFORE the expanding
+     ring it is supposed to outlast, which contradicts the same sentence's
+     "for a beat after the particles disperse" — and the particles from
+     the hit burst live 900ms. STAFF_GLOW_MS is read as "short-lived, and
+     a beat is what it lasts": 900ms against the ring's 520, ending with
+     the sparks. One constant either way. */
+  abilityRings.push({ x: p.x, y: p.y, t0: performance.now(), r: STAFF_SPLASH_R * 0.5,
+                      hold: true, ms: STAFF_GLOW_MS, a: STAFF_GLOW_A });
   return hits;
 }
 
@@ -9602,6 +9683,10 @@ const BASE_MIN_SEP = 3;
 const BASE_ANCHOR_R = 8;
 const BASE_FORGE_R = 4;
 const BASE_PLACE_DIST = 2;    // pieces are raised on the tile you face, 2 out
+/* v55 PART G: what a Forge or a Generator throws at night. Between a
+   torch (78) and the Spawn Forge (110) on purpose — see collectLights(). */
+const BASE_LIGHT_R = 96;      // TUNABLE
+const BASE_LIGHT_A = 0.8;     // TUNABLE
 
 let buildTier = "wood";       // the material selected in the BUILD panel
 let openChest = null;         // the Storage Chest whose panel is open, or null
@@ -10308,12 +10393,64 @@ function fastTravelTo(idx) {
   /* v21's respawn rule: never arrive flagged as diving on dry land. */
   me.diving = false;
   me.breath = breathMax();
-  burst(me.x, me.y, "#f4ecfa", 14, 2.6);
+  travelEffect("landmark");   // v55 PART H
   toast(`The world folds — ${p[0]}.`);
   sendMove(true);
   savePlayer();
   return true;
 }
+/* ============ v55 PART H — THREE TELEPORTS, ONE PRIMITIVE ============
+   Confirmed live before this was written: landmark travel and player
+   travel fired the byte-identical line — `burst(me.x, me.y, "#f4ecfa",
+   14, 2.6)` — so the world folding you to a fixed rune-marked landmark
+   and the world folding you to a person standing somewhere looked the
+   same, which is exactly the "shared generic one" the spec names.
+
+   ONE function, three rows in a table, and the primitives underneath are
+   the ones already here: `burst()` for the scatter and the v18 `aura()`
+   (through the v27 ability-ring loop, now carrying a per-ring colour) for
+   the ring. Nothing new is drawn; the same two shapes are recoloured and
+   resized per kind, which is the spec's own "reused-but-recolored"
+   instruction taken literally.
+
+   - LANDMARK is runic cyan `#5ac8e0` — ITEM_META's own runic stone, the
+     colour this world already uses for fixed, rune-marked, made things.
+     A wide, slow ring: you arrived at a PLACE that was always there.
+   - PLAYER keeps `#f4ecfa`, the pale arcane the shared effect already
+     wore, and takes a tighter, quicker ring. Deliberately the one that
+     did not change: repainting both would have thrown away the only
+     colour either of them had earned.
+   - AN ELDER IN YOUR COMPANY overrides both, in that Elder's own
+     SPECIES_COL gold — the same value its roster dot and its `aura()`
+     already use. This is the spec's "(if built) each Elder's own
+     presence": there is no separate Elder-travel mechanic in this file
+     (v51 PART I ungated the panel from owning a Unicorn Elder), so the
+     only honest reading of "a Unicorn Elder's travel effect" is a
+     teleport taken with one at your side — which is a real, live,
+     checkable state rather than an invented system. */
+const TRAVEL_FX = {
+  landmark: { col: "#5ac8e0", rgb: "90,200,224",  n: 14, spd: 2.6, r: 3.2, ms: 820 },
+  player:   { col: "#f4ecfa", rgb: "244,236,250", n: 14, spd: 2.6, r: 1.8, ms: 560 },
+};
+function travelElderSpecies() {
+  const sp = activePet && activePet.species;
+  return (sp && ELDER_SPECIES.indexOf(sp) >= 0) ? sp : null;
+}
+function hexTriplet(hex) { return shade(hex, 1).replace(/[^\d,]/g, ""); }
+function travelEffect(kind) {
+  const base = TRAVEL_FX[kind] || TRAVEL_FX.landmark;
+  const elder = travelElderSpecies();
+  const col = elder ? (SPECIES_COL[elder] || base.col) : base.col;
+  const rgb = elder ? hexTriplet(col) : base.rgb;
+  burst(me.x, me.y, col, elder ? base.n + 6 : base.n, base.spd);
+  abilityRings.push({ x: me.x, y: me.y, t0: performance.now(),
+                      r: elder ? base.r * 1.4 : base.r, hold: true,
+                      ms: base.ms, a: 0.85, rgb, motes: 0 });
+  lastTravelFx = { kind, col, elder };
+  return lastTravelFx;
+}
+let lastTravelFx = null;   // harness — see debugLightInfo()
+
 /* ============ Tuning/Polish PART C — TRAVELLING TO A PLAYER ==========
    A second destination list in the panel v39 already built, rather than a
    second panel or a second key: the thing you are doing is fast travel, and
@@ -10452,7 +10589,7 @@ function travelToPlayer(name) {
   me.diving = false;
   me.breath = breathMax();
   playerTpAt = performance.now();
-  burst(me.x, me.y, "#f4ecfa", 14, 2.6);
+  travelEffect("player");     // v55 PART H
   toast(`The world folds — beside ${name}.`);
   sendMove(true);
   savePlayer();
@@ -10626,6 +10763,57 @@ function refreshTravelPanel() {
   }
 }
 
+/* ============ v55 PART E — ONE SPECIES-COLOUR TABLE, NOT TWO ==========
+   This table is unchanged, character for character — it has simply moved
+   out of `refreshPetPanel()`'s body to the top level, because PART E needs
+   "the creature's own palette colour" on the CANVAS side and a table
+   locked inside a DOM function could not be read from there. The
+   alternative was a second table of creature colours, which is how two
+   lists start disagreeing about what colour a Krakenling is.
+
+   `refreshPetPanel()` reads it through a one-line alias so its own body
+   is untouched. Every entry, every comment and every hex below is the one
+   the roster has drawn its dots with since v11/v25/v39. */
+const SPECIES_COL = {
+  tree_sprite: "#6fae4e", water_sprite: "#6fb0c4", stone_sprite: "#a89c86",
+  wind_sprite: "#dce8ec", wolf: "#9aa2ac", golem: "#8e8474", shadowfox: "#3c3a4a",
+  boar: "#7a5f48", bear: "#8a6240", griffin: "#c8a35c", phoenix: "#e8641c",
+  stag: "#c49a68", unicorn: "#f4f0e8", lightfox: "#f6e4ac",
+  crystal_golem: "#9fc4e8", krakenling: "#5a3a6e", salamander_king: "#d84a28",   // v25
+  /* v39: the trio's roster dots, all three the same Elder gold their art
+     already stands in — the roster should say "these three are one tier"
+     at a glance, the way the tier colours do everywhere else. */
+  golem_elder: "#e8b64c", dragon_elder: "#f2cf6b", unicorn_elder: "#f6e4b0",
+  /* PART D: the Duskfox Elder's roster dot is its own twilight indigo, not
+     the trio's gold — it is the bible's Admin Only tier, beside the Elder
+     tier rather than inside it, and the dot should say so. */
+  duskfox_elder: "#4a4078",
+  /* v55 PART E: the four dragons had no roster entry — they have always
+     fallen through to the panel's own `|| "#8a94a2"` grey default, which
+     is correct for a 10px dot and useless for "a burst of the creature's
+     OWN palette". Each is its `DRAGON_PAL` lit face, verbatim: the exact
+     colour that dragon's body is painted with, so nothing new is invented
+     and the tame burst cannot drift away from the art. The roster dots
+     gain the same four colours as a side effect, which is a strict
+     improvement over four identical greys. */
+  fire_dragon: "#c2482c", water_dragon: "#4aa8b6",
+  storm_dragon: "#5f61a2", shadow_dragon: "#3a3450",
+  /* v55 PART E: and the Glow Moth, the last species with no entry. Its
+     colour is the LIGHT it casts — `#f4e8a0`, the exact hue collectLights()
+     warms the player's own lantern to while it is the active pet — because
+     for the one creature in the game that is a light source, the light is
+     what its palette actually is. */
+  glow_moth: "#f4e8a0",
+};
+/* The tame burst is deliberately BIGGER and FASTER than the generic one it
+   replaces (10 @ 2.2 -> 18 @ 3.0), because the spec's whole point is that
+   this moment was under-sold. Same `burst()`, same shape, one colour
+   argument and two numbers different. */
+const TAME_BURST_N   = 18;      // TUNABLE: was 10
+const TAME_BURST_SPD = 3.0;     // TUNABLE: was 2.2
+const TAME_BURST_FALLBACK = "#7fd45a";   // the pre-v55 green, for a species with no entry
+function tameBurstCol(species) { return SPECIES_COL[species] || TAME_BURST_FALLBACK; }
+
 /* v11: companion roster — species icon, name, active state */
 function refreshPetPanel() {
   const list = document.getElementById("petList");
@@ -10633,21 +10821,7 @@ function refreshPetPanel() {
     list.innerHTML = `<div class="inv-row"><span class="qty">No companions yet — Sprites haunt the forests, shores, rocks and plains; Wolf pups and young Golems hide in forest and ruin; something darker prowls the Dark Forest at night. Stags graze the shimmering Enchanted Forest, unicorns only after dark, and a Lightfox may show itself in a Sacred Meadow at first light. Hold E near one to tame it. Success isn't guaranteed!</span></div>`;
     return;
   }
-  const cols = {
-    tree_sprite: "#6fae4e", water_sprite: "#6fb0c4", stone_sprite: "#a89c86",
-    wind_sprite: "#dce8ec", wolf: "#9aa2ac", golem: "#8e8474", shadowfox: "#3c3a4a",
-    boar: "#7a5f48", bear: "#8a6240", griffin: "#c8a35c", phoenix: "#e8641c",
-    stag: "#c49a68", unicorn: "#f4f0e8", lightfox: "#f6e4ac",
-    crystal_golem: "#9fc4e8", krakenling: "#5a3a6e", salamander_king: "#d84a28",   // v25
-    /* v39: the trio's roster dots, all three the same Elder gold their art
-       already stands in — the roster should say "these three are one tier"
-       at a glance, the way the tier colours do everywhere else. */
-    golem_elder: "#e8b64c", dragon_elder: "#f2cf6b", unicorn_elder: "#f6e4b0",
-    /* PART D: the Duskfox Elder's roster dot is its own twilight indigo, not
-       the trio's gold — it is the bible's Admin Only tier, beside the Elder
-       tier rather than inside it, and the dot should say so. */
-    duskfox_elder: "#4a4078",
-  };
+  const cols = SPECIES_COL;
   list.innerHTML = myPets.map(pt => {
     const spName = WILD_SPECIES[pt.species]?.name || pt.species + " (retired)";
     // v16: surface the pet's combat role right in the roster
@@ -11099,7 +11273,10 @@ function update(dt, t) {
   // v27: the AOE rings expire on wall-clock, the same way the swing/pulse
   // timestamps do — nothing about them integrates dt.
   for (let i = abilityRings.length - 1; i >= 0; i--) {
-    if (now - abilityRings[i].t0 >= ABILITY_RING_MS) abilityRings.splice(i, 1);
+    /* v55 PART D: a ring may carry its own lifetime now (`ms`). Absent, it
+       is the v27 ABILITY_RING_MS exactly, so both existing ring kinds are
+       byte-for-byte unchanged. */
+    if (now - abilityRings[i].t0 >= (abilityRings[i].ms || ABILITY_RING_MS)) abilityRings.splice(i, 1);
   }
   /* v24: the music channel switch. `combatMusicUntil` is pushed forward by the
      two existing combat signals; this is only the check, and it is throttled
@@ -11152,18 +11329,70 @@ function update(dt, t) {
 /* =========================================================
    PARTICLES
    ========================================================= */
-function burst(wx, wy, col, n, spd) {
+/* v55 PART D: `burst` gained ONE optional argument and nothing else.
+   `opts.dir` is an angle in radians and `opts.spread` is the half-cone
+   around it; given both, the scatter is drawn inside that cone instead of
+   the full circle, and `opts.size`/`opts.z`/`opts.life` scale the flake.
+   Every one of the twenty-eight existing call sites passes no opts at all
+   and takes the identical full-circle burst it always did — this is the
+   shared particle-spawn function learning a direction, not a second
+   particle system standing beside it. */
+function burst(wx, wy, col, n, spd, opts) {
+  const o = opts || {};
+  const dir = o.dir, spread = o.spread === undefined ? Math.PI : o.spread;
   for (let i = 0; i < n; i++) {
-    const a = Math.random() * Math.PI * 2;
+    const a = dir === undefined ? Math.random() * Math.PI * 2
+                                : dir + (Math.random() * 2 - 1) * spread;
     particles.push({
-      x: wx, y: wy, z: 8,
+      x: wx, y: wy, z: o.z === undefined ? 8 : o.z,
       vx: Math.cos(a) * spd * (0.4 + Math.random() * 0.6),
       vy: Math.sin(a) * spd * (0.4 + Math.random() * 0.6),
-      vz: 24 + Math.random() * 20,
-      life: 0.5 + Math.random() * 0.4, maxLife: 0.9,
-      col, size: 2.4, kind: "spark",
+      vz: o.vz === undefined ? 24 + Math.random() * 20 : o.vz * (0.5 + Math.random()),
+      life: (o.life || 0.9) * (0.55 + Math.random() * 0.45),
+      maxLife: o.life || 0.9,
+      col, size: o.size === undefined ? 2.4 : o.size, kind: "spark",
     });
   }
+}
+
+/* ============ v55 PART D — EMBERS ALONG THE SWING =====================
+   Confirmed live before this was written: a weapon connecting produced a
+   hit-flash burst and nothing else, scattered evenly in every direction —
+   which says "something happened here" and says nothing at all about
+   where the blow came from. This is the same `burst()` above, pointed:
+   a handful of dim, small, low, short-lived flakes thrown inside a narrow
+   cone along the direction the hit was already carrying.
+
+   IT INVENTS NO DATA. `kx`/`ky` are the knockback vector every melee and
+   ranged hit has passed into dealHit/mobHit since v10 — the direction the
+   swing pushed — so the embers are aimed by a number the combat code was
+   already computing, and a hit with no direction (an Arcane Burst, a
+   splash, a poison tick) simply gets no embers rather than a guessed
+   angle. `#ffa050` is the file's own ember colour, the one the volcano
+   has thrown since v8; it is deliberately not the hit-flash's cream
+   `#ffd8a0`, so the two read as flash-then-embers rather than as one
+   effect drawn twice.
+
+   Dim is the whole brief: half the flash's size, a third of its rise, and
+   under half its life, so it lands as sparks off the strike and never as
+   a second explosion. */
+const HIT_EMBER_N      = 4;                 // TUNABLE: "a handful"
+const HIT_EMBER_SPD    = 1.5;               // TUNABLE
+const HIT_EMBER_CONE   = Math.PI / 5;       // TUNABLE: half-cone, 36 degrees
+const HIT_EMBER_COL    = "#ffa050";         // the v8 volcano ember, reused
+/* ⚠️ DELIBERATELY NOT GATED ON `SETTINGS.reduceMotion`, and that is v23's
+   own rule rather than an oversight: that toggle is scoped to the AMBIENT
+   spawner alone ("combat, death and dive particles are untouched, because
+   those are feedback"), and a hit landing is feedback. Putting these
+   behind it would have widened a documented toggle's meaning under cover
+   of a lighting pass. */
+function hitEmbers(wx, wy, kx, ky) {
+  if (!kx && !ky) return 0;                 // no direction -> no embers, never a guess
+  burst(wx, wy, HIT_EMBER_COL, HIT_EMBER_N, HIT_EMBER_SPD, {
+    dir: Math.atan2(ky, kx), spread: HIT_EMBER_CONE,
+    size: 1.4, z: 6, vz: 9, life: 0.42,
+  });
+  return HIT_EMBER_N;
 }
 
 /* v51 PART A: the will-o'-wisp fire chance, named rather than inline so the
@@ -11210,6 +11439,15 @@ const SPAWN_AMB_CHANCE = 0.85;         // TUNABLE: denser than WISP_CHANCE 0.55,
    safe zone is paved with, which is what "unmistakably magical" has to
    mean on grass. */
 const SPAWN_AMB_COL = "#e8d8ff";
+/* v55 PART A: the LIGHT half of the same moment — see the drawing block in
+   render() for why this is concentric flat ellipses and not a gradient. The
+   three numbers live here beside v54's particle half so the whole of "what
+   the Spawn Safe Zone looks like" is one place to read and one place to
+   retune. */
+const SPAWN_GLOW_RINGS = 7;              // TUNABLE: more rings = smoother falloff, more fills
+const SPAWN_GLOW_A     = 0.030;          // TUNABLE: per ring; the centre reaches 1-(1-a)^n
+const SPAWN_GLOW_RGB   = "255,238,196";  // the Caldera's own cream, NOT the Elder gold
+let spawnGlowRingsDrawn = 0;             // harness counter — see debugLightInfo()
 
 function updateParticles(dt, t) {
   const dayT = getDayT();
@@ -11330,6 +11568,44 @@ function updateParticles(dt, t) {
       }
     }
   }
+  /* ============ v55 PART I — THE WISP STORM ==========================
+     The other half of the world-ending signature, and it is the v50/v51
+     wisp a third time rather than a fourth particle kind: same `particles`
+     array, same `kind: "mote"` branch, same twinkling square-core-and-halo
+     paint. What makes it a STORM instead of ambience is density and speed
+     — UNMAKING_WISP_N per frame against the ambient spawner's four
+     samples, a short life so they tear past rather than drift, and its
+     own ceiling well above the ambient 160 so it is not starved by the
+     motes already in the air.
+
+     It is spawned around the CAMERA, not around the two Elders: the spec
+     says "the screen for anyone nearby", and a storm that only filled the
+     tiles under the fight would be invisible to the person standing back
+     watching it happen.
+
+     ⚠️ It respects `SETTINGS.reduceMotion`, exactly like every other
+     spawner in this function. A player who has turned ambient motion off
+     still gets the whole PART I signature through the tint, which is the
+     half that cannot be missed; giving this one effect an exemption would
+     have made that toggle mean something different on one night in the
+     game's history. */
+  {
+    const un = unmakingIntensity();
+    if (un > 0.001 && !SETTINGS.reduceMotion && particles.length < UNMAKING_WISP_CAP) {
+      const n = Math.max(1, Math.round(UNMAKING_WISP_N * un));
+      for (let i = 0; i < n; i++) {
+        const wx2 = cam.x - 16 + Math.random() * 32, wy2 = cam.y - 16 + Math.random() * 32;
+        particles.push({ x: wx2, y: wy2, z: 2 + Math.random() * 26,
+          vx: (Math.random() - 0.5) * 1.6, vy: (Math.random() - 0.5) * 1.6,
+          vz: 10 + Math.random() * 22,
+          life: 0.9 + Math.random() * 0.9, maxLife: 1.8,
+          col: UNMAKING_WISP_COL, size: 2.8, kind: "mote",
+          unmaking: true, ph: Math.random() * 9 });
+        unmakingWispsSpawned++;
+      }
+    }
+  }
+
   // forge chimney smoke — gentle grey puffs
   if (!SETTINGS.reduceMotion && Math.random() < 0.12) {
     particles.push({ x: SPAWN_FORGE.x + 0.38, y: SPAWN_FORGE.y - 0.28, z: 44,
@@ -11374,6 +11650,33 @@ function duskGlow(dt2) {
   const nearDusk = Math.max(0, 1 - Math.abs(dt2 - 0.55) / 0.07);
   return Math.max(nearDawn, nearDusk);
 }
+/* ============ v55 PART B — THE FOUR NUMBERS TIME OF DAY IS MADE OF ====
+   Two of them are moved rather than invented, and that matters: the night
+   darkness and the emissive add were inline literals (0.58 and 0.05) that
+   no gate could read and no future pass could find. They are named here,
+   and both MOVE — the spec's own instruction is that full night should
+   darken unlit ground further while anything already emissive reads
+   brighter BY CONTRAST, and those are the two halves of that one
+   sentence. They have to move together: raising the darkness alone would
+   just be a dimmer game, and raising the emissive add alone would just be
+   a brighter one.
+
+   0.58 -> 0.66 is the darkness laid over the frame; 0.05 -> 0.085 is what
+   the lights add back through the `lighter` pass. Lava, the wisps, a
+   Dragonsteel aura and every torch punch their own hole in the darkness
+   layer already (the `destination-out` pass), so a deeper darkness is
+   free contrast for all of them — nothing emissive had to be made
+   brighter in its own right, which is the point the spec makes about how
+   light actually reads.
+
+   ⚠️ EVERY ONE OF THESE IS A TUNABLE AND THE FIRST TWO ARE THE ONES TO
+   TOUCH IF THE GAME EVER READS TOO DARK AT NIGHT. */
+const NIGHT_DARK_A     = 0.66;   // TUNABLE: was an inline 0.58
+const NIGHT_EMIT_A     = 0.085;  // TUNABLE: was an inline 0.05
+const DAWN_WASH_BANDS  = 5;      // TUNABLE: flat overlapping rects, never a gradient
+const DAWN_WASH_A      = 0.035;  // TUNABLE: per band; the edge reaches 1-(1-a)^n
+const DAWN_WASH_FRAC   = 0.55;   // TUNABLE: how far across the screen the widest band reaches
+let dawnWashBands = 0, dawnWashRight = false;   // harness — see debugLightInfo()
 function sunShadow(dayT) {
   const p = Math.max(0, Math.min(1, dayT / 0.55));
   const ang = Math.PI * (1 - p);
@@ -12559,6 +12862,76 @@ function R(c, pts, col, w) {
   for (let i = 2; i < pts.length; i += 2) c.lineTo(pts[i], pts[i + 1]);
   c.stroke();
 }
+/* ============ v55 PART C — THE RIM LIGHT ==========================
+   Every creature in the game gets a light-direction cue from ONE
+   function, and that is the whole design: `PR` is `P` plus a rim, so a
+   creature opts in by changing a single character at its own main body
+   line rather than by carrying a second hand-written polygon beside the
+   one it already draws. Nothing can drift out of sync with the body,
+   because the rim is traced off the body's own points and tinted from
+   the body's own fill.
+
+   NO NEW COLOUR ENTERS THE PALETTE. The rim is `shade(col, RIM_LIGHT_K)`
+   — the locked 0.72/0.55 facet formula run the other way, on the
+   creature's OWN fill — so a Shadowfox rims near-black-blue and a
+   Phoenix rims hot orange, and neither borrows the other's light. shade()
+   clamps at 255, so a fill that is already near-white simply stops
+   getting lighter instead of wrapping.
+
+   WHICH EDGES: the ones actually facing the light, computed rather than
+   guessed. The outward normal of each edge is taken with the polygon's
+   own winding (signed area decides the sign — creature bodies in this
+   file are wound both ways and a fixed guess would have rimmed the
+   BOTTOM-RIGHT of half the roster), and an edge is stroked only when its
+   normal points up-left. Canvas y grows downward, so up-left is
+   (-1,-1)/root2 — the same corner the 0.72 "SW-facing, catching more
+   light" facet has meant since v8, so the rim agrees with the shading
+   formula the whole world already uses instead of inventing a second
+   light source.
+
+   It is a thin STROKE, not a fill: hard-edged, one flat colour, no
+   gradient and no outline around the whole shape. lineWidth is inside
+   each creature's own scale transform, so it stays proportional to the
+   body and a Glow Moth does not wear a Sea Serpent's rim. */
+const RIM_LIGHT_K = 1.34;    // TUNABLE: how much lighter than the base fill
+const RIM_LIGHT_A = 0.72;    // TUNABLE: never opaque — a rim is light, not a line
+const RIM_LIGHT_W = 0.85;    // TUNABLE: local units, scaled by the body transform
+const RIM_LIGHT_DX = -0.7071, RIM_LIGHT_DY = -0.7071;   // up-left, canvas axes
+let rimLightCalls = 0;       // harness counter — see debugLightInfo()
+function rimLight(c, pts, col) {
+  const n = pts.length / 2;
+  if (n < 3) return;
+  let area = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += pts[i * 2] * pts[j * 2 + 1] - pts[j * 2] * pts[i * 2 + 1];
+  }
+  const sgn = area >= 0 ? 1 : -1;
+  c.save();
+  c.globalAlpha = (c.globalAlpha === undefined ? 1 : c.globalAlpha) * RIM_LIGHT_A;
+  c.strokeStyle = shade(col, RIM_LIGHT_K);
+  c.lineWidth = RIM_LIGHT_W;
+  c.lineCap = "butt";
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const ax = pts[i * 2], ay = pts[i * 2 + 1], bx = pts[j * 2], by = pts[j * 2 + 1];
+    const ex = bx - ax, ey = by - ay;
+    const len = Math.hypot(ex, ey);
+    if (len < 0.01) continue;
+    /* outward normal for this winding, normalised */
+    const nx = (ey / len) * sgn, ny = (-ex / len) * sgn;
+    if (nx * RIM_LIGHT_DX + ny * RIM_LIGHT_DY <= 0) continue;   // faces away
+    c.beginPath(); c.moveTo(ax, ay); c.lineTo(bx, by); c.stroke();
+  }
+  c.restore();
+  rimLightCalls++;
+}
+/* `P` with the rim. Same signature, same fill, same call convention — the
+   rim goes on AFTER the fill so it sits on the body rather than under it. */
+function PR(c, pts, col) {
+  P(c, pts, col);
+  rimLight(c, pts, col);
+}
 function EY(c, x, y, r, col, pupil) {
   c.fillStyle = col; c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
   c.fillStyle = pupil || "#1a1420";
@@ -12658,7 +13031,7 @@ function dragonV2(sx, sy, PAL, t, variant, S) {
   P(ctx, [X(-5), Y(0), X(-6.4), Y(-7), X(-2), Y(-7.6), X(-1.4), Y(0)], PAL.mid);
   P(ctx, [X(-6.6), Y(0), X(-3), Y(0), X(-3), Y(-1.6), X(-7.2), Y(-1.2)], PAL.claw);
 
-  P(ctx, [X(-6), Y(-6), X(-5), Y(-14), X(4), Y(-14.6), X(6), Y(-6)], PAL.lit);
+  PR(ctx, [X(-6), Y(-6), X(-5), Y(-14), X(4), Y(-14.6), X(6), Y(-6)], PAL.lit);
   P(ctx, [X(4), Y(-14.6), X(6), Y(-6), X(-6), Y(-6), X(-0.5), Y(-9)], PAL.mid);
   P(ctx, [X(-5), Y(-6), X(5.4), Y(-6), X(4.4), Y(-1.4), X(-4), Y(-1.4)], PAL.belly);
   BND(ctx, X(-3.8), X(4.2), Y(-5), 4, 1.1 * S, PAL.bandLine, 0.6 * S);
@@ -13414,7 +13787,7 @@ function drawMob(m, t) {
   const raise = m.winding ? 3.2 : 0;   // wind-up: the weapon lifts
   if (m.kind === "goblin") {
 
-    P(ctx, [(0), (0) - 9, (0) - 4, (0) - 1, (0), (0) + 0.6], "#5f8a3c");
+    PR(ctx, [(0), (0) - 9, (0) - 4, (0) - 1, (0), (0) + 0.6], "#5f8a3c");
     P(ctx, [(0), (0) - 9, (0) + 4, (0) - 1, (0), (0) + 0.6], "#46682c");
     P(ctx, [(0) - 3.4, (0) - 3.4, (0) - 1.2, (0) - 7.4, (0) - 0.4, (0) - 1.2], "#7fa055");   // rag loincloth
     ctx.fillStyle = "#3a5222"; ctx.fillRect((0) - 2.6, (0) - 3.2, 5.2, 1.2);           // belt
@@ -13432,7 +13805,7 @@ function drawMob(m, t) {
   
   } else if (m.kind === "troll") {
 
-    P(ctx, [(0) - 8, (0), (0) - 6.6, (0) - 16, (0) + 4.4, (0) - 17, (0) + 7, (0)], "#6f8a5e");    // bulk
+    PR(ctx, [(0) - 8, (0), (0) - 6.6, (0) - 16, (0) + 4.4, (0) - 17, (0) + 7, (0)], "#6f8a5e");    // bulk
     P(ctx, [(0) + 4.4, (0) - 17, (0) + 7, (0), (0) - 8, (0), (0) - 1, (0) - 5.4], "#41563a");
     P(ctx, [(0) - 6.6, (0) - 16, (0) - 2.6, (0) - 19.4, (0) + 1.4, (0) - 19, (0) + 4.4, (0) - 17], "#84a06e"); // hunched shoulders
     P(ctx, [(0) - 1.4, (0) - 17.4, (0) + 6.6, (0) - 18.4, (0) + 7.2, (0) - 11.4, (0) - 0.6, (0) - 10.6], "#84a06e"); // head
@@ -13464,7 +13837,7 @@ function drawMob(m, t) {
       P(ctx, [(0) - 6 + i * 3, (0) - 8 + drift, (0) - 7.4 + i * 3 + w, (0) + 1 + drift, (0) - 3.6 + i * 3 + w, (0) - 0.6 + drift],
            i % 2 ? "#2e2444" : "#3c3058");
     }
-    P(ctx, [(0) - 6.4, (0) - 8 + drift, (0) - 5, (0) - 18 + drift, (0) + 4.6, (0) - 18.6 + drift, (0) + 6.4, (0) - 8 + drift], "#3c3058");
+    PR(ctx, [(0) - 6.4, (0) - 8 + drift, (0) - 5, (0) - 18 + drift, (0) + 4.6, (0) - 18.6 + drift, (0) + 6.4, (0) - 8 + drift], "#3c3058");
     P(ctx, [(0) + 4.6, (0) - 18.6 + drift, (0) + 6.4, (0) - 8 + drift, (0) - 6.4, (0) - 8 + drift, (0) - 0.4, (0) - 11 + drift], "#241c36");
     P(ctx, [(0) - 5, (0) - 18 + drift, (0) - 1.4, (0) - 20.4 + drift, (0) + 2, (0) - 20.2 + drift, (0) + 4.6, (0) - 18.6 + drift], "#4e4074");
     P(ctx, [(0) - 3.6, (0) - 18.4 + drift, (0) - 2.6, (0) - 12.6 + drift, (0) + 2.6, (0) - 12.8 + drift, (0) + 3.6, (0) - 18.6 + drift], "#120e1c");
@@ -13500,7 +13873,7 @@ function drawMob(m, t) {
        cresting coils, so it reads as a serpent breaking the surface of the
        cave pool rather than as another upright humanoid. */
     const w1 = Math.sin(t / 420) * 1.6, w2 = Math.sin(t / 420 + 1.2) * 1.6;
-    P(ctx, [(0) - 22, (0), (0) - 19, (0) - 6 + w1, (0) - 13, (0) - 6.4 + w1, (0) - 10, (0)], "#2f7c8c");
+    PR(ctx, [(0) - 22, (0), (0) - 19, (0) - 6 + w1, (0) - 13, (0) - 6.4 + w1, (0) - 10, (0)], "#2f7c8c");
     P(ctx, [(0) - 19, (0) - 6 + w1, (0) - 13, (0) - 6.4 + w1, (0) - 14, (0) - 2], "#1e5a68");
     P(ctx, [(0) - 9, (0), (0) - 6, (0) - 7 + w2, (0) + 1, (0) - 7.4 + w2, (0) + 4, (0)], "#3f9aa8");
     P(ctx, [(0) - 6, (0) - 7 + w2, (0) + 1, (0) - 7.4 + w2, (0) - 1, (0) - 2], "#25687a");
@@ -13561,7 +13934,7 @@ function drawMob(m, t) {
          colour since the v30 drake hotfix — never gold, which means Elder on
          the ground and nothing else. Flat fills and hard edges throughout;
          the glow is a flat square halo, not a gradient. */
-    P(ctx, [(0) - 4.4, (0), (0) - 4.4, (0) - 8.4, (0) + 4.4, (0) - 8.4, (0) + 4.4, (0)], "#6e6a60");     // body
+    PR(ctx, [(0) - 4.4, (0), (0) - 4.4, (0) - 8.4, (0) + 4.4, (0) - 8.4, (0) + 4.4, (0)], "#6e6a60");     // body
     P(ctx, [(0) + 1.4, (0) - 8.4, (0) + 4.4, (0) - 8.4, (0) + 4.4, (0), (0) + 1.4, (0)], "#46433c");
     P(ctx, [(0) - 4.4, (0) - 8.4, (0) - 1.6, (0) - 9.8, (0) + 4.4, (0) - 8.4], "#847f72");               // top light
     P(ctx, [(0) - 2.6, (0) - 8.6, (0) - 2.6, (0) - 12.6, (0) + 2.6, (0) - 12.6, (0) + 2.6, (0) - 8.6], "#7a7568"); // head
@@ -13611,7 +13984,7 @@ function drawMob(m, t) {
     P(ctx, [(0) - 1.4, (0) - 11.4, (0) - 5.0, (0) - 4.4, (0) - 2.0, (0) + 0.2], "#d8323c");                        // cloak, lit fold
     P(ctx, [(0) - 3.2, (0) - 4.2, (0) - 0.8, (0) - 4.2, (0) - 0.8, (0) + 1.2, (0) - 3.4, (0) + 1.2], "#2b2238");   // greaves
     P(ctx, [(0) + 0.8, (0) - 4.2, (0) + 3.2, (0) - 4.2, (0) + 3.4, (0) + 1.2, (0) + 0.8, (0) + 1.2], "#150f1e");
-    P(ctx, [(0) - 4.0, (0) - 11.2, (0) + 4.0, (0) - 11.2, (0) + 3.3, (0) - 3.2, (0) - 3.3, (0) - 3.2], "#2b2238"); // cuirass, lit facet
+    PR(ctx, [(0) - 4.0, (0) - 11.2, (0) + 4.0, (0) - 11.2, (0) + 3.3, (0) - 3.2, (0) - 3.3, (0) - 3.2], "#2b2238"); // cuirass, lit facet
     P(ctx, [(0) + 0.8, (0) - 11.2, (0) + 4.0, (0) - 11.2, (0) + 3.3, (0) - 3.2, (0) + 0.6, (0) - 3.2], "#150f1e"); // cuirass, shadow facet
     P(ctx, [(0) - 1.4, (0) - 10.2, (0) + 1.4, (0) - 10.2, (0) + 1.2, (0) - 2.2, (0) - 1.2, (0) - 2.2], "#d8323c"); // tabard — the centre line
     P(ctx, [(0) + 0.3, (0) - 10.2, (0) + 1.4, (0) - 10.2, (0) + 1.2, (0) - 2.2, (0) + 0.3, (0) - 2.2], "#8e1f2c");
@@ -13636,7 +14009,7 @@ function drawMob(m, t) {
 
   } else {
 
-    P(ctx, [(0), (0) - 10.5, (0) - 4, (0) - 0.6, (0), (0) + 0.8], "#7a5c40");
+    PR(ctx, [(0), (0) - 10.5, (0) - 4, (0) - 0.6, (0), (0) + 0.8], "#7a5c40");
     P(ctx, [(0), (0) - 10.5, (0) + 4, (0) - 0.6, (0), (0) + 0.8], "#5a4430");
     ctx.fillStyle = "#3e3022"; ctx.fillRect((0) - 3, (0) - 4.6, 6, 1.4);              // belt
     ctx.fillStyle = "#8a7250"; ctx.fillRect((0) - 0.8, (0) - 4.6, 1.6, 1.4);          // buckle
@@ -14473,7 +14846,7 @@ function drawSpecies(species, sx, sy, t, moving) {
             sx + Math.cos(a) * 9 + 2.6, sy - 8.4 + Math.sin(a) * 3,
             sx + Math.cos(a) * 9 + 0.6, sy - 5.6 + Math.sin(a) * 3], "#7fc45a");
     }
-    P(ctx, [sx, sy - 13, sx - 4.4, sy - 5, sx - 2, sy + 1, sx + 1.4, sy + 1], "#7fc45a");     // lit
+    PR(ctx, [sx, sy - 13, sx - 4.4, sy - 5, sx - 2, sy + 1, sx + 1.4, sy + 1], "#7fc45a");     // lit
     P(ctx, [sx, sy - 13, sx + 4.4, sy - 5, sx + 1.4, sy + 1, sx - 0.4, sy - 1.4], "#4a7c34"); // shadow
     P(ctx, [sx - 1.4, sy - 10.6, sx - 3, sy - 5.4, sx - 0.6, sy - 2.6, sx + 0.4, sy - 6], "#a2dc78"); // rim facet
     ctx.fillStyle = "rgba(214,255,168,0.75)";                            // inner core
@@ -14488,7 +14861,7 @@ function drawSpecies(species, sx, sy, t, moving) {
   
   } else if (species === "water_sprite") {
 
-    P(ctx, [sx, sy - 13, sx - 4.2, sy - 4.6, sx - 2, sy + 1, sx + 1.2, sy + 1], "#6fc0d4");
+    PR(ctx, [sx, sy - 13, sx - 4.2, sy - 4.6, sx - 2, sy + 1, sx + 1.2, sy + 1], "#6fc0d4");
     P(ctx, [sx, sy - 13, sx + 4.2, sy - 4.6, sx + 1.2, sy + 1, sx - 0.4, sy - 1.2], "#2f7c94");
     P(ctx, [sx - 1, sy - 10.4, sx - 2.8, sy - 5, sx - 0.6, sy - 2, sx + 0.6, sy - 5.6], "#a2e4f0");
     ctx.fillStyle = "rgba(232,252,255,0.9)";
@@ -14507,7 +14880,7 @@ function drawSpecies(species, sx, sy, t, moving) {
   
   } else if (species === "stone_sprite") {
 
-    P(ctx, [sx - 5, sy - 1.4, sx - 3.6, sy - 7.4, sx + 1.4, sy - 8.6, sx + 4.8, sy - 3.4, sx + 2.8, sy + 1.6, sx - 2.4, sy + 1.6], "#b4a892");
+    PR(ctx, [sx - 5, sy - 1.4, sx - 3.6, sy - 7.4, sx + 1.4, sy - 8.6, sx + 4.8, sy - 3.4, sx + 2.8, sy + 1.6, sx - 2.4, sy + 1.6], "#b4a892");
     P(ctx, [sx + 1.4, sy - 8.6, sx + 4.8, sy - 3.4, sx + 2.8, sy + 1.6, sx + 0.2, sy - 2.4], "#6f6656");
     P(ctx, [sx - 3.6, sy - 7.4, sx - 1, sy - 8.2, sx - 0.4, sy - 4, sx - 4.2, sy - 3.2], "#cdc2ac");
     ctx.strokeStyle = "rgba(255,232,150,0.7)"; ctx.lineWidth = 0.8;      // glowing crack
@@ -14522,7 +14895,7 @@ function drawSpecies(species, sx, sy, t, moving) {
   } else if (species === "wind_sprite") {
 
     ctx.globalAlpha = 0.78;
-    P(ctx, [sx, sy - 10, sx - 3.4, sy - 3.4, sx - 1.2, sy + 1, sx + 1.8, sy - 0.6], "#eef6f8");
+    PR(ctx, [sx, sy - 10, sx - 3.4, sy - 3.4, sx - 1.2, sy + 1, sx + 1.8, sy - 0.6], "#eef6f8");
     P(ctx, [sx, sy - 10, sx + 3.4, sy - 3.4, sx + 1.8, sy - 0.6, sx - 0.2, sy - 3], "#b6ccd4");
     ctx.fillStyle = "rgba(255,255,255,0.8)";
     ctx.beginPath(); ctx.arc(sx - 0.6, sy - 5.4, 1.5, 0, Math.PI * 2); ctx.fill();
@@ -14541,7 +14914,7 @@ function drawSpecies(species, sx, sy, t, moving) {
   
   } else if (species === "wolf") {
 
-    P(ctx, [sx - 6, sy, sx - 4.6, sy - 6.4, sx + 3, sy - 6.8, sx + 4.6, sy], "#a2aab4");            // body lit
+    PR(ctx, [sx - 6, sy, sx - 4.6, sy - 6.4, sx + 3, sy - 6.8, sx + 4.6, sy], "#a2aab4");            // body lit
     P(ctx, [sx + 3, sy - 6.8, sx + 4.6, sy, sx - 6, sy, sx - 0.6, sy - 2], "#5e6a78");              // shadow
     P(ctx, [sx - 4.4, sy - 6.2, sx - 1.6, sy - 7.2, sx - 0.6, sy - 3.4, sx - 4.8, sy - 2.6], "#c2cad4"); // ruff
     P(ctx, [sx - 4.6, sy - 5.8, sx - 2.6, sy - 8.4, sx - 0.4, sy - 5.6], "#c2cad4");                // fur tuft
@@ -14561,7 +14934,7 @@ function drawSpecies(species, sx, sy, t, moving) {
   
   } else if (species === "golem") {
 
-    P(ctx, [sx - 4.4, sy, sx - 4.4, sy - 8.4, sx + 4.4, sy - 8.4, sx + 4.4, sy], "#9c9282");     // body
+    PR(ctx, [sx - 4.4, sy, sx - 4.4, sy - 8.4, sx + 4.4, sy - 8.4, sx + 4.4, sy], "#9c9282");     // body
     P(ctx, [sx + 1.4, sy - 8.4, sx + 4.4, sy - 8.4, sx + 4.4, sy, sx + 1.4, sy], "#655d4e");
     P(ctx, [sx - 4.4, sy - 8.4, sx - 1.6, sy - 9.8, sx + 4.4, sy - 8.4], "#b4aa98");             // top light
     P(ctx, [sx - 2.6, sy - 8.6, sx - 2.6, sy - 12.6, sx + 2.6, sy - 12.6, sx + 2.6, sy - 8.6], "#a89e8c"); // head
@@ -14586,7 +14959,7 @@ function drawSpecies(species, sx, sy, t, moving) {
      runic-cyan eye, facet lines where Golem has cracks, and no moss. */
   } else if (species === "crystal_golem") {
 
-    P(ctx, [sx - 4.4, sy, sx - 4.4, sy - 8.4, sx + 4.4, sy - 8.4, sx + 4.4, sy], "#9fc4e8");     // body
+    PR(ctx, [sx - 4.4, sy, sx - 4.4, sy - 8.4, sx + 4.4, sy - 8.4, sx + 4.4, sy], "#9fc4e8");     // body
     P(ctx, [sx + 1.4, sy - 8.4, sx + 4.4, sy - 8.4, sx + 4.4, sy, sx + 1.4, sy], "#5a7fb0");
     P(ctx, [sx - 4.4, sy - 8.4, sx - 1.6, sy - 9.8, sx + 4.4, sy - 8.4], "#d4e8f8");             // top facet
     P(ctx, [sx - 2.6, sy - 8.6, sx - 2.6, sy - 12.6, sx + 2.6, sy - 12.6, sx + 2.6, sy - 8.6], "#b8d4ec"); // head
@@ -14606,7 +14979,7 @@ function drawSpecies(species, sx, sy, t, moving) {
 
   } else if (species === "boar") {
 
-    P(ctx, [sx - 7, sy, sx - 5.8, sy - 8.4, sx + 3, sy - 9.4, sx + 5.4, sy], "#7a5f48");
+    PR(ctx, [sx - 7, sy, sx - 5.8, sy - 8.4, sx + 3, sy - 9.4, sx + 5.4, sy], "#7a5f48");
     P(ctx, [sx + 3, sy - 9.4, sx + 5.4, sy, sx - 7, sy, sx - 1, sy - 3], "#4a382a");
     P(ctx, [sx - 5.8, sy - 8.4, sx - 2.6, sy - 12.4, sx + 2, sy - 11.4, sx + 3, sy - 9.4], "#3e2f22"); // bristle ridge
     ctx.strokeStyle = "#2e2218"; ctx.lineWidth = 0.7;                                                // bristles
@@ -14630,7 +15003,7 @@ function drawSpecies(species, sx, sy, t, moving) {
   
   } else if (species === "bear") {
 
-    P(ctx, [sx - 7.4, sy, sx - 6.2, sy - 12.6, sx + 3.6, sy - 13.6, sx + 6, sy], "#8a6240");
+    PR(ctx, [sx - 7.4, sy, sx - 6.2, sy - 12.6, sx + 3.6, sy - 13.6, sx + 6, sy], "#8a6240");
     P(ctx, [sx + 3.6, sy - 13.6, sx + 6, sy, sx - 7.4, sy, sx - 1, sy - 4.4], "#553a24");
     P(ctx, [sx - 6.2, sy - 12.6, sx - 3, sy - 15, sx + 1, sy - 14.6, sx + 3.6, sy - 13.6], "#9c7048"); // shoulder hump
     ctx.strokeStyle = "#4a3220"; ctx.lineWidth = 0.6;                                                 // fur strokes
@@ -14658,7 +15031,7 @@ function drawSpecies(species, sx, sy, t, moving) {
 
     const fl = Math.sin(t / 330) * 3;
     P(ctx, [sx - 1, sy - 12, sx - 14, sy - 19 - fl, sx - 17, sy - 8 - fl, sx - 6, sy - 6.6], "#a8894e"); // far wing
-    P(ctx, [sx - 6.4, sy, sx - 5.2, sy - 10.6, sx + 2.6, sy - 11, sx + 5, sy], "#c8a35c");              // lion body
+    PR(ctx, [sx - 6.4, sy, sx - 5.2, sy - 10.6, sx + 2.6, sy - 11, sx + 5, sy], "#c8a35c");              // lion body
     P(ctx, [sx + 2.6, sy - 11, sx + 5, sy, sx - 6.4, sy, sx - 0.6, sy - 3.6], "#8a6c38");
     ctx.strokeStyle = "#7a5e30"; ctx.lineWidth = 0.6;
     for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.moveTo(sx - 4 + i * 2, sy - 9.6); ctx.lineTo(sx - 4.6 + i * 2, sy - 6.6); ctx.stroke(); }
@@ -14695,7 +15068,7 @@ function drawSpecies(species, sx, sy, t, moving) {
     }
     const fl = Math.sin(t / 250) * 3.6;
     P(ctx, [sx - 1.4, sy - 12, sx - 14, sy - 22 - fl, sx - 16, sy - 9 - fl, sx - 4, sy - 7.6], "#c4441c"); // far wing
-    P(ctx, [sx - 4.6, sy, sx - 4, sy - 10.6, sx + 3.2, sy - 11, sx + 4.4, sy], "#e8641c");                 // body
+    PR(ctx, [sx - 4.6, sy, sx - 4, sy - 10.6, sx + 3.2, sy - 11, sx + 4.4, sy], "#e8641c");                 // body
     P(ctx, [sx + 3.2, sy - 11, sx + 4.4, sy, sx - 4.6, sy, sx - 0.4, sy - 3.6], "#a83c12");
     P(ctx, [sx - 3.4, sy - 10, sx - 1, sy - 11, sx + 0.4, sy - 6, sx - 3.8, sy - 5], "#ff9040");           // breast light
     for (let i = 0; i < 3; i++) {                                                                        // tail plumes
@@ -14726,7 +15099,7 @@ function drawSpecies(species, sx, sy, t, moving) {
       const off = i * 5 + Math.sin(t / 260 + i) * 1.2;
       P(ctx, [sx - 6 - off, sy - 1, sx - 2.4 - off, sy - 5.4, sx - off, sy], `rgba(52,46,72,${0.32 / i})`);
     }
-    P(ctx, [sx - 7.4, sy, sx - 5.4, sy - 8.4, sx + 3.4, sy - 8, sx + 5.4, sy], "#413d54");
+    PR(ctx, [sx - 7.4, sy, sx - 5.4, sy - 8.4, sx + 3.4, sy - 8, sx + 5.4, sy], "#413d54");
     P(ctx, [sx + 3.4, sy - 8, sx + 5.4, sy, sx - 7.4, sy, sx - 0.6, sy - 2.6], "#232030");
     P(ctx, [sx - 5.2, sy - 8, sx - 2.6, sy - 10.4, sx + 0.4, sy - 6.6, sx - 5.6, sy - 4.6], "#524d68"); // ruff
     ctx.fillStyle = "#181520";                                                                        // paws
@@ -14753,7 +15126,7 @@ function drawSpecies(species, sx, sy, t, moving) {
     ctx.moveTo(sx + 3.2, sy); ctx.lineTo(sx + 3.2, sy - 6); ctx.stroke();
     ctx.fillStyle = "#2e2418";
     ctx.fillRect(sx - 4.4, sy - 1, 1.4, 1); ctx.fillRect(sx + 2.6, sy - 1, 1.4, 1);
-    P(ctx, [sx - 5, sy - 5.6, sx - 3.8, sy - 12.4, sx + 3.6, sy - 13, sx + 4.8, sy - 5.6], "#c49a68");
+    PR(ctx, [sx - 5, sy - 5.6, sx - 3.8, sy - 12.4, sx + 3.6, sy - 13, sx + 4.8, sy - 5.6], "#c49a68");
     P(ctx, [sx + 3.6, sy - 13, sx + 4.8, sy - 5.6, sx - 5, sy - 5.6, sx - 0.4, sy - 7.6], "#8a6842");
     ctx.fillStyle = "#e8dcc4";
     ctx.fillRect(sx - 2.6, sy - 10.4, 1.2, 1.2); ctx.fillRect(sx + 0.4, sy - 11, 1.2, 1.2);
@@ -14787,7 +15160,7 @@ function drawSpecies(species, sx, sy, t, moving) {
     ctx.moveTo(sx + 3.4, sy); ctx.lineTo(sx + 3.4, sy - 6.4); ctx.stroke();
     ctx.fillStyle = "#c8bca8";
     ctx.fillRect(sx - 4.7, sy - 1.2, 1.6, 1.2); ctx.fillRect(sx + 2.7, sy - 1.2, 1.6, 1.2);
-    P(ctx, [sx - 5.4, sy - 6, sx - 4.2, sy - 13.4, sx + 4.2, sy - 14, sx + 5.2, sy - 6], "#f8f5ef");
+    PR(ctx, [sx - 5.4, sy - 6, sx - 4.2, sy - 13.4, sx + 4.2, sy - 14, sx + 5.2, sy - 6], "#f8f5ef");
     P(ctx, [sx + 4.2, sy - 14, sx + 5.2, sy - 6, sx - 5.4, sy - 6, sx - 0.4, sy - 8.2], "#cdc6bc");
     P(ctx, [sx - 4.2, sy - 13.4, sx - 1, sy - 14.4, sx + 0.4, sy - 10, sx - 4.6, sy - 9], "#ffffff");
     P(ctx, [sx + 2.8, sy - 13.4, sx + 4.2, sy - 19.8, sx + 7, sy - 19.6, sx + 5.4, sy - 12.6], "#f8f5ef");
@@ -14819,7 +15192,7 @@ function drawSpecies(species, sx, sy, t, moving) {
     const g = ctx.createRadialGradient(sx, sy - 7, 1, sx, sy - 7, 20);
     g.addColorStop(0, "rgba(255,238,176,0.3)"); g.addColorStop(1, "rgba(255,238,176,0)");
     ctx.fillStyle = g; ctx.fillRect(sx - 20, sy - 28, 40, 34);
-    P(ctx, [sx - 7.4, sy, sx - 5.4, sy - 8.4, sx + 3.4, sy - 8, sx + 5.4, sy], "#f6e4ac");
+    PR(ctx, [sx - 7.4, sy, sx - 5.4, sy - 8.4, sx + 3.4, sy - 8, sx + 5.4, sy], "#f6e4ac");
     P(ctx, [sx + 3.4, sy - 8, sx + 5.4, sy, sx - 7.4, sy, sx - 0.6, sy - 2.6], "#cfae68");
     P(ctx, [sx - 5.2, sy - 8, sx - 2.6, sy - 10.4, sx + 0.4, sy - 6.6, sx - 5.6, sy - 4.6], "#fdf4d4");
     ctx.fillStyle = "#fffbe8";
@@ -14877,7 +15250,7 @@ function drawSpecies(species, sx, sy, t, moving) {
      drawing body below is untouched, exactly as written. */
   } else if (species === "krakenling") {
 
-    P(ctx, [sx - 5, sy - 6, sx - 4, sy - 11, sx + 4, sy - 11, sx + 5, sy - 6, sx + 2, sy - 3, sx - 2, sy - 3], "#5a3a6e"); // mantle
+    PR(ctx, [sx - 5, sy - 6, sx - 4, sy - 11, sx + 4, sy - 11, sx + 5, sy - 6, sx + 2, sy - 3, sx - 2, sy - 3], "#5a3a6e"); // mantle
     P(ctx, [sx - 4, sy - 11, sx + 4, sy - 11, sx + 3, sy - 9, sx - 3, sy - 9], "#7a5a92");      // mantle highlight
     EY(ctx, sx - 1.8, sy - 8, 1.1, "#f0e8ff", "#1a0f28");
     EY(ctx, sx + 1.8, sy - 8, 1.1, "#f0e8ff", "#1a0f28");
@@ -14901,7 +15274,7 @@ function drawSpecies(species, sx, sy, t, moving) {
 
 
             const stride = Math.sin(t / 260) * 1.4;
-            P(ctx, [sx - 14, sy - 1, sx - 11, sy - 9, sx + 9, sy - 10, sx + 15, sy - 2, sx + 10, sy + 2, sx - 8, sy + 2.5], "#14100d"); // body — true near-black, not muddy brown
+            PR(ctx, [sx - 14, sy - 1, sx - 11, sy - 9, sx + 9, sy - 10, sx + 15, sy - 2, sx + 10, sy + 2, sx - 8, sy + 2.5], "#14100d"); // body — true near-black, not muddy brown
             P(ctx, [sx - 11, sy - 9, sx + 9, sy - 10, sx + 6, sy - 5.5, sx - 8, sy - 5], "#221a15");   // back highlight
             for (let i = 0; i < 7; i++) {                                                             // spine ridge — now GLOWS, the bold identity feature
               const rx = sx - 10 + i * 3.6, ry = sy - 9.4 + Math.sin(i * 0.5) * 1.2;
@@ -14932,7 +15305,7 @@ function drawSpecies(species, sx, sy, t, moving) {
 
   } else if (species === "salamander_king") {
 
-    P(ctx, [sx - 8, sy, sx - 6, sy - 4, sx + 4, sy - 4.4, sx + 7, sy], "#d84a28");              // body
+    PR(ctx, [sx - 8, sy, sx - 6, sy - 4, sx + 4, sy - 4.4, sx + 7, sy], "#d84a28");              // body
     P(ctx, [sx - 6, sy - 4, sx + 4, sy - 4.4, sx + 2, sy - 2, sx - 4, sy - 1.8], "#f07038");    // body highlight
     P(ctx, [sx + 4, sy - 4.4, sx + 10, sy - 5.4, sx + 11, sy - 1.4, sx + 7, sy], "#c8401e");    // head
     P(ctx, [sx + 10, sy - 5.4, sx + 11, sy - 1.4, sx + 9, sy - 1.6], "#8c2c14");
@@ -14953,7 +15326,7 @@ function drawSpecies(species, sx, sy, t, moving) {
     g.addColorStop(0, "rgba(244,232,160,0.5)"); g.addColorStop(1, "rgba(244,232,160,0)");
     ctx.fillStyle = g; ctx.fillRect(sx - 17, sy - 27, 34, 34);
     const fl = Math.sin(t / 150) * 3.4;
-    P(ctx, [sx - 1, sy - 11, sx - 12, sy - 18 - fl, sx - 9, sy - 6, sx - 2.6, sy - 7], "#c9b96c");
+    PR(ctx, [sx - 1, sy - 11, sx - 12, sy - 18 - fl, sx - 9, sy - 6, sx - 2.6, sy - 7], "#c9b96c");
     P(ctx, [sx + 1, sy - 11, sx + 12, sy - 18 - fl, sx + 9, sy - 6, sx + 2.6, sy - 7], "#b0a05a");
     P(ctx, [sx - 1, sy - 13, sx - 10, sy - 20 + fl * 0.4, sx - 3, sy - 10], "#f4ebb4");
     P(ctx, [sx + 1, sy - 13, sx + 10, sy - 20 + fl * 0.4, sx + 3, sy - 10], "#ded27f");
@@ -14991,7 +15364,7 @@ function drawSpecies(species, sx, sy, t, moving) {
   } else if (species === "golem_elder") {
 
     aura(sx, sy, "232,182,76", 11, t, { motes: 3, riseMs: 1300, lw: 1.1 });
-    P(ctx, [sx - 5.6, sy, sx - 5.6, sy - 10.6, sx + 5.6, sy - 10.6, sx + 5.6, sy], "#6e6a5e");   // body
+    PR(ctx, [sx - 5.6, sy, sx - 5.6, sy - 10.6, sx + 5.6, sy - 10.6, sx + 5.6, sy], "#6e6a5e");   // body
     P(ctx, [sx + 1.8, sy - 10.6, sx + 5.6, sy - 10.6, sx + 5.6, sy, sx + 1.8, sy], "#3f3c34");   // shadow face
     P(ctx, [sx - 5.6, sy - 10.6, sx - 2, sy - 12.4, sx + 5.6, sy - 10.6], "#87826f");            // top light
     P(ctx, [sx - 3.2, sy - 10.8, sx - 3.2, sy - 15.8, sx + 3.2, sy - 15.8, sx + 3.2, sy - 10.8], "#7a7566"); // head slab
@@ -15034,7 +15407,7 @@ function drawSpecies(species, sx, sy, t, moving) {
     ctx.moveTo(sx + 3.4, sy); ctx.lineTo(sx + 3.4, sy - 6.4); ctx.stroke();
     ctx.fillStyle = "#c8a862";                                                          // gold hooves
     ctx.fillRect(sx - 4.7, sy - 1.2, 1.6, 1.2); ctx.fillRect(sx + 2.7, sy - 1.2, 1.6, 1.2);
-    P(ctx, [sx - 5.4, sy - 6, sx - 4.2, sy - 13.4, sx + 4.2, sy - 14, sx + 5.2, sy - 6], "#fbf6e8");  // body
+    PR(ctx, [sx - 5.4, sy - 6, sx - 4.2, sy - 13.4, sx + 4.2, sy - 14, sx + 5.2, sy - 6], "#fbf6e8");  // body
     P(ctx, [sx + 4.2, sy - 14, sx + 5.2, sy - 6, sx - 5.4, sy - 6, sx - 0.4, sy - 8.2], "#cfc4a4");
     P(ctx, [sx - 4.2, sy - 13.4, sx - 1, sy - 14.4, sx + 0.4, sy - 10, sx - 4.6, sy - 9], "#ffffff");
     P(ctx, [sx + 2.8, sy - 13.4, sx + 4.2, sy - 19.8, sx + 7, sy - 19.6, sx + 5.4, sy - 12.6], "#fbf6e8"); // neck
@@ -15086,7 +15459,7 @@ function drawSpecies(species, sx, sy, t, moving) {
       const off = i * 5 + Math.sin(t / 260 + i) * 1.2;
       P(ctx, [sx - 6 - off, sy - 1, sx - 2.4 - off, sy - 5.4, sx - off, sy], `rgba(96,74,164,${0.34 / i})`);
     }
-    P(ctx, [sx - 7.4, sy, sx - 5.4, sy - 8.4, sx + 3.4, sy - 8, sx + 5.4, sy], "#3a3260");   // body
+    PR(ctx, [sx - 7.4, sy, sx - 5.4, sy - 8.4, sx + 3.4, sy - 8, sx + 5.4, sy], "#3a3260");   // body
     P(ctx, [sx + 3.4, sy - 8, sx + 5.4, sy, sx - 7.4, sy, sx - 0.6, sy - 2.6], "#1e1a33");
     P(ctx, [sx - 5.2, sy - 8, sx - 2.6, sy - 10.4, sx + 0.4, sy - 6.6, sx - 5.6, sy - 4.6], "#6a5aa8"); // ruff
     R(ctx, [sx - 4.6, sy - 8.6, sx + 0.2, sy - 6.9], "#f2cf6b", 0.7);                        // ruff trim
@@ -15567,9 +15940,68 @@ function drawItemEntity(it, t) {
 /* v29: a cave interior draws its own floor and walls rather than the
    overworld's ocean tiles. Deliberately simple and self-contained: same
    isometric projection helpers, same entity pass afterwards. */
+/* ============ v55 PART F — A CAVE IS DARK BETWEEN ITS LIGHTS =========
+   Confirmed live before this was written: an interior floor was lit
+   perfectly evenly from wall to wall. Ore veins glow, Kelp-Crystal
+   clusters glow, the exit glows — and none of them cast anything, so they
+   were bright OBJECTS scattered through a uniformly lit room rather than
+   light sources in a dark one. That is the whole difference this part is
+   about, and the spec is right that it is what makes a crystal feel like
+   it is casting light.
+
+   THE FALLOFF IS STAMPED, NOT SAMPLED, and that is what makes it cheap
+   enough to do at this grid size. A 160x160 interior is 25,600 tiles and
+   a real one carries ~100 lights; asking every tile for its nearest light
+   would be 2.5M distance tests. Instead each light stamps a disc of
+   radius CAVE_LIGHT_R into a byte map, quantised to CAVE_LIGHT_STEPS
+   levels and combined by max — about 20,000 writes for the whole cave,
+   once. Quantising is not a shortcut either: discrete steps are exactly
+   the layered-circle falloff this spec asks for everywhere else, and a
+   smooth ramp would be the one gradient in the build.
+
+   ⚠️ A MINED VEIN TAKES ITS LIGHT WITH IT. The map is baked once, so it
+   records how many untaken veins it was baked from and rebuilds when that
+   count changes — the same discipline v51 wrote down for the minimap's
+   flecks ("a mined node leaves the index and its fleck goes with it").
+   Without it, a cave would stay lit by a vein the player had already
+   carried away. */
+const CAVE_LIGHT_R     = 7;     // TUNABLE: tiles a vein/crystal/exit lights
+const CAVE_LIGHT_STEPS = 5;     // TUNABLE: discrete falloff bands, never a ramp
+const CAVE_DARK_A      = 0.62;  // TUNABLE: how dark a fully unlit floor tile goes
+const CAVE_PLAYER_R    = 6;     // TUNABLE: you carry your own light, as on the surface
+let caveDarkTiles = 0, caveLitTiles = 0;   // harness — see debugLightInfo()
+function interiorLightMap(rec) {
+  const live = (rec.ore || []).reduce((a, o) => a + (o.taken ? 0 : 1), 0);
+  if (rec.lightmap && rec.lightmapOre === live) return rec.lightmap;
+  const map = new Uint8Array(INTERIOR_N * INTERIOR_N);
+  const stamp = (cx, cy) => {
+    const x0 = Math.max(0, Math.floor(cx - CAVE_LIGHT_R)), x1 = Math.min(INTERIOR_N - 1, Math.ceil(cx + CAVE_LIGHT_R));
+    const y0 = Math.max(0, Math.floor(cy - CAVE_LIGHT_R)), y1 = Math.min(INTERIOR_N - 1, Math.ceil(cy + CAVE_LIGHT_R));
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
+        if (d > CAVE_LIGHT_R) continue;
+        const lv = Math.round(CAVE_LIGHT_STEPS * (1 - d / CAVE_LIGHT_R));
+        const i = y * INTERIOR_N + x;
+        if (lv > map[i]) map[i] = lv;
+      }
+    }
+  };
+  for (const o of (rec.ore || [])) if (!o.taken) stamp(o.x, o.y);
+  for (const k of (rec.kelp || [])) stamp(k.x, k.y);
+  /* The exit is a light because it already draws as one — the pale pulsing
+     outline v29 gave it — and because arriving into a pitch-black tile is
+     not atmosphere, it is a player who cannot find the way back out. */
+  if (rec.exit) stamp(rec.exit.x + 0.5, rec.exit.y + 0.5);
+  rec.lightmap = map; rec.lightmapOre = live;
+  return map;
+}
+
 function renderInteriorGround(t) {
   const rec = interiorCache.get(me.space);
   if (!rec) return;
+  const lmap = interiorLightMap(rec);
+  caveDarkTiles = 0; caveLitTiles = 0;
   for (let ty = 0; ty < INTERIOR_N; ty++) {
     for (let tx = 0; tx < INTERIOR_N; tx++) {
       const v = rec.grid[ty * INTERIOR_N + tx];
@@ -15616,6 +16048,31 @@ function renderInteriorGround(t) {
       ctx.beginPath();
       ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(cx2, cy2); ctx.lineTo(dx2, dy2);
       ctx.closePath(); ctx.fill();
+      /* v55 PART F: the darkness, laid over the tile that was just
+         painted. One flat diamond at an alpha the light map decides,
+         which is the same shape and the same four points the floor
+         itself used — no second geometry, no gradient, no light canvas.
+         The player carries their own light here exactly as they do on
+         the surface (collectLights() has pushed one at `me` since v18),
+         so a cave is dark where you are not and where nothing glows,
+         which is the whole read. Walls are skipped: they are already the
+         darkest thing in the room and dimming them further would only
+         flatten the lit/shadow faces that give them their silhouette. */
+      if (v !== IN_WALL) {
+        const stat = lmap[ty * INTERIOR_N + tx] / CAVE_LIGHT_STEPS;
+        const pd = Math.hypot(tx + 0.5 - me.x, ty + 0.5 - me.y);
+        const pl = pd >= CAVE_PLAYER_R ? 0
+                 : Math.round(CAVE_LIGHT_STEPS * (1 - pd / CAVE_PLAYER_R)) / CAVE_LIGHT_STEPS;
+        const lit = Math.max(stat, pl);
+        if (lit >= 0.999) caveLitTiles++;
+        else {
+          caveDarkTiles++;
+          ctx.fillStyle = `rgba(4,6,12,${(CAVE_DARK_A * (1 - lit)).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.lineTo(cx2, cy2); ctx.lineTo(dx2, dy2);
+          ctx.closePath(); ctx.fill();
+        }
+      }
       if (v === IN_FLOOR && ph > 0.93) {   // sparse bioluminescence
         const gl = 0.4 + 0.35 * Math.sin(t / 900 + ph * 9);
         ctx.fillStyle = abyss32 ? `rgba(150,110,220,${gl * 0.45})`
@@ -15880,6 +16337,51 @@ function render(t) {
       }
     }
   }
+
+  /* ============ v55 PART A — THE FIRST FRAME A PLAYER EVER SEES ======
+     A new player wakes up inside the Spawn Safe Zone, and until now that
+     ground was a full biome override to plain grass — by construction the
+     least distinctive tile in the world. v54 gave it a denser ambient
+     stream (SPAWN_AMB_CHANCE, still doing its half of the job); this is
+     the other half the spec asks for: real ambient LIGHT on the ground
+     under it.
+
+     ⚠️ IT IS NOT A GRADIENT, AND THAT IS THE WHOLE TECHNIQUE. It is
+     SPAWN_GLOW_RINGS concentric flat ellipses on the isometric ground
+     plane, painted largest-first at one low alpha each, so the alpha
+     ACCUMULATES toward the centre — 1-(1-a)^n at the core and a single a
+     at the rim. That is a radial falloff assembled out of flat shapes,
+     which is what this house style does instead of reaching for
+     createRadialGradient: the same reasoning the Caldera's crust, the
+     cave floor's shadow pool and every wisp halo already follow.
+
+     The colour is `255,238,196` — the Caldera's own inner-pool cream,
+     already in this file — deliberately NOT the Elder gold `232,182,76`
+     the safe-zone ring above wears. v39's rule is that a gold wash pooled
+     under a creature means Elder and nothing else; a landmark-scale cream
+     disc under a whole zone is a different claim in a different shape,
+     and keeping the two hues apart is what stops the zone reading as one
+     enormous Elder aura.
+
+     Ellipse geometry is the safe-zone ring's own, one line above: the
+     same IW2/IH2 * SQRT2 conversion, so the light lies on exactly the
+     disc the ring draws and cannot drift away from it. Surface only —
+     inside a cave, SPAWN is a world coordinate and the camera is on the
+     interior's grid. */
+  if (!inInterior()) {
+    const [gx0, gy0] = worldToScreen(SPAWN.x, SPAWN.y, 0);
+    const grx = SAFE_RADIUS * IW2 * Math.SQRT2, gry = SAFE_RADIUS * IH2 * Math.SQRT2;
+    if (gx0 + grx > 0 && gx0 - grx < w && gy0 + gry > 0 && gy0 - gry < h) {
+      ctx.fillStyle = `rgba(${SPAWN_GLOW_RGB},${SPAWN_GLOW_A})`;
+      for (let i = 0; i < SPAWN_GLOW_RINGS; i++) {
+        const f = 1 - i / SPAWN_GLOW_RINGS;          // 1 -> 1/n, largest first
+        ctx.beginPath();
+        ctx.ellipse(gx0, gy0, grx * f, gry * f, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      spawnGlowRingsDrawn = SPAWN_GLOW_RINGS;
+    } else spawnGlowRingsDrawn = 0;
+  } else spawnGlowRingsDrawn = 0;
 
   // Safe zone ring
   const [szx, szy] = worldToScreen(SPAWN.x, SPAWN.y, 0);
@@ -16224,11 +16726,21 @@ function render(t) {
      before the damage numbers, so it reads over the ground it covers and
      under the numbers it caused. Radius is in tiles; IW2 is the half-width of
      a tile in screen px, which is what puts the ring on the ground plane. */
+  /* v55 PART D adds a second SHAPE through this same loop and no second
+     draw call: a ring marked `hold` does not expand — it sits at its own
+     radius and only fades — which is precisely "a faint, fading glow
+     circle at the impact point". Same `aura()`, same array, same three
+     lines; the only difference is whether `ph` multiplies the radius. */
   for (const ring of abilityRings) {
-    const ph = Math.min(1, (performance.now() - ring.t0) / ABILITY_RING_MS);
+    const ph = Math.min(1, (performance.now() - ring.t0) / (ring.ms || ABILITY_RING_MS));
     const [rx2, ry2] = worldToScreen(ring.x, ring.y, groundZ(ring.x, ring.y));
-    ctx.globalAlpha = 1 - ph;
-    aura(rx2, ry2, ABILITY_RING_RGB, Math.max(2, ring.r * IW2 * ph), t, { motes: 5 });
+    ctx.globalAlpha = (1 - ph) * (ring.a === undefined ? 1 : ring.a);
+    /* v55 PART H: a ring may carry its own "r,g,b" now. Absent, it is the
+       Mystic's violet exactly as v27 wrote it, so both ability rings are
+       unchanged — this is how one primitive serves three travel
+       signatures without three copies of it. */
+    aura(rx2, ry2, ring.rgb || ABILITY_RING_RGB, Math.max(2, ring.r * IW2 * (ring.hold ? 1 : ph)), t,
+         { motes: ring.hold ? 0 : (ring.motes === undefined ? 5 : ring.motes) });
     ctx.globalAlpha = 1;
   }
 
@@ -16294,7 +16806,7 @@ function render(t) {
   const na = nightAlpha(dayT);
   if (na > 0.02) {
     lctx.clearRect(0, 0, w, h);
-    lctx.fillStyle = `rgba(9, 13, 32, ${na * 0.58})`;
+    lctx.fillStyle = `rgba(9, 13, 32, ${na * NIGHT_DARK_A})`;
     lctx.fillRect(0, 0, w, h);
     lctx.globalCompositeOperation = "destination-out";
     for (const L of collectLights()) {
@@ -16316,7 +16828,7 @@ function render(t) {
       const [lx2, ly2] = worldToScreen(L.x, L.y, L.z || 0);
       if (lx2 < -L.r || ly2 < -L.r || lx2 > w + L.r || ly2 > h + L.r) continue;
       const g = ctx.createRadialGradient(lx2, ly2, 2, lx2, ly2, L.r * 0.6);
-      g.addColorStop(0, L.col.replace("A)", (0.05 * na) + ")"));
+      g.addColorStop(0, L.col.replace("A)", (NIGHT_EMIT_A * na) + ")"));
       g.addColorStop(1, L.col.replace("A)", "0)"));
       ctx.fillStyle = g;
       ctx.fillRect(lx2 - L.r, ly2 - L.r, L.r * 2, L.r * 2);
@@ -16336,11 +16848,81 @@ function render(t) {
   if (glow > 0.01) {
     ctx.fillStyle = `rgba(230, 130, 55, ${glow * 0.13})`;
     ctx.fillRect(0, 0, w, h);
-  }
+    /* ============ v55 PART B — THE LIGHT COMES FROM SOMEWHERE ========
+       The flat fill above is the whole of the file's dawn/dusk treatment
+       today: an even wash over every pixel, which is a colour change and
+       not a light. This gives it a DIRECTION, in exactly the same colour
+       (`230,130,55` — literally the line above, not a second hue) and in
+       exactly the same technique as PART A: overlapping flat rectangles
+       from one screen edge, largest first, so alpha accumulates toward
+       that edge. No gradient object is created anywhere in this block.
+
+       WHICH EDGE IS NOT A GUESS. `SUN.dx` is the direction shadows are
+       CAST, so the sun itself is at `-SUN.dx`: at dawn shadows run west
+       (dx = -1) and the light comes from the right of the screen; at dusk
+       they run east (dx = +1) and it comes from the left. The wash is
+       therefore always on the same side as the low sun every object on
+       screen is already throwing its shadow away from, which is the only
+       way a fake directional light can avoid contradicting the real one
+       the world has drawn since v8. */
+    const washFromRight = SUN.dx < 0;
+    const bandW = (w * DAWN_WASH_FRAC) / DAWN_WASH_BANDS;
+    ctx.fillStyle = `rgba(230, 130, 55, ${(glow * DAWN_WASH_A).toFixed(4)})`;
+    for (let i = 0; i < DAWN_WASH_BANDS; i++) {
+      const bw = bandW * (DAWN_WASH_BANDS - i);
+      ctx.fillRect(washFromRight ? w - bw : 0, 0, bw, h);
+    }
+    dawnWashBands = DAWN_WASH_BANDS;
+    dawnWashRight = washFromRight;
+  } else dawnWashBands = 0;
 
   if (performance.now() - hitFlash < 220) {
     ctx.fillStyle = `rgba(200, 40, 30, ${0.32 * (1 - (performance.now() - hitFlash) / 220)})`;
     ctx.fillRect(0, 0, w, h);
+  }
+
+  /* v55 PART D: the Elder Drake's fight-start pulse — the hitFlash block
+     directly above, one constant set further, in the drake's own ember
+     rather than the damage red. Fired once per encounter by
+     noteBossCombat(); see there for why "once" is the hard part. */
+  {
+    const bp = performance.now() - bossPulseAt;
+    if (bossPulseAt && bp < BOSS_PULSE_MS) {
+      ctx.fillStyle = `rgba(${BOSS_PULSE_RGB},${(BOSS_PULSE_A * (1 - bp / BOSS_PULSE_MS)).toFixed(4)})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+  }
+
+  /* ============ v55 PART I — THE WORLD ENDING, SEEN ==================
+     The rarest thing this game can produce had, until this line, no
+     visual signature whatsoever: a Golem Elder and a Dragon Elder
+     fighting within ELDER_PROX_TILES for four continuous seconds armed a
+     world reset and the only tell was a countdown card appearing with ten
+     seconds left on it. `unmakingIntensity()` is that accumulator made
+     visible — it climbs with `elderHoldMs` across the whole trigger
+     window and holds at 1 for the countdown — so the escalation builds
+     for exactly as long as the condition does and drops to nothing the
+     instant the condition breaks, because the accumulator does.
+
+     ⚠️ THE SPEC SAYS "reuse the Blood Moon's existing red-tint
+     technique". THE BLOOD MOON HAS NO TINT. Checked directly:
+     `bloodMoonActive()` has six call sites in this file — its own
+     definition, `bloodMoonMobMult`, the presence roll, the aggro radius,
+     a debug export and one red line of HUD text — and not one of them
+     touches the canvas. What the file does have, and what that sentence
+     can only mean, is the full-screen flat red fillRect the hit flash
+     directly above has used since v9: no gradient, one flat colour,
+     decaying alpha. That is the technique reused, "pushed further" as the
+     spec asks — a deeper red at up to UNMAKING_TINT_A, which is more than
+     twice the hit flash's peak. Flagged rather than quietly reinterpreted,
+     and flagged rather than papered over by inventing a Blood Moon tint
+     this spec never asked for. */
+  {
+    const un = unmakingIntensity();
+    if (un > 0.001) {
+      ctx.fillStyle = `rgba(${UNMAKING_TINT_RGB},${(UNMAKING_TINT_A * un * un).toFixed(4)})`;
+      ctx.fillRect(0, 0, w, h);
+    }
   }
 
   ctx.restore();
@@ -16364,6 +16946,35 @@ function collectLights() {
     r: mothLit ? GLOW_MOTH_LIGHT_R : 150, a: mothLit ? 0.9 : 0.8,
     col: mothLit ? "rgba(244,232,160,A)" : "rgba(255,190,120,A)" });
   for (const tp of TORCHES) lights.push({ x: tp.x, y: tp.y, z: 12, r: 78, a: 0.85, col: "rgba(255,176,80,A)" });
+  /* ============ v55 PART G — SOMEONE LIVES HERE =====================
+     A base has never had any way to read as inhabited from outside
+     interaction range: the pieces are flat-shaded boxes like every rock
+     and tree, and at night they were simply dark boxes. A Forge has a
+     molten mouth and a Generator has a core pulse — both are already
+     drawn as things that are ON — so this is those two pieces finally
+     casting what they paint, and nothing else in a base does.
+
+     ⚠️ IT IS NOT A NEW LIGHT SYSTEM. These are rows in the list this
+     function has returned since v18, so they get the darkness punch-out,
+     the additive warm add and the off-screen cull for free, and — the
+     part that makes them a DISCOVERY — they only exist at all inside
+     `if (na > 0.02)`, which is the spec's "at night specifically"
+     enforced by where the list is consumed rather than by a second time
+     check here. BASE_LIGHT_R is deliberately larger than a torch's 78 and
+     smaller than the Spawn Forge's 110: a player's forge should be
+     findable across a valley, and should never rival the town.
+
+     Surface only. A piece is stored in world coordinates and an interior
+     is a different space — the same rule the entity pass applies to
+     basePieces two hundred lines above. */
+  if (!inInterior()) {
+    for (const [, bp] of basePieces) {
+      const bd = BASE_PIECES[bp.kind];
+      if (!bd || !(bd.forge || bd.gen)) continue;
+      lights.push({ x: bp.x, y: bp.y, z: 10, r: BASE_LIGHT_R, a: BASE_LIGHT_A,
+                    col: bd.forge ? "rgba(240,150,70,A)" : "rgba(120,220,236,A)" });
+    }
+  }
   for (const [, o] of others) if (!o.dead) lights.push({ x: o.x, y: o.y, z: 8, r: 130, a: 0.72, col: "rgba(255,190,120,A)" });
   return lights;
 }
@@ -17140,10 +17751,29 @@ function noteElderCombat(kind) {
    ========================================================================= */
 const BOSS_KIND = "elder_drake";
 let bossFightUntil = 0, bossFightId = null;
+let bossPulseAt = 0;         // v55 PART D — see below
 function noteBossCombat(kind, m) {
   if (kind !== BOSS_KIND) return;
-  bossFightUntil = performance.now() + COMBAT_MUSIC_LINGER;
+  /* ============ v55 PART D — THE INSTANT THE FIGHT STARTS ============
+     The bar appearing is a HUD element arriving; the spec asks for the
+     MOMENT to land, on a bigger scale than a hit-flash, across the whole
+     visible area. This is the START edge and only the start edge: the
+     linger window is refreshed by every subsequent hit, so a pulse fired
+     from this function unconditionally would strobe once per swing for
+     the length of a boss fight. It fires when the window was not already
+     open, or when the drake being fought is a DIFFERENT one — which is a
+     new encounter by any reading — and never otherwise.
+
+     ⚠️ The pulse is the hitFlash technique from v9 (one full-screen flat
+     rgba fillRect, decaying), not a new overlay and not a gradient. Its
+     colour is `#ff7a3c`, the drake's own ember and the locked Lava
+     palette entry, so the screen goes the colour of the thing that just
+     noticed you. */
+  const nowMs = performance.now();
+  const fresh = nowMs >= bossFightUntil || (m && m.id !== undefined && m.id !== bossFightId);
+  bossFightUntil = nowMs + COMBAT_MUSIC_LINGER;
   if (m && m.id !== undefined) bossFightId = m.id;
+  if (fresh) bossPulseAt = nowMs;
 }
 /* The live drake this bar is about, or null. Re-resolved every frame off the
    real mobs array by id, so a drake that dies, despawns or is simply no
@@ -17198,6 +17828,91 @@ function debugSetBoss(patch) {
   if ("id" in patch) bossFightId = patch.id;
   if (patch.refresh) updateBossHud();
   return debugBossInfo();
+}
+
+/* ============ v55 — THE LIGHTING HOOK ================================
+   Every number this version added is a top-level `const` or `let`, and
+   none of them land on `window` — so without this hook the whole build
+   could only be checked by grepping the source for literals, which proves
+   a line was typed and never that it does anything. Same reasoning
+   `debugScaleInfo()` gave for SPECIES_K and `debugAbilityInfo()` for the
+   cooldowns. Copies and live counters, plus one setter so a gate can
+   place an unmaking intensity without driving two Elders into each other
+   for four real seconds. */
+function debugLightInfo() {
+  return {
+    /* PART A */ SPAWN_GLOW_RINGS, SPAWN_GLOW_A, SPAWN_GLOW_RGB, SPAWN_AMB_CHANCE,
+                 spawnGlowRingsDrawn,
+    /* PART B */ NIGHT_DARK_A, NIGHT_EMIT_A, DAWN_WASH_BANDS, DAWN_WASH_A, DAWN_WASH_FRAC,
+                 dawnWashBands, dawnWashRight, sunDx: SUN.dx, dayT: getDayT(),
+                 nightAlpha: nightAlpha(getDayT()), duskGlow: duskGlow(getDayT()),
+    /* PART C */ RIM_LIGHT_K, RIM_LIGHT_A, RIM_LIGHT_W,
+                 RIM_LIGHT_DX, RIM_LIGHT_DY, rimLightCalls,
+    /* PART D */ HIT_EMBER_N, HIT_EMBER_CONE, HIT_EMBER_COL,
+                 STAFF_GLOW_MS, STAFF_GLOW_A, BOSS_PULSE_MS, BOSS_PULSE_A, BOSS_PULSE_RGB,
+                 bossPulseAt,
+                 rings: abilityRings.map(r => ({ r: r.r, hold: !!r.hold, ms: r.ms || ABILITY_RING_MS,
+                                                 rgb: r.rgb || ABILITY_RING_RGB })),
+    /* PART E */ TAME_BURST_N, TAME_BURST_SPD, TAME_BURST_FALLBACK,
+                 speciesCol: { ...SPECIES_COL },
+    /* PART F */ CAVE_LIGHT_R, CAVE_LIGHT_STEPS, CAVE_DARK_A, CAVE_PLAYER_R,
+                 caveDarkTiles, caveLitTiles,
+    /* PART G */ BASE_LIGHT_R, BASE_LIGHT_A,
+                 lights: collectLights().map(L => ({ x: L.x, y: L.y, r: L.r, col: L.col })),
+    /* PART H */ travelFx: JSON.parse(JSON.stringify(TRAVEL_FX)), lastTravelFx,
+    /* PART I */ UNMAKING_TINT_RGB, UNMAKING_TINT_A, UNMAKING_WISP_N, UNMAKING_WISP_CAP,
+                 UNMAKING_WISP_COL, unmakingIntensity: unmakingIntensity(),
+                 elderHoldMs, ELDER_HOLD_MS, unmakingWispsSpawned,
+                 unmakingParticles: particles.filter(p => p.unmaking).length,
+    /* shared  */ particles: particles.length,
+  };
+}
+function debugSetLight(patch) {
+  if (!patch) return debugLightInfo();
+  if ("elderHoldMs" in patch) elderHoldMs = +patch.elderHoldMs;
+  if ("bossPulseAt" in patch) bossPulseAt = +patch.bossPulseAt;
+  if ("rimLightCalls" in patch) rimLightCalls = +patch.rimLightCalls;
+  if ("unmakingWispsSpawned" in patch) unmakingWispsSpawned = +patch.unmakingWispsSpawned;
+  return debugLightInfo();
+}
+/* v55 PART B: the day clock, settable. `getDayT()` is derived from
+   `worldEpoch` and the wall clock, so the three lighting states this
+   version adds — dawn wash, dusk wash, full night — are otherwise only
+   reachable by waiting up to ten real minutes for the world to get there,
+   which means a coverage sweep would render exactly one of them and
+   silently pass. This shifts `worldEpoch` so `getDayT()` returns the value
+   asked for, and RETURNS the previous epoch so the caller can put the
+   world's own time back. Same shape and same reason as v24's
+   `debugSetMusicState`: it writes a field the game already writes every
+   frame, and nothing else. Pass (null, epoch) to restore. */
+function debugSetDayT(dt, restoreEpoch) {
+  const before = worldEpoch;
+  if (restoreEpoch !== undefined && restoreEpoch !== null) { worldEpoch = restoreEpoch; return before; }
+  const secs = Date.now() / 1000;
+  worldEpoch = secs - (Math.max(0, Math.min(0.9999, +dt)) * DAY_LENGTH);
+  return before;
+}
+/* The rim-light helper, reachable directly so a gate can drive a known
+   polygon through it and count the edges it decides are facing the light
+   rather than trusting that the winding maths is right. */
+function debugRimEdges(pts) {
+  const n = pts.length / 2;
+  let area = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += pts[i * 2] * pts[j * 2 + 1] - pts[j * 2] * pts[i * 2 + 1];
+  }
+  const sgn = area >= 0 ? 1 : -1;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const ex = pts[j * 2] - pts[i * 2], ey = pts[j * 2 + 1] - pts[i * 2 + 1];
+    const len = Math.hypot(ex, ey);
+    if (len < 0.01) continue;
+    const nx = (ey / len) * sgn, ny = (-ex / len) * sgn;
+    if (nx * RIM_LIGHT_DX + ny * RIM_LIGHT_DY > 0) out.push(i);
+  }
+  return out;
 }
 
 /* v24: harness hook — the playlist state is top-level `let`s, which never land

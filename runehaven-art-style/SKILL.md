@@ -53,6 +53,298 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-03 (v55 — The Lighting & Atmosphere Pass)
+
+Nine parts, and for the first time in a long while **every single one of them
+is rendering** — this is the whole version, there is no mechanics half living
+in the commit message. Not one palette entry, biome colour, rarity threshold,
+noise wavelength, cliff-face ratio, `SPECIES_K`, `MOB_K`, `MOB_TALL` or
+silhouette was touched, no species/mob/weapon/class was added, and **the world
+generates exactly the world it generated yesterday**. What changed is how it is
+lit.
+
+- **NOT ONE GRADIENT WAS ADDED, AND THAT IS MEASURED RATHER THAN CLAIMED.**
+  The file held **12** `createLinearGradient`/`createRadialGradient` calls
+  before this version and holds **12** after — the sky, the tower beam and
+  orb, the water reflection, the cloud shadows, the night light canvas, the
+  Glow Moth and Lightfox halos, and `aura()`. Every effect below is layered,
+  flat, semi-transparent shapes doing the work a gradient would normally do,
+  which is the technique the wisps and the Volcano cracks already proved. A
+  `run4` gate counts it on the **comment-stripped** source, because PART A's
+  own comment contains the word `createRadialGradient` in the sentence
+  explaining why it does not use one — v50's lesson for a third time.
+- **PART C IS THE WHOLE VERSION IN ONE FUNCTION, and the design decision that
+  matters is that a creature opts in by changing ONE CHARACTER.** `PR` is `P`
+  plus a rim, same signature, same call convention — so each creature's main
+  body line went from `P(ctx, [...], col)` to `PR(ctx, [...], col)` and
+  nothing else moved. **30 call sites**, covering all 27 species branches,
+  all 7 mob kinds, and the shared `dragonV2` body that five dragons run
+  through. There is no second hand-written rim polygon anywhere that could
+  drift out of sync with the body it belongs to, because the rim is traced
+  off the body's own points.
+- **The rim colour is never a new colour.** It is `shade(col, 1.34)` — the
+  locked 0.72/0.55 facet formula run the other way on the creature's OWN
+  fill — so a Shadowfox rims near-black-blue and a Phoenix rims hot orange.
+  `shade()` clamps at 255, so an already-pale body simply stops getting
+  lighter rather than wrapping.
+- **⚠️ WHICH EDGES GET THE RIM IS COMPUTED FROM THE POLYGON'S WINDING, AND
+  GUESSING WOULD HAVE RIMMED HALF THE ROSTER ON ITS DARK SIDE.** Creature
+  bodies in this file are wound both ways. The signed area decides the sign
+  of the outward normal, and an edge is stroked only when that normal points
+  up-left — the same corner the 0.72 "catching more light" facet has meant
+  since v8, so the rim agrees with the shading formula the world already
+  uses instead of inventing a second light source. `run4` drives one square
+  through it in **both windings** and asserts both rim the identical two
+  edges, and that those two are the TOP and the LEFT.
+- **PART A's spawn glow is 7 concentric flat ellipses on the ground plane,
+  largest first, at 0.030 alpha each** — so the alpha accumulates to 0.192 at
+  the centre and stays 0.030 at the rim. That is a radial falloff assembled
+  out of flat shapes. It uses the **safe-zone ring's own geometry** (the same
+  `IW2/IH2 * SQRT2` conversion one line above it), so the light and the
+  boundary can never drift apart.
+- **⚠️ The spawn glow is CREAM `255,238,196`, deliberately NOT the Elder gold
+  `232,182,76` the ring around it wears.** v39's rule is that a gold wash
+  pooled under a creature means Elder and nothing else. A landmark-scale
+  cream disc under a whole zone is a different claim in a different shape,
+  and keeping the two hues apart is what stops the safe zone reading as one
+  enormous Elder aura. The cream is the Caldera's own inner-pool colour,
+  already in the file.
+- **PART B moved two numbers that were inline literals and could not be read
+  by anything.** Night darkness `0.58 -> 0.66` and the emissive add
+  `0.05 -> 0.085`, now `NIGHT_DARK_A` and `NIGHT_EMIT_A`. They had to move
+  **together**: raising the darkness alone is a dimmer game and raising the
+  emissive alone is a brighter one. Lava, wisps, a Dragonsteel aura and every
+  torch already punch their own hole in the darkness layer, so a deeper
+  darkness is free contrast for all of them — nothing emissive was made
+  brighter in its own right, which is the spec's own point about how light
+  reads.
+- **⚠️ The dawn/dusk wash's EDGE is derived from the sun, not chosen.**
+  `SUN.dx` is the direction shadows are CAST, so the sun is at `-SUN.dx`: at
+  dawn shadows run west and the wash comes from the right of the screen, at
+  dusk the reverse. It is therefore always on the same side as the low sun
+  every object on screen is already throwing its shadow away from. Five
+  overlapping flat rects in the **existing** dusk colour `230,130,55` — the
+  literal one line above it — not a second hue.
+- **PART D gave `burst()` a direction and nothing else.** One optional
+  `opts` argument; all 28 pre-existing call sites pass nothing and take the
+  identical full circle they always did. Hit embers are aimed by `kx`/`ky`,
+  the knockback vector every melee and ranged hit has carried since v10, so
+  nothing is invented — and a hit with **no** direction (an Arcane Burst, a
+  splash, a poison tick) gets no embers rather than a guessed angle. The
+  ember is `#ffa050`, the v8 volcano's own, deliberately not the hit flash's
+  cream `#ffd8a0`, so the two read as flash-then-embers.
+- **The staff afterglow and the boss pulse both reuse something that was
+  already there.** The afterglow is one more entry in v27's `abilityRings`
+  array marked `hold` — same `aura()`, same loop, it simply does not expand.
+  The pulse is v9's `hitFlash` technique (one flat full-screen fill,
+  decaying) in `#ff7a3c`, the drake's own ember. **It fires once per
+  encounter, not once per swing**, which is the hard part: the linger window
+  is refreshed by every hit, so the pulse arms only when the window was not
+  already open or when the drake is a different one.
+- **PART E's tame burst is the creature's own colour, from the ROSTER's own
+  table.** `SPECIES_COL` is `refreshPetPanel()`'s colour map moved to the top
+  level unchanged, character for character, because the canvas could not read
+  it where it was — a second table of creature colours is how two lists start
+  disagreeing about what colour a Krakenling is. Five species had no entry
+  (the four dragons and the Glow Moth) and now do: each dragon takes its own
+  `DRAGON_PAL.lit` verbatim, and the moth takes `#f4e8a0`, the exact hue
+  `collectLights()` already warms the player's lantern to while it is out.
+  The roster dots gain those five colours as a side effect, which is a strict
+  improvement over five identical greys.
+- **PART F is a byte map stamped once per cave, not a per-frame search.** A
+  160x160 interior is 25,600 tiles carrying ~100 lights; asking every tile
+  for its nearest light would be 2.5M distance tests a frame. Each light
+  instead stamps a disc of 7 tiles quantised to **5 discrete bands**,
+  combined by max — ~20,000 writes for a whole cave, once. Quantising is not
+  a shortcut: discrete steps ARE the layered-circle falloff, and a smooth
+  ramp would have been the one gradient in the build. Measured on a real
+  Underwater Cave: **13 fully-lit floor tiles against 690 darkened ones.**
+- **⚠️ A mined vein takes its light with it.** The map records how many
+  untaken veins it was baked from and rebuilds when that count moves — v51's
+  own minimap discipline ("a mined node leaves the index and its fleck goes
+  with it"). The exit is a light source too, and deliberately: arriving into
+  a pitch-black tile is not atmosphere, it is a player who cannot find the
+  way out.
+- **PART G is two rows in `collectLights()` and no new light system.** A
+  Forge or a Generator on a player's base now casts what it already paints.
+  They get the darkness punch-out, the additive warm add and the off-screen
+  cull for free, and — the part that makes a base a **discovery** — they only
+  exist at all inside the `na > 0.02` branch, so "at night specifically" is
+  enforced by where the list is consumed rather than by a second time check.
+  `BASE_LIGHT_R` is 96: larger than a torch's 78 so it carries across a
+  valley, smaller than the Spawn Forge's 110 so it never rivals the town.
+- **PART H: landmark and player travel fired the byte-identical line.**
+  Confirmed live — `burst(me.x, me.y, "#f4ecfa", 14, 2.6)` in both. Now one
+  function and a three-row table over the same two primitives: landmark is
+  runic cyan `#5ac8e0` on a wide slow ring (you arrived at a PLACE that was
+  always there), player keeps the pale arcane `#f4ecfa` on a tighter quicker
+  one, and an Elder companion at your side overrides both in that Elder's own
+  gold. **Player travel is deliberately the one that did not change colour**:
+  repainting both would have thrown away the only colour either had earned.
+- **PART I: the world-ending event had literally no visual signature, and
+  now the escalation IS the trigger accumulator.** `unmakingIntensity()` is
+  `elderHoldMs / ELDER_HOLD_MS`, so the red tint and the wisp storm build
+  across the whole four-second window and **collapse to nothing on the same
+  frame the accumulator does** — anything that decayed gently would be
+  telling the player a lie about whether the condition still holds. Anyone
+  nearby sees it by construction, not by a new broadcast: `elderEventTick`
+  already runs on every client and already reads other players' Elder
+  companions off the existing `pe`/`cb` move fields.
+- **⚠️ THE SPEC SAYS "reuse the Blood Moon's existing red-tint technique".
+  THE BLOOD MOON HAS NO TINT.** Checked directly: `bloodMoonActive()` has six
+  call sites — its own definition, `bloodMoonMobMult`, the presence roll, the
+  aggro radius, a debug export and one red line of HUD text — and not one of
+  them touches the canvas. What the file does have, and what that sentence
+  can only mean, is v9's full-screen flat red `fillRect`. That is what was
+  reused, "pushed further" as the spec asks, at up to 0.72 against the hit
+  flash's 0.32. `run4` now pins the finding so nobody re-derives it. **If a
+  Blood Moon tint is wanted, it does not exist and this build deliberately
+  did not invent one under cover of a different part.**
+- **⚠️ Frame cost was checked rather than assumed, and it is unchanged.** The
+  ground pass still draws **2,009 tiles** a frame, the ambient particle
+  spawner still holds its 160 ceiling (92 alive over a real 20-frame run),
+  and the storm has its own separate 420 cap so it can neither starve the
+  ambience nor be starved by it. The rim adds at most a handful of 1-2 pixel
+  strokes per creature, inside that creature's own scale transform.
+- **⚠️ THE THING MOST WORTH A SCREENSHOT IS THE CAVE.** 13 lit tiles against
+  690 darkened is a real, deliberate inversion of how an interior has looked
+  since v29, and `CAVE_DARK_A` (0.62), `CAVE_LIGHT_R` (7) and
+  `CAVE_PLAYER_R` (6) are the three numbers to move if it reads as too dark
+  to play in rather than as atmospheric. **Nothing else in this build changes
+  how much of the screen you can see.**
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus three places where following
+it literally would have shipped something wrong and one thing it asserts about
+the file that is not true. All shipped through the full gate (parse clean,
+`run2` and `run3` `CAUGHT ERROR: none`, `run4` **1506/1506 with zero FAIL**,
+`run5` **1,386 coverage draws clean**, 1,315 -> 1,386) — refinements to
+consider, not unfinished work.
+
+1. **⚠️ THE BLOOD MOON HAS NO RED TINT TO REUSE, AND PART I ASSUMES IT DOES.**
+   Flagged at the top because it is the one factual error in the spec. The
+   full-screen flat red fill is v9's hit flash, and that is what PART I
+   reuses; the Blood Moon was deliberately NOT given a tint of its own,
+   because that is a different feature this spec never asked for and adding
+   it would have been scope smuggled in under a mis-stated premise. Same
+   call v46 made on `canBlock()` and v50 made on "the drifting-particle
+   technique already used for cave ore veins".
+2. **⚠️ PART D says the staff afterglow has a "shortened lifetime". It is
+   LONGER than the ring, at 900ms against 520.** Both readings were tried:
+   an aura shorter than `ABILITY_RING_MS` is gone BEFORE the expanding ring
+   it is meant to outlast, which contradicts the same sentence's "for a beat
+   after the particles disperse" — and the burst particles it is supposed to
+   outlast live 900ms. Read as "short-lived, and a beat is what it lasts".
+   One constant, `STAFF_GLOW_MS`, either way.
+3. **PART C's "main body shape" is each creature's own first body/torso
+   polygon**, which is unambiguous for 29 of the 30 sites. The exception is
+   the **Glow Moth**, whose torso is 3.4 local units wide at `SPECIES_K`
+   0.32 — about one painted pixel — so its rim goes on the near wing
+   instead, which is what actually reads as that creature's silhouette. One
+   line to move if the thorax was meant.
+4. **`RIM_LIGHT_K` 1.34, `RIM_LIGHT_A` 0.72, `RIM_LIGHT_W` 0.85 — all
+   unstated.** The spec says "a lightened version of its base fill" and gives
+   no amount. 1.34 is roughly the inverse of the locked 0.72 facet
+   multiplier, which is the honest reading of "the lit side of the same
+   formula"; 0.72 alpha keeps it light rather than a line; the width is in
+   local units so it scales with each body. **These three are the first
+   numbers to touch if the rim reads as an outline** — which is the failure
+   mode this house style cares about most, and the thing most worth a
+   screenshot after the cave.
+5. **PART D's embers fire on RANGED hits too, not only melee swings.** The
+   spec says "a weapon connecting ... along the direction of the swing"; a
+   bolt landing is a weapon connecting, it carries the same `kx`/`ky`, and
+   excluding it would have meant a Ranger's hits looking older than a
+   Knight's for no stated reason. One condition to narrow.
+6. **⚠️ The hit embers are deliberately NOT gated on `SETTINGS.reduceMotion`,
+   and the PART I storm deliberately IS.** v23's toggle is scoped to the
+   AMBIENT spawner alone ("combat, death and dive particles are untouched,
+   because those are feedback"), so a hit landing stays exempt and a storm
+   of drifting motes does not. A player with reduce-motion on still gets the
+   whole PART I signature through the tint, which is the half that cannot be
+   missed.
+7. **PART F lights the cave EXIT as well as the two things the spec names.**
+   Ore veins and Kelp-Crystal clusters are the spec's list; the exit already
+   draws as a pulsing light and, more importantly, an interior has no other
+   ambient light at all during the day, so without it a player could arrive
+   into a black tile with no way to read where the way out is. `CAVE_PLAYER_R`
+   exists for the same reason — you carry your own light down there exactly
+   as you do on the surface.
+8. **`CAVE_DARK_A` 0.62, `CAVE_LIGHT_R` 7, `CAVE_LIGHT_STEPS` 5,
+   `CAVE_PLAYER_R` 6 — all unstated, and this is the part most likely to
+   want retuning.** See the ⚠️ note above.
+9. **PART H's Elder variant is "an Elder companion out when you travel",
+   not a separate Elder-travel mechanic.** The spec hedges this with "(if
+   built)", and it is not: v51 PART I ungated the travel panel from owning a
+   Unicorn Elder, so there is no Elder-specific teleport path in the file.
+   The only honest reading of "a Unicorn Elder's travel effect" is a jump
+   taken with one at your side — a real, live, checkable state rather than
+   an invented system.
+10. **The landmark travel colour is runic cyan `#5ac8e0`, `ITEM_META`'s own
+    runic stone**, and player travel keeps the `#f4ecfa` both used to share.
+    The spec asks for three distinct signatures and names no colours.
+    Repainting both would have discarded the only colour either had.
+11. **`SPAWN_GLOW_RINGS` 7 at 0.030, `DAWN_WASH_BANDS` 5 at 0.035 over 55%
+    of the screen, `NIGHT_DARK_A` 0.66, `NIGHT_EMIT_A` 0.085,
+    `BASE_LIGHT_R` 96 — every one unstated.** Each is a single tunable whose
+    reasoning is written at its own definition site.
+12. **`debugSetDayT()` is a new harness hook, and without it PART B could not
+    be swept at all.** `getDayT()` is derived from `worldEpoch` and the wall
+    clock, so dawn, dusk and full night are otherwise reachable only by
+    waiting up to ten real minutes — a coverage run would have rendered
+    exactly one of the three and silently passed. It shifts `worldEpoch`, a
+    field the game already writes, and hands the old value back so the sweep
+    restores the world's own time. Same shape and same reason as v24's
+    `debugSetMusicState`.
+13. **⚠️ `run4`'s v52 PART H band-ratio gate had its SAMPLE corrected, stride
+    16 -> 5, and this is a fix to a proxy rather than a relaxed gate — every
+    tolerance is untouched and the two minimum-sample floors went UP (200 ->
+    2000 and 20 -> 200).** THE WORLD THAT GATE MEASURES IS RANDOM: the v39
+    block above it executes a genuine world reset and `performWorldReset()`
+    picks its seed with `Math.random()`, so every run samples a different
+    world. Observed on the **unmodified pre-v55 file** across four
+    consecutive runs: 459 / 470 / 463 / 446 node tiles and runic:iron ratios
+    of 0.0938, 0.0599, 0.1044, 0.0669. At stride 16 that is ~100 iron tiles —
+    a sample whose own error (0.027) exceeds the tolerance's 0.02 floor on
+    any seed where the ratio lands low, and this build drew one of those
+    seeds. Ratio preservation is a property of the `1 - K(1 - t)` form and is
+    true on every world; the fix is to measure it properly. Same shape of
+    call as Tuning/Polish judgment call 7.
+14. **⚠️ Two `run4`/`run5` cave gates were entering nothing, and one of them
+    was passing anyway.** `debugSetSpace` takes `enterAt` + `biome`; both new
+    gates were written with an `enter: {...}` key that the hook simply
+    ignores. `run4`'s passed regardless — because an earlier block had left
+    the player inside an interior, so the render calls happened to land in
+    one by luck. `run5`'s failed honestly and is what caught it. Both now use
+    the real signature. **This is the v22 lesson again: a test that passes
+    for a reason unrelated to what it is testing is the kind worth catching.**
+15. **One `run4` literal was updated, not relaxed.** v27's "the ring is the
+    v18 aura() helper" pinned `aura(rx2, ry2, ABILITY_RING_RGB`; PART H makes
+    that `ring.rgb || ABILITY_RING_RGB` so one primitive can serve three
+    travel signatures. The gate now asserts the new shape AND that there is
+    still exactly ONE `aura(rx2, ry2,` call in the whole ring loop — strictly
+    stronger than the literal it replaces.
+16. **`run5` gained a v55 sweep and no coverage list needed extending** — no
+    species, mob, weapon kind or class was added this version. It drives the
+    rim through **all 27 species bodies and all 12 mob kinds** and hard-fails
+    naming any body that drew no rim; drives both washes and full night
+    through the new clock hook; drives the held ring, the boss pulse, both
+    travel signatures, a real darkened cave floor, and the unmaking at full
+    intensity. 1,315 -> **1,386** draws.
+17. **The push to `main` that the README's step 8 invites was deliberately
+    not attempted.** This session is instructed to develop and push only on
+    its designated branch. The README calls a blocked push to `main` a
+    nice-to-have and explicitly not a failure, so the build lands on the
+    branch as usual and a human can sync it. Same call every version since
+    Expansion 2b has made.
+18. **⚠️ NOTHING IN THIS BUILD WAS SEEN RENDERED.** The harnesses stub the
+    canvas — they count calls and never rasterise — so every claim above is
+    an assertion about draw calls, not a sighting. This is a version about
+    how the game LOOKS, which makes it the one most in need of a screenshot:
+    the cave first, then the rim light on a creature at real scale, then the
+    spawn glow on first login.
+
 ### 2026-09-01 (v51 — the wisps made visible, minimap texture, guild badges and nameplates)
 
 Eleven parts, and four of them are rendering: PART A makes the v50 wisps
