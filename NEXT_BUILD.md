@@ -1,1 +1,1 @@
-Build exactly per "Confirmed, locked spec for a future version — The Lighting & Atmosphere Pass" in README.md.
+Build exactly per "Confirmed, locked spec for the next build — Dungeons & the Basilisk" in README.md.
