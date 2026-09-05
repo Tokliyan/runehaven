@@ -432,3 +432,65 @@ throughout), confirm frame cost stays within the existing per-frame
 particle budget rather than silently regressing performance the same
 way the feature-list eager-load issue once did.
 
+
+---
+
+## Confirmed, locked spec for the next build (Dungeons & the Basilisk)
+
+The last real bible system that doesn't exist yet, and the only thing
+blocking Basilisk (Deep Dungeons, dangerous, fight to tame). Scoped
+deliberately to one real, solid dungeon type rather than several at
+once — every other major system this project has built (caves, bases,
+guilds) shipped as one working version first, expanded later. Confirmed
+live: `RUINS` is a real, populated array (the bible's own entry point —
+"Ruins... dungeon entrances"), `demon_knight` already has real stats
+(`hp:280, dmg:26`) and a dragonsteel drop, `enterInterior()` is the
+proven, reusable space-transition technique cave interiors already use.
+
+**PART A — a dungeon entrance at a real subset of Ruins.** Not every
+Ruin becomes a dungeon — propose roughly 1 in 4 of the real, placed
+`RUINS` entries deterministically (seeded, so it's consistent across
+sessions, not re-rolled). A visibly distinct entrance marker
+distinguishes a dungeon Ruin from an ordinary one before the player
+commits to entering, reusing the existing Ruin art with a real, added
+detail rather than a whole new structure.
+
+**PART B — the dungeon interior, reusing the cave technique exactly.**
+Same underlying pattern as `enterInterior()`/cave generation — its own
+grid, its own space, flood-fill connectivity guaranteed the same way
+caves already prove it. Visually and structurally distinct from a cave
+(stone corridors and worked architecture, not natural rock), matching
+the bible's own framing of Dungeons as separate from Underground Caves.
+
+**PART C — Demon Knights live here too, not exclusively at the
+Volcano.** The existing Volcano placement (guarding the Elder Drake)
+stays exactly as it is — this adds dungeon interiors as a second, real
+place they exist, matching the bible's actual "Deep dungeons" placement
+that the Volcano exception always described as deliberate, not
+exclusive.
+
+**PART D — Basilisk, built for real.** Confirmed absent from the game
+entirely. Bible: "Deep dungeons, dangerous, fight to tame," Rare tier.
+New `WILD_SPECIES` entry, tameable via the same fight-to-tame pattern
+Bear/Boar/Griffin already use, placed only inside dungeon interiors —
+this is the one creature in the entire pet roster with nowhere to exist
+until this version ships. New art, following the locked style guide.
+
+**PART E — a real locked-vault reward, not just loot on the floor.**
+Each dungeon has one vault room at its deepest point, locked until the
+player defeats that dungeon's own Demon Knight and takes a key it
+drops specifically on death — guarantees a real fight happens before
+the reward, not a dash past every threat straight to the prize. Vault
+contents: guaranteed dragonsteel, matching the bible's own dragonsteel
+acquisition list, which already includes "Killing a Demon Knight in a
+dungeon" as a real, named source that currently has nowhere to happen.
+
+**Proof gates:** standard gauntlet plus confirm dungeon connectivity
+holds with zero sealed-off tiles across a real multi-seed sample,
+confirm Basilisk spawns only inside dungeon interiors and nowhere else,
+confirm a vault cannot be opened without the real key drop from that
+specific dungeon's Demon Knight, confirm the Volcano's own Demon
+Knights are completely unaffected by this version.
+
+**After this version ships successfully, do not start any further
+version automatically** — wait for `NEXT_BUILD.md` to be updated.
