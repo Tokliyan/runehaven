@@ -160,7 +160,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                       // v39: the Elder trio. All three are drawn through the
                       // same chain — the Golem Elder as a wild mob AND as a
                       // companion, the other two as companions.
-                      "golem_elder", "dragon_elder", "unicorn_elder"];
+                      "golem_elder", "dragon_elder", "unicorn_elder",
+                      // Dungeons PART D: the Basilisk, the one genuinely new
+                      // body this version. Its hostile form renders through
+                      // this same chain (tameable:true), so it is in MOBK too.
+                      // duskfox_elder joins it here: it shipped in
+                      // Mount/Bazaar Polish and was never added to this list.
+                      "basilisk", "duskfox_elder"];
     const MOBK = ["goblin", "bandit", "troll", "boar", "bear", "griffin", "phoenix",
                   "dark_wraith",                                          // v18
                   "sea_serpent",                                          // v21
@@ -172,7 +178,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                   // v39: the Golem Elder's hostile form is tameable:true, so
                   // it renders through drawSpecies exactly as the v14 beasts
                   // do — sweep every mob state over that path too.
-                  "golem_elder"];
+                  "golem_elder",
+                  // Dungeons PART D/C: the Basilisk's hostile form, and the
+                  // Demon Knight — which has been in the game since v48 and
+                  // was never added to this list, and which this version puts
+                  // in a second place.
+                  "basilisk", "demon_knight"];
     let n = 0;
     if (window.drawUnit) {
       for (const cls of CLS) {
@@ -413,6 +424,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         window.drawRuinPiece({ k, x: base.x + 0.6, y: base.y + 0.4, hp: 22, z: 28 });
         n += 1;
       }
+      /* Dungeons PART A: the marker branch. An entrance piece only draws its
+         steps, keystone and wardstones when the cluster it belongs to is a
+         real dungeon, so the plain sweep above never reaches it. */
+      window.drawRuinPiece({ k: 'entrance', x: base.x + 0.6, y: base.y + 0.4, dun: true,
+                             rx: base.x, ry: base.y });
+      n += 1;
       // every kind the live world actually built, at its real coordinates
       for (const p of (info5.ruinPieceSpots || [])) {
         window.drawRuinPiece({ k: p.k, x: p.x, y: p.y, hp: 22, z: 28 });
@@ -799,6 +816,67 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       for (let f = 0; f < 3; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
       window.debugSetGuild({ granted: grantedBefore });
       console.log('guild nameplates rendered — five hashed guilds plus the admin-granted sixth');
+    }
+
+    /* ============ Dungeons sweep ======================================
+       A whole space with its own ground pass, its own tile kinds and two
+       creatures that live nowhere else — and the 5-frame boot stands on the
+       surface, so not one line of it runs there. Walk into a real dungeon
+       through its real entrance piece, pump frames (dungeon stone, masonry
+       walls, the shut vault door and its iron band, the ember flecks, the
+       Demon Knight and the Basilisk), then take the key, open the vault and
+       pump again for the open door and the hoard. Hard-fails if the world
+       built no dungeon, or if the vault never drew. */
+    if (window.debugSetSpace && window.debugSpaceInfo && window.debugWorldInfo) {
+      const wiD = window.debugWorldInfo();
+      const dEnts = (wiD.ruinPieceSpots || []).filter(p => p.k === 'entrance' && p.dun);
+      const dRuins = (wiD.RUINS || []).filter(r => r.dun);
+      if (!dEnts.length || !dRuins.length) {
+        console.log('COVERAGE GAP: this seed built no dungeon at all');
+        process.exit(1);
+      }
+      const e0 = dEnts[0];
+      const r0 = dRuins.find(r => Math.hypot(r.x - e0.x, r.y - e0.y) < 4) || dRuins[0];
+      window.debugSetSpace({ enterDungeonAt: { x: e0.x, y: e0.y, dun: true, rx: r0.x, ry: r0.y } });
+      const sD = window.debugSpaceInfo();
+      if (!sD.inInterior || !sD.vault) {
+        console.log('COVERAGE GAP: the dungeon or its vault did not generate');
+        process.exit(1);
+      }
+      /* at the arrival corner, then at the vault door, so both ends of the
+         interior get a real camera and both door states get drawn */
+      for (let f = 700; f < 706; f++) {
+        const q = rafQ; rafQ = [];
+        for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+        n += 1;
+      }
+      window.debugSetSpace({ pos: [sD.vault.outside.x + 0.5, sD.vault.outside.y + 0.5] });
+      for (let f = 706; f < 712; f++) {
+        const q = rafQ; rafQ = [];
+        for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+        n += 1;
+      }
+      window.debugSetSpace({ giveKey: sD.space });
+      window.debugSetSpace({ openVault: true });
+      if (!window.debugSpaceInfo().vault.open) {
+        console.log('COVERAGE GAP: the vault would not open with its own key');
+        process.exit(1);
+      }
+      window.debugSetSpace({ pos: [sD.vault.x, sD.vault.y] });
+      for (let f = 712; f < 720; f++) {
+        const q = rafQ; rafQ = [];
+        for (const cb of q) { try { cb(f * 16.6); } catch (e) { if (!caught) caught = e; } }
+        n += 1;
+      }
+      /* the hoard, drawn directly as well, at both ends of its pulse */
+      if (window.drawVaultHoard) {
+        for (const tt of [0, 350, 700, 1050]) {
+          window.drawVaultHoard({ x: sD.vault.x, y: sD.vault.y, type: 'dragonsteel', vault: true }, tt);
+          n += 1;
+        }
+      }
+      window.debugSetSpace({ clearKeys: true, exit: true });
+      console.log('dungeon swept — stone corridors, a shut vault door, the key, the open vault and its hoard');
     }
 
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
