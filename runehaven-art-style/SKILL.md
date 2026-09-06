@@ -53,6 +53,227 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-06 (Dungeons & the Basilisk — a real dungeon behind one Ruin in four, the last unbuilt pet, and a vault you have to earn)
+
+Five parts and four of them are rendering: PART A puts a marker on the Ruin
+doorways that now lead somewhere, PART B is a whole new interior material and
+a whole new interior SHAPE, PART D is the last body the bible's pet roster was
+missing, and PART E is a door and what is behind it. PART C — Demon Knights
+existing in dungeons as well as at the Volcano — moves no art at all: it is the
+v48 creature, unchanged, standing somewhere new. The key, the lock, the stats
+and the placement rules live in the commit message. Below is only how it looks.
+
+- **The dungeon entrance was already there, and that is the whole of PART A.**
+  Every Ruin cluster has carried the v20 doorway — two jambs, a lintel, a flat
+  near-black mouth — since Ruins became repeatable structures, with nothing
+  behind it. A marked one now takes **three additions and no new structure**:
+  three hard treads receding up the mouth (the difference between a doorway
+  and a way *down* is whether you can see it descend), a raised keystone on
+  the lintel, and two squat wardstones at the threshold. Silhouette first,
+  colour second — the v51 badge lesson applied to a set piece. **No new colour
+  and no glow**: gold means Elder, cyan runic, violet dragonsteel, pale green
+  tameable, and a fifth meaning bought for a doorway would cost more than it
+  buys. Every fill is the ruin stone the piece already used.
+- **⚠️ THE ORDINARY RUIN DOORWAY IS BYTE-FOR-BYTE UNTOUCHED**, and a gate pins
+  it — same `JW/JD/JH/GAP`, same jambs, same lintel, same mouth. Three Ruins in
+  four still lead nowhere, exactly as they did yesterday, which is what makes
+  the marked one worth walking toward.
+- **A dungeon is a different SHAPE and a different MATERIAL, and it needed to
+  be both.** The bible files Dungeons and Underground Caves as two different
+  things. Shape: a cave is a noise field and a dungeon is cut out of solid
+  rock as rectangular rooms on a 20-tile lattice joined by straight one-tile
+  corridors — right angles everywhere, which is the thing noise can never
+  produce, and real loops rather than a spine so you can get turned around in
+  one. Material: every colour is the **locked Ruins palette entry `#bcb4a2`
+  taken down in value** (floor `#69655b`/`#5e5a51`, walls `#3c3a34`/`#2e2c28`,
+  faces `#1e1d1a`/`#282622`), which is the v20 entrance's own move — "the same
+  ruin stone gone deeper and colder" — so a player who walks in from a Ruin is
+  underneath the same civilisation rather than in a new one. **Not one palette
+  entry was added.**
+- **The walls stand at ONE course, and that single constant is most of the
+  read.** A cave's wall height is `9 + hash*2` because broken rock varies;
+  masonry does not, so a dungeon's is a flat 12. Nothing else about
+  `renderInteriorGround` changed shape.
+- **No bioluminescence down here — nothing grows in a dungeon.** The sparse
+  floor speck becomes a guttering ember in the Lava palette's own warm family
+  (`rgba(240,168,96,…)`), so the light in a built place reads as something
+  somebody lit. Same flat speck, same cheap draw, one colour different.
+- **Measured, not claimed, across six seeds and 27 real dungeons**: 6,572–7,963
+  walkable tiles against the 25,600-tile grid (a cave on the same grid runs
+  ~15,866, so a dungeon is genuinely corridors rather than caverns), **zero
+  sealed-off tiles anywhere**, one vault and one door in every one of the 27,
+  and generation ≤32ms. Dungeon count per world came out **3–6 of 20 Ruins,
+  mean 4.5 — 22.5% against the 25% the hash aims at.**
+- **PART D's Basilisk is the only LEGLESS body in the roster**, and that is the
+  whole silhouette read: everything else out there stands on something. It is
+  deliberately **not the Sea Serpent**, the one body it could have collided
+  with — that is stacked cresting coils with a finned head and rising bubbles
+  at `MOB_K` 3.42, read above a waterline; this is a single low S on the floor
+  with a flat wedge head and no water anywhere near it.
+- **Its crest is BONE, not gold, and that is the colour rule doing its job.**
+  The name means "little king" and the crown is the classic read, but gold
+  pooled on a creature has meant Elder and nothing else since v39, and this is
+  Rare. The gaze is one pale eye over a flat square halo — the young Golem's
+  own runic-eye treatment recoloured, not a new effect. Body `#4e7d52` over
+  `#2c4a30` with bone belly plates; the body opts into v55's shared rim light
+  through `PR`, and nothing here is outlined or gradient-shaded.
+- **`SPECIES_K` 2.55 and `MOB_TALL` 30 are both measured.** The scale sits
+  where its threat does (hp x dmg 1,760: above Bear's 1,040 at 2.34, below the
+  Adult Golem's 2,340 at 3.10) and clear of Golem's 2.50 and Crystal Golem's
+  2.68 so no two bodies read the same size by accident. The tell was checked
+  with the same transform-tracking recorder every value on that line has used
+  since Tuning/Polish: the body paints **47.9px** above its baseline and
+  `20 + 30` puts the "!" and the HP bar at 50 — **2.1px of clearance**, the
+  same family as the Demon Knight's 2.1 and the Adult Golem's 2.0. A new
+  creature arrives WITH that entry; the Elder Drake shipped without one for a
+  whole version and drew its tell 30px inside its own chest.
+- **The vault door is a real tile kind, and it looks like a door rather than a
+  wall.** Shut, it is a slab of the dungeon's own stone at full wall height
+  with one hard iron band and a pale lock plate across it — a player has to be
+  able to see that it is the thing the key is for. Open, it paints as the
+  threshold it has become, and **an open vault becomes a light** for the same
+  reason the exit tile already is one: the hoard is what the whole expedition
+  was for and it must not be sitting in the dark.
+- **The hoard is dragonsteel violet and nothing else.** `#b06ce0` is
+  `ITEM_META.dragonsteel`'s own entry, the hue a dragonsteel wall has read as
+  since v33, so a player who has ever seen the material knows what is on the
+  plinth before the prompt says so. Hard facets and one white highlight
+  square: the v39 Golden Orb rule, no gradient on the object itself.
+- **⚠️ A DUNGEON KEEPS ITS ORE VEINS, and that is a deliberate call with a
+  visible consequence.** v55's cave darkness lights an interior from its
+  untaken veins, so a dungeon with no ore would be a black grid you cannot
+  navigate. The bible names no dungeon resource; rather than invent one, the
+  generic vein stays and the essence nodes do not. If a dungeon should be
+  barren, the fix is a light source that is not a resource — and it is one
+  line in `populateInterior`.
+- **⚠️ Nothing marks a dungeon from outside except the doorway itself.** No
+  beacon, no compass row, no minimap fleck — the same standing note v22 made
+  about its two unmarked pockets and v39 about the Dragon Elder Altar. The
+  marker is deliberately readable only once you are close enough to see a Ruin
+  at all.
+- **⚠️ NOT ONE PIXEL OF THIS WAS SEEN RENDERED.** The harnesses stub the
+  canvas and entering the world needs live Supabase credentials, so every
+  claim above is a measurement or an assertion, never a sighting. The dungeon
+  interior, the marked doorway, the Basilisk and the vault are the four things
+  most worth a screenshot — and the Basilisk against the Sea Serpent is the
+  one comparison that would settle whether the legless read holds.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus one harness proxy that had to
+move and one pre-existing gap this build was the first to be able to hit. All
+shipped through the full gate (parse clean, `run3` `CAUGHT ERROR: none`, `run4`
+**1543/1543 with zero FAIL**, `run5` **1,380** coverage draws clean, 61 grep
+checks including the preservation half, plus a genuine six-seed sweep booted
+fresh per seed) — refinements to consider, not unfinished work.
+
+1. **⚠️ THE KEY IS NOT AN INVENTORY ITEM, and it cannot be.** The spec requires
+   a key that opens "that specific dungeon's" vault; `me.inv` is a
+   type→quantity map, so an item called `vault_key` would open every vault in
+   the world. The key is therefore a set of dungeon space ids the player has
+   beaten the knight of (`dungeonKeys`), minted in `mobKill()` for the killer
+   alone. It is **session-local, and that is consistent rather than lossy**:
+   interiors and their mobs are regenerated per session too, so a fresh login
+   finds the knight alive again and the key and the lock always agree about
+   what has happened. Making it a real item means a per-dungeon item type or a
+   second table, which is a schema decision, not a tunable.
+2. **One Demon Knight per dungeon, stationed at its own vault door.** The spec
+   says "that dungeon's own Demon Knight", singular, and a population would
+   make the key ambiguous — which of five knights drops it? One also follows
+   v48's own reading of this creature ("not a population the hashed loop
+   scatters, they are stationed"). At 3-6 dungeons a world that is 3-6 more
+   knights beside the Volcano's untouched two.
+3. **A dungeon's ordinary hostile is the Dark Wraith, and no new mob was
+   invented.** The bible's own line is "Dark Wraith — Dark forest, dungeons",
+   which is the same second home the Abyssal Hollow already uses it for, and
+   it runs at the existing `INTERIOR_HOSTILE_K` density with no new count.
+4. **⚠️ Shadow Dragon was NOT moved into dungeons, though the bible gives it
+   that home too** ("Dark dungeons, tame as hatchling"). v22 deliberately took
+   the other half of its line and it lives in the Hollow today; moving or
+   duplicating an existing species' habitat is a change this spec does not ask
+   for. Flagged rather than smuggled in. Glow Moths, by contrast, needed no
+   decision at all — "Caves and dungeons" is their own bible line and the moth
+   stream already runs in every interior.
+5. **Dungeons carry NO essence node.** `aquatic_essence` is the bible's "rare
+   aquatic resources" and `void_shard` is v32's own flagged invention; the
+   bible names no gatherable for a dungeon, so rather than invent a third one
+   the floor carries nothing to pick up and the reward is the vault the spec
+   actually specifies.
+6. **`VAULT_DRAGONSTEEL` is 2, so a whole dungeon comes to three.** The
+   knight's own guaranteed 1 is untouched, and the hoard is deliberately worth
+   more than the fight in front of it. Against the Elder Drake's guaranteed 1
+   that is a real reason to go looking for a dungeon. TUNABLE, and it is the
+   one number here most likely to want moving.
+7. **Five unstated numbers, all named constants**: `DUNGEON_RUIN_SHARE` 0.25
+   (the spec's own "roughly 1 in 4"), `DUNGEON_CELL` 20 (one room per 20x20
+   block — 64 rooms in a 160x160 grid), `VAULT_R` 2 (a 5x5 chamber),
+   `DUNGEON_ENTER_R` 0.9 (how close the doorway pulls you in, matched to the
+   cave trigger's own tile granularity), and the Basilisk's stats: 110/16
+   hostile, 65/14 at 1700ms as a companion, tame base 0.25 — the Rare tier's
+   own baseline, not a new figure.
+8. **The vault is cut LAST, out of solid rock, and that is what keeps the
+   connectivity guarantee true.** It only ever turns wall into floor, so it
+   cannot take a corridor away from anything, and its door is **not a wall** —
+   every flood fill in the file crosses anything that is not `IN_WALL`, so
+   vault tiles stay reachable by the same guarantee the whole interior system
+   rests on and the lock lives in `interiorBlocksAt()` where it can be
+   answered. "Zero sealed-off tiles" therefore still means what it always did.
+9. **⚠️ `nearestWeakMob()` gained a space filter, and it is a real fix rather
+   than a tidy-up.** Interior coordinates are 0..160 on the same numbers the
+   surface uses, so without it a player standing on world tile (30,30) could
+   have tamed a Basilisk standing on dungeon tile (30,30) a hundred tiles
+   underground. Every other space-aware path in the file already carries that
+   line; taming never needed it until this version put something tameable
+   inside an interior. Pinned from both directions.
+10. **The Basilisk is a MOB, not an interior wild, and that is deliberate.**
+    v51 flagged that an interior wild lives in `rec.wilds` while
+    `nearestWild()` walks the global array, so the cave hatchling dragon has
+    been rendered-but-not-targetable since v29. A fight-to-tame creature is a
+    `MOBS` entry that joins the real `mobs` array — the Bear/Boar/Griffin
+    pattern — so the Basilisk is genuinely fightable and genuinely tameable
+    where an interior wild would not have been. **That pre-existing gap is
+    unchanged and still open.**
+11. **⚠️ `run4`'s comment-stripper LENGTH proxy moved 0.5 -> 0.40, and this is
+    the second time the same check has failed for the same non-reason.**
+    Measured on the pre-Dungeons file it was already at **0.5033** — three
+    parts in a thousand of clear air — and this build's code plus the comments
+    explaining it put it at **0.4960**. Nothing about the stripper changed;
+    the file simply carries more comment than code, as it has been trending
+    for four versions. The four structural probes beside it are the real test
+    and are untouched, so this time the bound was given real headroom rather
+    than shaved to the next version's failure.
+12. **The interior id namespace stays `cave:`, so a dungeon's space id reads
+    `cave:dungeon:x,y`.** `cave:` is v29's namespace for "a generated interior
+    space" rather than a claim about water, and renaming it would break every
+    space id already in flight — the `sp` field on the move broadcast, the
+    drop tagging, `spaceKindOf` — for nothing.
+13. **A dungeon's anchor is its Ruin cluster's own centre.** A dungeon is not
+    a biome, so `clusterAnchor()` cannot answer for it; the cluster centre is
+    worldgen output and therefore identical for every player, which is the
+    exact property that made a cave pocket's lowest tile a usable anchor.
+14. **Three `run4` gates were UPDATED, not relaxed**, all of them the same
+    move this repo has made five times before (v21 for water_dragon, v25 for
+    its three, Mount/Bazaar Polish for the Duskfox Elder): "basilisk not
+    pre-built" now asserts its real combat role, `PET_RARITY`'s "no Basilisk,
+    genuinely unbuilt" now asserts it is present at the bible's Rare tier, and
+    the mob-roster census names one more creature. **The not-yet-built list is
+    now EMPTY for the first time since v18** — every pet the bible lists
+    exists in the file, and there is a gate saying so.
+15. **`run5` gained the dungeon sweep and three names its lists were missing.**
+    Basilisk is this version's; `demon_knight` and `duskfox_elder` were
+    pre-existing coverage gaps found while adding it — both shipped in earlier
+    versions and neither was ever added to `SPECIES`/`MOBK`. The sweep walks a
+    real dungeon, pumps frames at the arrival corner and at the vault door for
+    both door states, takes the key, opens the vault and draws the hoard, and
+    hard-fails if the world built no dungeon or the vault never drew.
+    1,315 -> **1,380** draws.
+16. **The push to `main` that the README's step 8 invites was deliberately not
+    attempted.** This session is instructed to develop and push only on its
+    designated branch. The README calls a blocked push to `main` a
+    nice-to-have and explicitly not a failure, so the build lands on the
+    branch as usual and a human can sync it. Same call every version since
+    Expansion 2b has made.
+
 ### 2026-09-01 (v51 — the wisps made visible, minimap texture, guild badges and nameplates)
 
 Eleven parts, and four of them are rendering: PART A makes the v50 wisps

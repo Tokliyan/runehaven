@@ -1214,6 +1214,11 @@ let featureIndex = new Map();        // "tx,ty" -> feature (for finite mining)
 let minedNodes = new Set();
 let decor = [];                      // non-gatherable clutter (bushes, flowers, pebbles, fences)
 let ruinPieces = [];                 // hand-composed ancient ruin set pieces
+/* Dungeons PART A: the subset of those set pieces that are real doorways —
+   filtered once per feature rebuild so the movement tick that tests them
+   costs one hypot per dungeon in the world rather than a sweep of every
+   ruin stone in it. Rebuilt beside ruinPieces itself, never separately. */
+let dungeonEntrances = [];
 let critters = [];                   // ambient rabbits (v8)
 let TORCHES = [];                    // torch post positions (v8, also light sources)
 let DOCK = null;                     // jetty anchor + direction (v8)
@@ -1741,7 +1746,7 @@ function debugWorldInfo() {
               was decided by, so run4 can prove both that at least one cluster
               qualifies and that Crystal Golem lands only on tagged ones. */
            MOUNTAIN_RUIN_ELEV,
-           RUINS: RUINS.map(r => ({ x: r.x, y: r.y, mtn: !!r.mtn })),
+           RUINS: RUINS.map(r => ({ x: r.x, y: r.y, mtn: !!r.mtn, dun: !!r.dun })),
            /* v25 PART C: the roster and the feeding constants — myPets is a
               top-level `let`, so the rampage path is otherwise unobservable. */
            SALAMANDER_STARVE_H, SALAMANDER_WARN_HAPPY,
@@ -1763,7 +1768,7 @@ function debugWorldInfo() {
              const f = featureAtTile(r.x, r.y - 1);
              return !!f && f.type === "runic";
            }).length,
-           ruinPieceSpots: ruinPieces.map(p => ({ k: p.k, x: p.x, y: p.y })),
+           ruinPieceSpots: ruinPieces.map(p => ({ k: p.k, x: p.x, y: p.y, dun: !!p.dun })),
            /* v21: the dive mechanic's live state and its constants. `me` is a
               top-level `let` like every other one of these, so a harness has
               no other way to see the breath values it has to prove. Copy. */
@@ -2367,7 +2372,20 @@ function debugSpaceInfo() {
   return {
     space: (me && me.space) || "main",
     inInterior: inInterior(),
-    INTERIOR_N, IN_WALL, IN_FLOOR, IN_EXIT,
+    INTERIOR_N, IN_WALL, IN_FLOOR, IN_EXIT, IN_VDOOR,
+    /* Dungeons PARTS B/E: the vault, its door and the keys this player
+       holds are all top-level state a harness has no other way to see —
+       same copy-out shape as `nodes` and `kelp` below, and for the identical
+       reason: an interior's contents are invisible from outside, so "one
+       vault per dungeon", "the door is shut without the key" and "the key
+       came from THAT dungeon's knight" would all have to be trusted rather
+       than shown. */
+    vault: rec && rec.vault ? { x: rec.vault.x, y: rec.vault.y, cx: rec.vault.cx, cy: rec.vault.cy,
+                                r: rec.vault.r, door: { ...rec.vault.door },
+                                outside: { ...rec.vault.outside }, open: !!rec.vault.open } : null,
+    dungeonKeys: Array.from(dungeonKeys),
+    haveKeyHere: haveVaultKey((me && me.space) || "main"),
+    nearVaultDoor: !!nearVaultDoor(),
     playerPos: me ? { x: me.x, y: me.y } : null,
     surfaceReturn: (me && me.surfaceReturn) ? { ...me.surfaceReturn } : null,
     cachedSpaces: Array.from(interiorCache.keys()),
@@ -2409,6 +2427,17 @@ function debugSetSpace(patch) {
     enterInterior(patch.enterAt[0], patch.enterAt[1],
                   "biome" in patch ? patch.biome : B.UWCAVE);
   }
+  /* Dungeons PART B: the dungeon's own door, driven exactly as the cave's is
+     — the piece is what a walking player actually touches, so the hook takes
+     one and honours the same precondition (you are standing on it). */
+  if ("enterDungeonAt" in patch) {
+    const de = patch.enterDungeonAt;
+    me.x = de.x; me.y = de.y;
+    enterDungeon(de);
+  }
+  if ("openVault" in patch) tryOpenVault();
+  if ("giveKey" in patch) dungeonKeys.add(patch.giveKey);
+  if ("clearKeys" in patch) dungeonKeys = new Set();
   if ("exit" in patch) exitInterior();
   if ("clearCache" in patch) interiorCache.clear();
   if ("pos" in patch) { me.x = patch.pos[0]; me.y = patch.pos[1]; }
@@ -2664,6 +2693,42 @@ const MOBS = {
        TUNABLE, the same shape the Elder Drake's second row is. */
     loot: [{ type: "dragonsteel", qty: 1, chance: 1.0 },
            { type: "runic_stone", qty: 2, chance: 0.7 }] },
+  /* ============ Dungeons PART D — THE BASILISK =======================
+     Bible, verbatim, from its own Rare row of the pet rarity table: "Basilisk
+     — Deep dungeons, dangerous, fight to tame". Confirmed before a line was
+     written: the creature existed nowhere in this file, in any form, and the
+     Mob Rarity build's own note says why — "it needs Dungeons, and it is
+     genuinely unbuilt". It is the one creature in the entire pet roster with
+     nowhere to exist until this version ships.
+
+     Every word of that line is a rule here and nothing is added to it:
+
+       "fight to tame" — tameable:true, which is the v14 shape a seventh
+         time (Boar, Bear, Griffin, Phoenix, Salamander King, Golem Elder)
+         and is also what routes drawMob through drawSpecies to its own art
+         rather than the humanoid chain. Its WILD_SPECIES entry carries the
+         tame chance and the tamed follower form, exactly as those six do.
+       "deep dungeons" — biomes:[] AND count:0, which is the Salamander
+         King's own pattern: the surface spawn loop cannot reach it at
+         either gate, and populateInterior() is the only line in the file
+         that ever creates one. Its daily cap lives on the WILD_SPECIES
+         entry instead, the same way that creature's does.
+       "dangerous" — hp x dmg = 1,760 sits above every other fight-to-tame
+         beast (Bear 1,040, Phoenix 825) and below the Adult Golem's 2,340,
+         so the file's "size sorts exactly as threat does" rule holds with
+         one more creature in it. Rare tier, in a dungeon, behind a Demon
+         Knight: harder than anything you tame in the open world and
+         nowhere near the thing standing outside its vault.
+
+     hp and dmg are designed TUNABLES sized against that ladder; atkRange,
+     cooldown, windup, aggro/leash and moveSpeed are tunables matched to the
+     Adult Golem's shape with a faster body, and the loot is existing
+     materials at an ordinary rate — the bible names no drop for a creature
+     it files as a pet, and taming forfeits loot anyway. */
+  basilisk: { name: "Basilisk", biomes: [], hp: 110, dmg: 16, atkRange: 1.7,
+    atkCooldownMs: 1700, windupMs: 650, aggroRadius: 7, leashRadius: 13,
+    moveSpeed: 1.75, count: 0, tameable: true,
+    loot: [{ type: "stone", qty: 2, chance: 0.7 }, { type: "runic_stone", qty: 1, chance: 0.5 }] },
   /* v25 PART C: the rampaged Salamander King. Bible — "must be fed and kept
      happy or it will rampage and return to the caldera" — so this is NOT an
      ambient worldgen spawn: count is 0 on purpose, and the ONLY thing that
@@ -2992,6 +3057,24 @@ const WILD_SPECIES = {
      same Epic baseline. The feeding half of that sentence is the real new
      mechanic this version — see salamanderHappiness() and salamanderRampage()
      further down. count is a designed tunable, matched to the dragons'. */
+  /* ============ Dungeons PART D — THE BASILISK'S PET HALF =============
+     The tame chance and the tamed follower form, beside the hostile form in
+     MOBS. base 0.25 is the Rare-tier baseline every other Rare pet in this
+     file already uses (Unicorn, Crystal Golem and all four dragons) — not a
+     new number. fightToTame:true is the Bear/Boar/Griffin flag, which is
+     what the bible's "fight to tame" means in this file.
+
+     `count` here is a CAP, not a density, and it is the water_dragon /
+     shadow_dragon precedent exactly: nothing in the spawn loop reads it,
+     because biomes:[] keeps the loop away, and populateInterior() places one
+     per dungeon. Five is roughly what a world holds — RUIN_COUNT 20 at
+     DUNGEON_RUIN_SHARE 0.25 — so the daily cap reads as "the whole world's
+     worth, and then it restocks tomorrow", which is what speciesDailyCap()
+     has meant since Mob Rarity. TUNABLE.
+
+     Deliberately NOT on the mountable list: the bible's MOUNTABLE PETS line
+     names nine species and this is not one of them. */
+  basilisk:        { name: "Basilisk",        base: 0.25, flier: false, count: 5, biomes: [], fightToTame: true, bloodFavored: false, shunnedByBlood: false },
   crystal_golem:   { name: "Crystal Golem",   base: 0.25, flier: false, count: 35, biomes: [B.RUINB],   mountainRuinOnly: true, bloodFavored: false, shunnedByBlood: false },
   krakenling:      { name: "Krakenling",      base: 0.20, flier: false, count: 4, biomes: [B.ABYSSAL], dayCycle: 10, presenceRoll: 0.55, bloodFavored: false, shunnedByBlood: false },
   salamander_king: { name: "Salamander King", base: 0.20, flier: false, count: 3, biomes: [B.CALDERA], bloodFavored: false, shunnedByBlood: false },
@@ -3075,9 +3158,9 @@ const WILD_SPECIES = {
        ("dragons, Crystal Golem, and above" = rare / epic / elder)
      - PART C, for how much each pet's silhouette grows
 
-   Basilisk is deliberately absent: the bible lists it as Rare, it needs
-   Dungeons, and it is genuinely unbuilt — an entry here for a species that
-   does not exist would be the first invented thing in this table.
+   Dungeons PART D: Basilisk is no longer absent. This comment used to read
+   "it needs Dungeons, and it is genuinely unbuilt" — Dungeons are built, the
+   creature is built, and it takes the bible's own Rare tier below.
    Mount/Bazaar Polish PART D: the Duskfox Elder is no longer absent — it
    SHIPPED this version, so it takes the tier the bible actually gives it.
    "admin" is a transcription like every other value here: the bible's rarity
@@ -3093,6 +3176,13 @@ const PET_RARITY = {
   unicorn: "rare", crystal_golem: "rare", phoenix: "rare",
   water_dragon: "rare", fire_dragon: "rare", storm_dragon: "rare",
   shadow_dragon: "rare",
+  /* Dungeons PART D: the Basilisk is no longer absent — it SHIPPED this
+     version, so it takes the tier the bible actually gives it, under that
+     table's own "Rare" heading. A transcription like every other value here,
+     and the same move v21 made for water_dragon, v25 for its three and
+     Mount/Bazaar Polish for the Duskfox Elder: a species leaves the
+     not-yet-built list on the version that builds it. */
+  basilisk: "rare",
   shadowfox: "epic", lightfox: "epic", krakenling: "epic",
   salamander_king: "epic",
   duskfox_elder: "admin",
@@ -3417,6 +3507,12 @@ const PET_COMBAT = {
      variant it is (more HP and damage than Golem's 60/5, still the longest
      cooldown of the three); the two Epics are fast glass by comparison. */
   crystal_golem:   { hp: 70, dmg: 9,  cdMs: 2200, pvp: true },
+  /* Dungeons PART D — the Basilisk as a companion. The bible gives it no
+     numbers, so these are TUNABLES read against its own tier: Rare, so
+     PvP-capable on Unicorn's gating, and sitting between the dragons'
+     55/12 and Crystal Golem's 70/9 — the hardest-won Rare companion in the
+     game hits hardest, and is not the wall the golem is. */
+  basilisk:        { hp: 65, dmg: 14, cdMs: 1700, pvp: true },
   krakenling:      { hp: 60, dmg: 12, cdMs: 1800, pvp: true },
   salamander_king: { hp: 75, dmg: 13, cdMs: 1800, pvp: true },
   /* v39 — the Elder trio. The bible gives them no numbers either, so these
@@ -3723,6 +3819,20 @@ const MOB_SPAWN_MIN = 700;    // Expansion 4: 350 * 2 — hostile mobs keep furt
    nowhere near demanding snow (the placeable band stops at 0.84, PEAK
    starts at 0.86). Still the tunable this comment always said it was. */
 const MOUNTAIN_RUIN_ELEV = 0.66;
+/* ============ Dungeons PART A — WHICH RUINS ARE DUNGEONS ==============
+   The bible's own entry point, verbatim: "Ruins — Young golems, rare loot,
+   dungeon entrances". Every Ruin cluster has carried a dungeon ENTRANCE set
+   piece since v20 — two jambs, a lintel and a flat near-black mouth with
+   nothing behind it — so this part does not invent a place, it decides which
+   of those doorways actually goes somewhere.
+
+   NOT EVERY RUIN, deliberately: the spec's own "roughly 1 in 4 of the real,
+   placed RUINS entries". Decided ONCE per cluster at worldgen from the
+   cluster's own tile and worldSeed and cached on the RUINS entry as `dun`,
+   exactly as `mtn` has been since v25 — so it is identical for every player,
+   stable across sessions, and never re-rolled. At RUIN_COUNT 20 that is five
+   dungeons in a world, give or take the hash. TUNABLE. */
+const DUNGEON_RUIN_SHARE = 0.25;
 const RUIN_FOOT = 76;       // carve radius of one Ruin cluster (Expansion 4: 38 * 2)
 const ZONE_R = 136;         // a Safe Zone's grass clearing AND its protected radius (Expansion 4: 68 * 2)
 /* ============ v51 PART H — THE SWEEP MOVED TWO CONSTANTS =============
@@ -3804,7 +3914,13 @@ function placeRuinsAndZones() {
     /* v25 PART A: tag the cluster mountain-or-not once, here, while elevRaw()
        is already the safe thing to call (see isPlaceableLand's note — this
        runs before tileCache.clear(), so biomeAt() must not be touched). */
-    RUINS.push({ x: tx, y: ty, mtn: elevRaw(tx, ty) >= MOUNTAIN_RUIN_ELEV });
+    /* Dungeons PART A: tagged here for the same reason `mtn` is — this runs
+       once per cluster at worldgen, from the cluster's own coordinates, so
+       every client resolves the identical set of dungeon Ruins and nothing
+       is re-rolled per session. Its own hash offset, so it cannot correlate
+       with the mountain tag or with the layout pick. */
+    RUINS.push({ x: tx, y: ty, mtn: elevRaw(tx, ty) >= MOUNTAIN_RUIN_ELEV,
+                 dun: hash2(tx, ty, worldSeed + 9931) < DUNGEON_RUIN_SHARE });
   }
   for (let a = 0; a < 960000 && OTHER_SAFE_ZONES.length < ZONE_COUNT; a++) {
     const tx = Math.floor(hash2(a, 71, worldSeed + 8837) * N);
@@ -3917,7 +4033,22 @@ const INTERIOR_FLOOR_26 = 298;
    populateInterior(). A pure TUNABLE, and the whole of PART D's downward
    half: no MOBS entry, no surface count and no stat is touched by it. */
 const INTERIOR_HOSTILE_K = 1.2;
-const IN_WALL = 0, IN_FLOOR = 1, IN_EXIT = 2;
+/* ============ Dungeons PART E — WHAT THE VAULT HOLDS ==================
+   The bible's dragonsteel section lists exactly three sources, and one of
+   them is "Killing a Demon Knight in a dungeon" — a line that until this
+   version had nowhere in the world it could happen. The knight's own drop is
+   already a guaranteed 1 (see MOBS.demon_knight.loot, untouched), so the
+   vault behind it is deliberately worth more than the fight in front of it
+   and the whole expedition comes to three: one from the knight, two from the
+   hoard. Against the Elder Drake's guaranteed 1 that is a real reason to go
+   looking for a dungeon, and it is a TUNABLE, not a rule from anywhere. */
+const VAULT_DRAGONSTEEL = 2;
+/* Dungeons PART E: a fourth interior tile kind, and the only one in the file
+   whose passability is a QUESTION rather than a constant — a vault door is
+   solid until this dungeon's own Demon Knight has been beaten and its key
+   taken. Every reader goes through interiorBlocksAt() below so the lock can
+   never be enforced in one place and forgotten in another. */
+const IN_WALL = 0, IN_FLOOR = 1, IN_EXIT = 2, IN_VDOOR = 3;
 const interiorCache = new Map();  // spaceId -> { grid, exit, spawnedAt }
 
 /* The anchor is the lowest (tx,ty) tile of a connected UWCAVE cluster, so
@@ -4003,12 +4134,18 @@ function spaceKindOf(spaceId) {
 function buildInterior(spaceId, anchor) {
   if (interiorCache.has(spaceId)) return interiorCache.get(spaceId);
   const seed = worldSeed + anchor[0] * 7919 + anchor[1] * 104729;
+  /* Dungeons PART B: the one thing that differs before the shared machinery
+     below runs. A cave is noise; a dungeon is architecture. Everything after
+     the generator — the connectivity guarantee, the pillars, the arrival
+     pocket, the exit — is the same code for both, which is the spec's own
+     "reusing the cave technique exactly". */
+  const isDungeon = spaceKindOf(spaceId) === "dungeon";
   const grid = new Uint8Array(INTERIOR_N * INTERIOR_N);
   /* Two noise fields at different scales instead of one: the coarse field
      carves the big chambers, the fine one roughens their edges so walls
      read as broken rock rather than a smooth blob. A single field is what
      made these feel flat. */
-  for (let y = 0; y < INTERIOR_N; y++) {
+  if (!isDungeon) for (let y = 0; y < INTERIOR_N; y++) {
     for (let x = 0; x < INTERIOR_N; x++) {
       const edge = (x < 2 || y < 2 || x >= INTERIOR_N - 2 || y >= INTERIOR_N - 2);
       const coarse = valueNoise(x / 7, y / 7, seed);
@@ -4017,6 +4154,8 @@ function buildInterior(spaceId, anchor) {
       grid[y * INTERIOR_N + x] = (edge || n < 0.44) ? IN_WALL : IN_FLOOR;
     }
   }
+  /* A dungeon starts as SOLID ROCK — a Uint8Array is already all IN_WALL —
+     and has rooms and corridors cut out of it below, once carve() exists. */
   /* CONNECTIVITY. Confirmed by a real reachability sweep that EVERY cave
      had floor tiles the player could never reach — noise alone happily
      produces sealed-off chambers, which is exactly the "I cannot enter
@@ -4064,6 +4203,55 @@ function buildInterior(spaceId, anchor) {
       }
     }
   };
+  /* ============ Dungeons PART B — ROOMS AND CORRIDORS =================
+     The bible files Dungeons and Underground Caves as two different things,
+     and the whole point of this part is that a player can tell which one
+     they are standing in without being told. A cave is a noise field: blobby
+     chambers with broken edges. A dungeon is BUILT — rectangular rooms on a
+     regular lattice, joined by straight one-tile corridors, cut out of solid
+     rock. Right angles everywhere, because right angles are the thing noise
+     can never produce.
+
+     One room per CELL x CELL block of the grid, its size and its offset
+     inside that block hashed from the same interior seed everything else
+     here uses — so the plan is deterministic and two players walking into
+     the same dungeon walk into the identical one. Each room is then joined
+     to its EAST and SOUTH lattice neighbours, which gives a connected grid
+     with real loops in it rather than a single spine: a corridor that comes
+     back around is what makes a dungeon a place you can get turned around
+     in, and it costs nothing because carve() already exists.
+
+     The connectivity pass below is untouched and still the guarantee — it
+     runs on this grid exactly as it runs on a cave's, and a room the lattice
+     somehow failed to join is joined by it like any other orphan. */
+  const DUNGEON_CELL = 20;   // TUNABLE: one room per 20x20 block of the grid
+  if (isDungeon) {
+    const cells = Math.floor(INTERIOR_N / DUNGEON_CELL);
+    const rooms = [];
+    for (let gy = 0; gy < cells; gy++) {
+      for (let gx = 0; gx < cells; gx++) {
+        const i = gy * cells + gx;
+        const rw = 7 + Math.floor(hash2(i, 31, seed) * 7);      // 7-13 tiles
+        const rh = 7 + Math.floor(hash2(i, 37, seed) * 7);
+        const rx = gx * DUNGEON_CELL + 2 + Math.floor(hash2(i, 41, seed) * (DUNGEON_CELL - rw - 3));
+        const ry = gy * DUNGEON_CELL + 2 + Math.floor(hash2(i, 43, seed) * (DUNGEON_CELL - rh - 3));
+        if (rx < 2 || ry < 2 || rx + rw >= INTERIOR_N - 2 || ry + rh >= INTERIOR_N - 2) continue;
+        for (let y = ry; y < ry + rh; y++)
+          for (let x = rx; x < rx + rw; x++) grid[y * INTERIOR_N + x] = IN_FLOOR;
+        rooms[i] = { cx: rx + (rw >> 1), cy: ry + (rh >> 1) };
+      }
+    }
+    for (let gy = 0; gy < cells; gy++) {
+      for (let gx = 0; gx < cells; gx++) {
+        const a = rooms[gy * cells + gx];
+        if (!a) continue;
+        const east = gx + 1 < cells ? rooms[gy * cells + gx + 1] : null;
+        const south = gy + 1 < cells ? rooms[(gy + 1) * cells + gx] : null;
+        if (east) carve(a.cx, a.cy, east.cx, east.cy);
+        if (south) carve(a.cx, a.cy, south.cx, south.cy);
+      }
+    }
+  }
   /* Expansion 2b: the pass CAP scales with the grid, for the same reason the
      node and ore counts do. Each pass joins the single largest orphaned
      region, so the number of passes needed tracks how many separate regions
@@ -4118,8 +4306,67 @@ function buildInterior(spaceId, anchor) {
   for (let y = sy0 - 1; y <= sy0 + 1; y++)
     for (let x = sx0 - 1; x <= sx0 + 1; x++) grid[y * INTERIOR_N + x] = IN_FLOOR;
   grid[sy0 * INTERIOR_N + sx0] = IN_EXIT;   // exit sits at the arrival corner
+  /* ============ Dungeons PART E — THE VAULT, CUT LAST ==================
+     "One vault room at its deepest point, locked" — and the order matters as
+     much as the shape. The chamber is cut out of SOLID ROCK after every pass
+     above has finished, so it can never take a corridor away from anything:
+     it only ever turns wall into floor, and the single tile joining it to the
+     rest of the dungeon is its door.
+
+     Deepest is taken literally as furthest from the arrival corner, since
+     that is the only depth an interior has. A candidate is a 5x5 chamber
+     whose own one-tile shell is solid rock — so it is a sealed box, not a
+     bite out of an existing room — with at least one shell tile that opens
+     directly onto real floor. That tile becomes the door, and the floor tile
+     beyond it is where the Demon Knight stands.
+
+     ⚠️ THE DOOR IS NOT A WALL, and that is deliberate: every flood fill in
+     this file crosses anything that is not IN_WALL, so a vault's tiles stay
+     REACHABLE by the connectivity guarantee the whole interior system rests
+     on, and the lock lives in interiorBlocksAt() where it can be answered
+     rather than in the geometry where it could not. "Zero sealed-off tiles"
+     therefore still means what it has always meant. */
+  const VAULT_R = 2;                        // TUNABLE: a 5x5 chamber
+  let vault = null;
+  if (isDungeon) {
+    const lo = VAULT_R + 3, hi = INTERIOR_N - VAULT_R - 3;
+    let bestD = -1;
+    for (let cy = lo; cy < hi; cy++) {
+      for (let cx = lo; cx < hi; cx++) {
+        const d = Math.hypot(cx - sx0, cy - sy0);
+        if (d <= bestD) continue;           // only ever deeper than what we have
+        let solid = true;
+        for (let y = cy - VAULT_R - 1; y <= cy + VAULT_R + 1 && solid; y++) {
+          for (let x = cx - VAULT_R - 1; x <= cx + VAULT_R + 1; x++) {
+            if (grid[y * INTERIOR_N + x] !== IN_WALL) { solid = false; break; }
+          }
+        }
+        if (!solid) continue;
+        let door = null, outside = null;
+        for (const [ox, oy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+          const dxT = cx + ox * (VAULT_R + 1), dyT = cy + oy * (VAULT_R + 1);
+          const fx = cx + ox * (VAULT_R + 2), fy = cy + oy * (VAULT_R + 2);
+          if (fx < 1 || fy < 1 || fx >= INTERIOR_N - 1 || fy >= INTERIOR_N - 1) continue;
+          if (grid[fy * INTERIOR_N + fx] === IN_FLOOR) {
+            door = [dxT, dyT]; outside = [fx, fy]; break;
+          }
+        }
+        if (!door) continue;
+        bestD = d;
+        vault = { x: cx + 0.5, y: cy + 0.5, cx, cy, r: VAULT_R,
+                  door: { x: door[0], y: door[1] },
+                  outside: { x: outside[0], y: outside[1] }, open: false };
+      }
+    }
+    if (vault) {
+      for (let y = vault.cy - VAULT_R; y <= vault.cy + VAULT_R; y++)
+        for (let x = vault.cx - VAULT_R; x <= vault.cx + VAULT_R; x++)
+          grid[y * INTERIOR_N + x] = IN_FLOOR;
+      grid[vault.door.y * INTERIOR_N + vault.door.x] = IN_VDOOR;
+    }
+  }
   const rec = { grid, spawn: { x: sx0 + 0.5, y: sy0 + 1.8 }, exit: { x: sx0, y: sy0 },
-                anchor, populated: false };
+                anchor, populated: false, vault };
   interiorCache.set(spaceId, rec);
   return rec;
 }
@@ -4135,6 +4382,20 @@ function populateInterior(spaceId, rec) {
   for (let y = 0; y < INTERIOR_N; y++)
     for (let x = 0; x < INTERIOR_N; x++)
       if (rec.grid[y * INTERIOR_N + x] === IN_FLOOR) floors.push([x, y]);
+  /* Dungeons PART E: the sealed chamber is real floor — that is what makes
+     it reachable once the door opens — but nothing may be PLACED in it by
+     the ordinary content streams. A wraith locked in a vault is a creature
+     nobody can fight, and an ore vein in there is a resource the lock is
+     accidentally guarding. The vault's own contents are placed by hand
+     below, which is the whole point of a vault. */
+  if (rec.vault) {
+    const V = rec.vault;
+    for (let i = floors.length - 1; i >= 0; i--) {
+      if (Math.abs(floors[i][0] - V.cx) <= V.r && Math.abs(floors[i][1] - V.cy) <= V.r) {
+        floors.splice(i, 1);
+      }
+    }
+  }
   if (!floors.length) return;
   /* hash2 can return exactly 1.0, which indexes one past the end and yields
      undefined — the destructure that follows would then throw, and before
@@ -4162,6 +4423,10 @@ function populateInterior(spaceId, rec) {
   /* v51 PART D: the Glow Moth stream, in its own 10,000-wide block for
      exactly the reason the five above are. */
   const S_MOTH = 50021;
+  /* Dungeons PART D: the Basilisk's stream, in its own 10,000-wide block for
+     exactly the reason the six above are — two streams landing on the same
+     index land on the same tile in every interior, deterministically. */
+  const S_BASILISK = 60013;
 
   /* Tuning/Polish PART D: this interior's OWN walkable area against the mean
      a 26x26 interior actually produced — see INTERIOR_FLOOR_26. Every content
@@ -4176,13 +4441,26 @@ function populateInterior(spaceId, rec) {
      Same structure, same counts — only the contents differ. */
   const kind32 = spaceKindOf(spaceId);
   const isAbyss = kind32 === "abyssal";
+  /* Dungeons PARTS C/D/E: a third interior kind, and what fills it is the
+     one thing that differs from a cave. Everything the bible actually names
+     for a dungeon lives below and nothing else does — Demon Knights ("Deep
+     dungeons"), Dark Wraiths ("Dark forest, dungeons"), Glow Moths ("Caves
+     and dungeons") and the Basilisk ("Deep dungeons, dangerous, fight to
+     tame"). The Sea Serpent, the hatchling dragon, the essence nodes and the
+     Kelp-Crystals are all UNDERWATER content and are all excluded by name. */
+  const isDungeon = kind32 === "dungeon";
   const nodeType = isAbyss ? "void_shard" : "aquatic_essence";
   const dragonSp = isAbyss ? "shadow_dragon" : "water_dragon";
 
   rec.nodes = [];
   /* 2b PART C: the 3-5 density is the v29 spec's own, kept — it is now
      3-5 per 26x26 worth of cave rather than 3-5 per cave. */
-  const nNodes = Math.round((3 + Math.floor(hash2(1, 1, seed) * 3)) * areaK);
+  /* Dungeons: no essence nodes. aquatic_essence is the bible's "rare aquatic
+     resources" and void_shard is v32's own flagged invention; the bible names
+     no gatherable of any kind for a dungeon, so rather than invent a third
+     one, a dungeon's floor carries nothing to pick up and its reward is the
+     vault the spec actually specifies. */
+  const nNodes = isDungeon ? 0 : Math.round((3 + Math.floor(hash2(1, 1, seed) * 3)) * areaK);
   for (let i = 0; i < nNodes; i++) {
     const [x, y] = pick(S_NODE + i * 3);
     rec.nodes.push({ x: x + 0.5, y: y + 0.5, type: nodeType, taken: false });
@@ -4192,9 +4470,16 @@ function populateInterior(spaceId, rec) {
      ~209 at the scaled node count and would have started landing on 41 — the
      dragon's own tile. Its own index, clear of every other stream: 907 - 11
      is not a multiple of 3, and every other stream starts past 10,000. */
-  const [wx, wy] = pick(907);
-  rec.wilds.push({ id: spaceId + ":" + dragonSp, species: dragonSp,
-                   x: wx + 0.5, y: wy + 0.5, ph: hash2(2, 2, seed) * 6 });
+  /* Dungeons: no hatchling dragon. The bible does give Shadow Dragon a
+     second home ("Dark dungeons, tame as hatchling") and v22 deliberately
+     took the OTHER one, the Abyssal Hollow, where it lives today. Moving or
+     duplicating it is a change to an existing species' habitat and is not
+     what this spec asks for — flagged rather than smuggled in. */
+  if (!isDungeon) {
+    const [wx, wy] = pick(907);
+    rec.wilds.push({ id: spaceId + ":" + dragonSp, species: dragonSp,
+                     x: wx + 0.5, y: wy + 0.5, ph: hash2(2, 2, seed) * 6 });
+  }
   /* ============ v51 PART D — GLOW MOTHS INSIDE A REAL CAVE ============
      Bible, verbatim, from its own Common row: "Glow Moth — Caves and
      dungeons, lights up dark areas slightly". Confirmed live before this
@@ -4261,7 +4546,7 @@ function populateInterior(spaceId, rec) {
      totals. One Sea Serpent in a 2500-tile cave is a creature you can walk a
      whole interior without meeting; four across that area is the same odds of
      running into one that the 676-tile cave always had. */
-  if (!isAbyss) {
+  if (!isAbyss && !isDungeon) {
     const serpents = Math.round(1 * areaK);
     for (let i = 0; i < serpents; i++) {
       const [sx2, sy2] = pick(S_SERPENT + i * 3);
@@ -4287,8 +4572,51 @@ function populateInterior(spaceId, rec) {
      placed above since v29, deliberately unchanged. */
   for (let i = 0; i < Math.round(INTERIOR_HOSTILE_K * areaK); i++) {
     const [gx, gy] = pick(S_TROLL + i * 7);
-    rec.mobs.push(mkInteriorMob(isAbyss ? "dark_wraith" : "troll",
+    /* Dungeons PART C's companion half: a dungeon's ordinary hostile is the
+       Dark Wraith, which is the bible's own second home for it — "Dark
+       Wraith — Dark forest, dungeons" — and the same creature the Hollow
+       already uses. No new mob, no new count, the same INTERIOR_HOSTILE_K
+       density every interior runs on. */
+    rec.mobs.push(mkInteriorMob((isAbyss || isDungeon) ? "dark_wraith" : "troll",
       gx + 0.5, gy + 0.5, hash2(4 + i, 4, seed) * 6, i));
+  }
+  /* ============ Dungeons PARTS C, D and E — WHAT A DUNGEON HOLDS =======
+     PART C — THE DEMON KNIGHT, IN A DUNGEON AT LAST. v48 stationed this
+     creature at the Volcano and said so in as many words: "'Deep Dungeons'
+     is not a biome in this game ... when Dungeons are built, this is the
+     creature that moves into them." It does not MOVE — the Volcano pair
+     guarding the Elder Drake is untouched, exactly as this spec requires —
+     it is now ALSO where the bible always put it. One per dungeon, hand
+     placed on the floor tile outside its own vault door, which is v48's own
+     reading of this creature: "not a population the hashed loop scatters,
+     they are stationed."
+
+     PART D — THE BASILISK. "Deep dungeons, dangerous, fight to tame," Rare.
+     One per dungeon, the same singleton shape the cave hatchling dragon has
+     had since v29, and a fight-to-tame MOB for the same reason Bear, Boar
+     and Griffin are: that is how this file expresses "fight to tame", and it
+     is what routes drawMob through drawSpecies to its own art. It exists
+     nowhere else in the world — MOBS.basilisk carries biomes: [] so the
+     surface spawn loop cannot reach it, and this is the only line in the
+     file that places one.
+
+     PART E — THE HOARD. Guaranteed dragonsteel, sitting in the sealed
+     chamber, expressed as an ordinary interior NODE so that every system
+     that already knows how to hand a player something — the gather key, the
+     HUD prompt, the taken flag, the burst — needs to learn nothing. */
+  if (isDungeon) {
+    const V = rec.vault;
+    if (V) {
+      const dk = mkInteriorMob("demon_knight", V.outside.x + 0.5, V.outside.y + 0.5,
+                               hash2(11, 11, seed) * 6, 0);
+      dk.hx = dk.x; dk.hy = dk.y;
+      rec.mobs.push(dk);
+      rec.nodes.push({ x: V.x, y: V.y, type: "dragonsteel",
+                       qty: VAULT_DRAGONSTEEL, taken: false, vault: true });
+    }
+    const [bx4, by4] = pick(S_BASILISK);
+    rec.mobs.push(mkInteriorMob("basilisk", bx4 + 0.5, by4 + 0.5,
+                                hash2(12, 12, seed) * 6, 0));
   }
   rec.mobs.forEach(m => mobs.push(m));   // join the real mob array
 
@@ -4338,7 +4666,7 @@ function populateInterior(spaceId, rec) {
      colder, emptier version of this place — its landmark is the Void Rift
      out on the sea floor, not more glow inside. */
   rec.kelp = [];
-  if (!isAbyss) {
+  if (!isAbyss && !isDungeon) {
     const edges = [];
     for (const [fx3, fy3] of floors) {
       if (rec.grid[fy3 * INTERIOR_N + (fx3 - 1)] === IN_WALL ||
@@ -4365,11 +4693,56 @@ function interiorTileAt(tx, ty) {
   return rec.grid[ty * INTERIOR_N + tx];
 }
 
+/* ============ Dungeons PART E — THE ONE PLACE THE LOCK IS ANSWERED =====
+   Everything that can be stopped by an interior wall — the player's own
+   movement and mobBlocked()'s AI step — goes through this, so a vault door
+   is solid for a Demon Knight standing outside it exactly as it is for the
+   player, and there is no second copy of the rule to forget. A door that
+   has been opened is simply floor from then on.
+
+   `dungeonKeys` is the key itself: the set of dungeons whose own Demon
+   Knight this player has beaten. It is deliberately NOT an inventory item,
+   because an inventory item cannot be specific to one dungeon and the spec
+   requires exactly that ("the real key drop from that specific dungeon's
+   Demon Knight"). Session-local, like the interiors and their mobs — a
+   fresh session regenerates the dungeon with its knight alive again, so
+   the key and the thing it opens always agree about what has happened. */
+let dungeonKeys = new Set();
+function haveVaultKey(spaceId) { return dungeonKeys.has(spaceId); }
+function interiorBlocksAt(rec, tx, ty) {
+  if (!rec) return true;
+  if (tx < 0 || ty < 0 || tx >= INTERIOR_N || ty >= INTERIOR_N) return true;
+  const v = rec.grid[ty * INTERIOR_N + tx];
+  if (v === IN_WALL) return true;
+  if (v === IN_VDOOR) return !(rec.vault && rec.vault.open);
+  return false;
+}
+function interiorBlocked(tx, ty) {
+  return interiorBlocksAt(interiorCache.get(me.space), tx, ty);
+}
+
 /* Treats an unset space as "main" deliberately: me is built in several
    places (fresh login, resumed save, respawn) and depending on every one
    of them to remember a new field is exactly how a player ends up counted
    as being inside a cave the moment they log in. */
 function inInterior() { return !!me && !!me.space && me.space !== "main"; }
+
+/* v29's own arrival sequence, unchanged and now shared: build the space,
+   remember where the surface was, move into it, populate it, say so, tell
+   everyone else. Dungeons PART B's "reusing the cave technique exactly" is
+   this function being called by a second door rather than a second copy of
+   it existing. */
+function enterSpaceAt(id, anchor, msg) {
+  const rec = buildInterior(id, anchor);
+  me.surfaceReturn = { x: me.x, y: me.y };
+  me.space = id;
+  me.x = rec.spawn.x; me.y = rec.spawn.y;
+  cam.x = me.x; cam.y = me.y;
+  populateInterior(id, rec);
+  toast(msg);
+  sendMove(true);
+  return true;
+}
 
 function enterInterior(tx, ty, biomeConst) {
   /* v32: default keeps every v29 call site working unchanged. */
@@ -4379,15 +4752,39 @@ function enterInterior(tx, ty, biomeConst) {
   const anchor = clusterAnchor(tx, ty, bc);
   if (!anchor) return false;
   const id = spaceIdFor(kind, anchor);
-  const rec = buildInterior(id, anchor);
-  me.surfaceReturn = { x: me.x, y: me.y };
-  me.space = id;
-  me.x = rec.spawn.x; me.y = rec.spawn.y;
-  cam.x = me.x; cam.y = me.y;
-  populateInterior(id, rec);
-  toast(kind === "abyssal" ? "You sink into the hollow" : "You slip into the cave");
-  sendMove(true);
-  return true;
+  return enterSpaceAt(id, anchor, kind === "abyssal" ? "You sink into the hollow"
+                                                     : "You slip into the cave");
+}
+
+/* ============ Dungeons PART B — THE SECOND DOOR ======================
+   A dungeon is not a biome, so its anchor cannot come from clusterAnchor():
+   it comes from the Ruin cluster the entrance belongs to, which is worldgen
+   output and therefore identical for every player — the same property that
+   made a cave cluster's lowest tile a usable anchor in the first place. The
+   id keeps spaceIdFor()'s exact shape, so `spaceKindOf`, the `sp` field on
+   the move broadcast, the drop tagging and every other space-aware path in
+   this file need no changes at all to know about dungeons.
+
+   ⚠️ The id therefore reads "cave:dungeon:x,y". "cave:" is v29's namespace
+   for a generated interior space, not a claim that this is a cave — renaming
+   it would break every space id already in flight for nothing. */
+function enterDungeon(piece) {
+  if (!piece || !piece.dun) return false;
+  const anchor = [Math.round(piece.rx), Math.round(piece.ry)];
+  return enterSpaceAt(spaceIdFor("dungeon", anchor), anchor,
+                      "You descend into the dungeon");
+}
+
+/* The player is standing in a real dungeon doorway. Built from the same
+   `ruinPieces` the world already draws, filtered once per feature rebuild
+   into `dungeonEntrances` so this costs one hypot per dungeon rather than a
+   sweep of every ruin stone in the world. */
+const DUNGEON_ENTER_R = 0.9;   // TUNABLE: how close the doorway pulls you in
+function dungeonEntranceNear(x, y, r) {
+  for (const de of dungeonEntrances) {
+    if (Math.hypot(de.x - x, de.y - y) <= r) return de;
+  }
+  return null;
 }
 
 function exitInterior() {
@@ -4409,19 +4806,27 @@ function exitInterior() {
         if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
         const tx = Math.floor(back.x) + dx, ty = Math.floor(back.y) + dy;
         const b = biomeAt(tx, ty);
-        if (b !== B.UWCAVE && b !== B.ABYSSAL && !BLOCKED.has(b)) {
+        /* Dungeons PART B: a dungeon doorway is the same trap in a different
+           shape. surfaceReturn is the threshold tile you walked in on, and
+           the entry trigger below checks nothing but proximity — so landing
+           back on it would pull the player straight back underground on the
+           very next movement tick, which is exactly the bug the paragraph
+           above was written about. Same guard, one more kind of doorway. */
+        if (b !== B.UWCAVE && b !== B.ABYSSAL && !BLOCKED.has(b) &&
+            !dungeonEntranceNear(tx + 0.5, ty + 0.5, DUNGEON_ENTER_R + 0.6)) {
           landX = tx + 0.5; landY = ty + 0.5;
           break outer;
         }
       }
     }
   }
+  const wasDungeon = spaceKindOf(me.space) === "dungeon";
   me.space = "main";
   me.x = landX; me.y = landY;
   me.diving = false;
   cam.x = me.x; cam.y = me.y;
   me.surfaceReturn = null;
-  toast("You surface");
+  toast(wasDungeon ? "You climb back into the light" : "You surface");
   sendMove(true);
 }
 
@@ -5499,6 +5904,11 @@ function buildFeatureList() {
     }
   }
   for (const R of RUINS) buildRuinCluster(R, Math.floor(hash2(R.x, R.y, worldSeed + 77) * 3));
+  /* Dungeons PART A: derived from the pieces that were just built, so the
+     doorway a player walks into is provably the same object the world drew.
+     Roughly a quarter of the clusters, decided at worldgen — see
+     DUNGEON_RUIN_SHARE. */
+  dungeonEntrances = ruinPieces.filter(p => p.k === "entrance" && p.dun);
   /* v20: each Other Safe Zone is anchored by the existing ruin "well" set
      piece — the same stone well art, reused, no new drawing code. */
   for (const z of OTHER_SAFE_ZONES) ruinPieces.push({ k: "well", x: z.x, y: z.y });
@@ -5516,6 +5926,13 @@ function buildFeatureList() {
    built per centre and appended to the shared array — the caller resets it. */
 function buildRuinCluster(center, template) {
   const R = center;
+  /* Dungeons PART A: every layout already places exactly one `entrance`, and
+     all three of them now carry the cluster's own dungeon tag plus the
+     cluster centre. The tag is what drawRuinPiece reads to add the marker,
+     and the centre is the interior's ANCHOR — the same role a cave cluster's
+     lowest tile plays in spaceIdFor(), and stable for the same reason: it is
+     worldgen output, identical for every player. */
+  const dunTag = { dun: !!R.dun, rx: R.x, ry: R.y };
 
   if (template === 1) {
     // "Collapsed Tower" — dense, circular, total-collapse composition
@@ -5527,7 +5944,7 @@ function buildRuinCluster(center, template) {
     ruinPieces.push({ k: "rubble", x: R.x - 2.2, y: R.y + 0.6 });
     ruinPieces.push({ k: "rubble", x: R.x + 2.0, y: R.y - 1.4 });
     ruinPieces.push({ k: "rubble", x: R.x - 0.6, y: R.y + 2.4 });
-    ruinPieces.push({ k: "entrance", x: R.x + 2.6, y: R.y + 0.2 });
+    ruinPieces.push(Object.assign({ k: "entrance", x: R.x + 2.6, y: R.y + 0.2 }, dunTag));
   } else if (template === 2) {
     // "Sunken Courtyard" — open, sparse, boundary-only
     ruinPieces.push({ k: "well", x: R.x, y: R.y });
@@ -5538,7 +5955,7 @@ function buildRuinCluster(center, template) {
     ruinPieces.push({ k: "rubble", x: R.x - 1.2, y: R.y + 1.8 });
     ruinPieces.push({ k: "rubble", x: R.x + 1.4, y: R.y + 2.0 });
     ruinPieces.push({ k: "col", x: R.x - 2.6, y: R.y + 2.2, hp: 18 });
-    ruinPieces.push({ k: "entrance", x: R.x - 0.6, y: R.y - 2.4 });
+    ruinPieces.push(Object.assign({ k: "entrance", x: R.x - 0.6, y: R.y - 2.4 }, dunTag));
   } else {
     // template 0 — the original "broken wall + archway" layout, unchanged
     const wallSegs = [[-2.4, -2.2], [-1.4, -2.2], [-0.4, -2.2], [1.6, -2.2], [2.6, -2.2]];
@@ -5555,7 +5972,7 @@ function buildRuinCluster(center, template) {
     ruinPieces.push({ k: "rubble", x: R.x - 1.4, y: R.y - 0.4 });
     ruinPieces.push({ k: "col", x: R.x + 0.2, y: R.y + 2.3, hp: 12 });
     ruinPieces.push({ k: "well", x: R.x - 0.6, y: R.y + 0.1 });
-    ruinPieces.push({ k: "entrance", x: R.x + 0.6, y: R.y - 2.2 });
+    ruinPieces.push(Object.assign({ k: "entrance", x: R.x + 0.6, y: R.y - 2.2 }, dunTag));
   }
 }
 function removeFeature(key) {
@@ -7164,6 +7581,20 @@ async function mobKill(m, iKilled) {
      A tamed creature is a `pets` row and can never reach this function, which
      is what keeps a tamed-then-killed dragon from returning a slot. */
   noteRareTake(m.kind);
+  /* ============ Dungeons PART E — THE KEY DROPS ON DEATH ==============
+     "Locked until the player defeats that dungeon's own Demon Knight and
+     takes a key it drops specifically on death" — so it is minted here, in
+     the one place a kill is resolved, and only for the client that landed it
+     (everything above this line runs for the killer alone). It is recorded
+     against the mob's OWN space, which is what makes it that dungeon's key
+     and no other dungeon's: walking into a second dungeon with the first
+     one's key open nothing. A knight killed at the Volcano carries no space
+     and mints nothing, so the pair guarding the Elder Drake is untouched by
+     every word of this. */
+  if (m.kind === "demon_knight" && spaceKindOf(m.space) === "dungeon") {
+    dungeonKeys.add(m.space);
+    toast("The Demon Knight falls — you take the vault key from its belt");
+  }
   channel.send({ type: "broadcast", event: "mob_dead", payload: { id: m.id, until: m.respawnAt } });
   // loot rolls -> real ground items via the existing persisted-drop path
   const def = MOBS[m.kind];
@@ -7197,10 +7628,10 @@ async function mobKill(m, iKilled) {
    player who is somewhere else entirely. */
 function mobBlocked(m, tx, ty) {
   if (m.space) {
-    const rec = interiorCache.get(m.space);
-    if (!rec) return true;
-    if (tx < 0 || ty < 0 || tx >= INTERIOR_N || ty >= INTERIOR_N) return true;
-    return rec.grid[ty * INTERIOR_N + tx] === IN_WALL;
+    /* Dungeons PART E: the same lock the player obeys. A Demon Knight
+       stationed outside its vault must not be able to walk through the door
+       it is guarding, and once the door is open it is floor for both. */
+    return interiorBlocksAt(interiorCache.get(m.space), tx, ty);
   }
   return BLOCKED.has(biomeAt(tx, ty));
 }
@@ -7486,6 +7917,14 @@ async function resolveTaming() {
 function nearestWeakMob() {
   let best = null, bestD = 1.8;
   for (const m of mobs) {
+    /* Dungeons PART D: the Basilisk is the first fight-to-tame creature that
+       lives INSIDE an interior, and an interior's coordinates are 0..160 on
+       the same numbers the surface uses — so without this, a player standing
+       on world tile (30, 30) could tame a Basilisk standing on dungeon tile
+       (30, 30) a hundred tiles underground. Every other space-aware path in
+       the file already carries exactly this line; taming never needed it
+       until there was something tameable down there. */
+    if ((m.space || "main") !== (me.space || "main")) continue;
     if (!canWearDownTame(m)) continue;
     const d = Math.hypot(m.x - me.x, m.y - me.y);
     if (d < bestD) { best = m; bestD = d; }
@@ -9163,6 +9602,35 @@ function respawn() {
 /* =========================================================
    GATHERING & CRAFTING — ore is finite and shared
    ========================================================= */
+/* ============ Dungeons PART E — THE DOOR YOU WALK UP TO ===============
+   A fixture you stand in front of and use, exactly like the Shrine, the
+   Oracle and the Dragon Elder Altar — so it answers on the same interact key
+   they do, at the same GATHER_RANGE everything else in this file uses, and
+   invents no binding, no panel and no prompt language of its own. */
+function nearVaultDoor() {
+  if (!inInterior()) return null;
+  const rec = interiorCache.get(me.space);
+  if (!rec || !rec.vault || rec.vault.open) return null;
+  const d = Math.hypot(rec.vault.door.x + 0.5 - me.x, rec.vault.door.y + 0.5 - me.y);
+  return d <= GATHER_RANGE ? rec : null;
+}
+function tryOpenVault() {
+  const rec = interiorCache.get(me.space);
+  if (!rec || !rec.vault || rec.vault.open) return;
+  if (!haveVaultKey(me.space)) {
+    toast("The vault is sealed — its Demon Knight carries the key");
+    return;
+  }
+  rec.vault.open = true;
+  /* The open vault is a light source, and the light map is cached against
+     the count of untaken ore veins — so it has to be told the room changed
+     rather than waiting for someone to mine something. */
+  rec.lightmapOre = -1;
+  toast("The key turns — the vault grinds open");
+  burst(rec.vault.door.x + 0.5, rec.vault.door.y + 0.5,
+        (ITEM_META.dragonsteel || {}).color || "#b06ce0", 12, 2.4);
+}
+
 function nearestGatherable() {
   let best = null, bestD = GATHER_RANGE;
   /* v29: inside a cave the gatherables are the interior's own nodes, not
@@ -9293,6 +9761,15 @@ async function doInteract() {
     await awakenDragonElder();
     return;
   }
+  /* Dungeons PART E: the vault door, checked beside the other three fixtures
+     you walk up to and use. Nothing else in the game can be within reach of
+     it — it is a sealed door at the deepest point of a dungeon — so its
+     position in this chain cannot take a keypress away from anything. */
+  if (nearVaultDoor()) {
+    lastGather = now;
+    tryOpenVault();
+    return;
+  }
   if (nearChest()) {
     lastGather = now;
     for (const mat of ["wood", "stone", "iron_ore", "iron_bar", "runic_stone", "dragonsteel"]) {
@@ -9360,9 +9837,13 @@ async function doInteract() {
     lastGather = now;
     g._node.taken = true;
     const got32 = g._node.type || "aquatic_essence";   // v32
+    /* Dungeons PART E: a node may now carry a quantity. Every node that
+       existed before this version has none and takes the 1 it always did —
+       the vault hoard is the only thing in the file that sets it. */
+    const qty32 = g._node.qty || 1;
     burst(g.x, g.y, ITEM_META[got32].color, 7, 2);
-    invAdd(got32, 1);
-    toast("+1 " + ITEM_META[got32].name);
+    invAdd(got32, qty32);
+    toast("+" + qty32 + " " + ITEM_META[got32].name);
     savePlayer();
     return;
   }
@@ -10780,6 +11261,10 @@ const SPECIES_COL = {
   boar: "#7a5f48", bear: "#8a6240", griffin: "#c8a35c", phoenix: "#e8641c",
   stag: "#c49a68", unicorn: "#f4f0e8", lightfox: "#f6e4ac",
   crystal_golem: "#9fc4e8", krakenling: "#5a3a6e", salamander_king: "#d84a28",   // v25
+  /* Dungeons PART D: the Basilisk's roster dot and tame burst — its own lit
+     body facet, verbatim from its art below, so neither can drift away from
+     the creature they stand for. */
+  basilisk: "#4e7d52",
   /* v39: the trio's roster dots, all three the same Elder gold their art
      already stands in — the roster should say "these three are one tier"
      at a glance, the way the tier colours do everywhere else. */
@@ -11115,8 +11600,12 @@ function update(dt, t) {
       if (inInterior()) {
         /* v29: inside a cave the grid is the interior's, not the world's.
            Same movement code, different tile source. */
-        if (interiorTileAt(Math.floor(nx), Math.floor(me.y)) !== IN_WALL) me.x = nx;
-        if (interiorTileAt(Math.floor(me.x), Math.floor(ny)) !== IN_WALL) me.y = ny;
+        /* Dungeons PART E: interiorBlocked() is interiorTileAt()'s own wall
+           test plus the one thing a wall cannot express — a vault door that
+           is solid until this dungeon's key has been taken. Identical
+           behaviour in every cave and hollow, which have no vault. */
+        if (!interiorBlocked(Math.floor(nx), Math.floor(me.y))) me.x = nx;
+        if (!interiorBlocked(Math.floor(me.x), Math.floor(ny))) me.y = ny;
         me.x = Math.max(0.5, Math.min(INTERIOR_N - 0.5, me.x));
         me.y = Math.max(0.5, Math.min(INTERIOR_N - 0.5, me.y));
         if (interiorTileAt(Math.floor(me.x), Math.floor(me.y)) === IN_EXIT) exitInterior();
@@ -11134,6 +11623,14 @@ function update(dt, t) {
       const hb32 = biomeAt(Math.floor(me.x), Math.floor(me.y));
       if (hb32 === B.UWCAVE || hb32 === B.ABYSSAL) {
         enterInterior(Math.floor(me.x), Math.floor(me.y), hb32);   // v32
+      }
+      /* Dungeons PART B: the second entry trigger, in the same place in the
+         same tick as the cave's and with the same shape — walk into the
+         doorway and you are inside. The marker on the piece is what tells
+         the player which doorways do this before they walk into one. */
+      else {
+        const de = dungeonEntranceNear(me.x, me.y, DUNGEON_ENTER_R);
+        if (de) enterDungeon(de);
       }
       }
       sendMove(false);
@@ -12048,6 +12545,41 @@ function drawEssenceNode(f, t) {
   }
 }
 
+/* ============ Dungeons PART E — THE VAULT HOARD ====================
+   What is actually sitting in the sealed room: a low plinth of the dungeon's
+   own worked stone carrying three faceted dragonsteel ingots. It is drawn
+   from the interior's node list like the essence nodes are, so it inherits
+   the depth sort, the gather key and the taken flag with no special casing —
+   the only thing it does differently is look like the rarest material in the
+   world instead of a lump of crystal.
+
+   VIOLET, and no other colour: `#b06ce0` is dragonsteel's own ITEM_META
+   entry, the same hue a dragonsteel wall has read as since v33 and the same
+   one its gear's aura carries. That is the whole point of the locked colour
+   meanings — a player who has ever seen dragonsteel knows what this is
+   before the prompt says so. Hard facets and one white highlight square, the
+   v39 Golden Orb rule: no gradient on the object itself. */
+function drawVaultHoard(nd, t) {
+  const [sx, sy] = worldToScreen(nd.x, nd.y, groundZ(nd.x, nd.y));
+  drawShadow(sx, sy, 20, 9);
+  P(ctx, [sx - 8, sy, sx - 6.4, sy - 4.2, sx + 6.4, sy - 4.2, sx + 8, sy], "#5e5a51");   // plinth
+  P(ctx, [sx + 6.4, sy - 4.2, sx + 8, sy, sx - 0.6, sy], "#3c3a34");
+  P(ctx, [sx - 6.4, sy - 4.2, sx - 4.8, sy - 5.4, sx + 5, sy - 5.4, sx + 6.4, sy - 4.2], "#7d7466");
+  const gl = 0.5 + 0.35 * Math.sin(t / 700);
+  ctx.fillStyle = `rgba(176,108,224,${0.18 * gl})`;                                      // flat halo
+  ctx.fillRect(sx - 9, sy - 17, 18, 14);
+  const ing = (ox, oy, w2, h2) => {                                                      // faceted ingots
+    P(ctx, [sx + ox - w2, sy + oy, sx + ox - w2 + 1.4, sy + oy - h2,
+            sx + ox + w2 - 1.4, sy + oy - h2, sx + ox + w2, sy + oy], "#b06ce0");
+    P(ctx, [sx + ox + w2 - 1.4, sy + oy - h2, sx + ox + w2, sy + oy, sx + ox - 0.4, sy + oy], "#7a44a0");
+  };
+  ing(-3.4, -5.4, 3.6, 3.0);
+  ing(3.4, -5.4, 3.6, 3.0);
+  ing(0, -8.4, 3.6, 3.2);
+  ctx.fillStyle = "#f0dcff";
+  ctx.fillRect(sx - 1.2, sy - 11.2, 2.2, 2.2);                                           // highlight
+}
+
 /* ============ v50 PART A — KELP-CRYSTAL CLUSTERS ==================
    The Underwater Caves' landmark, drawn where it is placed: on a floor
    tile that touches a wall, leaning AWAY from that wall so it reads as
@@ -12185,6 +12717,45 @@ function drawRuinPiece(p) {
     drawBox(p.x - GAP, p.y, JW, JD, JH, RUINDARK);
     drawBox(p.x + GAP, p.y, JW, JD, JH, RUINDARK);
     drawBox(p.x, p.y, GAP * 2 + JW, JD * 0.85, 6, RUINLINTEL, JH);
+    /* ============ Dungeons PART A — THE MARKER ON A REAL ONE ==========
+       A dungeon Ruin must be readable as one BEFORE the player walks in,
+       and the spec's own instruction is to do it by adding a real detail
+       to the existing Ruin art rather than by building a second structure.
+       Three additions, all of them this same architecture:
+
+         - STEPS INSIDE THE MOUTH. The whole difference between a doorway
+           and a way down is whether you can see it descend, so three hard
+           treads recede up the trapezoid, each one narrower and darker
+           than the one in front of it. That is the entire read at
+           distance, and it is silhouette rather than colour — the v51
+           badge lesson, applied to a set piece.
+         - A RAISED KEYSTONE on the lintel, so the doorway carries a
+           crown the ordinary ones do not.
+         - TWO WARDSTONES flanking the threshold, low and squat, which is
+           what stops the keystone reading as a chipped lintel.
+
+       Deliberately NO new colour and NO glow: gold means Elder, cyan means
+       runic, violet means dragonsteel and pale green means tameable, and a
+       fifth meaning bought for a doorway would cost more than it buys. Every
+       fill here is the ruin stone this piece already uses, hard-edged and
+       flat, on drawBox's own locked facet split. */
+    if (p.dun) {
+      const STEP = ["#7d766a", "#5c574e", "#3d3932"];
+      for (let i = 0; i < 3; i++) {
+        const inset = 2 + i * 2.6, base = 3 + i * 4.2;
+        ctx.fillStyle = STEP[i];
+        ctx.beginPath();
+        ctx.moveTo(mx0 + inset, my0 - base);
+        ctx.lineTo(mx1 - inset, my1 - base);
+        ctx.lineTo(mx1 - inset - 1.2, my1 - base - 2.6);
+        ctx.lineTo(mx0 + inset + 1.2, my0 - base - 2.6);
+        ctx.closePath();
+        ctx.fill();
+      }
+      drawBox(p.x, p.y, 0.22, JD * 0.9, 7, RUINSTONE, JH + 6);          // keystone
+      drawBox(p.x - GAP - 0.46, p.y + 0.2, 0.2, 0.2, 12, RUINDARK);     // wardstones
+      drawBox(p.x + GAP + 0.46, p.y + 0.2, 0.2, 0.2, 12, RUINDARK);
+    }
   }
 }
 
@@ -13262,6 +13833,15 @@ const SPECIES_K = {
      file with a hostile form, and an Epic one, so it takes the uncommon
      band's +8%. Krakenling has no hostile form and is left where v25 put it. */
   krakenling: 1.95, salamander_king: 2.31,
+  /* Dungeons PART D: the Basilisk. Sized by the same rule every fight-to-tame
+     body on this line is — its own threat in MOBS — so size goes on saying
+     what it already says about danger: hp x dmg 1,760 sits above Bear's 1,040
+     (2.34) and below the Adult Golem's 2,340 (MOB_K 3.10), and 2.55 sits
+     between them. It is also deliberately clear of Golem's 2.50 and Crystal
+     Golem's 2.68, the two bodies nearest it in scale, so no two creatures in
+     the file read as the same size by accident. Pure render scale — it also
+     scales the v16 overlay offsets — and a TUNABLE. */
+  basilisk: 2.55,
   /* v39: the Elder trio. Each is deliberately the LARGEST of its own line —
      Golem Elder above Golem's 1.85 and Crystal Golem's 1.70, Dragon Elder
      above the four 1.55 dragons, Unicorn Elder above Unicorn's 1.30 — so
@@ -13402,7 +13982,17 @@ const MOB_K = { goblin: 1.50, bandit: 1.85, troll: 2.33, dark_wraith: 1.40, sea_
    drawMob's own note — its real art paints 62.1px where the Bandit art it has
    been drawing all along painted 64.0, so the same 66 offset that cleared the
    wrong body by 2.0px clears the right one by 3.9px. */
-const MOB_TALL = { troll: 31, bandit: 5, boar: 7, bear: 17, griffin: 21, phoenix: 24, dark_wraith: 6, sea_serpent: 78, adult_golem: 24, demon_knight: 41, salamander_king: 4, golem_elder: 54, elder_drake: 46 };
+/* Dungeons PART D: basilisk 30, measured with the same transform-tracking
+   recorder every other value on this line was checked against, never guessed.
+   The topmost paint is the middle crest spike at -18.8 in local units; at
+   SPECIES_K 2.55 that is 47.9px above the baseline, and the "!" tell and the
+   HP bar draw at `sy - 20 - MOB_TALL`. 30 puts them at 50 — 2.1px of
+   clearance over the crest, the same family as the Demon Knight's 2.1 and the
+   Adult Golem's 2.0, so the v13 fairness rule reads on this creature exactly
+   as it does on those. A new creature has to ARRIVE with this entry: the
+   Elder Drake shipped without one for a whole version and drew its tell 30px
+   inside its own chest. */
+const MOB_TALL = { troll: 31, bandit: 5, boar: 7, bear: 17, griffin: 21, phoenix: 24, dark_wraith: 6, sea_serpent: 78, adult_golem: 24, demon_knight: 41, salamander_king: 4, golem_elder: 54, elder_drake: 46, basilisk: 30 };
 
 const KIT = {
   Ranger:      { trim: "#2e4a22", accent: "#c8b078", cloth: "#5a4a30" },
@@ -15248,6 +15838,63 @@ function drawSpecies(species, sx, sy, t, moving) {
      wild pet (WILD_SPECIES + presence roll), not a mob, so drawMob's `m.kind`
      chain is not its home either. Branch head corrected to `species`; the
      drawing body below is untouched, exactly as written. */
+  /* ============ Dungeons PART D — THE BASILISK'S BODY ================
+     New art, and the first genuinely new silhouette shape in the roster
+     since the Krakenling: this is the only LEGLESS creature in the game.
+     That is the whole read — everything else out there stands on something,
+     so a body that pours along the ground and rears at one end cannot be
+     mistaken for any of them at distance, which is the rule this file has
+     followed since the v25 Crystal Golem.
+
+     It is deliberately NOT the Sea Serpent, the one creature it could have
+     collided with: that body is stacked cresting COILS with a finned head and
+     rising bubbles, read from above the waterline, and it is three times this
+     one's size. This is a single low S on the floor with a flat wedge head, a
+     bone crest and no water anywhere near it.
+
+     The crest is what makes it a basilisk rather than a big snake — the name
+     is "little king" and the classic read is the crown — and it is bone
+     rather than gold, because gold pooled on a creature means Elder and
+     nothing else (v39) and this is Rare. The gaze is one large pale eye over
+     a flat square halo, which is the Golem's own runic-eye treatment in a
+     different hue rather than a new effect: hard-edged, flat, no gradient.
+     Every fill is two facets on the locked lit/shadow split, the body opts
+     into v55's shared rim light through PR, and nothing here is outlined. */
+  } else if (species === "basilisk") {
+
+    const tf = Math.sin(t / 420) * 1.5;      // tail sway
+    const tg = Math.sin(t / 260);            // tongue flick
+    P(ctx, [sx - 15.4, sy - 1.4 + tf, sx - 9.6, sy - 3.2, sx - 9.6, sy - 0.4], "#2c4a30");   // tail
+    PR(ctx, [sx - 10, sy - 1.2, sx - 5.4, sy - 4.2, sx - 0.6, sy - 2.2, sx + 3.4, sy - 4.8,
+             sx + 5.2, sy - 3.2, sx + 0.4, sy - 0.6, sx - 4.8, sy - 2.4, sx - 10, sy + 0.2], "#4e7d52");
+    P(ctx, [sx - 10, sy + 0.2, sx - 4.8, sy - 2.4, sx + 0.4, sy - 0.6, sx + 5.2, sy - 3.2,
+            sx + 5.6, sy - 2.0, sx + 0.6, sy + 0.6, sx - 4.8, sy - 1.2, sx - 10, sy + 1.0], "#2c4a30");
+    for (let i = 0; i < 4; i++) {                                                            // belly plates
+      const bpx = sx - 8.2 + i * 3.6, bpy = sy - 0.2 - Math.sin(i * 1.6) * 1.0;
+      P(ctx, [bpx, bpy, bpx + 2.2, bpy - 0.9, bpx + 2.2, bpy - 2.0, bpx, bpy - 1.1], "#b9b28e");
+    }
+    R(ctx, [sx - 9.4, sy - 1.8, sx - 5.2, sy - 4.4, sx - 0.6, sy - 2.6, sx + 3.4, sy - 5.0], "#6fa06a", 0.8);
+    PR(ctx, [sx + 3.4, sy - 4.6, sx + 5.4, sy - 12.4, sx + 8.0, sy - 12.6, sx + 6.2, sy - 3.6], "#4e7d52"); // neck
+    P(ctx, [sx + 6.2, sy - 3.6, sx + 8.0, sy - 12.6, sx + 8.8, sy - 12.0, sx + 7.0, sy - 3.2], "#2c4a30");
+    PR(ctx, [sx + 4.8, sy - 13.0, sx + 10.4, sy - 14.2, sx + 13.0, sy - 11.6, sx + 5.8, sy - 10.6], "#5a8a5e"); // head
+    P(ctx, [sx + 10.4, sy - 14.2, sx + 13.0, sy - 11.6, sx + 8.8, sy - 11.4], "#33553a");
+    P(ctx, [sx + 6.0, sy - 11.0, sx + 12.6, sy - 11.4, sx + 11.6, sy - 9.6, sx + 6.4, sy - 9.8], "#2c4a30"); // jaw
+    P(ctx, [sx + 4.9, sy - 13.2, sx + 5.4, sy - 17.4, sx + 6.9, sy - 13.6], "#d8d0b0");      // crest
+    P(ctx, [sx + 6.9, sy - 13.6, sx + 7.8, sy - 18.8, sx + 9.0, sy - 13.9], "#d8d0b0");
+    P(ctx, [sx + 9.0, sy - 13.9, sx + 10.2, sy - 17.0, sx + 11.0, sy - 14.1], "#9a9276");
+    ctx.fillStyle = "rgba(232,240,106,0.28)";                                                // the gaze
+    ctx.fillRect(sx + 8.0, sy - 14.4, 4.4, 4.4);
+    EY(ctx, sx + 10.2, sy - 12.2, 1.3, "#e8f06a", "#1c2416");
+    ctx.strokeStyle = "#a83c4c"; ctx.lineWidth = 0.7;                                        // forked tongue
+    ctx.beginPath();
+    ctx.moveTo(sx + 12.8, sy - 10.8);
+    ctx.lineTo(sx + 15.4 + tg * 1.2, sy - 10.2);
+    ctx.moveTo(sx + 15.4 + tg * 1.2, sy - 10.2);
+    ctx.lineTo(sx + 17.0 + tg * 1.4, sy - 11.0);
+    ctx.moveTo(sx + 15.4 + tg * 1.2, sy - 10.2);
+    ctx.lineTo(sx + 16.8 + tg * 1.4, sy - 9.2);
+    ctx.stroke();
+
   } else if (species === "krakenling") {
 
     PR(ctx, [sx - 5, sy - 6, sx - 4, sy - 11, sx + 4, sy - 11, sx + 5, sy - 6, sx + 2, sy - 3, sx - 2, sy - 3], "#5a3a6e"); // mantle
@@ -15993,6 +16640,12 @@ function interiorLightMap(rec) {
      outline v29 gave it — and because arriving into a pitch-black tile is
      not atmosphere, it is a player who cannot find the way back out. */
   if (rec.exit) stamp(rec.exit.x + 0.5, rec.exit.y + 0.5);
+  /* Dungeons PART E: an OPEN vault is a light, for the same reason the exit
+     is one — the hoard is the thing the whole expedition was for and it must
+     not be sitting in the dark. A shut one lights nothing, so the deepest
+     room stays black until it is earned. tryOpenVault() invalidates this
+     cache when the door turns. */
+  if (rec.vault && rec.vault.open) stamp(rec.vault.x, rec.vault.y);
   rec.lightmap = map; rec.lightmapOre = live;
   return map;
 }
@@ -16017,16 +16670,39 @@ function renderInteriorGround(t) {
          contrast reads the shape" rule this project's own style already
          requires everywhere else, just missed here originally. */
       const abyss32 = spaceKindOf(me.space) === "abyssal";
+      /* ============ Dungeons PART B — WORKED STONE, NOT ROCK ==========
+         The generator makes a dungeon a different SHAPE; this makes it a
+         different MATERIAL, and the two together are what the bible's
+         separation of Dungeons from Underground Caves actually reads as.
+         Every colour here is the locked Ruins palette entry `#bcb4a2` taken
+         down in value — the same move the v20 dungeon entrance made
+         above ground ("the same ruin stone taken down deeper and colder"),
+         so a player who walks in from a Ruin is standing in the same
+         civilisation rather than in a new one. Flat fills, hard edges, two
+         facets on the locked split, and no new palette entry. */
+      const dun55 = spaceKindOf(me.space) === "dungeon";
       let col;
-      if (v === IN_WALL)      col = abyss32 ? (ph > 0.7 ? "#120a1e" : "#0a0614")
-                                            : (ph > 0.7 ? "#221812" : "#170f0a");
-      else if (v === IN_EXIT) col = abyss32 ? "#4a3a7a" : "#5a9aa8";
-      else                    col = abyss32 ? (ph > 0.72 ? "#4a3868" : "#3e2e58")
-                                            : (ph > 0.72 ? "#8a7458" : "#78624a");
+      if (v === IN_WALL)      col = dun55 ? (ph > 0.7 ? "#3c3a34" : "#2e2c28")
+                                          : abyss32 ? (ph > 0.7 ? "#120a1e" : "#0a0614")
+                                                    : (ph > 0.7 ? "#221812" : "#170f0a");
+      else if (v === IN_EXIT) col = dun55 ? "#9a8f6a" : abyss32 ? "#4a3a7a" : "#5a9aa8";
+      /* Dungeons PART E: the vault door. Shut, it is a slab of the dungeon's
+         own stone with a hard iron band across it — deliberately readable as
+         a DOOR and not as a wall, since a player has to know it is the thing
+         the key is for. Open, it paints as the threshold it has become. */
+      else if (v === IN_VDOOR) col = (rec.vault && rec.vault.open) ? "#7d7466" : "#4a4640";
+      else                    col = dun55 ? (ph > 0.72 ? "#69655b" : "#5e5a51")
+                                          : abyss32 ? (ph > 0.72 ? "#4a3868" : "#3e2e58")
+                                                    : (ph > 0.72 ? "#8a7458" : "#78624a");
       /* Walls are drawn as real raised blocks with lit/shadow faces, not
          flat tiles — this is the single biggest reason the interiors read
          as "flat land" before: everything sat at z=0 with no silhouette. */
-      const wallH = (v === IN_WALL) ? (9 + Math.floor(ph * 3) * 2) : 0;
+      /* Dungeons PART B: a cave's walls vary in height, because broken rock
+         does. Masonry does not — a dungeon's walls all stand at one course,
+         and that single constant is most of why a corridor reads as BUILT
+         from inside it. A shut vault door stands with them. */
+      const wallH = (v === IN_WALL) ? (dun55 ? 12 : (9 + Math.floor(ph * 3) * 2))
+                  : (v === IN_VDOOR && !(rec.vault && rec.vault.open)) ? 12 : 0;
       const [ax, ay] = worldToScreen(tx, ty, wallH);
       const [bx, by] = worldToScreen(tx + 1, ty, wallH);
       const [cx2, cy2] = worldToScreen(tx + 1, ty + 1, wallH);
@@ -16035,11 +16711,11 @@ function renderInteriorGround(t) {
         const [a0x, a0y] = worldToScreen(tx, ty + 1, 0);
         const [b0x, b0y] = worldToScreen(tx + 1, ty + 1, 0);
         const [c0x, c0y] = worldToScreen(tx + 1, ty, 0);
-        ctx.fillStyle = abyss32 ? "#060410" : "#100a06";        // shadowed south face
+        ctx.fillStyle = dun55 ? "#1e1d1a" : abyss32 ? "#060410" : "#100a06";   // shadowed south face
         ctx.beginPath();
         ctx.moveTo(dx2, dy2); ctx.lineTo(cx2, cy2); ctx.lineTo(b0x, b0y); ctx.lineTo(a0x, a0y);
         ctx.closePath(); ctx.fill();
-        ctx.fillStyle = abyss32 ? "#0a0718" : "#1a110b";        // lit east face
+        ctx.fillStyle = dun55 ? "#282622" : abyss32 ? "#0a0718" : "#1a110b";   // lit east face
         ctx.beginPath();
         ctx.moveTo(cx2, cy2); ctx.lineTo(bx, by); ctx.lineTo(c0x, c0y); ctx.lineTo(b0x, b0y);
         ctx.closePath(); ctx.fill();
@@ -16075,9 +16751,27 @@ function renderInteriorGround(t) {
       }
       if (v === IN_FLOOR && ph > 0.93) {   // sparse bioluminescence
         const gl = 0.4 + 0.35 * Math.sin(t / 900 + ph * 9);
-        ctx.fillStyle = abyss32 ? `rgba(150,110,220,${gl * 0.45})`
-                                : `rgba(90,216,224,${gl * 0.5})`;
+        /* Dungeons PART B: a dungeon has no bioluminescence — nothing grows
+           down here. What it has is the odd guttering ember left in a
+           sconce, in the Lava palette's own `#ff7a3c` family, so the light
+           in a built place reads as something somebody lit. Same flat
+           speck, same cheap draw, one colour different. */
+        ctx.fillStyle = dun55 ? `rgba(240,168,96,${gl * 0.5})`
+                              : abyss32 ? `rgba(150,110,220,${gl * 0.45})`
+                                        : `rgba(90,216,224,${gl * 0.5})`;
         ctx.beginPath(); ctx.arc(sx + 12, sy + 6, 1.6, 0, Math.PI * 2); ctx.fill();
+      }
+      /* Dungeons PART E: the iron band across a shut vault door. One hard
+         flat bar on the face that is already painted — no second geometry,
+         no glow, no gradient — and it goes with the door when it opens. */
+      if (v === IN_VDOOR && !(rec.vault && rec.vault.open)) {
+        ctx.fillStyle = "#2a2622";
+        ctx.beginPath();
+        ctx.moveTo(ax, ay + 4); ctx.lineTo(bx, by + 4);
+        ctx.lineTo(cx2, cy2 + 4); ctx.lineTo(dx2, dy2 + 4);
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "#c8bfa4";
+        ctx.fillRect(sx + 10, sy - 2, 4, 3);      // the lock plate
       }
       if (v === IN_EXIT) {
         const gl = 0.5 + 0.4 * Math.sin(t / 500);
@@ -16573,7 +17267,13 @@ function render(t) {
     }
     else if (e.kind === "herb") drawHerbNode(e.f, t);
     else if (e.kind === "essence") drawEssenceNode(e.f, t);
-    else if (e.kind === "inode") drawEssenceNode({ x: e.nd.x - 0.5, y: e.nd.y - 0.5 }, t);   // v29
+    /* Dungeons PART E: the vault hoard is an interior node like any other —
+       it is only its own draw that differs, and it is the node itself that
+       says so rather than a second list to keep in step. */
+    else if (e.kind === "inode") {
+      if (e.nd.vault) drawVaultHoard(e.nd, t);
+      else drawEssenceNode({ x: e.nd.x - 0.5, y: e.nd.y - 0.5 }, t);   // v29
+    }
     else if (e.kind === "iore") {
       const f = { x: e.o.x - 0.5, y: e.o.y - 0.5, tx: Math.floor(e.o.x), ty: Math.floor(e.o.y) };
       if (e.o.type === "runic") drawRunicNode(f, t); else drawIronNode(f, t);
@@ -17357,6 +18057,17 @@ function updateHUD(dayT) {
   }
   else if (me && podiumAt(me.x, me.y) !== null) { hudPrompt.textContent = `${PODIUMS[podiumAt(me.x, me.y)].name} — a duel needs a challenger on the other podium`; hudPrompt.style.display = "block"; }
   else if (inColosseum(me.x, me.y)) { hudPrompt.textContent = "The Ruined Colosseum — PvP is live inside the ring"; hudPrompt.style.display = "block"; }
+  /* Dungeons PART E: in the same position in this chain as the branch it
+     mirrors in doInteract(), so the prompt can never advertise something a
+     keypress would not actually do. It says which of the two states the
+     door is in, because "sealed" with no reason given is the one thing a
+     player standing in front of it cannot work out on their own. */
+  else if (me && nearVaultDoor()) {
+    hudPrompt.textContent = haveVaultKey(me.space)
+      ? `[${(KEYBINDS.interact || "e").toUpperCase()}] Unlock the vault`
+      : "The vault is sealed — its Demon Knight carries the key";
+    hudPrompt.style.display = "block";
+  }
   else if (nearChest()) { hudPrompt.textContent = "[E] Dev Supply Chest — stock all materials"; hudPrompt.style.display = "block"; }
   else if (nearBaseChest()) { hudPrompt.textContent = "[E] Storage Chest — open"; hudPrompt.style.display = "block"; }
   else if (item) { hudPrompt.textContent = `[E] Pick up ${ITEM_META[item.type]?.name || item.type}`; hudPrompt.style.display = "block"; }
