@@ -494,3 +494,57 @@ Knights are completely unaffected by this version.
 
 **After this version ships successfully, do not start any further
 version automatically** — wait for `NEXT_BUILD.md` to be updated.
+
+---
+
+## QUEUED, AFTER DUNGEONS — do not build until the spec above ships.
+## Confirmed, locked spec for the version after next (UI Consistency & Onboarding Pass)
+
+**Confirmed live: 13 distinct top-level HUD/panel elements exist,
+added incrementally across 55+ versions.** Real panels (inventory,
+craft, build, character, travel, chest, give) genuinely share one
+`.panel` class and are already consistent with each other. This spec
+targets what hasn't been verified: the HUD elements outside that shared
+class, and one specific, confirmed, real problem.
+
+**PART A — the keybind bar has grown into an unreadable single line and
+will keep growing forever as-is.** Confirmed live: `#hudHelp` currently
+lists 14 separate keybinds in one unbroken string, and every new
+mechanic this project has shipped has simply appended another entry —
+this does not scale and reads as worse with every future feature. Fix:
+show only the handful of core, always-relevant keys by default (move,
+attack, gather, inventory — 4-5 entries), with the full current list
+moved behind a small, unobtrusive toggle (a `[?]` icon or similar) that
+expands the complete reference on demand. This is a real UX fix, not a
+cosmetic one — a 14-entry text wall is measurably harder to actually
+read than a short list plus an opt-in expansion.
+
+**PART B — a real consistency audit across every non-panel HUD
+element**, not assumed clean. Check the compass dial, minimap, player
+status box, boss bar, and every toast/notification style against one
+shared set of values — border-radius, padding, backdrop blur, font
+weight, the `--panel`/`--panel-edge` color variables the real panels
+already use consistently. Where an element was built independently and
+drifted from these values (very plausible given how incrementally this
+UI has grown), bring it in line. Report the actual specific
+inconsistencies found, not just "checked, found none" — this is a real
+audit, the same rigor as every code-correctness pass this project has
+done, applied to visual consistency instead.
+
+**PART C — the very first login should not show everything at once.**
+Confirmed: compass, minimap, and the full status box all render
+immediately on a brand new account, before Tutorial Grounds even
+finishes. Hold the compass and minimap hidden until the tutorial
+completes (or is skipped) — a new player's very first screen should
+teach movement and combat, not compete with two separate navigational
+UI elements they don't have a reason to use yet. This does not touch
+Tutorial Grounds' own logic, only what surrounds it.
+
+**Proof gates:** standard gauntlet plus confirm the keybind bar's
+default state shows only the core entries with a real, working
+expand/collapse, confirm every one of the 13 HUD elements shares real,
+identical spacing/radius/color values (a genuine per-element check, not
+a sample), confirm compass/minimap stay hidden until Tutorial Grounds
+completes or is explicitly skipped, confirm nothing else during the
+tutorial is affected.
+
