@@ -5963,6 +5963,20 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     {
       const doc46 = window.document;
 
+      /* ⚠️ v56 PART C RE-PIN, and it is a real behaviour change rather than a
+         convenience. Every compass/minimap gate below was written when both
+         cards were up from the very first frame; v56 holds them back until
+         Tutorial Grounds completes or is skipped, and this harness boots as
+         a brand new account, so at this point the tutorial is genuinely still
+         running. The gates below are about the interior hide/show rule and
+         the two-cards-not-one rule, neither of which v56 touches — so the
+         tutorial is ENDED here, exactly as a real player ends it, and they go
+         on testing what they were written to test from the state a player is
+         in for the whole rest of their life. The held-back rule itself is
+         driven in both directions by the v56 block at the foot of this file,
+         which re-arms the flag rather than assuming anything about it. */
+      window.debugSetV35({ tutorialActive: false, tutorialDone: true });
+
       /* ---- PART A: the death timer ------------------------------------- */
       results.push(['v46 A: the respawn wait is one constant, and it is seconds now',
         gameScript.indexOf('const RESPAWN_SECONDS = 30;') > 0 &&
@@ -8720,6 +8734,247 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
 
       results.push(['v52+53: the world still runs frames cleanly after every part of this',
+        (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
+    }
+
+    /* ===================== v56 — UI CONSISTENCY & ONBOARDING =============
+       PART A is the keybind bar, PART B the non-panel HUD audit, PART C the
+       two navigation cards held back until Tutorial Grounds is done. Runs
+       last, and PART C restores the flag it arms. ====================== */
+    {
+      const doc56 = window.document;
+      const strip56 = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+      const code56 = strip56(gameScript);
+      /* The stylesheet, comment-stripped for the same reason every source
+         grep in this file is: v56's own comments quote the literals it
+         removed, so a blunt grep over the raw file would fail on the
+         documentation of the rule it is enforcing. */
+      const cssRaw = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
+      const css56 = cssRaw.replace(/\/\*[\s\S]*?\*\//g, '');
+      const countIn = (s, sub) => s.split(sub).length - 1;
+      /* One rule, by its selector, anchored to the two-space indent every
+         rule in this stylesheet starts on — so a gate about #hudZone can
+         never accidentally be reading #hudZone's neighbours. */
+      const ruleOf = sel => {
+        const i = css56.indexOf('\n  ' + sel);
+        return i < 0 ? '' : css56.slice(i, css56.indexOf('}', i) + 1);
+      };
+
+      /* ---- PART A: the keybind bar ------------------------------------- */
+      if (window.debugHelpInfo) {
+        const H = window.debugHelpInfo;
+        const h0 = H();
+        results.push([`v56 A: the default bar is the four core keys and nothing else (${h0.coreCount} of ${h0.fullCount})`,
+          h0.coreCount === 4 && h0.fullCount === 14 &&
+          h0.coreKeys.join(',') === 'move,attack,interact,inventory']);
+        results.push(['v56 A: and it really is move / attack / gather / inventory, read off the rendered bar',
+          h0.coreText.indexOf('move') > 0 && h0.coreText.indexOf('attack') > 0 &&
+          h0.coreText.indexOf('gather / pick up') > 0 && h0.coreText.indexOf('inventory') > 0 &&
+          h0.coreText.indexOf('fast travel') < 0 && h0.coreText.indexOf('class ability') < 0]);
+        results.push(['v56 A: the complete reference is built but collapsed until asked for',
+          h0.expanded === false && h0.fullShown === false &&
+          h0.fullRows === 14 && h0.hasToggle === true]);
+        /* Driven through the real element, not the flag behind it. */
+        doc56.getElementById('helpToggle').click();
+        const h1 = H();
+        doc56.getElementById('helpToggle').click();
+        const h2 = H();
+        results.push(['v56 A: a real, working expand/collapse — the toggle is clicked, not the state poked',
+          h1.expanded === true && h1.fullShown === true && h1.fullRows === 14 &&
+          h2.expanded === false && h2.fullShown === false]);
+        results.push(['v56 A: and the toggle survives its own rebuild, so it can be clicked twice',
+          h1.hasToggle === true && h2.hasToggle === true]);
+        /* ⚠️ THE REAL BUG THIS PART FOUND. */
+        results.push(['v56 A: THE FIND — the mount key is in the bar at last; the markup listed it, the generator never did',
+          h1.fullText.indexOf('R mount') > 0 &&
+          html.indexOf('&nbsp;&bull;&nbsp; R mount &nbsp;') < 0 &&
+          html.indexOf('<div class="hud" id="hudHelp"><div id="helpCore"></div><div id="helpFull"></div></div>') > 0]);
+        /* One table, and nothing bindable can fall out of it again. The four
+           movement actions are the one deliberate merge — they are four rows
+           on the rebinding screen and one entry ("WASD move") here. */
+        const MOVE = ['up', 'down', 'left', 'right'];
+        /* KEYBIND_DEFAULTS is a top-level const and never lands on window, so
+           the bindable set is read off the source rather than the object —
+           the same reason debugV35Info() exists at all. */
+        const kbBlock = code56.slice(code56.indexOf('const KEYBIND_DEFAULTS = {'),
+                                     code56.indexOf('const KEYBIND_LABELS'));
+        const bindable = (kbBlock.match(/(\w+):\s*"/g) || []).map(s => s.split(':')[0].trim());
+        const missing = bindable.filter(a => MOVE.indexOf(a) < 0 && h0.rowIds.indexOf(a) < 0);
+        results.push([`v56 A: every bindable action reaches the bar — ${bindable.length} bindings, ${missing.length} unlisted`,
+          bindable.length === 17 && missing.length === 0 && h0.rowIds.indexOf('move') === 0]);
+        /* Still generated from KEYBINDS on both halves, so neither can lie
+           after a rebind — the v23 rule, now covering the reference too. */
+        const before = window.debugSettingsInfo().KEYBINDS.ability;
+        window.setKeybind('ability', 'z');
+        const h3 = H();
+        window.setKeybind('ability', before);
+        results.push(['v56 A: the expansion regenerates from KEYBINDS after a rebind, exactly as the line always has',
+          h3.fullText.indexOf('Z class ability') > 0 &&
+          h3.fullText.indexOf('Q class ability') < 0 &&
+          H().fullText.indexOf('Q class ability') > 0]);
+        /* ⚠️ A bar-wide click target in the bottom-left corner would quietly
+           eat click-to-attack in that corner of the world, so the lift is on
+           the toggle alone. Two `pointer-events: auto` in the whole file, and
+           the other one is #enterBtn.ready on the login screen. */
+        results.push(['v56 A: the toggle is the ONLY thing in the HUD that takes a click — the card itself still never eats one',
+          countIn(css56, 'pointer-events: auto') === 2 &&
+          ruleOf('#helpToggle').indexOf('pointer-events: auto') > 0 &&
+          ruleOf('#enterBtn.ready').indexOf('pointer-events: auto') > 0 &&
+          ruleOf('.hud').indexOf('pointer-events: none') > 0 &&
+          ruleOf('#hudHelp').indexOf('pointer-events') < 0]);
+      } else {
+        results.push(['v56 A: debugHelpInfo() is reachable', false]);
+      }
+
+      /* ---- PART B: the non-panel HUD audit ------------------------------ */
+      {
+        results.push(['v56 B: the three drifted treatments are named tokens now, beside --panel and --panel-edge',
+          css56.indexOf('--panel-well: rgba(8,10,16,0.8);') > 0 &&
+          css56.indexOf('--edge-gold: rgba(232,182,76,0.40);') > 0 &&
+          css56.indexOf('--edge-danger: rgba(200,72,56,0.55);') > 0]);
+        /* Each drifted literal is GONE from the executable stylesheet, not
+           merely joined by a token. One occurrence each is the :root
+           definition itself. */
+        results.push(['v56 B: FINDING 1 — the bar trough and the compass dial were the same colour at two different alphas; both drifts are gone',
+          countIn(css56, 'rgba(8,10,16,0.85)') === 0 &&
+          countIn(css56, 'rgba(8,10,16,0.55)') === 0 &&
+          countIn(css56, 'var(--panel-well)') === 2]);
+        results.push(['v56 B: FINDING 2 — the HP/boss bar carried the only 8px radius in the file; every HUD card is 4px now',
+          countIn(css56, 'border-radius: 8px') === 0 &&
+          ruleOf('#hpBarWrap').indexOf('border-radius: 4px') > 0 &&
+          ruleOf('#hpBarWrap').indexOf('var(--panel-well)') > 0]);
+        results.push(['v56 B: FINDING 3 — the minimap canvas carried the only 2px radius; it takes the file\'s own 3px',
+          countIn(css56, 'border-radius: 2px') === 0 &&
+          css56.indexOf('#mapCanvas { display: block; border-radius: 3px; }') > 0]);
+        results.push(['v56 B: FINDING 4 — the toast was the one card in the HUD with no backdrop blur, and the only 20px padding',
+          ruleOf('#toast').indexOf('backdrop-filter: blur(2px)') > 0 &&
+          countIn(css56, 'padding: 8px 20px') === 0 &&
+          ruleOf('#toast').indexOf('padding: 8px 14px') > 0]);
+        /* The literal is gone entirely — the one remaining occurrence of that
+           colour is the token's own definition, written 0.40. */
+        results.push(['v56 B: FINDING 5 — a gold card edge was written two ways (an rgba on two cards, a TEXT colour on two others); one token now',
+          countIn(css56, 'rgba(232,182,76,0.4)') === 0 &&
+          countIn(css56, 'rgba(232,182,76,0.40)') === 1 &&
+          countIn(css56, 'border-color: var(--edge-gold)') === 3 &&
+          countIn(css56, 'border: 1px solid var(--edge-gold)') === 1 &&
+          ruleOf('#hudPrompt').indexOf('var(--gold-dim)') < 0]);
+        results.push(['v56 B: FINDING 6 — the two danger cards already agreed; the value is named so a third cannot start a fourth',
+          countIn(css56, 'rgba(200,72,56,0.55)') === 1 &&
+          countIn(css56, 'border-color: var(--edge-danger)') === 2]);
+        results.push(['v56 B: FINDING 7 — the two map cards inset their contents 4px in two different ways; both say it the same way now',
+          ruleOf('#hudMinimap').indexOf('padding: 4px;') > 0 &&
+          ruleOf('#hudMap').indexOf('padding: 4px;') > 0 &&
+          ruleOf('#mmDial').indexOf('margin: 0;') > 0 &&
+          countIn(css56, 'margin: 4px;') === 0]);
+        /* The preservation half: every value the audit did NOT change is
+           still exactly what it was, so "bring it in line" cannot quietly
+           become "redesign the HUD". */
+        results.push(['v56 B: the two shared card rules themselves are untouched — .hud is still 4px/blur(2px), .panel still 5px/blur(3px)',
+          ruleOf('.hud').indexOf('border-radius: 4px; backdrop-filter: blur(2px);') > 0 &&
+          ruleOf('.hud').indexOf('padding: 8px 14px;') > 0 &&
+          ruleOf('.hud').indexOf('background: var(--panel);') > 0 &&
+          ruleOf('.panel').indexOf('border-radius: 5px;') > 0 &&
+          ruleOf('.panel').indexOf('backdrop-filter: blur(3px);') > 0 &&
+          ruleOf('.panel').indexOf('padding: 14px 16px;') > 0]);
+        /* A real per-element check, not a sample: every one of the thirteen
+           top-level HUD elements outside the .panel class. */
+        const HUD13 = ['#hudPlayer', '#hudWorld', '#hudZone', '#hudPrompt',
+                       '#hudTutorial', '#hudUnmaking', '#hudBoss', '#hudMinimap',
+                       '#hudMap', '#hudHelp', '#hpBarWrap', '#toast', '#deathOverlay'];
+        results.push([`v56 B: all ${HUD13.length} non-panel HUD elements were read individually and every one of them has a rule to read`,
+          HUD13.every(sel => ruleOf(sel).length > 0)]);
+        results.push(['v56 B: and not one of them sets a font-weight — they all still inherit Barlow 400',
+          HUD13.every(sel => ruleOf(sel).indexOf('font-weight') < 0) &&
+          countIn(css56, 'font-weight') === 6]);
+        results.push(['v56 B: every one of them takes its fill and hairline from the shared variables, or is deliberately not a card',
+          HUD13.every(sel => {
+            const r = ruleOf(sel);
+            /* The ten .hud cards inherit both from the class and set neither.
+               The three that are not .hud cards each say where they stand:
+               the bar is a well, the toast is the panel fill, and the death
+               overlay is a full-screen scrim rather than a card at all. */
+            if (r.indexOf('background') < 0 && r.indexOf('border:') < 0) return true;
+            return r.indexOf('var(--panel-well)') > 0 || r.indexOf('var(--panel)') > 0 ||
+                   sel === '#deathOverlay';
+          })]);
+        results.push(['v56 B: the dial is still a dial and the z-index ladder is untouched',
+          ruleOf('#mmDial').indexOf('border-radius: 50%;') > 0 &&
+          ruleOf('.hud').indexOf('z-index: 5;') > 0 &&
+          ruleOf('.panel').indexOf('z-index: 10;') > 0 &&
+          ruleOf('#toast').indexOf('z-index: 20;') > 0 &&
+          ruleOf('#deathOverlay').indexOf('z-index: 25;') > 0]);
+        /* The one v52 gate that reads these rules by name still reads them. */
+        results.push(['v56 B: the boss bar is still the HP bar\'s own treatment, one selector wider',
+          html.indexOf('#hpBarWrap, #bossBarWrap {') > 0 &&
+          html.indexOf('#hpBar.low, #bossBar {') > 0]);
+      }
+
+      /* ---- PART C: the first screen ------------------------------------ */
+      if (window.debugSetV35 && window.updateMinimap && window.updateWorldMap) {
+        const disp = id => doc56.getElementById(id).style.display;
+        const nav = () => { window.updateMinimap(); window.updateWorldMap();
+                            return [disp('hudMinimap'), disp('hudMap')]; };
+        results.push(['v56 C: one predicate, and BOTH cards read it — they can never disagree about this',
+          code56.indexOf('function navHudHeld() { return tutorialActive; }') > 0 &&
+          (code56.match(/inInterior\(\) \|\| navHudHeld\(\)/g) || []).length === 2]);
+        /* Held. Driven from the real flag, set by the real setter. */
+        window.debugSetV35({ tutorialActive: true });
+        window.refreshTutorialHud();
+        const held = nav();
+        results.push(['v56 C: while Tutorial Grounds is running, neither navigation card is on screen',
+          held[0] === 'none' && held[1] === 'none' &&
+          window.debugV35Info().navHudHeld === true]);
+        /* And nothing else during the tutorial moved. */
+        results.push(['v56 C: and nothing ELSE during the tutorial is affected — the line, the two readouts and the keybind bar are all still up',
+          disp('hudTutorial') === 'block' && disp('hudPlayer') !== 'none' &&
+          disp('hudWorld') !== 'none' && disp('hudHelp') !== 'none']);
+        /* Completing it. */
+        window.endTutorial(true);
+        const done = nav();
+        results.push(['v56 C: completing it brings both back',
+          done[0] === 'block' && done[1] === 'block' &&
+          window.debugV35Info().tutorialActive === false]);
+        /* Skipping it — the ESC path, which is endTutorial(false). */
+        window.debugSetV35({ tutorialActive: true });
+        const held2 = nav();
+        window.endTutorial(false);
+        const skipped = nav();
+        results.push(['v56 C: and SKIPPING it does exactly the same, because both routes are the one flag',
+          held2[0] === 'none' && held2[1] === 'none' &&
+          skipped[0] === 'block' && skipped[1] === 'block']);
+        /* A returning player never arms it at all. */
+        results.push(['v56 C: a returning row with tutorial_done never runs the tutorial, so it never holds anything back',
+          window.tutorialShouldRun({ tutorial_done: true }) === false &&
+          window.tutorialShouldRun({}) === true &&
+          window.startTutorialIfNeeded() === false]);
+        /* The interior rule is independent of it and still wins. */
+        {
+          const info = window.debugWorldInfo(), Bc = info.B;
+          let spot = null;
+          for (let y = 0; y < info.N && !spot; y++) for (let x = 0; x < info.N; x++) {
+            if (window.biomeAt(x, y) === Bc.UWCAVE) { spot = [x, y]; break; }
+          }
+          if (spot) {
+            window.debugSetPlayer({ x: spot[0] + 0.5, y: spot[1] + 0.5, diving: true, hp: 100, breath: 30 });
+            window.enterInterior(spot[0], spot[1], Bc.UWCAVE);
+            const inCave = nav();
+            window.exitInterior();
+            window.debugSetPlayer({ x: info.SPAWN.x, y: info.SPAWN.y, diving: false, hp: 100 });
+            const out = nav();
+            results.push(['v56 C: the older interior rule is untouched and still hides them on its own',
+              inCave[0] === 'none' && inCave[1] === 'none' &&
+              out[0] === 'block' && out[1] === 'block']);
+          } else {
+            results.push(['v56 C: interior-independence gate had a UWCAVE tile to use', false]);
+          }
+        }
+        /* Restore, so nothing after this sees an armed flag. */
+        window.debugSetV35({ tutorialActive: false, tutorialDone: true });
+      } else {
+        results.push(['v56 C: the tutorial setter and both card updaters are reachable', false]);
+      }
+
+      results.push(['v56: the world still runs frames cleanly after every part of this',
         (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
     }
 

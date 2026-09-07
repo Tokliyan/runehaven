@@ -19,6 +19,28 @@
     --danger: #e06c5a;
     --runic: #5ac8e0;
     --dsteel: #b06ce0;
+    /* ============ v56 PART B — THREE TOKENS THE AUDIT FOUND MISSING =====
+       Every one of these was already a real, repeated treatment in the HUD;
+       none of them had a name, which is exactly why they drifted. Named
+       here beside --panel and --panel-edge, which are the two the real
+       panels have always shared consistently.
+
+       --panel-well  a RECESSED surface inside a card (the HP/boss bar's
+                     trough, the compass dial's face). It is not --panel:
+                     a well has to read as cut INTO the card it sits in.
+                     The audit found the same colour at four different
+                     alphas — 0.55 (dial), 0.7 (settings tabs/buttons),
+                     0.8 (every login field), 0.85 (the bar). 0.8 is the
+                     one with the most call sites, so it is the value.
+       --edge-gold   the border of a card the player should NOTICE. Found
+                     as rgba(232,182,76,0.40) on two cards and as
+                     var(--gold-dim) — a TEXT colour — on two others.
+       --edge-danger the border of a card that means danger. Already
+                     consistent on both its cards; named so a third one
+                     cannot start a fourth value. */
+    --panel-well: rgba(8,10,16,0.8);
+    --edge-gold: rgba(232,182,76,0.40);
+    --edge-danger: rgba(200,72,56,0.55);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -171,12 +193,58 @@
   #hudZone {
     bottom: 64px; left: 50%; transform: translateX(-50%);
     color: var(--gold); font-size: 14px; letter-spacing: 2px; display: none;
-    border-color: rgba(232,182,76,0.4);
+    border-color: var(--edge-gold);
   }
-  #hudHelp { bottom: 14px; left: 12px; color: var(--text-dim); font-size: 12px; }
+  /* ---------- v56 PART A: THE KEYBIND BAR, SHORT BY DEFAULT ----------
+     Confirmed live before touching it: the bar carried FOURTEEN binds in one
+     unbroken line, and every mechanic since v23 has simply appended another —
+     a wall that reads worse with every feature this project ships. It is the
+     same `.hud` card it always was; the only thing that changes is how much
+     of the list is on screen at once.
+
+     column-reverse is the whole layout, and it is doing two jobs at once. The
+     card is bottom-anchored, so the reference has to open UPWARD or it opens
+     off the bottom of the screen — but the core row must also come FIRST in
+     the DOM, because textContent is how three separate harness gates read
+     this bar and they read it in document order. Reversing the visual order
+     rather than the DOM order is what lets both be true. */
+  #hudHelp {
+    bottom: 14px; left: 12px; color: var(--text-dim); font-size: 12px;
+    display: flex; flex-direction: column-reverse; align-items: flex-start; gap: 7px;
+  }
+  #helpCore { white-space: nowrap; }
+  /* The one clickable thing in the entire HUD, so it is also the one place
+     `.hud`'s pointer-events: none is lifted — and it is lifted on the toggle
+     ALONE, never on the card. A bar-wide click target in the bottom-left
+     corner would quietly eat click-to-attack in that corner of the world. */
+  #helpToggle {
+    pointer-events: auto; cursor: pointer; margin-left: 10px;
+    background: none; border: 1px solid var(--panel-edge); border-radius: 3px;
+    color: var(--gold-dim); font-family: inherit; font-size: 11px;
+    letter-spacing: 1px; padding: 1px 6px; vertical-align: 1px;
+  }
+  #helpToggle:hover { border-color: var(--gold-dim); color: var(--gold); }
+  #helpFull { display: none; }
+  #helpFull.shown { display: block; }
+  /* 11px gold at 2px tracking is the micro-title this HUD already uses twice
+     — .mm-title over both map cards, .tut-step inside the tutorial line — so
+     the reference gets that one rather than a third heading treatment.
+
+     Two columns, because fourteen rows in one is the tall version of the wall
+     this part exists to remove. CSS multi-column rather than a grid,
+     deliberately: it balances itself and needs no row count, so the fifteenth
+     binding this project adds lands in the reference without anyone having to
+     remember to re-split it. */
+  #helpFull .help-title { color: var(--gold); font-size: 11px; letter-spacing: 2px; margin-bottom: 5px; }
+  #helpFull .help-cols { columns: 2; column-gap: 24px; }
+  .help-row {
+    display: grid; grid-template-columns: 76px auto;
+    line-height: 1.65; white-space: nowrap; break-inside: avoid;
+  }
+  .help-row .help-key { color: var(--gold-dim); letter-spacing: 1px; }
   #hudPrompt {
     bottom: 112px; left: 50%; transform: translateX(-50%);
-    color: var(--text); font-size: 14px; display: none; border-color: var(--gold-dim);
+    color: var(--text); font-size: 14px; display: none; border-color: var(--edge-gold);
   }
   .hud .gold { color: var(--gold); }
   .hud .dim { color: var(--text-dim); }
@@ -191,8 +259,13 @@
        grew to 10 keybinds across v23/v27/v28 and now runs the full width.
        Moved to the bottom-right corner, clear of it entirely. */
     position: fixed; bottom: 16px; right: 16px;
-    width: 270px; height: 16px; background: rgba(8,10,16,0.85);
-    border: 1px solid var(--panel-edge); z-index: 5; border-radius: 8px; overflow: hidden;
+    /* v56 PART B: two real drifts, both found by the audit rather than
+       assumed. The trough was a one-off rgba at 0.85 where every other
+       recessed surface in the file uses the same colour at a different
+       alpha, and its 8px corner was the ONLY 8px in the stylesheet — every
+       other card in this HUD is 4px. Both go to the shared value. */
+    width: 270px; height: 16px; background: var(--panel-well);
+    border: 1px solid var(--panel-edge); z-index: 5; border-radius: 4px; overflow: hidden;
   }
   #hpBar, #bossBar { height: 100%; width: 100%; background: linear-gradient(90deg, #4e8f3a, #7fce5a); transition: width .2s ease; }
   /* v52+53 PART G: the boss bar takes the hostile red the player's own bar
@@ -264,9 +337,14 @@
 
   #toast {
     position: fixed; top: 64px; left: 50%; transform: translateX(-50%);
-    background: var(--panel); border: 1px solid var(--gold-dim); color: var(--gold);
-    padding: 8px 20px; font-size: 14px; opacity: 0; transition: opacity .4s ease;
-    z-index: 20; pointer-events: none; border-radius: 4px;
+    background: var(--panel); border: 1px solid var(--edge-gold); color: var(--gold);
+    padding: 8px 14px; font-size: 14px; opacity: 0; transition: opacity .4s ease;
+    /* v56 PART B: the toast was built independently and had drifted on two
+       of the four values the audit checks — it was the one card in the HUD
+       with NO backdrop blur, and it carried its own 20px side padding where
+       every `.hud` card uses 14px. Its gold edge is deliberate and stays;
+       it just uses the named token now instead of a text colour. */
+    z-index: 20; pointer-events: none; border-radius: 4px; backdrop-filter: blur(2px);
   }
 
   /* ---------- v23: SETTINGS / ACCESSIBILITY / CREDITS ---------- */
@@ -410,7 +488,12 @@
      correct, real atan2 trig) — now presented as an actual dial with the
      eight real compass points marked around the rim, which is what "a
      real 8-way compass" means to a player looking at it. */
-  #hudMinimap { bottom: 52px; left: 12px; display: none; width: 148px; height: 148px; padding: 0; }
+  /* v56 PART B: padding 0 with a 4px margin on the dial inside it, against
+     #hudMap's padding 4px with no margin on the canvas inside it — the same
+     4px inset, written two different ways on two cards that sit in opposite
+     corners doing the same job. Same geometry to the pixel either way; the
+     two now simply say it the same way. */
+  #hudMinimap { bottom: 52px; left: 12px; display: none; width: 148px; height: 148px; padding: 4px; }
   #hudMinimap .mm-title, #hudMap .mm-title {
     position: absolute; top: -18px; left: 0; color: var(--gold);
     font-size: 11px; letter-spacing: 2px;
@@ -428,11 +511,18 @@
      opposite corner: direction on one side of the screen, ground on the
      other. */
   #hudMap { bottom: 44px; right: 16px; display: none; padding: 4px; }
-  #mapCanvas { display: block; border-radius: 2px; }
+  /* v56 PART B: 2px was the only 2px in the stylesheet. 3px is the radius
+     every small inner element in this file already uses. */
+  #mapCanvas { display: block; border-radius: 3px; }
   #mmDial {
-    position: relative; width: 140px; height: 140px; margin: 4px;
+    /* v56 PART B: the margin moved out to the card's own padding (above) and
+       the dial's face joins the shared well token — it was the lightest of
+       the four alphas the same colour was carrying, which is also why the
+       gold ticks on it were the faintest text in the HUD. Its 50% radius is
+       not drift and does not move: it is a dial. */
+    position: relative; width: 140px; height: 140px; margin: 0;
     border: 1px solid var(--panel-edge); border-radius: 50%;
-    background: rgba(8,10,16,0.55);
+    background: var(--panel-well);
   }
   .mm-tick {
     position: absolute; font-size: 9px; color: var(--text-dim);
@@ -456,7 +546,7 @@
      top where nothing else lives, so it never fights the two corner readouts. */
   #hudTutorial {
     top: 12px; left: 50%; transform: translateX(-50%); display: none;
-    max-width: 460px; text-align: center; border-color: rgba(232,182,76,0.4);
+    max-width: 460px; text-align: center; border-color: var(--edge-gold);
   }
   #hudTutorial .tut-step { color: var(--gold); font-size: 11px; letter-spacing: 2px; }
   #hudTutorial .tut-skip { color: var(--text-dim); font-size: 11px; }
@@ -466,7 +556,7 @@
      It is deliberately the only red card in the game. */
   #hudUnmaking {
     top: 12px; left: 50%; transform: translateX(-50%); display: none;
-    max-width: 460px; text-align: center; border-color: rgba(200,72,56,0.55);
+    max-width: 460px; text-align: center; border-color: var(--edge-danger);
   }
   #hudUnmaking .un-head {
     color: var(--danger); font-size: 13px; letter-spacing: 3px;
@@ -489,7 +579,7 @@
   #hudBoss {
     top: 12px; left: 50%; transform: translateX(-50%); display: none;
     width: 460px; max-width: 62vw; text-align: center;
-    border-color: rgba(200,72,56,0.55);
+    border-color: var(--edge-danger);
   }
   #hudBoss .boss-name {
     color: var(--danger); font-size: 15px; letter-spacing: 3px;
@@ -576,7 +666,16 @@
   <div class="mm-title">MINIMAP</div>
   <canvas id="mapCanvas" width="124" height="124"></canvas>
 </div>
-<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character &nbsp;•&nbsp; M fast travel &nbsp;•&nbsp; G give item</div>
+<!-- v56 PART A: two empty rows, filled by refreshHelpLine() from KEYBINDS
+     before the first frame (applySettings() runs at the foot of the script).
+     The fourteen-entry string that used to sit here is DELETED rather than
+     shortened, and that is the point: it was a second, hardcoded copy of the
+     list that had already gone stale — it named "R mount", which the
+     generator has never emitted — so a player rebinding anything saw one
+     line and a reader of this file saw a different one. One source now.
+     #helpCore is first in the DOM and #helpFull renders above it; see the
+     column-reverse note in the stylesheet for why it is that way round. -->
+<div class="hud" id="hudHelp"><div id="helpCore"></div><div id="helpFull"></div></div>
 <div id="hpBarWrap"><div id="hpBar"></div></div>
 
 <div class="panel" id="invPanel">
@@ -2026,6 +2125,7 @@ function debugV35Info() {
     minimap: minimapBearings(),
     MINIMAP_LABELS: MINIMAP_MARKS.map(m => m[0]),
     tutorialActive, tutorialStep, tutorialDone, tutorialRuns,
+    navHudHeld: navHudHeld(),      // v56 PART C: the one predicate both cards read
     TUTORIAL_STEPS: TUTORIAL_STEPS.map(s => s.key),
     TUTORIAL_MARK: { x: TUTORIAL_MARK.x, y: TUTORIAL_MARK.y },
     TUTORIAL_DUMMY: { x: TUTORIAL_DUMMY.x, y: TUTORIAL_DUMMY.y },
@@ -17752,13 +17852,29 @@ const COMPASS_POINTS = [
   ["N", 0], ["NE", 45], ["E", 90], ["SE", 135],
   ["S", 180], ["SW", 225], ["W", 270], ["NW", 315],
 ];
+/* ============ v56 PART C — THE FIRST SCREEN IS NOT EVERY SCREEN =========
+   Confirmed live before changing anything: on a brand new account the
+   compass and the minimap were both already up on the very first frame,
+   competing with Tutorial Grounds for a player who has not yet been taught
+   to walk. Two navigational cards are the wrong thing to be reading while
+   the game is teaching movement and combat.
+
+   ONE predicate, read by both cards, so they can never disagree about it —
+   the same reason `isBlocking()` and `pinProtectOffered()` exist. It is
+   deliberately keyed to `tutorialActive` and nothing else: finishing the
+   tutorial and skipping it with ESCAPE both clear that flag through
+   endTutorial(), so "completes OR is skipped" is one condition rather than
+   two, and a returning player whose row already carries `tutorial_done`
+   never sets it at all and sees both cards on their first frame exactly as
+   they always have. Nothing inside Tutorial Grounds' own logic is touched. */
+function navHudHeld() { return tutorialActive; }
 function updateMinimap() {
   const el = document.getElementById("hudMinimap");
   if (!el) return;
   /* Inside a cave the grid is the interior's own, not the world's, so a
      world bearing would be meaningless there — the compass simply goes away,
      the same way the breath readout only appears when it means something. */
-  if (!me || inInterior()) { el.style.display = "none"; return; }
+  if (!me || inInterior() || navHudHeld()) { el.style.display = "none"; return; }
   const dial = document.getElementById("mmDial");
   if (dial) {
     /* hotfix: R_TICK and R_MARK used to be 46/36 — only 10px apart, which
@@ -17866,7 +17982,9 @@ function mapPixel(wx, wy, px, py) {
 function updateWorldMap() {
   const el = document.getElementById("hudMap");
   if (!el) return;
-  if (!me || inInterior()) { el.style.display = "none"; return; }
+  /* v56 PART C: the same held-until-the-tutorial-ends rule the compass reads,
+     from the same predicate. */
+  if (!me || inInterior() || navHudHeld()) { el.style.display = "none"; return; }
   const cv = document.getElementById("mapCanvas");
   if (!cv) { el.style.display = "none"; return; }
   if (!mapCtx) mapCtx = cv.getContext("2d");
@@ -18748,27 +18866,100 @@ addEventListener("keydown", e => {
   refreshKeybindList();
 }, true);
 
-/* The help line is generated from KEYBINDS, so it can never tell the player to
-   press a key they have rebound. */
+/* ============ v56 PART A — THE KEYBIND BAR ==============================
+   Both halves of the bar are generated from KEYBINDS, so neither can ever
+   tell a player to press a key they have rebound — the v23 rule, now applied
+   to the reference as well as the line.
+
+   ⚠️ ONE TABLE, and finding that there were two is what this part fixed
+   first. The old generator emitted THIRTEEN entries and the hardcoded string
+   in the markup listed FOURTEEN; the extra one was "R mount", added to
+   KEYBIND_DEFAULTS by v28 and never added here — so the mount key has been
+   missing from the line every player actually reads for the whole of its
+   life, while the file's own markup claimed otherwise. The markup copy is
+   deleted and `mount` joins this table, which is now the only place the bar's
+   content is decided.
+
+   HELP_ROWS is deliberately its own table rather than a read of
+   KEYBIND_LABELS: that one is the REBINDING screen's list, where the four
+   movement keys are four separate rows a player has to be able to rebind one
+   at a time, and here they are one entry ("WASD move"). Two different jobs,
+   two lists, and the harness checks that every bindable action reaches one of
+   them so a future binding cannot go missing the way `mount` did. */
+const HELP_ROWS = [
+  ["move",      () => keyLabel(KEYBINDS.up) + keyLabel(KEYBINDS.left) +
+                      keyLabel(KEYBINDS.down) + keyLabel(KEYBINDS.right), "move"],
+  ["attack",    () => keyLabel(KEYBINDS.attack) + " / click", "attack"],
+  ["interact",  () => keyLabel(KEYBINDS.interact),  "gather / pick up"],
+  ["inventory", () => keyLabel(KEYBINDS.inventory), "inventory"],
+  ["block",     () => keyLabel(KEYBINDS.block),     "block"],
+  ["dive",      () => keyLabel(KEYBINDS.dive),      "dive (deep water)"],
+  ["mount",     () => keyLabel(KEYBINDS.mount),     "mount"],
+  ["craft",     () => keyLabel(KEYBINDS.craft),     "craft"],
+  ["pets",      () => keyLabel(KEYBINDS.pets),      "companions"],
+  ["ability",   () => keyLabel(KEYBINDS.ability),   "class ability"],
+  ["build",     () => keyLabel(KEYBINDS.build),     "build"],
+  ["character", () => keyLabel(KEYBINDS.character), "character"],
+  ["travel",    () => keyLabel(KEYBINDS.travel),    "fast travel"],
+  ["give",      () => keyLabel(KEYBINDS.give),      "give item"],
+];
+/* The whole of the "which keys are always relevant" decision, and the spec's
+   own four: move, attack, gather, inventory. One list to edit. Anything NOT
+   named here still appears in the expansion, so the default for a new binding
+   is "listed, but not in the way" and joining the core is a deliberate act. */
+const HELP_CORE = ["move", "attack", "interact", "inventory"];
+let helpExpanded = false;
+
 function refreshHelpLine() {
-  const el = document.getElementById("hudHelp");
-  if (!el) return;
-  const K = a => keyLabel(KEYBINDS[a]);
+  const core = document.getElementById("helpCore");
+  const full = document.getElementById("helpFull");
+  if (!core || !full) return;
   const dot = " &nbsp;&bull;&nbsp; ";
-  el.innerHTML =
-    K("up") + K("left") + K("down") + K("right") + " move" + dot +
-    K("attack") + " / click attack" + dot +
-    K("block") + " block" + dot +
-    K("interact") + " gather / pick up" + dot +
-    K("dive") + " dive (deep water)" + dot +
-    K("inventory") + " inventory" + dot +
-    K("craft") + " craft" + dot +
-    K("pets") + " companions" + dot +
-    K("ability") + " class ability" + dot +
-    K("build") + " build" + dot +
-    K("character") + " character" + dot +   // v35
-    K("travel") + " fast travel" + dot +
-    K("give") + " give item";                // v51 PART J
+  /* ⚠️ THE TRAILING SPACE INSIDE EACH KEY SPAN IS LOAD-BEARING. textContent
+     concatenates adjacent elements with nothing between them, and three
+     harness gates read this bar as one string ("TASD…" at position 0, and
+     "Z class ability" after a rebind) — without it they would be reading
+     "Zclass ability". Kept as real text rather than CSS spacing for exactly
+     that reason. */
+  core.innerHTML =
+    HELP_ROWS.filter(r => HELP_CORE.indexOf(r[0]) >= 0)
+             .map(r => r[1]() + " " + r[2]).join(dot) +
+    `<button id="helpToggle" title="Show every control">` +
+    (helpExpanded ? "&minus;" : "?") + `</button>`;
+  full.className = helpExpanded ? "shown" : "";
+  full.innerHTML =
+    `<div class="help-title">ALL CONTROLS</div><div class="help-cols">` +
+    HELP_ROWS.map(r =>
+      `<div class="help-row"><span class="help-key">${r[1]()} </span>` +
+      `<span class="help-lab">${r[2]}</span></div>`).join("") +
+    `</div>`;
+  /* Re-attached every rebuild, because the rebuild is what destroys it. The
+     blur() is not decoration: a focused <button> answers SPACE, and SPACE is
+     the default attack key — leaving it focused would toggle this panel every
+     time the player swung. */
+  const btn = document.getElementById("helpToggle");
+  if (btn) btn.onclick = () => { helpExpanded = !helpExpanded; refreshHelpLine();
+                                 const b2 = document.getElementById("helpToggle");
+                                 if (b2 && b2.blur) b2.blur(); };
+}
+/* Harness hook. `helpExpanded` and both tables are lexically scoped and never
+   land on window, and "the default state is four entries and the expansion is
+   all fourteen" is not a thing a grep can check. */
+function debugHelpInfo() {
+  const core = document.getElementById("helpCore");
+  const full = document.getElementById("helpFull");
+  return {
+    expanded: helpExpanded,
+    coreKeys: HELP_CORE.slice(),
+    coreCount: HELP_ROWS.filter(r => HELP_CORE.indexOf(r[0]) >= 0).length,
+    fullCount: HELP_ROWS.length,
+    rowIds: HELP_ROWS.map(r => r[0]),
+    coreText: core ? (core.textContent || "").replace(/\s+/g, " ").trim() : null,
+    fullText: full ? (full.textContent || "").replace(/\s+/g, " ").trim() : null,
+    fullShown: full ? full.className === "shown" : null,
+    fullRows: full ? full.querySelectorAll(".help-row").length : 0,
+    hasToggle: !!document.getElementById("helpToggle"),
+  };
 }
 
 /* --- PART B/E: the settings panel ----------------------------------------- */

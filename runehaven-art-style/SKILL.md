@@ -53,6 +53,208 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-07 (v56 — UI Consistency & Onboarding Pass: the keybind bar, the HUD audit, the first screen)
+
+Three parts and all three of them are this layer, which makes this the first
+entry in a while that is rendering end to end — but it is the HUD's rendering,
+not the canvas's. **Not one palette entry, biome colour, cliff-face ratio,
+`SPECIES_K`, `MOB_K`, `MOB_TALL`, silhouette, shadow, rim light or particle was
+read, let alone touched, and `run5`'s coverage sweep says so in a number: the
+world draws exactly as it did this morning.** No gradient was added anywhere —
+12 canvas calls and 12 CSS, both unchanged.
+
+- **PART A: the keybind bar was a fourteen-entry wall and now it is four keys
+  and a `[?]`.** The default line is move, attack, gather, inventory —
+  the spec's own four — and the complete reference is one click above it, in
+  two balanced columns, collapsed until asked for. It is the same `.hud` card
+  at the same corner; the only genuinely new component is the toggle, which is
+  the `#settingsBtn` bordered-text idiom at HUD scale.
+- **⚠️ THE FIND, and it is the reason this part had to rebuild rather than
+  truncate: the bar has never named the mount key.** `refreshHelpLine()`
+  emitted THIRTEEN entries; the hardcoded string in `<div id="hudHelp">`
+  listed FOURTEEN, and the extra one was **"R mount"** — added to
+  `KEYBIND_DEFAULTS` by v28 and never added to the generator. So the file's own
+  markup promised a line no player has ever seen, for twenty-eight versions.
+  There were two copies of this list and they disagreed. The markup copy is
+  **deleted**, not shortened, `mount` joins `HELP_ROWS`, and a `run4` gate now
+  walks every bindable action in `KEYBIND_DEFAULTS` and fails if any of the
+  seventeen fails to reach the bar — so the next binding cannot go missing the
+  way this one did.
+- **`column-reverse` is doing two jobs and both of them are load-bearing.** The
+  card is bottom-anchored, so the reference has to open UPWARD; but the core
+  row also has to come FIRST in the DOM, because three separate `run4` gates
+  read this bar as one `textContent` string in document order (`"TASD…"` at
+  position 0 after a rebind, `"Z class ability"` after another). Reversing the
+  visual order rather than the DOM order is what lets both be true. The
+  trailing space inside each key `<span>` is load-bearing for the same reason —
+  `textContent` puts nothing between adjacent elements, so without it the
+  harness would be reading `"Zclass ability"`.
+- **The toggle is the ONLY thing in the HUD that takes a click, and the lift is
+  on the toggle alone.** `.hud` is `pointer-events: none` for a real reason: a
+  bar-wide click target in the bottom-left corner would quietly eat
+  click-to-attack in that corner of the world. Two `pointer-events: auto` in
+  the whole file now, and the other one is `#enterBtn.ready`. The handler also
+  calls `blur()` on itself, which is not tidiness — a focused `<button>`
+  answers SPACE, and SPACE is the default attack key.
+- **PART B is a real audit and it found seven real inconsistencies**, listed
+  below with what each one actually was. Thirteen non-panel HUD elements were
+  read one at a time — the ten `.hud` cards, `#hpBarWrap`, `#toast` and
+  `#deathOverlay` — not sampled; the `run4` gate pulls each element's own rule
+  out of the stylesheet by selector and checks it individually. **The eight
+  `.panel` panels were confirmed clean**, as the spec expected: `#invPanel`,
+  `#craftPanel`, `#buildPanel`, `#chestPanel`, `#givePanel`, `#charPanel`,
+  `#travelPanel` and `#petPanel` add a position and a width between them, plus
+  the one `transform` that centres the character panel, and nothing else.
+
+  ```
+  FINDING 1  the same recessed colour at FOUR different alphas — 0.55 (the
+             compass dial), 0.7 (settings tabs/buttons), 0.8 (every login
+             field), 0.85 (the HP/boss bar trough). Two of those four are
+             HUD and both now take --panel-well (0.8, the alpha with the
+             most call sites). The dial was the lightest of the four, which
+             is also why its gold ticks were the faintest text in the HUD.
+  FINDING 2  #hpBarWrap carried border-radius: 8px — the ONLY 8px in the
+             stylesheet, against 4px on every other card. Now 4px.
+  FINDING 3  #mapCanvas carried border-radius: 2px — the only 2px. The
+             file's small-element radius is 3px. Now 3px.
+  FINDING 4  #toast was the one card in the HUD with NO backdrop-filter,
+             and carried its own 8px 20px padding against .hud's 8px 14px.
+             Both brought in line.
+  FINDING 5  a gold card edge was written two ways: rgba(232,182,76,0.4) on
+             #hudZone and #hudTutorial, and var(--gold-dim) — a TEXT colour
+             — on #hudPrompt and #toast. All four take --edge-gold now.
+  FINDING 6  the two danger cards (#hudUnmaking, #hudBoss) already agreed
+             at rgba(200,72,56,0.55). Named --edge-danger anyway, so a
+             third red card cannot start a fourth value.
+  FINDING 7  the two map cards inset their contents 4px in two different
+             ways — #hudMap with padding, #hudMinimap with padding 0 and a
+             margin on the dial inside it. Identical geometry to the pixel;
+             they simply now say it the same way.
+  CLEAN      font-weight: not one of the thirteen sets it, all six in the
+             file are login/settings/button chrome. z-index ladder: 5 (the
+             .hud cards AND the bar trough, correctly the same rung) / 10
+             panels / 20 toast / 25 death / 30 login / 40 settings / 50
+             intro — a real ordering, no accidental collisions.
+             .mm-title and .tut-step are already the same micro-title
+             (11px gold, 2px tracking) — the new ALL CONTROLS heading takes
+             that one rather than inventing a third.
+  ```
+- **PART C holds the compass and the minimap back until Tutorial Grounds is
+  over, and it is one predicate both cards read.** `navHudHeld()` — the same
+  single-predicate discipline as `isBlocking()` and `pinProtectOffered()`, so
+  the two cards can never disagree. It is keyed to `tutorialActive` and nothing
+  else, which is what makes "completes OR is skipped" one condition instead of
+  two: both routes run through `endTutorial()` and both clear that flag. A
+  returning player whose row carries `tutorial_done` never sets it at all and
+  sees both cards on their first frame exactly as they always have. **Nothing
+  inside Tutorial Grounds' own logic is touched** — the tutorial line, the two
+  corner readouts and the keybind bar are all still up while it runs, and a
+  gate asserts that rather than assuming it.
+- **⚠️ THE EXPANDED REFERENCE OPENS OVER THE COMPASS, and that is the one
+  thing here most likely to want a second look.** `#hudMinimap` sits at
+  `bottom: 52px` directly above the help bar, and fourteen rows in two columns
+  is roughly 175px of card — so while it is open it covers the dial. It is an
+  overlay the player asked for and closes with the same click, so it was
+  shipped that way rather than moved to a corner it does not belong in; see
+  judgment call 1.
+- **⚠️ PRE-EXISTING, found by the audit and deliberately not "fixed":
+  `#hudMinimap` overflows its own fixed 148px box by 2px.** The dial is 140px
+  plus a 4px inset on each side, which is 148 before the card's own 1px
+  hairlines are counted. It was true before this version and is true after it —
+  the padding rewrite is geometrically identical — and correcting it means
+  moving either the card's size or the dial's, which is a look decision rather
+  than a consistency one. First thing to check if the dial ever reads clipped.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus the two places where a
+literal reading would have shipped something worse than the spec wanted. All
+shipped through the full gate (parse clean, `run2` and `run3` `CAUGHT ERROR:
+none`, `run4` **1574/1574 with zero FAIL**, `run5` **1320 coverage draws
+clean**, plus a 29-line grep checklist whose second half is preservation
+rather than novelty) — refinements to consider, not unfinished work.
+
+1. **The expansion opens upward over the compass, rather than being moved
+   somewhere it would not cover anything.** The alternatives were a third
+   screen position for a card that belongs beside its own toggle, or leaving
+   the reference as a wall. It is transient, it is dismissed by the same click
+   that raised it, and the compass is the one card whose job (which way is the
+   Tower) nobody is doing in the same second they are looking up which key
+   opens the build menu. One `bottom` value away from a different answer.
+2. **`--panel-well` is 0.8, and the compass dial is visibly darker for it.**
+   Four alphas were in play; 0.8 has the most call sites in the file, so it is
+   the value rather than an average nobody was using. The bar moves 0.85 → 0.80
+   and nobody will see it; the dial moves 0.55 → 0.80 and it is a real change,
+   in the direction of more contrast under the gold ticks. **One token to
+   revise** if the dial now reads too heavy against the card behind it.
+3. **The HP bar is no longer a pill.** 8px on a 16px-tall bar is fully rounded;
+   4px is the card radius every other HUD element uses. The spec names
+   border-radius as one of the values to bring in line and this was the only
+   element in the file out of step on it, so it moved. One value.
+4. **The gold edge unified on the rgba, not on `var(--gold-dim)`.** Two cards
+   used each, so the count was a tie and the tiebreak is a principle: the spec
+   asks for the `--panel`/`--panel-edge` VARIABLES the panels share, and
+   `--gold-dim` is a text colour doing border duty (`.craft-row .where`,
+   `#pinProtect:hover`). Edges get an edge token; text colours stay text
+   colours. `#hudPrompt` and `#toast` are one shade dimmer at the border for
+   it, and nothing else changed on either.
+5. **PART C hides the compass and the minimap and NOT the status box, though
+   the spec's framing sentence names all three.** Its instruction sentence
+   names two ("Hold the compass and minimap hidden until the tutorial
+   completes"), and the status box is where a player in a fight reads their own
+   HP — hiding that during a tutorial step whose whole content is "strike the
+   dummy" would be removing the one readout the lesson is about. The framing
+   sentence is read as the observation and the instruction as the instruction.
+6. **`.boss-name` is 15px against `.un-head`'s 13px, and it is REPORTED rather
+   than changed.** Both are Almendra Display in `--danger` at 3px tracking on a
+   top-centre red card, so the two really have drifted — but font SIZE is not
+   one of the four values the spec's audit names (border-radius, padding,
+   backdrop blur, font weight), and shrinking the Elder Drake's name is a
+   presence decision that belongs to whoever wanted a boss bar. Two characters
+   to change if it is wanted.
+7. **The settings tabs/buttons at 0.7 and the login fields at 0.8 keep their
+   literals, and are reported instead.** They are the other half of FINDING 1
+   and they are outside PART B's stated scope, which is the non-panel HUD.
+   Bringing `.set-tab`/`.set-btn` onto the token would change the settings
+   screen's look in a version that is not about the settings screen. **Four
+   call sites** if a later pass wants it.
+8. **`mount` is in the expansion, not the core four.** The spec names its four
+   and mount is not one of them; a key you press when you are standing next to
+   a griffin is not a key you need on screen at all times. Same reasoning put
+   block and dive there, both of which the old line carried.
+9. **⚠️ TWO HARNESS RE-PINS, and both are real behaviour changes rather than
+   convenience.** `run4`'s v46 PART D block and `run5`'s biome sweep were
+   written when both navigation cards were up from the first frame; both
+   harnesses boot a brand new account, so under PART C the tutorial is
+   genuinely still running when they ask the cards to draw. Both now **end the
+   tutorial exactly as a player ends it** before those sections, so the gates
+   go on testing what they were written to test (the interior hide/show rule,
+   the two-cards-not-one rule, nineteen biome windows) from the state a player
+   is in for the whole rest of their life. **The held-back rule itself is not
+   assumed anywhere** — `run4`'s new v56 block re-arms the flag and drives all
+   four directions: held during the tutorial, back on completion, back on skip,
+   and never armed at all for a returning row.
+10. **`run5` gained two sweeps and no coverage list needed extending.** Step 7
+    of the standard process asks for coverage of any new species, mob, weapon
+    kind or class — this build adds none. What it does add is two DOM branches
+    a plain boot can never reach: the compass's held/shown pair (its whole dial
+    build now sits behind an early return) and the keybind bar's expansion
+    (nobody clicks `[?]` on the way in). 1315 → **1320**.
+11. **`run4` grew 31 gates and the audit's findings are pinned as findings.**
+    Each of the seven is asserted as "this literal no longer exists in the
+    executable stylesheet" rather than "the token is present", so a future
+    version cannot quietly reintroduce the drift beside the token. The
+    stylesheet is comment-stripped before every one of those greps, for the
+    third version running and the same reason: v56's own comments quote the
+    literals it removed, and a blunt grep would fail on the documentation of
+    the rule it is enforcing.
+12. **The push to `main` that the README's step 8 invites was deliberately not
+    attempted.** This session is instructed to develop and push only on its
+    designated branch. The README calls a blocked push to `main` a
+    nice-to-have and explicitly not a failure, so the build lands on the branch
+    as usual and a human can sync it. Same call every version since Expansion
+    2b has made.
+
 ### 2026-09-01 (v51 — the wisps made visible, minimap texture, guild badges and nameplates)
 
 Eleven parts, and four of them are rendering: PART A makes the v50 wisps

@@ -677,6 +677,50 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
        on it, so this sweeps the branches by hand: a terrain window over every
        ground biome the seed can reach, a nearby player dot, a remote player in
        another space (which must NOT draw), and the interior hide. */
+    /* v56 PART C: the compass and the minimap are held back until Tutorial
+       Grounds completes or is skipped, and this harness boots a brand new
+       account — so the tutorial is ended here, exactly as a player ends it,
+       before the sweep below asks the card to draw. Without this the whole
+       biome sweep is nineteen draws of a hidden card. The hold itself is
+       driven in both directions by run4; this is a coverage sweep, and what
+       it needs is the card actually painting. */
+    if (window.debugSetV35) window.debugSetV35({ tutorialActive: false, tutorialDone: true });
+    /* Both v56 branches of the compass, swept by hand for the same reason:
+       held during the tutorial is now a real early return, and the dial's
+       whole build loop sits behind it. */
+    if (window.updateMinimap) {
+      window.debugSetV35({ tutorialActive: true });
+      window.updateMinimap();
+      const heldC = window.document.getElementById('hudMinimap').style.display === 'none';
+      window.debugSetV35({ tutorialActive: false, tutorialDone: true });
+      window.updateMinimap();
+      const backC = window.document.getElementById('hudMinimap').style.display === 'block';
+      const marks = window.document.getElementById('mmDial').querySelectorAll('.mm-mark').length;
+      n += 2;
+      if (!heldC || !backC || marks !== 9) {
+        console.log('COVERAGE GAP: the compass did not hold for the tutorial and come back with all nine marks' +
+                    ' (held=' + heldC + ' back=' + backC + ' marks=' + marks + ')');
+        process.exit(1);
+      }
+      console.log('compass swept — held during Tutorial Grounds, back after it with', marks, 'marks');
+    }
+    /* v56 PART A: the keybind bar's expansion is a second DOM build that a
+       plain boot never reaches — nobody clicks [?] on the way in. */
+    if (window.debugHelpInfo) {
+      const h0 = window.debugHelpInfo();
+      window.document.getElementById('helpToggle').click();
+      const h1 = window.debugHelpInfo();
+      window.document.getElementById('helpToggle').click();
+      const h2 = window.debugHelpInfo();
+      n += 3;
+      if (h0.expanded !== false || h1.expanded !== true || h2.expanded !== false ||
+          h1.fullRows !== h1.fullCount || h0.coreCount !== 4) {
+        console.log('COVERAGE GAP: the keybind bar did not expand and collapse through its real toggle');
+        process.exit(1);
+      }
+      console.log('keybind bar swept — ' + h0.coreCount + ' core entries, ' +
+                  h1.fullRows + ' in the expansion, both states drawn');
+    }
     if (window.debugMapInfo && window.updateWorldMap) {
       const wi = window.debugWorldInfo(), Bm = wi.B;
       const seen = {}, want = Object.keys(Bm).map(k => Bm[k]);
