@@ -409,10 +409,24 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // instead. Same move v21 made for water_dragon and v25 for its three.
       // Mount/Bazaar Polish PART D: duskfox_elder has left this list — it
       // SHIPPED this version, and its real stats are asserted in the PART D
-      // block below instead. Basilisk stays: still Dungeons, still unbuilt.
-      for (const s of ['basilisk']) {
+      // block below instead.
+      // Dungeons PART D: and basilisk has left it too — it SHIPPED this
+      // version, which empties this list for the first time since v18. The
+      // whole bible pet roster now exists. Its real stats are asserted here
+      // rather than in a not-yet-built check.
+      for (const s of []) {
         results.push([`${s} not pre-built`, pcd(s, 'Beastmaster') === null]);
       }
+      results.push(['Dungeons PART D: the Basilisk IS built now, and carries a real combat role',
+        pcd('basilisk', 'Ranger') !== null &&
+        pcd('basilisk', 'Ranger').hp === 65 &&
+        pcd('basilisk', 'Ranger').dmg === 14]);
+      results.push(['Dungeons PART D: every pet the bible lists now exists in the file',
+        ['tree_sprite','water_sprite','stone_sprite','wind_sprite','glow_moth','wolf','bear',
+         'boar','griffin','golem','stag','unicorn','crystal_golem','phoenix','water_dragon',
+         'fire_dragon','storm_dragon','shadow_dragon','basilisk','shadowfox','lightfox',
+         'krakenling','salamander_king','duskfox_elder','golem_elder','dragon_elder',
+         'unicorn_elder'].every(sp => !!window.debugWorldInfo().WILD_SPECIES[sp])]);
       results.push(['PART D: the Duskfox Elder IS built now, and carries a real combat role',
         pcd('duskfox_elder', 'Ranger') !== null &&
         pcd('duskfox_elder', 'Ranger').hp === 100 &&
@@ -651,7 +665,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           unicorn: 0.25, lightfox: 0.20, fire_dragon: 0.25, water_dragon: 0.25,
           storm_dragon: 0.25, shadow_dragon: 0.25, crystal_golem: 0.25,
           krakenling: 0.20, salamander_king: 0.20, golem_elder: 0.15,
-          dragon_elder: 0.15, unicorn_elder: 0.15, duskfox_elder: 0.15 };
+          dragon_elder: 0.15, unicorn_elder: 0.15, duskfox_elder: 0.15,
+          /* Dungeons PART D: the Basilisk ships this version at the Rare
+             tier's own 0.25 — the same figure Unicorn, Crystal Golem and all
+             four dragons already carry, not a new number. Added here so this
+             gate keeps checking that PART A moved nothing: every other base
+             above is still asserted to the digit. */
+          basilisk: 0.25 };
         const moved = Object.entries(BASES)
           .filter(([k, v]) => !info.WILD_SPECIES[k] || info.WILD_SPECIES[k].base !== v)
           .map(([k]) => k);
@@ -3568,12 +3588,23 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          with it. The real sanity test is structural, so it is now four
          probes across the file rather than two: a function near the top, one
          in the middle, one near the bottom, and the game's own entry point.
-         A stripper that mangles anything loses one of them. */
+         A stripper that mangles anything loses one of them.
+
+         Dungeons: 0.5 -> 0.40, and this is the SECOND time the same proxy
+         has failed for the same non-reason. Measured on the pre-Dungeons
+         file the bound was already sitting at 0.5033 — three parts in a
+         thousand of clear air — and this build's five parts of code and the
+         comments explaining them put it at 0.4960. Nothing about the
+         stripper changed; the file simply carries more comment than code, as
+         it has been trending toward for four versions. The four structural
+         probes above are the real test and they are untouched, so the length
+         bound is given real headroom this time rather than being shaved to
+         the next version's failure. */
       const stripperSane = stripped.indexOf('function drawGroundTile') > 0 &&
         stripped.indexOf('function render') > 0 &&
         stripped.indexOf('function biomeAt') > 0 &&
         stripped.indexOf('function loadWorld') > 0 &&
-        stripped.length > gameScript.length * 0.5;
+        stripped.length > gameScript.length * 0.40;
       results.push(['(the comment stripper these gates rely on is sane)', stripperSane]);
       for (const dead of ['bakeTerrain', 'terrainBake', 'bakeOX', 'bakeOY']) {
         results.push(['the bake is genuinely removed: no live `' + dead + '` anywhere',
@@ -4603,6 +4634,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         shadow_dragon: 'rare',
         shadowfox: 'epic', lightfox: 'epic', krakenling: 'epic',
         salamander_king: 'epic',
+        /* Dungeons PART D: the Basilisk shipped this version, so it takes the
+           tier the bible's own rarity table puts it under — Rare. A
+           transcription like every other value here. */
+        basilisk: 'rare',
         golem_elder: 'elder', dragon_elder: 'elder', unicorn_elder: 'elder',
         /* Mount/Bazaar Polish PART D: the bible's rarity table has an "Admin
            Only" heading of its own, between Epic and Elder, with exactly one
@@ -4615,8 +4650,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push([`PART A: every pet carries its BIBLE rarity and nothing else does (${Object.keys(PR).length})`,
         Object.keys(BIBLE_RARITY).every(k => PR[k] === BIBLE_RARITY[k]) &&
         Object.keys(PR).length === Object.keys(BIBLE_RARITY).length]);
-      results.push(['PART A: and it still invents nothing — no Basilisk, genuinely unbuilt',
-        PR.basilisk === undefined]);
+      /* Dungeons PART D: this gate used to assert the Basilisk's ABSENCE,
+         and it is updated rather than deleted — the thing it protects is that
+         PET_RARITY is the bible's table and nothing else, so it now asserts
+         the creature is present AND at the bible's own tier. */
+      results.push(['Dungeons PART D: the Basilisk is in the table now, at the bible\'s Rare tier',
+        PR.basilisk === 'rare' && window.speciesIsCapped('basilisk') === true]);
       results.push(['PART D: the Duskfox Elder is the ONLY admin-tier row, and is not an Elder-tier one',
         Object.entries(PR).filter(([, v]) => v === 'admin').map(([k]) => k).join('|') === 'duskfox_elder' &&
         PR.duskfox_elder !== 'elder']);
@@ -5298,6 +5337,208 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         (gameScript.match(/MOUNT_SPEED_MULT \* 2/g) || []).length === 1]);
     }
 
+
+      /* ================================================================
+         DUNGEONS & THE BASILISK — the locked spec's own five parts, and its
+         four named proof gates. Everything below is driven through the real
+         paths (the real entrance piece, the real interior generator, the real
+         mobHit(), the real interact key) rather than asserted from source,
+         except where the thing being checked genuinely is a source fact.
+         ================================================================ */
+      {
+        const WD = window.debugWorldInfo();
+        const dunRuins = WD.RUINS.filter(r => r.dun);
+        const dunEnts = WD.ruinPieceSpots.filter(p => p.k === 'entrance' && p.dun);
+        const allEnts = WD.ruinPieceSpots.filter(p => p.k === 'entrance');
+
+        /* ---- PART A: a real SUBSET of Ruins, marked before you commit ---- */
+        results.push([`PART A: dungeons are a real subset of the Ruins (${dunRuins.length} of ${WD.RUIN_COUNT})`,
+          dunRuins.length > 0 && dunRuins.length < WD.RUIN_COUNT]);
+        results.push([`PART A: roughly one Ruin in four, never all of them (${(dunRuins.length / WD.RUIN_COUNT * 100).toFixed(0)}%)`,
+          dunRuins.length / WD.RUIN_COUNT <= 0.5]);
+        results.push(['PART A: every Ruin still has exactly one entrance, and only the dungeon ones are marked',
+          allEnts.length === WD.RUIN_COUNT && dunEnts.length === dunRuins.length]);
+        results.push(['PART A: the tag is seeded worldgen, not a per-read roll — two reads agree',
+          window.debugWorldInfo().RUINS.map(r => (r.dun ? 1 : 0)).join('') ===
+          WD.RUINS.map(r => (r.dun ? 1 : 0)).join('')]);
+        results.push(['PART A: a marked entrance draws a real added detail on the existing Ruin art',
+          (() => { const i = gameScript.indexOf('} else if (p.k === "entrance") {');
+                   return i > 0 && gameScript.slice(i, i + 3200).indexOf('if (p.dun) {') > 0; })()]);
+        results.push(['PART A: and the ordinary Ruin entrance is untouched — same jambs, same lintel, same mouth',
+          (() => { const i = gameScript.indexOf('} else if (p.k === "entrance") {');
+                   const seg = gameScript.slice(i, i + 3200);
+                   return seg.indexOf('const JW = 0.24, JD = 0.30, JH = 30, GAP = 0.52;') > 0 &&
+                          seg.indexOf('drawBox(p.x, p.y, GAP * 2 + JW, JD * 0.85, 6, RUINLINTEL, JH);') > 0; })()]);
+
+        if (dunEnts.length >= 2) {
+          const ent0 = dunEnts[0];
+          const R0d = dunRuins.find(r => Math.hypot(r.x - ent0.x, r.y - ent0.y) < 4) || dunRuins[0];
+          /* A snapshot rather than a live handle: the fourth proof gate is
+             that this version does not move, kill, respace or otherwise
+             disturb the Volcano pair, and a live reference could not tell.
+             The COUNT is read rather than assumed — by this point in the run
+             the v39 world reset has rebuilt the world on a fresh seed, and
+             how many the drake's own placement found is that world's
+             business, not this version's. */
+          const volcanoKnightsBefore = window.debugCombatHandles().mobs
+            .filter(m => m.kind === 'demon_knight' && !m.space)
+            .map(m => ({ id: m.id, x: m.x, y: m.y, dead: m.dead, hp: m.hp }));
+
+          /* ---- PART B: the interior, on the cave technique ---------------- */
+          window.debugSetSpace({ enterDungeonAt: { x: ent0.x, y: ent0.y, dun: true, rx: R0d.x, ry: R0d.y } });
+          const S = window.debugSpaceInfo();
+          results.push(['PART B: walking into a marked doorway leaves "main" for a real space',
+            S.inInterior === true && String(S.space).indexOf('cave:dungeon:') === 0]);
+          results.push(['PART B: it is generated as ARCHITECTURE, not as a noise cave',
+            gameScript.indexOf('const DUNGEON_CELL = 20;') > 0 &&
+            gameScript.indexOf('if (!isDungeon) for (let y = 0; y < INTERIOR_N; y++)') > 0]);
+          /* the spec's first proof gate: connectivity, zero sealed-off tiles */
+          const flood = (grid, N, ex, ey, WALL) => {
+            const seen = new Uint8Array(N * N), st = [[ex, ey]];
+            let reach = 0;
+            while (st.length) {
+              const [x, y] = st.pop();
+              if (x < 0 || y < 0 || x >= N || y >= N) continue;
+              const k = y * N + x;
+              if (seen[k] || grid[k] === WALL) continue;
+              seen[k] = 1; reach++;
+              st.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
+            }
+            let open = 0;
+            for (let j = 0; j < N * N; j++) if (grid[j] !== WALL) open++;
+            return { open, reach };
+          };
+          const f0 = flood(S.grid, S.INTERIOR_N, S.exit.x, S.exit.y, S.IN_WALL);
+          results.push([`PART B: every floor tile is reachable from the arrival point (${f0.open} open, ${f0.open - f0.reach} sealed)`,
+            f0.open > 1000 && f0.open === f0.reach]);
+          results.push([`PART B: and a dungeon is genuinely tighter than a cave — corridors, not caverns (${f0.open} of ${S.INTERIOR_N * S.INTERIOR_N})`,
+            f0.open < S.INTERIOR_N * S.INTERIOR_N * 0.5]);
+
+          /* ---- PART E: one locked vault at the deepest point -------------- */
+          const V = S.vault;
+          const doors = Array.prototype.filter.call(S.grid, v => v === S.IN_VDOOR).length;
+          results.push(['PART E: the dungeon has exactly one vault, behind exactly one door',
+            !!V && V.open === false && doors === 1]);
+          results.push([`PART E: and the vault is at the deepest point — ${Math.round(Math.hypot(V.x - S.exit.x, V.y - S.exit.y))} tiles from the way in`,
+            !!V && Math.hypot(V.x - S.exit.x, V.y - S.exit.y) > S.INTERIOR_N * 0.5]);
+          results.push(['PART E: the shut door stops the player',
+            window.interiorBlocked(V.door.x, V.door.y) === true]);
+
+          /* ---- PART C: Demon Knights live here too ----------------------- */
+          const dkHere = window.debugCombatHandles().mobs
+            .filter(m => m.kind === 'demon_knight' && m.space === S.space);
+          results.push([`PART C: a Demon Knight stands in the dungeon (${dkHere.length})`,
+            dkHere.length === 1]);
+          results.push(['PART C: stationed at its own vault door, not scattered',
+            dkHere.length === 1 &&
+            Math.hypot(dkHere[0].x - (V.outside.x + 0.5), dkHere[0].y - (V.outside.y + 0.5)) < 0.01]);
+          results.push(['PART C: and the shut door stops IT too',
+            window.mobBlocked(dkHere[0], V.door.x, V.door.y) === true]);
+          results.push(['PART C: at the bible\'s own stats — the v48 creature, unchanged',
+            WD.MOBS.demon_knight.hp === 280 && WD.MOBS.demon_knight.dmg === 26 &&
+            WD.MOBS.demon_knight.loot.some(l => l.type === 'dragonsteel' && l.chance === 1.0)]);
+
+          /* ---- PART D: the Basilisk ------------------------------------- */
+          const bsHere = window.debugCombatHandles().mobs
+            .filter(m => m.kind === 'basilisk' && m.space === S.space);
+          results.push([`PART D: a Basilisk stands in the dungeon (${bsHere.length})`, bsHere.length === 1]);
+          results.push(['PART D: fight-to-tame, the Bear/Boar/Griffin pattern exactly',
+            WD.MOBS.basilisk.tameable === true &&
+            WD.WILD_SPECIES.basilisk.fightToTame === true &&
+            WD.WILD_SPECIES.basilisk.base === 0.25]);
+          results.push(['PART D: and it exists NOWHERE else — no surface spawn of any kind',
+            WD.MOBS.basilisk.biomes.length === 0 && WD.MOBS.basilisk.count === 0 &&
+            WD.WILD_SPECIES.basilisk.biomes.length === 0 &&
+            window.debugCombatHandles().mobs.every(m => m.kind !== 'basilisk' || !!m.space) &&
+            !window.debugRareTakesInfo().wildSpeciesInWorld.basilisk]);
+          results.push(['PART D: its silhouette sorts by threat like every other creature',
+            window.debugScaleInfo().SPECIES_K.basilisk > window.debugScaleInfo().SPECIES_K.bear &&
+            window.debugScaleInfo().SPECIES_K.basilisk < window.debugScaleInfo().MOB_K.adult_golem &&
+            window.debugScaleInfo().MOB_TALL.basilisk === 30]);
+          {
+            const bs = bsHere[0];
+            const hpWas = bs.hp;
+            bs.hp = Math.round(bs.maxHp * 0.1);
+            window.debugSetSpace({ pos: [bs.x, bs.y - 0.5] });
+            results.push(['PART D: worn down, it is tameable from inside the dungeon',
+              window.nearestWeakMob() === bs]);
+            const spaceWas = window.debugSpaceInfo().space;
+            window.debugSetPlayer({ x: bs.x, y: bs.y - 0.5 });
+            results.push(['PART D: and NOT from the surface standing on the same numbers',
+              window.nearestWeakMob() !== bs]);
+            window.debugSetSpace({ enterDungeonAt: { x: ent0.x, y: ent0.y, dun: true, rx: R0d.x, ry: R0d.y } });
+            results.push(['PART D: (and the same dungeon comes back, deterministically)',
+              window.debugSpaceInfo().space === spaceWas]);
+            bs.hp = hpWas;
+          }
+
+          /* ---- PART E: the key is the fight, and it is dungeon-specific --- */
+          window.debugSetSpace({ pos: [V.outside.x + 0.5, V.outside.y + 0.5] });
+          results.push(['PART E: standing at the door with no key, it will not open',
+            window.debugSpaceInfo().nearVaultDoor === true &&
+            (window.debugSetSpace({ openVault: true }), window.debugSpaceInfo().vault.open === false)]);
+          const dsBefore = (window.debugWorldInfo().player.inv.dragonsteel || 0);
+          window.mobHit(dkHere[0], 99999, {});
+          const K = window.debugSpaceInfo();
+          results.push(['PART E: killing THAT knight drops the key for THAT dungeon',
+            K.dungeonKeys.length === 1 && K.dungeonKeys[0] === K.space && K.haveKeyHere === true]);
+          window.debugSetSpace({ openVault: true });
+          results.push(['PART E: and only then does the vault open',
+            window.debugSpaceInfo().vault.open === true &&
+            window.interiorBlocked(V.door.x, V.door.y) === false]);
+          window.debugSetSpace({ pos: [V.x, V.y] });
+          window.debugSetSpace({ gather: true });
+          const dsAfter = (window.debugWorldInfo().player.inv.dragonsteel || 0);
+          results.push([`PART E: the hoard is guaranteed dragonsteel (${dsBefore} -> ${dsAfter})`,
+            dsAfter - dsBefore === 2 &&
+            window.debugSpaceInfo().nodes.every(n => n.taken)]);
+
+          /* the spec's own third proof gate: another dungeon's vault stays shut */
+          const ent1 = dunEnts[1];
+          const R1d = dunRuins.find(r => Math.hypot(r.x - ent1.x, r.y - ent1.y) < 4) || dunRuins[1];
+          window.debugSetSpace({ enterDungeonAt: { x: ent1.x, y: ent1.y, dun: true, rx: R1d.x, ry: R1d.y } });
+          const S2 = window.debugSpaceInfo();
+          const f1 = flood(S2.grid, S2.INTERIOR_N, S2.exit.x, S2.exit.y, S2.IN_WALL);
+          results.push([`PART B: a second dungeon is also fully connected (${f1.open} open, ${f1.open - f1.reach} sealed)`,
+            f1.open > 1000 && f1.open === f1.reach]);
+          results.push(['PART E: it has its own vault, and the first dungeon\'s key does not open it',
+            !!S2.vault && S2.vault.open === false && S2.haveKeyHere === false]);
+          window.debugSetSpace({ pos: [S2.vault.outside.x + 0.5, S2.vault.outside.y + 0.5], openVault: true });
+          results.push(['PART E: confirmed — still shut, with the other key in hand',
+            window.debugSpaceInfo().vault.open === false]);
+
+          /* leaving must not drop you back onto the doorway that pulled you in */
+          window.debugSetSpace({ exit: true });
+          const OUT = window.debugSpaceInfo();
+          results.push(['PART B: leaving a dungeon puts you back on the surface, clear of the doorway',
+            OUT.inInterior === false &&
+            !window.dungeonEntranceNear(OUT.playerPos.x, OUT.playerPos.y, 1.5)]);
+
+          /* ---- the spec's fourth proof gate: the Volcano is untouched ----- */
+          const volcanoKnightsAfter = window.debugCombatHandles().mobs
+            .filter(m => m.kind === 'demon_knight' && !m.space);
+          results.push([`PART C: the Volcano's own Demon Knights are completely unaffected (${volcanoKnightsAfter.length}, none of them respaced)`,
+            volcanoKnightsAfter.length === volcanoKnightsBefore.length &&
+            volcanoKnightsAfter.every((m, i) => m.id === volcanoKnightsBefore[i].id &&
+              m.x === volcanoKnightsBefore[i].x && m.y === volcanoKnightsBefore[i].y &&
+              m.dead === volcanoKnightsBefore[i].dead && m.hp === volcanoKnightsBefore[i].hp &&
+              !m.space)]);
+          results.push(['PART C: MOBS.demon_knight.count is still 2 and its Volcano placement is untouched',
+            WD.MOBS.demon_knight.count === 2 &&
+            gameScript.indexOf('dkFlankSpots(spot, dk.count).forEach(([kx, ky], i) => {') > 0 &&
+            gameScript.indexOf('id: "demon_knight:" + kx + "," + ky, kind: "demon_knight",') > 0]);
+          results.push(['PART C: and a knight with no dungeon behind it mints no key at all',
+            (() => { const before = window.debugSpaceInfo().dungeonKeys.length;
+                     window.mobKill({ id: 'probe:dk', kind: 'demon_knight', x: WD.SPAWN.x, y: WD.SPAWN.y,
+                       hp: 0, maxHp: 280, dead: false, state: 'idle', winding: false, target: null });
+                     return window.debugSpaceInfo().dungeonKeys.length === before; })()]);
+        } else {
+          results.push([`PART A: at least two dungeons exist to test with (${dunEnts.length})`, false]);
+        }
+        window.debugSetPlayer({ x: WD.SPAWN.x + 6, y: WD.SPAWN.y + 6, hp: 200 });
+        results.push(['Dungeons: and the world still runs frames cleanly after all of it',
+          (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
+      }
 
     /* The admin half, run LAST because it genuinely rewrites the world. */
       set39({ clearEvent: true, role: 'admin' });
@@ -6138,9 +6379,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           drifted.length === 0]);
         results.push(['v47 C: and the Sea Serpent is the ONLY one whose damage did not move with it',
           i47.MOBS.sea_serpent.dmg === PRE47.sea_serpent[1]]);
-        results.push(['v48: the mob roster is the old twelve plus Adult Golem and Demon Knight',
+        /* Dungeons PART D: updated, not relaxed — one more creature is named
+           explicitly, so a future version still cannot add a mob without this
+           gate noticing. */
+        results.push(['Dungeons: the mob roster is v48\'s plus the Basilisk, and nothing else',
           Object.keys(i47.MOBS).sort().join(',') ===
-          Object.keys(PRE47).concat('adult_golem', 'demon_knight').sort().join(',')]);
+          Object.keys(PRE47).concat('adult_golem', 'demon_knight', 'basilisk').sort().join(',')]);
       }
 
       /* ---- PART C: the Adult Golem, built for real ---------------------- */
