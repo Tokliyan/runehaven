@@ -548,3 +548,73 @@ a sample), confirm compass/minimap stay hidden until Tutorial Grounds
 completes or is explicitly skipped, confirm nothing else during the
 tutorial is affected.
 
+
+---
+
+## QUEUED, AFTER THE UI PASS — do not build until the spec above ships.
+## Confirmed, locked spec for a future version (Animation & A Living World Pass)
+
+**Confirmed live before writing this: 15 creatures already use a real
+idle-bob technique (`Math.sin(t/400 + phase)`-style motion) — that
+pattern is proven and should be the reused foundation, not replaced.
+Confirmed real, current gaps: no floating damage numbers exist
+anywhere in the game, no water tile has any ripple/motion, and no
+walk-cycle exists for the player or any creature's legs during
+movement — everything currently translates position as a rigid shape.**
+This spec closes those specific gaps and extends the proven idle
+technique further, rather than inventing a new animation system.
+
+**PART A — floating damage numbers, the single most-requested feeling
+in games like this and currently entirely absent.** Every hit that
+lands — player attacking a mob, a mob hitting the player, PvP — spawns
+a small number at the impact point that drifts upward and fades,
+reusing the existing particle/text-rendering technique already used
+for toasts rather than a new system. Different weight or color for a
+critical/backstab hit versus a normal one, reusing whatever crit
+distinction already exists in the damage calculation.
+
+**PART B — a real walk-cycle, not just translating position.**
+Confirmed live: movement currently repositions a rigid shape with no
+internal motion. Add a simple, cheap leg/limb offset driven by the
+existing movement-phase value already computed for bob animation —
+alternating leg positions synced to actual movement speed, stopping
+instantly when the player or a creature stops moving. This is the
+single highest-leverage change for making the game feel alive on every
+single frame someone is playing, the same logic as the Lighting pass's
+rim-light helper being one function touching everywhere.
+
+**PART C — water gets real motion.** Confirmed live: no ripple, wave,
+or shimmer exists on any water tile. Add a subtle, layered-shape ripple
+technique (concentric fading circles, reusing the exact non-gradient
+technique already proven throughout this project) that drifts slowly
+across Shallow and Water tiles specifically — cheap, ambient, and
+currently the single most static-looking surface in the whole game
+despite covering a large fraction of the map.
+
+**PART D — trees and grass respond to something, even if only
+themselves.** Confirmed `drawTree()` already receives a time parameter;
+confirm whether it is currently used for sway and, if not, add a real,
+subtle sway — reusing the exact rotation-offset technique idle-bob
+creatures already use, applied to the canopy shape specifically, not
+the trunk. Grass/flower decoration gets the same treatment at a smaller
+scale. This alone will change how "alive" empty biomes feel more than
+any single other change in this spec.
+
+**PART E — UI transitions get finished, not invented.** Confirmed live:
+some transitions already exist (panel opacity, HP bar width). Audit
+every remaining UI value that currently snaps instantly — inventory
+counts changing, a new item appearing, the boss bar itself on first
+appearing — and apply the same `transition` technique already proven
+elsewhere, rather than a new animation system. This is completion of an
+existing pattern, not new work.
+
+**Proof gates:** standard gauntlet plus confirm floating damage numbers
+appear for every real hit source (player, mob, PvP) and correctly
+distinguish a crit, confirm the walk-cycle only animates while actual
+movement speed is non-zero and stops cleanly, confirm water ripple
+animation has no measurable per-frame cost regression against the
+existing particle budget, confirm tree/grass sway does not affect
+hitbox or gather-range detection (visual only), confirm every part
+reuses a named existing technique rather than introducing a parallel
+system, matching the Lighting pass's own discipline.
+
