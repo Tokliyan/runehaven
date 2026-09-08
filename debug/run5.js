@@ -672,6 +672,54 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('credits rendered — RUNEHAVEN, MUSIC (' + mcl.children.length + '), COLLABORATIONS');
       n += 1;
     }
+    /* ============ UI CONSISTENCY & ONBOARDING PASS =====================
+       Two genuinely new render branches, and one of them is holding down
+       every minimap gate below this line: PART C keeps the compass and the
+       minimap off screen for the length of the Tutorial Grounds, and this
+       harness boots a brand-new account, so the tutorial IS running and both
+       cards ARE hidden right now. Sweep the hold in both directions first —
+       held, then released through the real endTutorial() — and leave it
+       released, with the tutorial wolf put back, so the v46 sweep below runs
+       against the world it always has.
+       PART A's two renderings of the keybind bar are swept here too: the
+       collapsed default line and the expanded full reference are two
+       different builds of the same card and neither is reachable from a
+       plain boot with nobody pressing anything. */
+    if (window.debugV35Info && window.debugHelpInfo && window.updateMinimap) {
+      const compass5 = () => window.document.getElementById('hudMinimap').style.display;
+      const map5 = () => window.document.getElementById('hudMap').style.display;
+      const paint5 = () => { window.updateMinimap(); window.updateWorldMap(); };
+      paint5();
+      const held5 = window.debugV35Info().tutorialActive === true &&
+                    compass5() === 'none' && map5() === 'none';
+      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      window.endTutorial(true);
+      paint5();
+      const freed5 = compass5() === 'block' && map5() === 'block';
+      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      if (!held5 || !freed5) {
+        console.log('COVERAGE GAP: the compass/minimap tutorial hold did not sweep both ways');
+        process.exit(1);
+      }
+      /* Put the wolf back, exactly as run4's own block does. */
+      window.debugSetV35({ tutorialDone: false });
+      window.startTutorialIfNeeded();
+      window.debugSetV35({ tutorialActive: false });
+      paint5();
+      console.log('compass/minimap tutorial hold swept — held during the Grounds, back after them');
+      const h5a = window.debugHelpInfo();
+      window.setHelpExpanded(true);
+      const h5b = window.debugHelpInfo();
+      window.setHelpExpanded(false);
+      const h5c = window.debugHelpInfo();
+      n += 2;
+      if (!(h5a.coreShown && !h5a.fullShown && h5b.fullShown && !h5b.coreShown && h5c.coreShown)) {
+        console.log('COVERAGE GAP: the keybind bar did not render both its collapsed and expanded states');
+        process.exit(1);
+      }
+      console.log('keybind bar swept — ' + h5a.coreCount + ' core entries collapsed, ' +
+                  h5b.allCount + ' expanded');
+    }
     /* v46 PART D: the real minimap. Its whole render body is unreachable from
        the plain boot unless the card is actually up and something is standing
        on it, so this sweeps the branches by hand: a terrain window over every

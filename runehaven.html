@@ -17,6 +17,17 @@
     --text: #d8dee6;
     --text-dim: #8a94a2;
     --danger: #e06c5a;
+    /* UI PASS PART B: the inset WELL — the one dark recess a HUD element uses
+       when it HOLDS something rather than sits behind it: the compass dial's
+       face, and the empty track of the HP and boss bars. The audit found the
+       same idea hand-written twice at two different alphas
+       (rgba(8,10,16,0.55) on the dial, rgba(8,10,16,0.85) on the bars) with
+       no variable either could be checked against. One value, named, so the
+       two can never drift apart again. The login card's own fields (#sbUrl,
+       0.8) and the settings tab strip (.set-tab, 0.7) are the same idea on a
+       different surface and are deliberately left alone — this pass audits
+       the HUD, not the login and settings cards. */
+    --well: rgba(8,10,16,0.85);
     --runic: #5ac8e0;
     --dsteel: #b06ce0;
   }
@@ -171,9 +182,37 @@
   #hudZone {
     bottom: 64px; left: 50%; transform: translateX(-50%);
     color: var(--gold); font-size: 14px; letter-spacing: 2px; display: none;
-    border-color: rgba(232,182,76,0.4);
+    /* UI PASS PART B: was rgba(232,182,76,0.4) — the gold accent hairline was
+       written two ways across four cards (that rgba here and on #hudTutorial,
+       var(--gold-dim) on #hudPrompt and #toast). Same intent, two spellings,
+       so two of the four were a slightly different gold from the other two.
+       All four now name the variable the login card has always used. */
+    border-color: var(--gold-dim);
   }
-  #hudHelp { bottom: 14px; left: 12px; color: var(--text-dim); font-size: 12px; }
+  /* ============ UI PASS PART A — THE KEYBIND BAR STOPS GROWING ============
+     Confirmed live before this was written: the generated line ran to 13
+     entries across 16 bound actions in one unbroken string, and every version
+     that shipped a mechanic simply appended another one. That does not scale,
+     and a 14-entry wall is measurably harder to read than a short list is.
+     The line now carries only the four keys a player needs in front of them
+     at all times, with the COMPLETE reference — all 14 entries, mount
+     included — behind the [?] toggle beside it.
+     `max-width` is what lets the expanded reference wrap into a readable
+     block instead of becoming the same unbroken line one row higher up. */
+  #hudHelp { bottom: 14px; left: 12px; color: var(--text-dim); font-size: 12px; max-width: 560px; }
+  #hudHelpFull { display: none; line-height: 1.7; }
+  /* The toggle is the login card's own quiet bordered text-button idiom
+     (#settingsBtn / #pinProtect), at HUD scale — no new component language.
+     `pointer-events: auto` is the one thing it genuinely needs: .hud is
+     pointer-events:none so the world stays clickable through the HUD, and
+     this is the first thing on a HUD card that has ever had to be pressed. */
+  #hudHelpMore {
+    background: none; border: 1px solid var(--panel-edge); color: var(--text-dim);
+    font-family: inherit; font-size: 11px; letter-spacing: 1px;
+    padding: 1px 6px; margin-left: 10px; cursor: pointer; border-radius: 3px;
+    pointer-events: auto; vertical-align: middle;
+  }
+  #hudHelpMore:hover, #hudHelpMore.on { border-color: var(--gold-dim); color: var(--gold); }
   #hudPrompt {
     bottom: 112px; left: 50%; transform: translateX(-50%);
     color: var(--text); font-size: 14px; display: none; border-color: var(--gold-dim);
@@ -191,8 +230,17 @@
        grew to 10 keybinds across v23/v27/v28 and now runs the full width.
        Moved to the bottom-right corner, clear of it entirely. */
     position: fixed; bottom: 16px; right: 16px;
-    width: 270px; height: 16px; background: rgba(8,10,16,0.85);
-    border: 1px solid var(--panel-edge); z-index: 5; border-radius: 8px; overflow: hidden;
+    /* UI PASS PART B: the audit's second real find. This is a top-level HUD
+       element built independently of the .hud card and drifted from it in
+       three ways at once — a hand-written fill no variable could reach, an
+       8px radius against the HUD's own 4px, and no backdrop blur at all
+       while every card beside it has one. The fill is now the named --well
+       (it IS a recess, so it keeps the darker recess colour rather than
+       taking the card fill), the radius joins the other twelve, and the
+       blur is the .hud value. */
+    width: 270px; height: 16px; background: var(--well);
+    border: 1px solid var(--panel-edge); z-index: 5; border-radius: 4px; overflow: hidden;
+    backdrop-filter: blur(2px);
   }
   #hpBar, #bossBar { height: 100%; width: 100%; background: linear-gradient(90deg, #4e8f3a, #7fce5a); transition: width .2s ease; }
   /* v52+53 PART G: the boss bar takes the hostile red the player's own bar
@@ -265,8 +313,13 @@
   #toast {
     position: fixed; top: 64px; left: 50%; transform: translateX(-50%);
     background: var(--panel); border: 1px solid var(--gold-dim); color: var(--gold);
-    padding: 8px 20px; font-size: 14px; opacity: 0; transition: opacity .4s ease;
-    z-index: 20; pointer-events: none; border-radius: 4px;
+    /* UI PASS PART B: the audit's first real find. The toast already wore the
+       card fill, the gold accent hairline and the 4px radius — but its
+       padding was 8px 20px where all ten .hud cards use 8px 14px, and it was
+       the only translucent card in the game floating over the live world with
+       no backdrop blur behind it. Both are now the .hud values. */
+    padding: 8px 14px; font-size: 14px; opacity: 0; transition: opacity .4s ease;
+    z-index: 20; pointer-events: none; border-radius: 4px; backdrop-filter: blur(2px);
   }
 
   /* ---------- v23: SETTINGS / ACCESSIBILITY / CREDITS ---------- */
@@ -410,7 +463,16 @@
      correct, real atan2 trig) — now presented as an actual dial with the
      eight real compass points marked around the rim, which is what "a
      real 8-way compass" means to a player looking at it. */
-  #hudMinimap { bottom: 52px; left: 12px; display: none; width: 148px; height: 148px; padding: 0; }
+  /* UI PASS PART B: the compass and the minimap are the same card holding the
+     same kind of fixed-size child, and they inset it two different ways —
+     this card carried `padding: 0` and pushed the job onto the dial's own
+     4px margin, while #hudMap simply carried `padding: 4px`. Worse, the two
+     did not agree: box-sizing is border-box, so a declared 148px box left
+     146px of content for a dial that occupies 148, and the card was 2px
+     narrower than the thing inside it. One padding, on both cards; the dial's
+     margin goes; 150px is the same 140px dial with the same 4px inset around
+     it, now declared honestly. */
+  #hudMinimap { bottom: 52px; left: 12px; display: none; width: 150px; height: 150px; padding: 4px; }
   #hudMinimap .mm-title, #hudMap .mm-title {
     position: absolute; top: -18px; left: 0; color: var(--gold);
     font-size: 11px; letter-spacing: 2px;
@@ -430,9 +492,13 @@
   #hudMap { bottom: 44px; right: 16px; display: none; padding: 4px; }
   #mapCanvas { display: block; border-radius: 2px; }
   #mmDial {
-    position: relative; width: 140px; height: 140px; margin: 4px;
+    /* UI PASS PART B: the margin moved to #hudMinimap's padding (above), and
+       the face is the named --well the HP and boss bars now share — it was
+       rgba(8,10,16,0.55) against their 0.85, the same recess written twice.
+       The 50% radius stays: this one is a dial, and a dial is round. */
+    position: relative; width: 140px; height: 140px; margin: 0;
     border: 1px solid var(--panel-edge); border-radius: 50%;
-    background: rgba(8,10,16,0.55);
+    background: var(--well);
   }
   .mm-tick {
     position: absolute; font-size: 9px; color: var(--text-dim);
@@ -456,7 +522,9 @@
      top where nothing else lives, so it never fights the two corner readouts. */
   #hudTutorial {
     top: 12px; left: 50%; transform: translateX(-50%); display: none;
-    max-width: 460px; text-align: center; border-color: rgba(232,182,76,0.4);
+    /* UI PASS PART B: border-color was rgba(232,182,76,0.4) here too — see
+       #hudZone above. One gold accent, one spelling, four cards. */
+    max-width: 460px; text-align: center; border-color: var(--gold-dim);
   }
   #hudTutorial .tut-step { color: var(--gold); font-size: 11px; letter-spacing: 2px; }
   #hudTutorial .tut-skip { color: var(--text-dim); font-size: 11px; }
@@ -498,7 +566,14 @@
   #hudBoss .boss-hp { color: var(--text-dim); font-size: 11px; letter-spacing: 2px; margin-top: 5px; }
   /* The two overrides the shared bar rule needs to stop being a fixed corner
      element and start being a row inside a card. Nothing else about it moves. */
-  #bossBarWrap { position: relative; bottom: auto; right: auto; width: 100%; height: 14px; }
+  /* UI PASS PART B: one more thing to unlearn, and for the same reason as the
+     position — a blur is a card's relationship with the WORLD behind it, and
+     this bar's backdrop is the #hudBoss card, which already carries one. Two
+     stacked blurs on the same pixels is a second effect nobody asked for. */
+  #bossBarWrap {
+    position: relative; bottom: auto; right: auto; width: 100%; height: 14px;
+    backdrop-filter: none;
+  }
 </style>
 </head>
 <body>
@@ -576,7 +651,12 @@
   <div class="mm-title">MINIMAP</div>
   <canvas id="mapCanvas" width="124" height="124"></canvas>
 </div>
-<div class="hud" id="hudHelp">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character &nbsp;•&nbsp; M fast travel &nbsp;•&nbsp; G give item</div>
+<!-- UI PASS PART A: the static fallback is the COLLAPSED state, exactly what
+     refreshHelpLine() builds on its first run — the four core keys, the full
+     reference sitting hidden beside them, and the toggle. Same discipline as
+     #pinInput and every conditional HUD card: the markup and the JS agree
+     from the very first frame, never for one frame only. -->
+<div class="hud" id="hudHelp"><span id="hudHelpCore">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; I inventory</span><span id="hudHelpFull">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; SHIFT block &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; I inventory &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character &nbsp;•&nbsp; M fast travel &nbsp;•&nbsp; G give item</span><button id="hudHelpMore" title="Show all controls">[?]</button></div>
 <div id="hpBarWrap"><div id="hpBar"></div></div>
 
 <div class="panel" id="invPanel">
@@ -1477,6 +1557,23 @@ function refreshTutorialHud() {
     `${step.text()}<br><span class="tut-skip">[ESC] skip</span>`;
   el.style.display = "block";
 }
+
+/* ============ UI PASS PART C — THE FIRST SCREEN TEACHES, IT DOES NOT BRIEF ==
+   Confirmed live before this was written: on a brand new account the compass
+   and the minimap both came up on the very first frame, beside a tutorial
+   whose first instruction is "walk to the marked stone". Two navigational
+   readouts, in two corners, for a player who has nowhere to navigate to yet
+   and no idea what either is.
+
+   So they wait. This is the ONE predicate both cards read, and it is
+   deliberately nothing more than "is the tutorial running": completing it and
+   skipping it both clear `tutorialActive` through endTutorial(), so both
+   already mean "the hold is over" with no second flag to keep in step, and a
+   returning player whose row carries tutorial_done never enters the hold at
+   all. Nothing about the Tutorial Grounds themselves is touched — its own HUD
+   line, the status box, the help line and every prop are exactly as they
+   were. */
+function tutorialHoldsNav() { return tutorialActive; }
 
 /* ============ v37: the three remaining bible landmarks ============
    Grand Bazaar, The Ancient Forge and the Ruined Colosseum were named in
@@ -17757,8 +17854,11 @@ function updateMinimap() {
   if (!el) return;
   /* Inside a cave the grid is the interior's own, not the world's, so a
      world bearing would be meaningless there — the compass simply goes away,
-     the same way the breath readout only appears when it means something. */
-  if (!me || inInterior()) { el.style.display = "none"; return; }
+     the same way the breath readout only appears when it means something.
+     UI PASS PART C adds the second reason the dial is not on screen: a player
+     still inside the Tutorial Grounds has not been given anywhere to point it
+     yet. Same branch, same one line of hiding. */
+  if (!me || inInterior() || tutorialHoldsNav()) { el.style.display = "none"; return; }
   const dial = document.getElementById("mmDial");
   if (dial) {
     /* hotfix: R_TICK and R_MARK used to be 46/36 — only 10px apart, which
@@ -17866,7 +17966,10 @@ function mapPixel(wx, wy, px, py) {
 function updateWorldMap() {
   const el = document.getElementById("hudMap");
   if (!el) return;
-  if (!me || inInterior()) { el.style.display = "none"; return; }
+  /* UI PASS PART C: the same hold the compass takes, in the same shape — the
+     card is off screen for the length of the tutorial and comes back the
+     moment it completes or is skipped. */
+  if (!me || inInterior() || tutorialHoldsNav()) { el.style.display = "none"; return; }
   const cv = document.getElementById("mapCanvas");
   if (!cv) { el.style.display = "none"; return; }
   if (!mapCtx) mapCtx = cv.getContext("2d");
@@ -18748,27 +18851,98 @@ addEventListener("keydown", e => {
   refreshKeybindList();
 }, true);
 
-/* The help line is generated from KEYBINDS, so it can never tell the player to
-   press a key they have rebound. */
+/* ============ UI PASS PART A — THE KEYBIND BAR STOPS GROWING ==============
+   The help line is still generated from KEYBINDS, so it can never tell the
+   player to press a key they have rebound — that is the v23 rule and it is
+   untouched. What changes is how much of it is on screen at once.
+
+   Confirmed live before a line was written: this function emitted THIRTEEN
+   entries across sixteen bound actions in one unbroken string, and every
+   version that shipped a mechanic has simply appended another one (v27's
+   ability, v28's mount, v33's build, v35's character, v39's travel, v51's
+   give). It reads worse with every feature and there is no version of that
+   which ends well.
+
+   So the entries carry a `core` flag now, and it is the whole mechanism: the
+   four a player needs in front of them at all times are the default line, and
+   the COMPLETE reference — every entry, in the same order, generated from the
+   same table — sits beside it in a hidden span that the [?] toggle raises.
+   One table, two renderings; a fourteenth entry added by some future version
+   costs the default line nothing.
+
+   ⚠️ `mount` IS in this table, and it was NOT in the string this function used
+   to build. It is a real bound action (R, since v28), the static markup in the
+   body has always named it, and the generated line quietly dropped it — found
+   while transcribing the string into the table below. A reference that calls
+   itself complete has to be complete, so it is in. */
+const HELP_ENTRIES = [
+  { core: true,  keys: ["up", "left", "down", "right"], text: " move" },
+  { core: true,  keys: ["attack"],    text: " / click attack" },
+  { core: false, keys: ["block"],     text: " block" },
+  { core: true,  keys: ["interact"],  text: " gather / pick up" },
+  { core: false, keys: ["dive"],      text: " dive (deep water)" },
+  { core: false, keys: ["mount"],     text: " mount" },            // v28
+  { core: true,  keys: ["inventory"], text: " inventory" },
+  { core: false, keys: ["craft"],     text: " craft" },
+  { core: false, keys: ["pets"],      text: " companions" },
+  { core: false, keys: ["ability"],   text: " class ability" },    // v27
+  { core: false, keys: ["build"],     text: " build" },            // v33
+  { core: false, keys: ["character"], text: " character" },        // v35
+  { core: false, keys: ["travel"],    text: " fast travel" },      // v39
+  { core: false, keys: ["give"],      text: " give item" },        // v51 PART J
+];
+/* Session state, deliberately not persisted: the expansion is a glance at a
+   reference, not a preference — the same reading v23 gave fullscreen, where
+   what is stored is what the panel last showed and never the state itself. */
+let helpExpanded = false;
+
+function helpLineHtml(coreOnly) {
+  const dot = " &nbsp;&bull;&nbsp; ";
+  return HELP_ENTRIES
+    .filter(e => !coreOnly || e.core)
+    .map(e => e.keys.map(a => keyLabel(KEYBINDS[a])).join("") + e.text)
+    .join(dot);
+}
+/* Both renderings are always IN the card and only one is ever displayed, so
+   the toggle is a display swap rather than a rebuild of what the line says —
+   and a harness (or a screen reader) reading the card still sees the whole
+   reference either way. */
 function refreshHelpLine() {
   const el = document.getElementById("hudHelp");
   if (!el) return;
-  const K = a => keyLabel(KEYBINDS[a]);
-  const dot = " &nbsp;&bull;&nbsp; ";
   el.innerHTML =
-    K("up") + K("left") + K("down") + K("right") + " move" + dot +
-    K("attack") + " / click attack" + dot +
-    K("block") + " block" + dot +
-    K("interact") + " gather / pick up" + dot +
-    K("dive") + " dive (deep water)" + dot +
-    K("inventory") + " inventory" + dot +
-    K("craft") + " craft" + dot +
-    K("pets") + " companions" + dot +
-    K("ability") + " class ability" + dot +
-    K("build") + " build" + dot +
-    K("character") + " character" + dot +   // v35
-    K("travel") + " fast travel" + dot +
-    K("give") + " give item";                // v51 PART J
+    '<span id="hudHelpCore"' + (helpExpanded ? ' style="display:none"' : '') + '>' +
+      helpLineHtml(true) + '</span>' +
+    '<span id="hudHelpFull"' + (helpExpanded ? ' style="display:block"' : '') + '>' +
+      helpLineHtml(false) + '</span>' +
+    '<button id="hudHelpMore"' + (helpExpanded ? ' class="on"' : '') +
+      ' title="' + (helpExpanded ? "Hide the full control list" : "Show all controls") + '">' +
+      (helpExpanded ? "[&times;]" : "[?]") + '</button>';
+  const btn = document.getElementById("hudHelpMore");
+  if (btn) btn.onclick = () => { toggleHelpLine(); };
+}
+function setHelpExpanded(v) { helpExpanded = !!v; refreshHelpLine(); return helpExpanded; }
+function toggleHelpLine() { return setHelpExpanded(!helpExpanded); }
+/* Harness hook: HELP_ENTRIES and helpExpanded are top-level and never land on
+   window, and "the default line is short and the full one is complete" is a
+   relationship rather than a string a grep could pin. */
+function debugHelpInfo() {
+  const el = document.getElementById("hudHelp");
+  const core = document.getElementById("hudHelpCore");
+  const full = document.getElementById("hudHelpFull");
+  const btn = document.getElementById("hudHelpMore");
+  const shown = e => !!e && e.style.display !== "none";
+  return {
+    expanded: helpExpanded,
+    coreCount: HELP_ENTRIES.filter(e => e.core).length,
+    allCount: HELP_ENTRIES.length,
+    actions: HELP_ENTRIES.reduce((n, e) => n + e.keys.length, 0),
+    coreShown: shown(core), fullShown: helpExpanded && !!full && full.style.display === "block",
+    coreText: core ? core.textContent : null,
+    fullText: full ? full.textContent : null,
+    cardText: el ? el.textContent : null,
+    toggle: btn ? { label: btn.textContent, on: btn.className === "on" } : null,
+  };
 }
 
 /* --- PART B/E: the settings panel ----------------------------------------- */

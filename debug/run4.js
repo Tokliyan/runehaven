@@ -300,6 +300,244 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     const cwdt = window.canWearDownTame, tcf = window.tameChanceFor;
     const mk = (kind, hp, maxHp, dead = false) => ({ id: kind + ':test', kind, hp, maxHp, dead });
     const results = [];
+
+    /* ============ UI CONSISTENCY & ONBOARDING PASS =======================
+       PART A the keybind bar, PART B a per-element audit of every non-panel
+       HUD element, PART C the compass/minimap hold across the tutorial.
+
+       This block runs FIRST, before every other gate in this file, for one
+       reason: the harness's boot login is a brand-new account, so the
+       Tutorial Grounds are genuinely running right now and PART C's hold is
+       genuinely in force — which is the only moment the boot state can be
+       observed. It ends by putting the world back exactly as it found it
+       (wolf in the world, hold released), so every gate below runs against
+       the world it always has. */
+    if (window.debugHelpInfo && window.debugV35Info) {
+      const dh = window.debugHelpInfo, dv35 = window.debugV35Info;
+      const compassNow = () => doc.getElementById('hudMinimap').style.display;
+      const mapNow = () => doc.getElementById('hudMap').style.display;
+      const paintHud = () => { window.updateMinimap(); window.updateWorldMap(); };
+
+      /* ---- PART C: the hold, observed at boot before anything releases it */
+      const bootTut = dv35();
+      paintHud();
+      results.push(['UI C: the harness boots a brand-new account, so the Tutorial Grounds really are running',
+        bootTut.tutorialActive === true && bootTut.tutorialDone === false &&
+        bootTut.tutorialRuns === 1]);
+      results.push(['UI C: and on that very first screen the compass and the minimap are both held off it',
+        compassNow() === 'none' && mapNow() === 'none' &&
+        window.debugMapInfo().visible === false]);
+      /* "This does not touch Tutorial Grounds' own logic, only what surrounds
+         it" — so everything else on that screen is still exactly there. */
+      results.push(['UI C: nothing else on the first screen moved — the tutorial line, the status box, the world box and the keybind bar are all still up',
+        doc.getElementById('hudTutorial').style.display === 'block' &&
+        doc.getElementById('hudPlayer').style.display !== 'none' &&
+        doc.getElementById('hudWorld').style.display !== 'none' &&
+        doc.getElementById('hudHelp').style.display !== 'none']);
+      results.push(['UI C: and the Grounds themselves are untouched — three steps, the wolf in the world, the marked stone and the dummy where they were',
+        dv35().TUTORIAL_STEPS.length === 3 && dv35().tutorialWolfInWorld === true &&
+        dv35().tutorialStep === 0]);
+      /* One predicate, read by both cards and by nothing else. */
+      results.push(['UI C: both cards read ONE predicate, and it is nothing more than "the tutorial is running"',
+        gameScript.indexOf('function tutorialHoldsNav() { return tutorialActive; }') > 0 &&
+        (gameScript.match(/tutorialHoldsNav\(\)/g) || []).length === 3 &&
+        gameScript.indexOf('if (!me || inInterior() || tutorialHoldsNav()) { el.style.display = "none"; return; }') > 0]);
+      /* COMPLETING it releases the hold — driven through the real end path. */
+      window.endTutorial(true);
+      paintHud();
+      results.push(['UI C: completing the tutorial brings both cards back',
+        dv35().tutorialActive === false &&
+        compassNow() === 'block' && mapNow() === 'block' &&
+        window.debugMapInfo().visible === true]);
+      /* And so does SKIPPING it — through the real ESCAPE key, not a call. */
+      window.debugSetV35({ tutorialDone: false });
+      window.startTutorialIfNeeded();
+      paintHud();
+      const heldAgain = compassNow() === 'none' && mapNow() === 'none';
+      window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      paintHud();
+      results.push(['UI C: a restarted tutorial holds them again, and a real ESCAPE skip releases them exactly as finishing does',
+        heldAgain === true && dv35().tutorialActive === false &&
+        compassNow() === 'block' && mapNow() === 'block']);
+      results.push(['UI C: the hold is the ONLY thing the tutorial does to them — inside a cave they still hide for the v35/v46 reason instead',
+        gameScript.indexOf('function updateMinimap()') > 0 &&
+        gameScript.slice(gameScript.indexOf('function updateMinimap()'),
+                         gameScript.indexOf('function updateMinimap()') + 1200)
+                  .indexOf('inInterior()') > 0]);
+      /* Put the world back the way this block found it: the tutorial wolf
+         returns to `wilds` and the hold stays released, so nothing below
+         this line runs against a world one wild short of the usual one. */
+      window.debugSetV35({ tutorialDone: false });
+      window.startTutorialIfNeeded();
+      window.debugSetV35({ tutorialActive: false });
+      paintHud();
+      results.push(['UI C: and the harness leaves the world as it found it — wolf back in it, hold released for the gates below',
+        dv35().tutorialWolfInWorld === true && dv35().tutorialActive === false &&
+        window.debugMapInfo().visible === true]);
+
+      /* ---- PART A: the keybind bar ------------------------------------- */
+      const h0 = dh();
+      results.push([`UI A: the default line is the four core keys and nothing else (${h0.coreCount} of ${h0.allCount} entries)`,
+        h0.coreCount === 4 && h0.coreShown === true && h0.fullShown === false &&
+        h0.coreText.split('•').length === 4]);
+      results.push(['UI A: and the four are the ones the spec names — move, attack, gather, inventory',
+        /move/.test(h0.coreText) && /attack/.test(h0.coreText) &&
+        /gather/.test(h0.coreText) && /inventory/.test(h0.coreText) &&
+        !/craft|companions|class ability|build|character|fast travel|give item|mount|dive|block/.test(h0.coreText)]);
+      results.push([`UI A: the hidden reference is COMPLETE — ${h0.allCount} entries covering all ${h0.actions} bound actions`,
+        h0.allCount === 14 && h0.actions === 17 &&
+        window.debugSettingsInfo && Object.keys(window.debugSettingsInfo().KEYBINDS).length === 17]);
+      results.push(['UI A: including mount, which the generated line had silently dropped since v28',
+        / mount/.test(h0.fullText) && !/ mount/.test(h0.coreText)]);
+      {
+        /* Every bound action's real key label appears in the reference. */
+        const K = window.debugSettingsInfo().KEYBINDS;
+        const missing = Object.keys(K).filter(a =>
+          h0.fullText.toUpperCase().indexOf(window.keyLabel(K[a]).toUpperCase()) < 0);
+        results.push(['UI A: every one of the seventeen bound keys is genuinely named in it' +
+          (missing.length ? ' (missing ' + missing.join(', ') + ')' : ''), missing.length === 0]);
+      }
+      {
+        /* The toggle is pressed the way a player presses it: the real button. */
+        const btn = doc.getElementById('hudHelpMore');
+        btn.onclick();
+        const h1 = dh();
+        btn.onclick();
+        const h2 = dh();
+        results.push(['UI A: the [?] toggle really expands and collapses it — one press each way',
+          h1.expanded === true && h1.fullShown === true && h1.coreShown === false &&
+          h1.toggle.on === true &&
+          h2.expanded === false && h2.fullShown === false && h2.coreShown === true &&
+          h2.toggle.label === '[?]']);
+      }
+      {
+        /* Still generated from KEYBINDS — the v23 rule, in both renderings. */
+        const reb = window.setKeybind('inventory', 'j');
+        const h3 = dh();
+        window.setKeybind('inventory', 'i');
+        results.push(['UI A: both renderings are still generated from KEYBINDS, never hardcoded',
+          reb.ok === true && /J inventory/.test(h3.coreText) && /J inventory/.test(h3.fullText) &&
+          /I inventory/.test(dh().coreText)]);
+      }
+
+      /* ---- PART B: the per-element audit -------------------------------
+         Read from the stylesheet itself rather than from a computed style,
+         because jsdom resolves almost none of these properties — and because
+         what the audit is actually about is what the SHEET says, one shared
+         set of values, per element. Flat rule list, later rule wins: this
+         file has no @media, no @keyframes and no id rule that precedes the
+         class rule it overrides, so cascade order is source order here. */
+      {
+        const styleText = html.slice(html.indexOf('<style>') + 7, html.indexOf('</style>'))
+                              .replace(/\/\*[\s\S]*?\*\//g, '');
+        const rules = [];
+        for (const chunk of styleText.split('}')) {
+          const i = chunk.indexOf('{');
+          if (i < 0) continue;
+          const sels = chunk.slice(0, i).split(',').map(s => s.trim()).filter(Boolean);
+          const decls = {};
+          for (const d of chunk.slice(i + 1).split(';')) {
+            const j = d.indexOf(':');
+            if (j > 0) decls[d.slice(0, j).trim()] = d.slice(j + 1).trim();
+          }
+          rules.push({ sels, decls });
+        }
+        const styleOf = (id, cls) => {
+          const out = {};
+          for (const r of rules)
+            for (const s of r.sels)
+              if (s === '#' + id || (cls && s === '.' + cls)) Object.assign(out, r.decls);
+          return out;
+        };
+        const HUD_CARDS = ['hudPlayer', 'hudWorld', 'hudZone', 'hudPrompt', 'hudTutorial',
+                           'hudUnmaking', 'hudBoss', 'hudMinimap', 'hudMap', 'hudHelp'];
+        const TEXT_CARDS = ['hudPlayer', 'hudWorld', 'hudZone', 'hudPrompt', 'hudTutorial',
+                            'hudUnmaking', 'hudBoss', 'hudHelp'];
+        const MAP_CARDS = ['hudMinimap', 'hudMap'];
+        const PANEL_IDS = ['invPanel', 'craftPanel', 'buildPanel', 'chestPanel',
+                           'givePanel', 'charPanel', 'travelPanel', 'petPanel'];
+        const ACCENTS = ['var(--gold-dim)', 'rgba(200,72,56,0.55)'];
+        const bad = [];
+        for (const id of HUD_CARDS) {
+          const s = styleOf(id, 'hud');
+          if (s.background !== 'var(--panel)') bad.push(id + '.background=' + s.background);
+          if (s.border !== '1px solid var(--panel-edge)') bad.push(id + '.border=' + s.border);
+          if (s['border-radius'] !== '4px') bad.push(id + '.radius=' + s['border-radius']);
+          if (s['backdrop-filter'] !== 'blur(2px)') bad.push(id + '.blur=' + s['backdrop-filter']);
+          if (s['border-color'] !== undefined && ACCENTS.indexOf(s['border-color']) < 0)
+            bad.push(id + '.border-color=' + s['border-color']);
+        }
+        for (const id of TEXT_CARDS) {
+          const s = styleOf(id, 'hud');
+          if (s.padding !== '8px 14px') bad.push(id + '.padding=' + s.padding);
+        }
+        for (const id of MAP_CARDS) {
+          const s = styleOf(id, 'hud');
+          if (s.padding !== '4px') bad.push(id + '.padding=' + s.padding);
+        }
+        results.push(['UI B: all ten .hud cards resolve to ONE set of values — var(--panel) on var(--panel-edge), 4px, blur(2px), 8px 14px (4px on the two that hold a fixed-size child)' +
+          (bad.length ? ' — drifted: ' + bad.join(' ') : ''), bad.length === 0]);
+        {
+          const t = styleOf('toast');
+          results.push([`UI B: the toast joins them — padding was 8px 20px and it had no blur at all (now ${t.padding} / ${t['backdrop-filter']})`,
+            t.background === 'var(--panel)' && t.padding === '8px 14px' &&
+            t['border-radius'] === '4px' && t['backdrop-filter'] === 'blur(2px)' &&
+            t.border === '1px solid var(--gold-dim)']);
+        }
+        {
+          const b = styleOf('hpBarWrap'), bb = styleOf('bossBarWrap');
+          results.push([`UI B: the player HP bar joins them too — radius was 8px against the HUD's 4px, fill was a hand-written rgba, no blur (now ${b['border-radius']} / ${b.background} / ${b['backdrop-filter']})`,
+            b['border-radius'] === '4px' && b.background === 'var(--well)' &&
+            b['backdrop-filter'] === 'blur(2px)' &&
+            b.border === '1px solid var(--panel-edge)']);
+          results.push(['UI B: and the boss bar unlearns only the blur, because its backdrop is a card that already carries one',
+            bb['border-radius'] === '4px' && bb.background === 'var(--well)' &&
+            bb['backdrop-filter'] === 'none']);
+        }
+        {
+          const pbad = [];
+          for (const id of PANEL_IDS) {
+            const s = styleOf(id, 'panel');
+            if (s.background !== 'var(--panel)') pbad.push(id + '.background=' + s.background);
+            if (s.border !== '1px solid var(--panel-edge)') pbad.push(id + '.border=' + s.border);
+            if (s['border-radius'] !== '5px') pbad.push(id + '.radius=' + s['border-radius']);
+            if (s.padding !== '14px 16px') pbad.push(id + '.padding=' + s.padding);
+            if (s['backdrop-filter'] !== 'blur(3px)') pbad.push(id + '.blur=' + s['backdrop-filter']);
+          }
+          results.push(['UI B: and all eight real panels were checked one by one too — the spec said they were already consistent, and they are' +
+            (pbad.length ? ' — drifted: ' + pbad.join(' ') : ''), pbad.length === 0]);
+        }
+        /* The two drifts that were a value written twice rather than a value
+           set wrongly. Both are now unreachable by their old spellings. */
+        results.push(['UI B: the gold accent hairline has ONE spelling now — no card carries rgba(232,182,76,0.4) any more',
+          styleText.indexOf('rgba(232,182,76,0.4)') < 0 &&
+          styleOf('hudZone', 'hud')['border-color'] === 'var(--gold-dim)' &&
+          styleOf('hudTutorial', 'hud')['border-color'] === 'var(--gold-dim)' &&
+          styleOf('hudPrompt', 'hud')['border-color'] === 'var(--gold-dim)']);
+        results.push(['UI B: and the inset well is one named value — the dial\'s old 0.55 is gone entirely and the 0.85 survives only as the variable\'s own definition',
+          styleText.indexOf('rgba(8,10,16,0.55)') < 0 &&
+          (styleText.match(/rgba\(8,10,16,0\.85\)/g) || []).length === 1 &&
+          (styleText.match(/--well:/g) || []).length === 1 &&
+          (styleText.match(/var\(--well\)/g) || []).length === 2 &&
+          styleOf('mmDial').background === 'var(--well)']);
+        /* The compass card and the dial inside it now agree about their own
+           size — border-box made the declared 148 two pixels short of the
+           148 its child actually occupied. */
+        results.push(['UI B: the compass card is finally as wide as the dial inside it (150 = 140 + 4px padding + 1px hairline, both sides)',
+          styleOf('hudMinimap', 'hud').width === '150px' &&
+          styleOf('hudMinimap', 'hud').height === '150px' &&
+          styleOf('mmDial').margin === '0' && styleOf('mmDial').width === '140px']);
+        /* PART A's toggle is the first thing on a HUD card that has to be
+           pressed, and .hud is pointer-events:none. */
+        results.push(['UI A: the toggle is genuinely clickable through a pointer-events:none card',
+          styleOf(null, 'hud')['pointer-events'] === 'none' &&
+          styleOf('hudHelpMore')['pointer-events'] === 'auto']);
+        results.push(['UI B: twenty top-level HUD/panel elements were audited one by one — 10 .hud cards, the toast, the HP bar, and the 8 panels',
+          HUD_CARDS.length + PANEL_IDS.length + 2 === 20]);
+      }
+    } else {
+      results.push(['UI PASS: debugHelpInfo() and debugV35Info() are reachable', false]);
+    }
     if (cwdt && tcf) {
       results.push(['gate CLOSED at full hp',        cwdt(mk('bear', 80, 80)) === false]);
       results.push(['gate CLOSED just above 25%',    cwdt(mk('bear', 21, 80)) === false]);
