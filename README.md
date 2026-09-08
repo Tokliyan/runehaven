@@ -618,3 +618,59 @@ hitbox or gather-range detection (visual only), confirm every part
 reuses a named existing technique rather than introducing a parallel
 system, matching the Lighting pass's own discipline.
 
+
+---
+
+## QUEUED, AFTER THE ANIMATION PASS — do not build until both specs above ship.
+## Confirmed, locked spec for a future version (Consumables)
+
+**Confirmed live: `herb` and `essence` are real, gatherable resources
+with their own node types, drawing, and picking logic — and are used in
+zero crafting recipes anywhere in the current file.** They are pure
+dead weight right now: a player can gather them and nothing in the game
+ever asks for them again. This spec gives them, and food generally, a
+real purpose, reusing the existing item/inventory system rather than
+building a new one.
+
+**PART A — a real "use item" action, since none currently exists.**
+Confirmed live: no `useItem`/`consumeItem` function exists anywhere.
+Add one real interaction point — an inventory item with a defined
+consumable effect gets a "Use" action alongside its existing display,
+reusing the inventory panel's own existing item-row rendering rather
+than a new UI. Using an item removes one from the stack and applies its
+effect immediately.
+
+**PART B — real food, using resources that already exist.** Cooked
+meat from existing mob loot (reuse whatever raw-meat-equivalent loot
+already drops, or gate behind a Forge interaction turning a raw
+material into a cooked one) restores HP over a short duration — the
+simplest, most obvious first consumable, and the most universally
+useful.
+
+**PART C — herb and essence become real potion ingredients.** A small,
+contained set of potions craftable at any Forge from combinations of
+existing materials (herb, essence, plus a tier-appropriate common
+resource) rather than inventing new gatherables:
+- A speed potion (temporary movement boost, stacking rules TBD against
+  mount speed and guild buffs — must not compound into something
+  absurd, check against both directly)
+- A breath-extension potion for diving — a direct, in-world answer to
+  the underwater-reachability conversation from earlier in this
+  project, an item-based solution instead of a permanent stat change
+- A basic resist potion (temporary reduced damage from one specific
+  source — propose fire, tying naturally to Volcano/Caldera expeditions)
+
+**PART D — no consumable breaks combat balance on its own.** Every
+effect in Part B/C is temporary and modest — this is about texture and
+survival-prep, not a new permanent power source stacked on top of
+guilds, gear, and Elders. Confirm every proposed number against what
+already exists (guild buffs, gear bonuses) rather than in isolation.
+
+**Proof gates:** standard gauntlet plus confirm using a consumable
+correctly removes exactly one from the stack and cannot be used from
+an empty count, confirm every potion's real duration/magnitude is
+measured and stated (not left as a vague "temporary boost"), confirm
+stacking behavior against mount speed and guild Tier 1/2 buffs is
+explicitly tested, not assumed safe, confirm herb/essence genuinely
+have a real use for the first time in the project's history.
+
