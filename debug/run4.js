@@ -293,6 +293,60 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
   }
   console.log('frames pumped, CAUGHT ERROR:', caught ? (caught.stack || caught) : 'none');
 
+  /* ============ v58 PART C — MEASURED HERE, ASSERTED BELOW ==============
+     The boot account is brand new, so RIGHT NOW — and nowhere else in this
+     run — the world is genuinely inside the Tutorial Grounds. That is the
+     state PART C is about, so it is read here, five real frames in, before
+     anything else in this file has had a chance to move it.
+
+     It then ENDS the tutorial the way a player does, through the real
+     endTutorial() that the ESC key calls, and re-reads both cards. Every
+     later gate in this file therefore sees the post-tutorial world it has
+     always seen, which is why this block lives here rather than at the end
+     with the rest of the v58 gates. */
+  const navBoot = {};
+  try {
+    const v35a = window.debugV35Info ? window.debugV35Info() : {};
+    navBoot.active = v35a.tutorialActive;
+    navBoot.done = v35a.tutorialDone;
+    navBoot.runs = v35a.tutorialRuns;
+    window.updateMinimap();
+    window.updateWorldMap();
+    navBoot.compass = doc.getElementById('hudMinimap').style.display;
+    navBoot.map = doc.getElementById('hudMap').style.display;
+    navBoot.mapVisible = window.debugMapInfo ? window.debugMapInfo().visible : null;
+    /* The tutorial line itself must be UP while they are down — the point is
+       that the first screen carries the lesson and nothing competing. */
+    navBoot.tutLine = doc.getElementById('hudTutorial').style.display;
+    navBoot.skipped = window.endTutorial(false);
+    const v35b = window.debugV35Info();
+    navBoot.activeAfter = v35b.tutorialActive;
+    navBoot.doneAfter = v35b.tutorialDone;
+    window.render(6);
+    window.updateMinimap();
+    window.updateWorldMap();
+    navBoot.compassAfter = doc.getElementById('hudMinimap').style.display;
+    navBoot.mapAfter = doc.getElementById('hudMap').style.display;
+    navBoot.mapVisibleAfter = window.debugMapInfo ? window.debugMapInfo().visible : null;
+    navBoot.tutLineAfter = doc.getElementById('hudTutorial').style.display;
+  } catch (e) { navBoot.err = String((e && e.message) || e); }
+
+  /* v58 PART C: several later blocks log in again for real — the PIN gates
+     call loginPlayer('BootTest') and the v46 B block drives a whole
+     resumeSession(). The stub's players row carries no `tutorial_done`
+     column, so each of those logins correctly reads "tutorial not done" and
+     the Grounds are back, which correctly holds the compass and the minimap
+     again. Any gate about those two cards therefore has to resolve the
+     tutorial first, the way a player does. That is what this is: not a
+     relaxation, a precondition — and the behaviour it works around is
+     asserted directly in the v58 block at the end of this file. */
+  const releaseTutorialHold = () => {
+    try {
+      if (window.debugV35Info && window.debugV35Info().tutorialActive) window.endTutorial(false);
+      window.debugSetV35({ tutorialActive: false, tutorialDone: true });
+    } catch (e) {}
+  };
+
   // ===== targeted wear-down / taming-gate simulation =====
   // Login above is Beastmaster (class card index 3), so +25% applies.
   // Extend this block whenever new tameable species or modifiers ship.
@@ -6111,6 +6165,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
 
       /* ---- PART D: the real minimap ------------------------------------ */
+      releaseTutorialHold();   // v58 PART C — see the helper's own comment
       if (window.debugMapInfo) {
         const dmi = window.debugMapInfo;
         const w46 = window.debugWorldInfo();
@@ -7241,6 +7296,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
 
       /* ---- PART B: the minimap texture pass ----------------------------- */
+      releaseTutorialHold();   // v58 PART C — see the helper's own comment
       if (window.debugMapInfo) {
         window.updateWorldMap();
         const mi51 = window.debugMapInfo();
@@ -8720,6 +8776,208 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
 
       results.push(['v52+53: the world still runs frames cleanly after every part of this',
+        (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
+    }
+
+    /* ==================================================================
+       v58 — UI CONSISTENCY & ONBOARDING PASS
+
+       PART A is the keybind bar, PART B is a per-element audit of every
+       non-panel HUD element against one shared set of values, and PART C
+       is the tutorial hold, whose only observable moment was captured up
+       at boot (see navBoot) and is asserted here.
+       ================================================================== */
+    {
+      const CS = el => window.getComputedStyle(el);
+      const byId = id => doc.getElementById(id);
+
+      /* ---- PART A: the keybind bar ---------------------------------- */
+      const helpEl = byId('hudHelp'), coreEl = byId('hudHelpCore'),
+            fullEl = byId('hudHelpFull'), tgEl = byId('hudHelpToggle');
+      results.push(['v58 A: the help card is three real elements — a core line, a [?] and a full reference',
+        !!helpEl && !!coreEl && !!fullEl && !!tgEl &&
+        coreEl.parentNode === helpEl && fullEl.parentNode === helpEl && tgEl.parentNode === helpEl]);
+      const coreTxt = () => (coreEl.textContent || '');
+      const coreEntries = () => coreTxt().split('•').length;
+      results.push([`v58 A: the DEFAULT line is the four core keys and nothing else (${coreEntries()} entries)`,
+        coreEntries() === 4]);
+      results.push(['v58 A: and those four are move / attack / gather / inventory',
+        coreTxt().indexOf('move') > 0 && coreTxt().indexOf('attack') > 0 &&
+        coreTxt().indexOf('gather / pick up') > 0 && coreTxt().indexOf('inventory') > 0]);
+      results.push(['v58 A: the long tail is genuinely NOT in the default line',
+        ['class ability', 'fast travel', 'companions', 'give item', 'build', 'character', 'craft',
+         'mount', 'dive', 'block'].every(s => coreTxt().indexOf(s) < 0)]);
+      results.push([`v58 A: the full reference is the COMPLETE list — every entry, core ones included (${fullEl.children.length} rows)`,
+        fullEl.children.length === 14]);
+      /* The reference has to name every action that is really bound, which
+         is the thing the old single line had quietly stopped doing. */
+      {
+        const kb = window.debugSettingsInfo().KEYBINDS;
+        const fullTxt = fullEl.textContent || '';
+        const missing = Object.keys(kb).filter(a => fullTxt.indexOf(window.keyLabel(kb[a])) < 0);
+        results.push([`v58 A: every one of the ${Object.keys(kb).length} bound actions appears in it (missing: ${missing.join(',') || 'none'})`,
+          missing.length === 0]);
+        results.push(['v58 A: including MOUNT, which the generated line had been missing since v28',
+          fullTxt.indexOf('mount') > 0]);
+      }
+      results.push(['v58 A: it starts COLLAPSED, and the markup itself says so rather than JS having to apply it',
+        fullEl.style.display === 'none' && tgEl.textContent === '[?]' &&
+        html.indexOf('id="hudHelpFull"') > 0 &&
+        html.indexOf('#hudHelpFull { display: none;') > 0]);
+      /* The real click, through the real handler. */
+      tgEl.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      const openedFull = fullEl.style.display, openedLabel = tgEl.textContent,
+            openedAria = tgEl.getAttribute('aria-expanded');
+      tgEl.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+      results.push(['v58 A: the [?] genuinely expands and collapses it, and the label follows',
+        openedFull === 'block' && openedLabel === '[×]' && openedAria === 'true' &&
+        fullEl.style.display === 'none' && tgEl.textContent === '[?]' &&
+        tgEl.getAttribute('aria-expanded') === 'false']);
+      results.push(['v58 A: the toggle is clickable at all — .hud is pointer-events:none, so it has to opt back in',
+        CS(tgEl).getPropertyValue('pointer-events') === 'auto']);
+      /* Both halves still regenerate from KEYBINDS, which is v23's rule and
+         the whole reason this line exists in this shape. */
+      {
+        const reb58 = window.setKeybind('mount', 'y');
+        const fullAfter = (fullEl.textContent || '').indexOf('Y mount') > 0;
+        window.setKeybind('mount', 'r');
+        const coreReb = window.setKeybind('inventory', 'j');
+        const coreAfter = (coreEl.textContent || '').indexOf('J inventory') > 0;
+        window.setKeybind('inventory', 'i');
+        results.push(['v58 A: a rebind regenerates BOTH the core line and the reference behind the toggle',
+          reb58.ok === true && fullAfter === true && coreReb.ok === true && coreAfter === true &&
+          (coreEl.textContent || '').indexOf('I inventory') > 0]);
+      }
+      results.push(['v58 A: one table drives both states, so a future mechanic is one row and lands behind the toggle',
+        gameScript.indexOf('const HELP_ENTRIES = [') > 0 &&
+        gameScript.indexOf('HELP_ENTRIES.filter(e => e.core)') > 0]);
+
+      /* ---- PART B: the per-element audit ---------------------------- */
+      /* Every non-panel HUD element, checked individually — not a sample.
+         The eight text cards share one set of values; the two map cards
+         differ only in the padding a canvas and a dial need; the two bars
+         are bars. Anything else is drift. */
+      const TEXT_CARDS = ['hudPlayer', 'hudWorld', 'hudZone', 'hudPrompt', 'hudTutorial',
+                          'hudUnmaking', 'hudBoss', 'hudHelp'];
+      const MAP_CARDS = ['hudMinimap', 'hudMap'];
+      const BARS = ['hpBarWrap', 'bossBarWrap'];
+      const bad = [];
+      for (const id of TEXT_CARDS.concat(MAP_CARDS)) {
+        const s = CS(byId(id));
+        if (s.getPropertyValue('border-radius') !== '4px') bad.push(id + ':radius=' + s.getPropertyValue('border-radius'));
+        if (s.getPropertyValue('backdrop-filter') !== 'blur(2px)') bad.push(id + ':blur=' + s.getPropertyValue('backdrop-filter'));
+        if (s.getPropertyValue('line-height') !== '1.5') bad.push(id + ':lh=' + s.getPropertyValue('line-height'));
+      }
+      results.push([`v58 B: all ten .hud cards share one radius, one blur and one line-height (drift: ${bad.join(' ') || 'none'})`,
+        bad.length === 0]);
+      const padBad = TEXT_CARDS.filter(id => CS(byId(id)).getPropertyValue('padding') !== '8px 14px');
+      results.push([`v58 B: the eight text cards share one padding (drift: ${padBad.join(' ') || 'none'})`,
+        padBad.length === 0]);
+      results.push(['v58 B: and the two map cards inset their contents the same way as each other, which they did not before',
+        CS(byId('hudMinimap')).getPropertyValue('padding') === '4px' &&
+        CS(byId('hudMap')).getPropertyValue('padding') === '4px' &&
+        CS(byId('mmDial')).getPropertyValue('margin') !== '4px']);
+      /* The toast was built independently of the card language and had
+         drifted in three of the five audited values. */
+      {
+        const t = CS(byId('toast'));
+        results.push(['v58 B: the toast now carries the card values it had drifted from — padding, blur and line-height',
+          t.getPropertyValue('padding') === '8px 14px' &&
+          t.getPropertyValue('backdrop-filter') === 'blur(2px)' &&
+          t.getPropertyValue('line-height') === '1.5' &&
+          t.getPropertyValue('border-radius') === '4px']);
+        results.push(['v58 B: and its gold hairline is untouched — an accent border is how a HUD card marks that it is saying something',
+          html.indexOf('background: var(--panel); border: 1px solid var(--gold-dim); color: var(--gold);') > 0]);
+      }
+      const barBad = BARS.filter(id => CS(byId(id)).getPropertyValue('border-radius') !== '4px');
+      results.push([`v58 B: the HP bar and the boss bar stop being 8px capsules and join the cards at 4px (drift: ${barBad.join(' ') || 'none'})`,
+        barBad.length === 0]);
+      /* One token for the inset well, which the audit found spelled four
+         different ways. The two HUD-side wells are the ones in scope. */
+      /* Greps the DECLARATIONS, not the raw file: the rule that replaced
+         each literal names the value it replaced in its own comment, which
+         is the same lesson Expansion 2a's "the bake is gone" gate wrote
+         down. What matters is that no declaration spells it by hand. */
+      results.push([`v58 B: the inset well is one --well token — every literal spelling of it is gone from the declarations (${(html.match(/background: rgba\(8,10,16,/g) || []).length} left)`,
+        html.indexOf('--well: rgba(8, 10, 16, 0.8);') > 0 &&
+        (html.match(/background: rgba\(8,10,16,/g) || []).length === 0 &&
+        (html.match(/var\(--well\)/g) || []).length === 5]);
+      results.push(['v58 B: every card still takes its fill and hairline from --panel/--panel-edge, through the one .hud rule',
+        html.indexOf('position: fixed; background: var(--panel); border: 1px solid var(--panel-edge);') > 0]);
+      /* Font weight was audited too, and is the one value that needed
+         nothing: every HUD element is already the body weight. */
+      {
+        const fw = TEXT_CARDS.concat(MAP_CARDS, BARS, ['toast'])
+          .map(id => CS(byId(id)).getPropertyValue('font-weight'));
+        results.push(['v58 B: font weight was already consistent across all thirteen — nothing to bring in line',
+          fw.every(w => w === fw[0])]);
+      }
+      /* The panels were confirmed consistent with each other and are
+         explicitly out of this pass's scope — pinned so a future version
+         cannot quietly drift one of them either. */
+      {
+        const pans = ['invPanel', 'craftPanel', 'buildPanel', 'chestPanel', 'givePanel',
+                      'charPanel', 'travelPanel', 'petPanel'];
+        const pd = pans.filter(id => {
+          const s = CS(byId(id));
+          return s.getPropertyValue('border-radius') !== '5px' ||
+                 s.getPropertyValue('padding') !== '14px 16px' ||
+                 s.getPropertyValue('backdrop-filter') !== 'blur(3px)';
+        });
+        results.push([`v58 B: and the eight .panel cards are still identical to each other, untouched by this pass (drift: ${pd.join(' ') || 'none'})`,
+          pd.length === 0]);
+      }
+
+      /* ---- PART C: the first login ---------------------------------- */
+      results.push(['v58 C: the boot account really was inside the Tutorial Grounds when it was measured',
+        navBoot.active === true && navBoot.done === false && navBoot.runs === 1 &&
+        navBoot.tutLine === 'block' && !navBoot.err]);
+      results.push(['v58 C: with the tutorial running, the compass and the minimap are both held off screen',
+        navBoot.compass === 'none' && navBoot.map === 'none' && navBoot.mapVisible === false]);
+      results.push(['v58 C: skipping it — the real endTutorial() the ESC key calls — releases both',
+        navBoot.skipped === true && navBoot.activeAfter === false && navBoot.doneAfter === true &&
+        navBoot.compassAfter === 'block' && navBoot.mapAfter === 'block' &&
+        navBoot.mapVisibleAfter === true]);
+      results.push(['v58 C: and the tutorial line itself goes with it, so nothing is left behind',
+        navBoot.tutLineAfter === 'none']);
+      results.push(['v58 C: ONE predicate holds both cards, so the two can never disagree about when they are allowed on',
+        gameScript.indexOf('function navHudHeldByTutorial()') > 0 &&
+        (gameScript.match(/navHudHeldByTutorial\(\)/g) || []).length === 3]);
+      results.push(['v58 C: nothing in the tutorial\'s own logic was touched — it still ends on completion or ESC and nowhere else',
+        gameScript.indexOf('if (k === "escape" && tutorialActive) endTutorial(false);') > 0 &&
+        gameScript.indexOf('if (tutorialStep >= TUTORIAL_STEPS.length) { endTutorial(true); return true; }') > 0 &&
+        (gameScript.match(/endTutorial\((?:true|false)\)/g) || []).length === 2]);
+      /* A returning player is the other direction, and it is the one that
+         must NOT have changed: the flag comes off their row at login. */
+      results.push(['v58 C: a returning player whose row carries the flag is never held at all',
+        (() => {
+          releaseTutorialHold();
+          window.updateMinimap(); window.updateWorldMap();
+          return byId('hudMinimap').style.display === 'block' &&
+                 byId('hudMap').style.display === 'block' &&
+                 gameScript.indexOf('tutorialDone = !tutorialShouldRun(p);') > 0;
+        })()]);
+      /* And the pre-migration direction, driven for real rather than
+         reasoned about: a players row with no `tutorial_done` column reads
+         as not-done on every login (v35's own documented degradation), so
+         the Grounds replay and the two cards are held again for as long as
+         they run. One keypress out of it, exactly as before. */
+      {
+        await window.loginPlayer('BootTest', 'Beastmaster');
+        const preLogin = window.debugV35Info().tutorialDone;
+        window.startTutorialIfNeeded();
+        window.updateMinimap(); window.updateWorldMap();
+        const heldAgain = byId('hudMinimap').style.display === 'none' &&
+                          byId('hudMap').style.display === 'none' &&
+                          window.debugV35Info().tutorialActive === true;
+        window.endTutorial(false);
+        window.updateMinimap(); window.updateWorldMap();
+        results.push(['v58 C: a row with no tutorial_done column replays the Grounds and is held again — the honest degradation, both directions',
+          preLogin === false && heldAgain === true &&
+          byId('hudMinimap').style.display === 'block' &&
+          byId('hudMap').style.display === 'block']);
+      }
+      results.push(['v58: and the world still runs frames cleanly after every part of this',
         (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
     }
 

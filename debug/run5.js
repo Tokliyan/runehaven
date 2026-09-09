@@ -677,6 +677,53 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
        on it, so this sweeps the branches by hand: a terrain window over every
        ground biome the seed can reach, a nearby player dot, a remote player in
        another space (which must NOT draw), and the interior hide. */
+    /* ================= v58 — UI CONSISTENCY & ONBOARDING ================
+       PART C puts a real gate in front of the two navigation cards: this
+       harness boots a brand new account, so it comes up INSIDE the Tutorial
+       Grounds and both of them are correctly held. That is a render branch
+       of its own and is swept here — and it has to be resolved before the
+       v46 sweep below, which needs the minimap actually on screen.
+
+       PART A's two states are swept with it. Neither is canvas, but both are
+       real branches of a real refresh function that a plain boot only ever
+       reaches in one of its two states. */
+    if (window.debugV35Info && window.debugSetV35) {
+      const held = window.debugV35Info();
+      window.updateMinimap(); window.updateWorldMap();
+      const compassHeld = window.document.getElementById('hudMinimap').style.display;
+      const mapHeld = window.debugMapInfo ? window.debugMapInfo().visible : null;
+      n += 2;
+      if (!held.tutorialActive || compassHeld !== 'none' || mapHeld !== false) {
+        console.log('COVERAGE GAP: a fresh boot did not come up inside the tutorial with both nav cards held' +
+                    ' (active ' + held.tutorialActive + ', compass ' + compassHeld + ', map ' + mapHeld + ')');
+        process.exit(1);
+      }
+      window.endTutorial(false);
+      window.updateMinimap(); window.updateWorldMap();
+      n += 2;
+      if (window.document.getElementById('hudMinimap').style.display !== 'block' ||
+          (window.debugMapInfo && window.debugMapInfo().visible !== true)) {
+        console.log('COVERAGE GAP: the nav cards did not come back after the tutorial was skipped');
+        process.exit(1);
+      }
+      console.log('v58 C swept — both nav cards held during the tutorial, both released after it');
+      if (window.setHelpExpanded && window.refreshHelpLine) {
+        const fullEl = window.document.getElementById('hudHelpFull');
+        window.setHelpExpanded(true);
+        window.refreshHelpLine();
+        const openRows = fullEl ? fullEl.children.length : 0;
+        const openShown = fullEl && fullEl.style.display === 'block';
+        window.setHelpExpanded(false);
+        window.refreshHelpLine();
+        n += 2;
+        if (!openShown || openRows !== 14 || fullEl.style.display !== 'none') {
+          console.log('COVERAGE GAP: the help card did not draw both of its states (' +
+                      openRows + ' rows, open ' + openShown + ')');
+          process.exit(1);
+        }
+        console.log('v58 A swept — help card collapsed and expanded, ' + openRows + ' reference rows');
+      }
+    }
     if (window.debugMapInfo && window.updateWorldMap) {
       const wi = window.debugWorldInfo(), Bm = wi.B;
       const seen = {}, want = Object.keys(Bm).map(k => Bm[k]);

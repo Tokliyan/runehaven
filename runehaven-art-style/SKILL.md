@@ -53,6 +53,222 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-09 (v58 — UI Consistency & Onboarding: the keybind bar, a real HUD audit, and a first screen that teaches)
+
+Three parts and **all three of them are rendering** — this is the first
+version in a long while whose entire scope is the layer this file covers.
+Not one canvas call, palette entry, biome colour, `SPECIES_K`, `MOB_K`,
+`MOB_TALL`, silhouette or shadow was read, let alone touched: `run5`'s world
+coverage is unchanged and the six draws it gained are the new HUD states
+themselves. Everything below is CSS, markup and the two functions that write
+into them.
+
+- **PART A: the keybind bar was a 14-entry wall and it was going to keep
+  growing.** `#hudHelp` printed every bound key in one unbroken line — 445px
+  of dim 12px text across the bottom of the screen, measured in real
+  Chromium — and every version that shipped a mechanic had simply appended
+  another entry to it. It now carries **four keys (move, attack, gather,
+  inventory) and a `[?]`**, with the complete reference one click behind it.
+  The four are not a new idea about what matters: they are the first four
+  things the Tutorial Grounds itself teaches.
+- **The expansion is the WHOLE list, not the leftovers.** A reference with
+  the four commonest keys missing from it is not a reference. One table,
+  `HELP_ENTRIES`, marks four rows `core: true` and drives both states, so a
+  future mechanic is one row and it lands behind the toggle by default —
+  which is the actual fix, since the growth was the problem rather than the
+  length on any particular day.
+- **⚠️ THE AUDIT FOUND A REAL BUG IN THE OLD LINE: `mount` was missing.**
+  v28 added the binding and put `R mount` in the static markup, and never
+  added it to `refreshHelpLine()` — so from v28 onward the generated line
+  silently carried thirteen of the fourteen entries and the static string it
+  replaced carried all fourteen. Restored, because "the complete reference"
+  has to mean complete. `run4` now pins every one of the **17 bound actions**
+  appearing in it.
+- **The toggle invents no component.** It is `#settingsBtn`'s bordered
+  text-button idiom with one more selector on the rule — the same "extended
+  by one selector" move v47's redeem button and v52+53's resume cancel made
+  — plus three layout overrides and `pointer-events: auto`, because `.hud`
+  sets `pointer-events: none` on every card and the one thing in this one
+  that is clickable has to opt back in. The reference rows are the card's own
+  existing `.hud .gold` class for the key beside dim body text for the
+  action. **Two new rules in the whole part**, both of them layout.
+- **⚠️ THE EXPANDED REFERENCE COVERS THE COMPASS DIAL, and it is measured
+  rather than guessed.** The card is bottom-anchored so it unfolds upward,
+  and the compass sits directly above it with no gap. Measured at 1280x800:
+  collapsed the card is **445x38 at y 748 and clears the compass exactly**;
+  expanded in a single column it was **446x330**, which covered the dial and
+  a third of the screen with it. Two columns take it to **446x188 at y 598**
+  — the same top edge as the compass, so the open reference now occupies
+  precisely the dial's footprint and nothing more, and paints over it (later
+  in the DOM, same z-index). One click puts the dial back. If that is the
+  wrong trade, the alternatives are a third column (shorter, still overlaps)
+  or moving the compass, and both are one line.
+
+- **PART B: the audit is a real per-element measurement, and it found four
+  drifts.** Thirteen non-panel HUD elements — the ten `.hud` cards,
+  `#hpBarWrap`, `#bossBarWrap` and `#toast` — read through
+  `getComputedStyle` rather than eyeballed, and `run4` now re-reads every one
+  of them on every run. What was actually wrong:
+
+  ```
+  element        value            was              now
+  #toast         padding          8px 20px         8px 14px   (the card's)
+  #toast         backdrop-filter  none             blur(2px)
+  #toast         line-height      browser default  1.5
+  #hpBarWrap     border-radius    8px              4px        (a capsule)
+  #bossBarWrap   border-radius    8px              4px        (shares it)
+  #hpBarWrap     background       rgba(8,10,16,.85) var(--well)
+  #mmDial        background       rgba(8,10,16,.55) var(--well)
+  .set-tab/.btn  background       rgba(8,10,16,.7)  var(--well)
+  #hudMinimap    padding          0 + a 4px margin  4px, no margin
+  #hudMinimap    width/height     148px             150px
+  ```
+- **The inset well was one surface with four spellings.** `rgba(8,10,16,·)`
+  at 0.55 on the compass dial, 0.7 on the settings tabs and buttons, 0.8 on
+  every text field and 0.85 behind the HP bar — four values nobody could have
+  noticed drifting apart, because the largest gap between any two of them is
+  three hundredths of an alpha. It is `--well` now, at the 0.8 the text
+  fields already carried (the value in the most places). Five declarations,
+  one token, and `run4` fails if any hand-spelled one comes back.
+- **The 148 -> 150 compass card is a fix, not a resize.** With
+  `box-sizing: border-box` a 148px card holds 146px of content, and the 140px
+  dial plus its own 4px margins measured 148 — 2px wider than the box it sat
+  in. 150 minus two hairlines minus 8px of padding is exactly 140. The dial's
+  own geometry (`CX/CY 70`, `R_TICK 64`, `R_MARK 42`) is untouched, so the
+  ticks and the nine landmark marks land where they always did.
+- **⚠️ ONE DRIFT WAS FOUND AND DELIBERATELY NOT FIXED: the gold accent
+  hairline has two spellings.** `#hudZone` and `#hudTutorial` use
+  `rgba(232,182,76,0.4)`; `#hudPrompt` and `#toast` use the opaque
+  `var(--gold-dim)`, which is visibly brighter over the panel fill. That is
+  plausibly deliberate — a prompt and a toast are asking for attention where
+  a zone banner is stating a fact — and an accent colour is outside the five
+  values the audit was asked to check (radius, padding, blur, font weight,
+  the `--panel`/`--panel-edge` tokens). Reported rather than changed; the fix
+  is one value if the brighter pair was never intended.
+- **Font weight needed nothing, and that is a measured result rather than an
+  assumption.** All thirteen elements are the body weight already, so there
+  was nothing to bring in line — pinned anyway, so a future card cannot
+  arrive at 600 without failing.
+- **The eight `.panel` cards were confirmed identical to each other and left
+  completely alone** (5px radius, 14px 16px padding, blur(3px)), which is
+  what the spec scoped. They are pinned now too, so this pass's own
+  neighbours cannot drift either.
+
+- **PART C: a brand new player's first screen no longer competes with
+  itself.** The compass dial and the minimap card both rendered from frame
+  one, before the Tutorial Grounds had taught anything — two navigational
+  readouts beside a three-step lesson about walking, swinging and taming.
+  Both are held until the tutorial resolves, and **both ways of resolving it
+  count**: finishing it and pressing ESC to skip it run the same
+  `endTutorial()`, which is what sets the flag the hold reads.
+- **ONE predicate, `navHudHeldByTutorial()`, read by exactly the two cards.**
+  It goes on the same line as the interior hide each of them already had — a
+  card that has no business being on screen yet is the same condition as one
+  with nothing true to say — so there is no second visibility mechanism and
+  the two can never disagree. **Nothing in the tutorial's own logic was
+  touched**: `run4` pins that it still ends on completion or ESC and nowhere
+  else, and that a returning player, whose flag comes off their row at login,
+  is never held for an instant.
+- **⚠️ A pre-migration account replays the hold on every login, and that is
+  v35's own documented degradation showing through.** A players row with no
+  `tutorial_done` column reads as not-done every time, so the Grounds replay
+  and the two cards go with them — one keypress out of it, exactly as before.
+  Driven for real in `run4` rather than reasoned about, both directions.
+- **⚠️ v52 through v57 have no entries in this file either.** v51's own note
+  flagged the same gap for v47-v50; six more versions have shipped since and
+  none of them wrote one. Not backfilled here, for the reason v51 gave —
+  reconstructing six versions' rendering notes after the fact would be
+  writing history rather than recording it — but the gap is now ten versions
+  wide and worth knowing when reading this list as a running record.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus two things it says about
+the file that turned out not to be exactly true. All shipped through the full
+gate (parse clean, `run2` and `run3` `CAUGHT ERROR: none`, `run4`
+**1574/1574 with zero FAIL** against 1543 before, `run5` 1,321 coverage draws
+clean against 1,315, 60/60 grep checks including the preservation half) plus
+a real-Chromium layout pass at 1280x800 with measured boxes — refinements to
+consider, not unfinished work.
+
+1. **⚠️ The spec says "13 distinct top-level HUD/panel elements exist". The
+   real count is 20, and 13 is the number this pass audited.** Ten `.hud`
+   cards, `#hpBarWrap`, `#bossBarWrap` and `#toast` is exactly thirteen —
+   the non-panel set the spec's own PART B lists — and the eight `.panel`
+   cards are the other seven-plus-one it calls already consistent (it names
+   seven; `#petPanel` is an eighth). Noted rather than silently corrected,
+   since the spec offered the number as evidence it had counted.
+2. **The four core keys are move, attack, gather and inventory**, the spec's
+   own parenthetical, taken at the bottom of its "4-5 entries" range. Block
+   and dive are the two that most nearly made it and both are situational —
+   you learn `SHIFT` in your first fight and `F` the first time you stand on
+   deep water, and neither is worth a permanent fifth of a line everyone
+   reads forever. One `core: true` to change.
+3. **The expansion shows all fourteen entries, not the ten that are not
+   core.** The spec says "expands the complete reference"; a reference is
+   complete or it is something else.
+4. **`mount` was restored to the generated line, which the spec does not ask
+   for.** It asks for the full current list behind the toggle — and the
+   current list had a hole in it that this audit is what found. Shipping the
+   hole behind a toggle labelled "all controls" would have been shipping a
+   known lie. Flagged rather than done silently.
+5. **The toggle is `[?]` collapsed and `[×]` expanded, and it is a click,
+   never a key.** The spec proposes "a `[?]` icon or similar". A keybind for
+   it would have to join `KEYBIND_DEFAULTS` and take one of the few free
+   letters left, for a card that is already on screen and already clickable.
+   The handler blurs the button after every click, because the button keeps
+   focus and `SPACE` — the attack key — would otherwise re-press it.
+6. **The expanded state is session-local and starts collapsed.** Nothing in
+   the spec asks for it to persist, and `SETTINGS` is a saved object a
+   disclosure state has no business joining. It is one `let`.
+7. **`--well` is a new token, and the spec names only `--panel` and
+   `--panel-edge`.** Its point is one shared set of values, and four literal
+   spellings of one recessed surface is the exact opposite of that. The value
+   chosen is the one already used in the most places rather than an average,
+   so three of the five declarations are pure tokenisation with no visual
+   change at all; the compass dial goes slightly darker and the HP-bar track
+   slightly lighter, and both are one line to revert.
+8. **The settings card's own tabs and buttons were tokenised too, though
+   they are not HUD.** They carried the same literal, and leaving two of the
+   five spellings behind would have made "one token" a half-truth. Nothing
+   else on that card was read or touched.
+9. **The HP bar's 8px radius was a capsule and is now 4px like every card.**
+   The spec lists the boss bar among the elements to audit and the two share
+   one rule, so this was never going to be one bar's decision. It is the most
+   visible single change in PART B and the first thing to look at in a
+   screenshot.
+10. **The expanded reference is two columns because one column covered a
+    third of the screen.** Measured, not judged by eye: 330px against 188px.
+    The residual overlap with the compass is flagged in the entry above with
+    both of its one-line alternatives.
+11. **`run4` gained 31 gates and one precondition helper, and the helper is
+    worth knowing about.** Several existing blocks log in again for real (the
+    PIN gates call `loginPlayer('BootTest')`, the v46 B block drives a whole
+    `resumeSession()`), and the stub's players row has no `tutorial_done`
+    column — so each of those logins correctly restarts the Grounds and
+    correctly re-holds the two cards, which broke three v46 D gates and one
+    v51 B gate that had nothing to do with this version. `releaseTutorialHold()`
+    resolves the tutorial the way a player does before those blocks run. It
+    is a precondition, not a relaxation: the behaviour it works around is
+    itself asserted, in both directions, in the v58 block.
+12. **PART C's own state exists for exactly one moment in a harness run, so
+    it is measured at boot and asserted at the end.** Five real frames into a
+    brand new account is the only time `run4` is genuinely inside the
+    tutorial; `navBoot` captures both cards' display, the tutorial line's,
+    and then skips through the real `endTutorial(false)` and re-reads all
+    three. Same shape as the `pinBoot` capture above it.
+13. **`run5` gained a v58 sweep and no coverage list needed extending** — no
+    species, mob, weapon kind or class was added this version. It hard-fails
+    if a fresh boot does not come up with both nav cards held, if they do not
+    come back after the skip, or if the reference does not draw its 14 rows
+    in both states. 1,315 -> **1,321**.
+14. **The push to `main` that the README's step 8 invites was deliberately
+    not attempted.** This session is instructed to develop and push only on
+    its designated branch. The README calls a blocked push to `main` a
+    nice-to-have and explicitly not a failure, so the build lands on the
+    branch as usual and a human can sync it. Same call every version since
+    Expansion 2b has made.
+
 ### 2026-09-01 (v51 — the wisps made visible, minimap texture, guild badges and nameplates)
 
 Eleven parts, and four of them are rendering: PART A makes the v50 wisps
