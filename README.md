@@ -674,3 +674,39 @@ stacking behavior against mount speed and guild Tier 1/2 buffs is
 explicitly tested, not assumed safe, confirm herb/essence genuinely
 have a real use for the first time in the project's history.
 
+
+---
+
+## QUEUED, AFTER CONSUMABLES — do not build until all three specs above ship.
+## Confirmed, locked spec for a future version (Matched-Tier Gear Bonus)
+
+**Confirmed live: `ARMORS` has exactly one equip slot (`me.armor`), not
+separate pieces — "set bonus" in the traditional multi-piece sense
+does not fit this game's real structure.** Confirmed real values:
+`iron_armor: { tier: "iron", reduce: 0.15 }`,
+`runic_armor: { tier: "runic", reduce: 0.28 }`. The real, buildable
+version of this idea: a bonus for matching your equipped weapon's tier
+to your equipped armor's tier, since that is the actual choice a player
+makes with two real slots, not an imagined third and fourth slot.
+
+**PART A — one small, real bonus per matched tier.** Wielding an Iron
+weapon while wearing Iron armor, or Runic-with-Runic, or Dragonsteel-
+with-Dragonsteel, grants one modest passive — propose a small bonus to
+the armor's own `reduce` value specifically (matched tier meaningfully
+outperforms mismatched tier at the same gear level) rather than an
+unrelated new stat. This rewards deliberate, coherent gear choices
+without adding new equipment slots this game was never built around.
+
+**PART B — mismatched tiers stay completely valid, just without the
+bonus.** A Dragonsteel weapon with Iron armor (or any other mismatch)
+continues working exactly as it does today — this is a bonus for
+coherence, not a penalty for mixing tiers, which is a real, legitimate
+playstyle choice (e.g., prioritizing offense while gear is still
+catching up on defense).
+
+**Proof gates:** standard gauntlet plus confirm the bonus only applies
+when weapon tier and armor tier are genuinely identical strings,
+confirm a mismatched loadout takes zero penalty relative to current
+behavior, confirm the bonus is real and measured against the base
+`reduce` value for each tier, not a vague "small boost".
+
