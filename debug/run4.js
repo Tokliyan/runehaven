@@ -300,6 +300,176 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     const cwdt = window.canWearDownTame, tcf = window.tameChanceFor;
     const mk = (kind, hp, maxHp, dead = false) => ({ id: kind + ':test', kind, hp, maxHp, dead });
     const results = [];
+
+    /* ============ UI CONSISTENCY & ONBOARDING PASS =====================
+       Placed FIRST in the file, deliberately. The boot above is a brand-new
+       account's very first login and PART C is a rule about exactly that
+       moment — this is the only point in the whole run where the first
+       screen can be observed for real instead of simulated. It ends Tutorial
+       Grounds the way a player does (one ESC through the real handler) when
+       it is finished, which is also what puts the two navigation cards back
+       for every later gate in this file. */
+    if (window.debugUiInfo && window.debugSetUi) {
+      const dui = window.debugUiInfo, dsu = window.debugSetUi;
+
+      /* ---- PART A: the keybind bar ---------------------------------- */
+      const u0 = dsu({ helpExpanded: false });
+      results.push([`UI A: ONE table, two views — ${u0.helpCoreCount} core entries against ${u0.helpAllCount} in the full reference`,
+        u0.helpCoreCount === 4 && u0.helpAllCount === 14]);
+      results.push(['UI A: the default line is move / attack / gather / inventory and nothing else',
+        /move/.test(u0.helpCoreText) && /attack/.test(u0.helpCoreText) &&
+        /gather/.test(u0.helpCoreText) && /inventory/.test(u0.helpCoreText) &&
+        !/block|dive|mount|craft|companions|class ability|build|character|fast travel|give item/
+          .test(u0.helpCoreText)]);
+      results.push(['UI A: the full reference carries all fourteen, including the mount key v28 never added to this line',
+        ['block', 'dive', 'mount', 'inventory', 'craft', 'companions', 'class ability',
+         'build', 'character', 'fast travel', 'give item']
+          .every(s => u0.helpAllText.indexOf(s) >= 0)]);
+      results.push([`UI A: and the default really is shorter, not merely reordered (${u0.helpCoreText.length} chars against ${u0.helpAllText.length})`,
+        u0.helpCoreText.length * 2 < u0.helpAllText.length]);
+      /* Driven through the real button handler, never by setting the flag. */
+      const u1 = dsu({ clickToggle: true });
+      results.push(['UI A: clicking the toggle expands the complete reference',
+        u1.helpExpanded === true && u1.cardExpandedClass === true &&
+        u1.bodyHelpOpen === true && u1.toggleAria === 'true' &&
+        u1.toggleLabel !== u0.toggleLabel]);
+      const u2 = dsu({ clickToggle: true });
+      results.push(['UI A: and clicking it again collapses it back to the core line',
+        u2.helpExpanded === false && u2.cardExpandedClass === false &&
+        u2.bodyHelpOpen === false && u2.toggleAria === 'false' &&
+        u2.toggleLabel === u0.toggleLabel]);
+      results.push(['UI A: the toggle is the one thing inside a pointer-events:none card that can catch a click',
+        html.indexOf('#hudHelpToggle {') > 0 &&
+        /#hudHelpToggle \{[^}]*pointer-events: auto/.test(html)]);
+      results.push(['UI A: everything standing in the expansion\'s way steps out of it rather than being overlapped',
+        html.indexOf('body.help-open #hudMinimap { bottom: 116px; }') > 0 &&
+        html.indexOf('body.help-open #hudZone { bottom: 116px; }') > 0 &&
+        html.indexOf('body.help-open #hudPrompt { bottom: 164px; }') > 0 &&
+        /#hudHelp\.expanded \{ max-width: min\(640px, calc\(100vw - 310px\)\); \}/.test(html)]);
+      results.push(['UI A: a rebind still reaches BOTH views, so the two can never disagree',
+        (() => {
+          window.setKeybind('inventory', 'j');
+          const r = dui();
+          const ok = r.helpCoreText.indexOf('J inventory') >= 0 &&
+                     r.helpAllText.indexOf('J inventory') >= 0;
+          window.setKeybind('inventory', 'i');
+          const back = dui();
+          return ok && back.helpCoreText.indexOf('I inventory') >= 0;
+        })()]);
+
+      /* ---- PART B: the consistency audit ----------------------------- */
+      results.push(['UI B: the toast was the only var(--panel) card on the HUD with no blur behind it',
+        /#toast \{[^}]*backdrop-filter: blur\(2px\)/.test(html)]);
+      results.push(['UI B: and its padding is the 8px 14px every other .hud card uses, never its own 20px',
+        /#toast \{[^}]*padding: 8px 14px/.test(html) && html.indexOf('padding: 8px 20px') < 0]);
+      results.push(['UI B: the HP/boss bar corner is the HUD\'s own 4px — the 8px stadium was the only radius on the HUD that was not 4 or 5',
+        /#hpBarWrap, #bossBarWrap \{[\s\S]*?border-radius: 4px/.test(html) &&
+        html.indexOf('border-radius: 8px') < 0]);
+      results.push(['UI B: the standalone HP bar gained the blur every other fixed HUD card has, and the nested boss track deliberately did not',
+        html.indexOf('#hpBarWrap { backdrop-filter: blur(2px); }') > 0 &&
+        !/#bossBarWrap \{[^}]*backdrop-filter/.test(html)]);
+      results.push(['UI B: compass and minimap carry ONE inset now, written the same way on both cards',
+        /#hudMinimap \{[^}]*padding: 4px/.test(html) &&
+        /#hudMap \{[^}]*padding: 4px/.test(html) &&
+        !/#mmDial \{[^}]*margin: 4px/.test(html)]);
+      results.push(['UI B: and the dial stops overflowing its own card — 4 + 140 + 4 plus two hairlines is 150, not 148',
+        /#hudMinimap \{[^}]*width: 150px; height: 150px/.test(html) &&
+        /#mmDial \{[\s\S]*?width: 140px; height: 140px/.test(html) &&
+        html.indexOf('width: 148px; height: 148px') < 0]);
+      results.push(['UI B: the two red alert cards share one header size and one second-row size',
+        /#hudBoss \.boss-name \{[^}]*font-size: 13px/.test(html) &&
+        /#hudUnmaking \.un-head \{[^}]*font-size: 13px/.test(html) &&
+        html.indexOf('#hudBoss .boss-hp { color: var(--text-dim); font-size: 11px;') > 0 &&
+        html.indexOf('#hudUnmaking .un-count { color: var(--text-dim); font-size: 11px;') > 0]);
+      /* The spec asks for a genuine PER-ELEMENT check, not a sample. Read
+         out of the stylesheet itself: every one of the ten .hud cards must
+         take the shared fill, hairline, radius and blur from `.hud` and
+         override none of them — border-COLOR is allowed, because that is the
+         semantic accent (#hudZone gold, #hudBoss red) rather than a drift —
+         and only the two card-shaped ones may set a padding, at one value. */
+      {
+        const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
+        const ruleOf = sel => {
+          const m = css.match(new RegExp('\\n\\s*' + sel.replace(/[#.]/g, '\\$&') + '\\s*\\{([^}]*)\\}'));
+          return m ? m[1] : null;
+        };
+        const HUD_CARDS = ['#hudPlayer', '#hudWorld', '#hudZone', '#hudPrompt', '#hudTutorial',
+                           '#hudUnmaking', '#hudBoss', '#hudMinimap', '#hudMap', '#hudHelp'];
+        const INSET_OK = ['#hudMinimap', '#hudMap'];
+        const drift = [];
+        for (const id of HUD_CARDS) {
+          const r = ruleOf(id);
+          if (r === null) { drift.push(id + ' has no rule at all'); continue; }
+          if (/background:/.test(r)) drift.push(id + ' redeclares background');
+          if (/border-radius:/.test(r)) drift.push(id + ' redeclares border-radius');
+          if (/backdrop-filter:/.test(r)) drift.push(id + ' redeclares backdrop-filter');
+          if (/(^|[;\s])border:/.test(r)) drift.push(id + ' redeclares border');
+          const p = r.match(/padding:\s*([^;}]+)/);
+          if (p && INSET_OK.indexOf(id) < 0) drift.push(id + ' redeclares padding');
+          if (p && p[1].trim() !== '4px') drift.push(id + ' padding is ' + p[1].trim());
+        }
+        results.push(['UI B: per-element audit of all ten .hud cards — every one takes the shared fill, hairline, radius and blur' +
+          (drift.length ? ' (' + drift.join('; ') + ')' : ''), drift.length === 0]);
+        /* The other three top-level in-world elements, checked by hand
+           because none of them is a .hud card: the HP bar, the toast and the
+           death overlay. Ten plus these three is the thirteen the spec
+           counts. */
+        results.push(['UI B: the three non-.hud top-level elements complete the thirteen, each on the shared variables',
+          /#hpBarWrap, #bossBarWrap \{[\s\S]*?border: 1px solid var\(--panel-edge\)/.test(html) &&
+          /#toast \{[^}]*background: var\(--panel\)/.test(html) &&
+          html.indexOf('#deathOverlay {') > 0]);
+      }
+
+      /* ---- PART C: the first screen ---------------------------------- */
+      const c0 = dui();
+      results.push(['UI C: this really is a new account\'s first login — Tutorial Grounds is running',
+        c0.tutorialActive === true && c0.tutorialDone === false]);
+      window.updateMinimap(); window.updateWorldMap();
+      const c1 = dui();
+      results.push(['UI C: and neither the compass nor the minimap is on screen yet',
+        c1.compassShown === false && c1.mapShown === false && c1.navHudVisible === false]);
+      results.push(['UI C: while the tutorial\'s own line is up and untouched',
+        doc.getElementById('hudTutorial').style.display === 'block']);
+      results.push(['UI C: one predicate decides for both cards, so they can never disagree',
+        gameScript.indexOf('function navHudVisible() { return !!me && !inInterior() && tutorialDone; }') > 0 &&
+        (gameScript.match(/if \(!navHudVisible\(\)\) \{ el\.style\.display = "none"; return; \}/g) || []).length === 2]);
+      /* Ended the way a player ends it — one ESC, through the real handler. */
+      window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+      /* The game's own endTutorial() calls savePlayerExtras(), which writes
+         tutorial_done back to the players row. The shared stub records
+         inserts and not updates, so the row is patched here to hold what the
+         real database would now hold — otherwise every later loginPlayer()
+         in this file re-reads a row with no flag on it, lands on the
+         pre-migration path, and correctly holds the two navigation cards
+         back for gates that are about something else entirely. */
+      { const bt = tableData.players.find(r => r.username === 'BootTest');
+        if (bt) bt.tutorial_done = true; }
+      const c2 = dui();
+      results.push(['UI C: ESC ends it exactly as finishing it does',
+        c2.tutorialActive === false && c2.tutorialDone === true]);
+      window.updateMinimap(); window.updateWorldMap();
+      const c3 = dui();
+      results.push(['UI C: and both navigation cards arrive the moment it ends',
+        c3.compassShown === true && c3.mapShown === true && c3.navHudVisible === true]);
+      results.push(['UI C: the hold is the tutorial flag itself, not a one-shot latch that can only fire once',
+        (() => {
+          window.debugSetV35({ tutorialDone: false, tutorialActive: false });
+          window.updateMinimap(); window.updateWorldMap();
+          const off = dui();
+          window.debugSetV35({ tutorialDone: true });
+          window.updateMinimap(); window.updateWorldMap();
+          const on = dui();
+          return off.compassShown === false && off.mapShown === false &&
+                 on.compassShown === true && on.mapShown === true;
+        })()]);
+      results.push(['UI C: nothing about Tutorial Grounds\' own logic moved — same three steps, same props, same unbindable skip key',
+        gameScript.indexOf('if (k === "escape" && tutorialActive) endTutorial(false);') > 0 &&
+        window.debugV35Info().TUTORIAL_STEPS.join(',') === 'move,fight,tame' &&
+        gameScript.indexOf('if (tutorialActive && !inInterior()) {') > 0]);
+    } else {
+      results.push(['UI Pass: debugUiInfo()/debugSetUi() are reachable', false]);
+    }
+
     if (cwdt && tcf) {
       results.push(['gate CLOSED at full hp',        cwdt(mk('bear', 80, 80)) === false]);
       results.push(['gate CLOSED just above 25%',    cwdt(mk('bear', 21, 80)) === false]);
@@ -5621,8 +5791,16 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         (await look('BootTest')).mode === 'verify']);
 
       /* ---- GATE 3: a pre-existing unprotected name logs in as before ----- */
+      /* UI Pass PART C: these two rows are PRE-EXISTING accounts — the whole
+         point of this gate — so they carry tutorial_done, exactly as a row
+         that has been through Tutorial Grounds does. Without it every later
+         login as one of them lands on the pre-migration path and correctly
+         holds the compass and the minimap back, which is a true statement
+         about a world whose v38 SQL was never run and a false one about the
+         world this file is simulating. */
       tableData.players.push({ username: 'OldTimer', class: 'Knight', x: 12, y: 12,
-                               level: 1, hp: 100, max_hp: 100, inventory: {} });
+                               level: 1, hp: 100, max_hp: 100, inventory: {},
+                               tutorial_done: true });
       setFields('OldTimer', '');
       const old1 = await allowed('OldTimer');
       results.push(['PIN: an account made before this shipped still logs straight in',
@@ -5731,7 +5909,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         return dpi();
       };
       tableData.players.push({ username: 'OldTimer2', class: 'Ranger', x: 12, y: 12,
-                               level: 1, hp: 100, max_hp: 100, inventory: {} });
+                               level: 1, hp: 100, max_hp: 100, inventory: {},
+                               tutorial_done: true });   // UI Pass PART C, as above
       const offerOld = await probeFor('OldTimer');
       results.push(['PIN Fixes B: an account made before PINs existed is finally offered one',
         offerOld.protectShown === true && offerOld.optIn === false &&

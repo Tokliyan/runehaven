@@ -53,6 +53,256 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-10 (UI Consistency & Onboarding Pass — the keybind bar, the HUD audit, the first screen)
+
+Three parts, and for the first time in a long while ALL of them are rendering:
+this whole version lives in the chrome around the world, and nothing in the
+world itself was read, let alone touched. Not one palette entry, biome, cliff
+face, landmark, silhouette, `SPECIES_K`, `MOB_K`, `MOB_TALL`, rarity threshold
+or noise wavelength moved, no canvas draw call was added or removed, and the
+gradient census is byte-identical at **8 linear + 4 radial CSS, zero canvas**.
+`run5`'s coverage went 1,315 -> **1,322**, and every one of those seven new
+draws is a HUD branch — which is the assertion that the canvas paints exactly
+as it did this morning.
+
+- **PART A: the keybind bar was fourteen entries long and had already started
+  colliding with the card above it.** The numbers are derived rather than
+  eyeballed, from a character count `run4` now prints on every run: the full
+  run is **236 characters** against the new default's 73, which at 12px Barlow
+  (~5.6px average advance) is roughly **1,320px of text**. `#hudHelp` has no
+  width of its own, so anything narrower than that wraps — a two-line card
+  standing at `bottom: 14px` has its top edge at 68px against a compass whose
+  own bottom is 52. The wall of text was not merely hard to read; on a 1024px
+  or 1280px screen it was overlapping its neighbour. The default is now the
+  four core keys the spec names (move, attack, gather, inventory) — one short
+  line at any width, top edge at 50, clearing the compass by the 2px gap it
+  has always had. **This is a derivation, not a sighting**; the harnesses stub
+  the canvas and none of them lays out text, so a screenshot at 1024 is what
+  would confirm it.
+- **⚠️ THE FIND, and it had been true since v28: `mount` was never in the
+  generated line at all.** v28 added `R`, updated the static fallback string in
+  the markup, and did not update `refreshHelpLine()` — so for every version
+  since, the markup has claimed fourteen entries and the function drew thirteen,
+  and the one key the bar never mentioned was the one that makes you go faster.
+  It is in the table now. That is also why the two counts are **4 and 14**
+  rather than 4 and 13.
+- **One table, two views, and that is the part that actually scales.**
+  `helpEntries()` returns `[core, text]` rows; the collapsed span is the rows
+  marked core and the expanded span is all of them, joined by the same
+  separator. The two can never disagree about what a key does, and the next
+  mechanic to ship appends **one row** that lands in the expansion only — the
+  growth this bar could not absorb finally has somewhere to go.
+- **The toggle is `#settingsBtn`'s bordered text-button idiom at HUD scale**,
+  which is the login card's own "this is an offer" language one step quieter.
+  Not one new component: the whole rule is a border, a dim colour and a gold
+  hover, exactly as `#pinProtect`, `#redeemBtn` and `#resumeCancel` already
+  are. That is the eighth version running to add to the HUD without inventing
+  a component.
+- **⚠️ It is the only pointer-events island on the entire HUD, and it has to
+  be.** `.hud` is `pointer-events: none` precisely so a click over a card
+  falls through to the canvas and becomes an attack; a button inside one is
+  the first thing in this file that needs to catch a click instead. The
+  handler **blurs the button afterwards**, and that is a fix rather than a
+  flourish: the game's keydown listener is on the window and ATTACK defaults
+  to SPACE, so a button left focused after a click would have swallowed the
+  next attack into a second toggle.
+- **The expansion is bounded and everything in its way steps aside, so no
+  state of this card ever overlaps anything.** `max-width: min(640px,
+  calc(100vw - 310px))` is what keeps it clear of the HP bar's own corner
+  (the unbounded line ran straight under it). At its widest the 1,320px of
+  text wraps to three lines inside 640 — a 72px card whose top edge is 86 — so
+  `body.help-open` lifts the compass and the safe-zone banner to 116 and the
+  prompt to 164, which clears even a four-line expansion by the same 12px the
+  top row uses between cards, and puts all three straight back on close.
+- **PART B is a genuine per-element audit, and it found six real drifts plus
+  one measurable bug.** Every one of the ten `.hud` cards is now checked
+  mechanically out of the stylesheet — a permanent `run4` gate reads each
+  element's own rule and fails if it redeclares the shared fill, hairline,
+  radius or blur — rather than a sample. What was actually wrong:
+  - **The toast was the only `var(--panel)` card anywhere on the HUD with no
+    `backdrop-filter` behind it.** Over a Caldera or a snow peak it read flat
+    where every card around it reads recessed. It takes `.hud`'s `blur(2px)`,
+    not `.panel`'s 3px — it is a HUD-scale card.
+  - **The toast's horizontal padding was 20px against the 14px every `.hud`
+    card uses**, including `#hudZone`, which is the same shape of thing (a
+    centred announcement) sitting 40px below it.
+  - **`#hpBarWrap`/`#bossBarWrap` carried an 8px radius** — a stadium on a
+    16px bar, and the only corner on the HUD that was neither the 4px `.hud`
+    and `#toast` share nor the 5px `.panel` uses one step up. Now 4.
+  - **`#hpBarWrap` is a fixed HUD card in its own right and had no blur.**
+    It has one now. `#bossBarWrap` deliberately does NOT join it: that one is
+    a row inside a `.hud` card that is already blurred, and blurring an
+    already-composited backdrop twice buys nothing.
+  - **The compass and the minimap were built as deliberate mirrors (v46's own
+    word) and carried two different insets expressed two different ways** —
+    `padding: 0` on the compass card with a 4px MARGIN on the dial inside it,
+    against `padding: 4px` on the minimap card. One value now, written once,
+    on the card.
+  - **⚠️ THE MEASURABLE BUG: the dial has been overflowing its own card by 2px
+    since v35.** `* { box-sizing: border-box }` makes a 148px box a 146px
+    content area, and a 140px dial plus 8px of margin needs 148. Nobody had
+    done the arithmetic. 150px is the honest number for 4 + 140 + 4 plus the
+    two hairlines, and the card is 150 now.
+  - **The two red alert cards are the same card in the same place saying the
+    same kind of thing, and their headers were 15px and 13px** of the same
+    Almendra at the same 3px tracking. `#hudBoss`'s came down to `#hudUnmaking`'s
+    13, because the countdown shipped first. Their second rows disagreed the
+    other way round — `.boss-hp` 11px against `.un-count` 12px — and there the
+    12 is the outlier: **11px dim Barlow at 2px tracking is the HUD's
+    established small-label size**, shared by `.mm-title`, `.tut-step`,
+    `.tut-skip` and `.boss-hp` already. So in both cases the element that had
+    drifted from the shared value is the element that moved.
+- **What PART B checked and deliberately did NOT change, with the reason, so
+  nobody re-derives it:** the gold hairline on `#toast` and `#hudPrompt` is a
+  semantic accent and not a drift (it is what makes a toast read as speech
+  rather than one more readout); `#mmDial`'s 50% is a DIAL, not a stray corner
+  radius; the `rgba(8,10,16,·)` fill on the bar track and the dial is the WELL
+  language every recessed control in this file is written in (`#sbUrl`,
+  `.set-tab`, `.set-btn`) and is never the `--panel` card fill; `#mapCanvas`'s
+  2px sits inside a 4px card with 4px of padding, where the mathematically
+  correct inner radius is 0; and `#hudHelp`'s 12px is the hint line's own
+  size, not a drifted body size.
+- **⚠️ One real inconsistency was found, reported and left alone: the screen
+  gutter is not one number.** The left column sits at `left: 12px`
+  (`#hudPlayer`, `#hudHelp`, `#hudMinimap`) and the right column at `right:
+  16px` (`#hpBarWrap`, `#hudMap`) while the top row is 12 on both sides — so
+  the bottom-right corner is 4px further in than everything else. It is a real
+  drift, it is on none of the axes PART B names (radius, padding, blur, font
+  weight, the two colour variables), and moving two fixed elements is a
+  position change rather than a consistency one. **Four values, one pass, if
+  it is wanted.**
+- **PART C: a brand new account no longer arrives with everything on at
+  once.** The compass and the minimap are held until `tutorialDone`, which
+  `endTutorial()` sets on BOTH of its paths — finished and skipped alike — so
+  one ESC brings them straight back. One predicate, `navHudVisible()`, is read
+  by both cards, because they answer the same question and must never be able
+  to disagree about whether it is worth asking yet. A returning account whose
+  row already carries `tutorial_done` has both from frame one, exactly as it
+  always did.
+- **The status box was deliberately left up, and that is the spec followed
+  rather than overridden.** PART C names the compass and the minimap as the
+  two to hold; `#hudPlayer` carries the player's own HP, and a first screen
+  that teaches combat while hiding the HP readout would be teaching it badly.
+- **⚠️ Nothing about Tutorial Grounds itself was touched** — same three steps,
+  same two props, same generated step text, same unbindable ESC. PART C is
+  entirely a rule about what stands AROUND it, which is the spec's own
+  instruction, and `run4` pins the steps, the props branch and the skip key
+  unchanged alongside the new behaviour.
+- **⚠️ On a world whose `tutorial_done` SQL was never run, the two cards go
+  away at every login until you press ESC.** That is v38's own documented
+  degradation ("the Grounds replay on each login, one keypress to skip")
+  reaching one element further than it used to, not a new failure mode — but
+  it is the first time that flag has controlled anything other than the
+  tutorial itself, and it is worth knowing before someone reports a compass
+  that keeps disappearing.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus two things it asserts about
+the file that turned out not to be exactly true. All shipped through the full
+gate (parse clean, `run3` `CAUGHT ERROR: none`, `run4` **1,569/1,569 with zero
+FAIL**, `run5` 1,322 coverage draws clean, 54/54 greps including the
+preservation half) — refinements to consider, not unfinished work.
+
+1. **⚠️ The spec says "13 distinct top-level HUD/panel elements exist"; the
+   real enumeration is 13 in the world and 8 panels beside them.** In-world
+   top-level elements are the ten `.hud` cards (`#hudPlayer`, `#hudWorld`,
+   `#hudZone`, `#hudPrompt`, `#hudTutorial`, `#hudUnmaking`, `#hudBoss`,
+   `#hudMinimap`, `#hudMap`, `#hudHelp`) plus `#hpBarWrap`, `#toast` and
+   `#deathOverlay` — exactly thirteen, so the number is right. The panel half
+   is one out: the spec lists seven (inventory, craft, build, character,
+   travel, chest, give) and `#petPanel` is an eighth sharing the same
+   `.panel` class. Noted rather than silently corrected, the same way
+   Expansion 2a noted its spec's "13 places". All thirteen are audited; the
+   eight panels were confirmed unchanged.
+2. **⚠️ The spec says `#hudHelp` "currently lists 14 separate keybinds"; the
+   GENERATED line listed 13.** Both are true of different halves of the file
+   — the static fallback in the markup really does list fourteen — and the
+   discrepancy is the v28 `mount` bug above. Building the table to fourteen
+   is the spec's own number; getting there meant fixing a real defect rather
+   than transcribing what the function drew.
+3. **The core four are the spec's own four, and no fifth was added.** It
+   offers "4-5 entries" and then names exactly four (move, attack, gather,
+   inventory). Picking a fifth would have been designing; the parenthetical
+   is the list. One row's `true` to change if a fifth is wanted.
+4. **The expansion REPLACES the core line rather than stacking above it.**
+   The spec says the toggle "expands the complete reference", and the core
+   four are part of the complete reference — showing them twice would be the
+   only card in the game that repeats itself. It also halves how far the card
+   grows, which is what let the collapsed state keep its position.
+5. **The toggle's label flips `[?]` -> `[×]`.** The spec offers "a `[?]` icon
+   or similar" for opening it and says nothing about closing it. Without a
+   changed label the only affordance for closing is remembering that the same
+   button does both — the same reasoning that made the PIN offer a toggle
+   with a second label.
+6. **`max-width: min(640px, calc(100vw - 310px))` and the three
+   `body.help-open` offsets are all invented numbers, and all measured
+   against real geometry rather than picked.** 310 is the HP bar's 270 plus
+   its 16px gutter plus a 24px gap; 640 is where fourteen entries settle to
+   three lines; 116 clears a four-line card at `bottom: 14` by the 12px the
+   top row already uses; 164 preserves `#hudPrompt`'s existing 48px above
+   `#hudZone`. Every one is a one-line tunable.
+7. **The toggle's handler calls `.blur()` (the DOM focus method, not the CSS
+   one), which nobody asked for and which it would be a bug without.** SPACE
+   is `KEYBINDS.attack` and the game's keydown handler is on the window; a
+   button left focused after a click turns the next attack into a second
+   toggle. Found by reading the handler, not by a test.
+8. **PART B moved nine values across six elements and left five documented
+   differences standing.** Both halves are in the entry above with reasons.
+   The judgement in every case was the same: a difference that carries
+   MEANING (a gold hairline, a round dial, a well fill, an inner radius) is
+   not a drift; a difference that carries nothing (a missing blur, a 20px
+   padding, an 8px radius, two spellings of one inset) is.
+9. **`#hudBoss .boss-name` came DOWN to 13px rather than `#hudUnmaking
+   .un-head` going up to 15.** Either would have unified them. The audit's
+   rule throughout is that the element which drifted is the one that moves,
+   and the countdown card shipped first (v39) against the boss bar's v52+53.
+   Two one-line reverts if the bigger boss header was deliberate.
+10. **PART C holds the two cards on `tutorialDone` rather than on a separate
+    "first session" latch.** The spec says "until the tutorial completes (or
+    is skipped)" and that flag is precisely the thing both of those set, in
+    one place, already persisted. A second latch would be a second source of
+    truth for one rule. Pinned from both directions by a gate that turns the
+    flag off and watches both cards leave.
+11. **`navHudVisible()` is one predicate rather than the same condition
+    written twice.** The two guards were already byte-identical copies before
+    this version; adding a third clause to each would have been the third
+    chance for them to drift apart. `run4` asserts there are exactly two call
+    sites and that the old un-gated copy survives in neither.
+12. **`run4`'s new block is placed FIRST in the file, and that is load-bearing
+    rather than tidy.** The boot login is a brand-new account's very first
+    login, so it is the only point in the whole run where PART C's first
+    screen exists to be observed rather than simulated. The block ends
+    Tutorial Grounds the way a player does — one real ESC through the real
+    handler — which is also what puts the two cards back for the v46 and v51
+    minimap gates further down. Those gates were **not relaxed**: they still
+    demand the card is on screen, they now simply run from the far side of a
+    tutorial that a real player would also have finished by then.
+13. **`run5` had to move to the far side of the tutorial too, and it does it
+    after the boot's frames rather than before.** The two tutorial props draw
+    only while it runs, so ending it at login would have silently dropped
+    their coverage; ending it at the map sweep keeps both. 1,315 -> **1,322**:
+    the two navigation cards held back and then back again (4), and the
+    keybind bar's two views driven through the real button (3).
+14. **`debugUiInfo()` / `debugSetUi()` are new hooks, for the reason every
+    hook here exists.** `helpExpanded` is a top-level `let` and `helpEntries()`
+    a top-level function — neither lands on `window` — and "the default is the
+    core rows of the same table the expansion is all of" is a RELATIONSHIP a
+    grep cannot read. `clickToggle` drives the real `onclick` rather than
+    setting the flag, so the gate proves the click path and not the state it
+    happens to leave behind. Copies, never live nodes.
+15. **No species, mob, weapon kind or class shipped, so `run5`'s coverage
+    lists needed no extending** — step 7 of the standard process is satisfied
+    by the lists already being complete. The sweep that was added is a HUD
+    sweep, and the branch it covers is one that a plain boot reaches only one
+    side of.
+16. **The push to `main` that the README's step 8 invites was deliberately not
+    attempted.** This session is instructed to develop and push only on its
+    designated branch. The README calls a blocked push to `main` a
+    nice-to-have and explicitly not a failure, so the build lands on the
+    branch as usual and a human can sync it. Same call every version since
+    Expansion 2b has made.
+
 ### 2026-09-01 (v51 — the wisps made visible, minimap texture, guild badges and nameplates)
 
 Eleven parts, and four of them are rendering: PART A makes the v50 wisps

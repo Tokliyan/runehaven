@@ -672,6 +672,43 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('credits rendered — RUNEHAVEN, MUSIC (' + mcl.children.length + '), COLLABORATIONS');
       n += 1;
     }
+    /* ============ UI CONSISTENCY & ONBOARDING PASS ====================
+       PART A's two views of the help line and PART C's held-back navigation
+       cards are four render branches a plain boot reaches only one of, and
+       PART C's hold is ALSO the reason the v46 minimap sweep below has to run
+       from the far side of Tutorial Grounds: on this harness's brand-new
+       account the compass and the minimap are correctly not on screen yet.
+       Swept here, and left in the post-tutorial state for the block below. */
+    if (window.debugUiInfo && window.debugSetUi && window.debugSetV35) {
+      /* PART C: held back while the tutorial runs, both back the moment it
+         ends. Driven through the real update functions, not the flag. */
+      window.debugSetV35({ tutorialActive: true, tutorialDone: false });
+      window.updateMinimap(); window.updateWorldMap();
+      const held = window.debugUiInfo();
+      window.debugSetV35({ tutorialActive: false, tutorialDone: true });
+      window.updateMinimap(); window.updateWorldMap();
+      const back = window.debugUiInfo();
+      n += 4;
+      if (held.compassShown || held.mapShown || !back.compassShown || !back.mapShown) {
+        console.log('COVERAGE GAP: the compass/minimap did not hold back for the tutorial and come back after it');
+        process.exit(1);
+      }
+      console.log('UI PART C swept — both navigation cards held back during Tutorial Grounds, both back after it');
+      /* PART A: the collapsed default, the expansion, and the collapse back,
+         all through the real [?] button handler. */
+      const h0 = window.debugSetUi({ helpExpanded: false });
+      const h1 = window.debugSetUi({ clickToggle: true });
+      const h2 = window.debugSetUi({ clickToggle: true });
+      n += 3;
+      if (h0.helpCoreCount !== 4 || h0.helpAllCount !== 14 ||
+          h0.helpExpanded !== false || h1.helpExpanded !== true || h2.helpExpanded !== false ||
+          h1.toggleLabel === h0.toggleLabel) {
+        console.log('COVERAGE GAP: the keybind bar did not render both of its two views');
+        process.exit(1);
+      }
+      console.log('UI PART A swept — ' + h0.helpCoreCount + ' core entries collapsed, ' +
+                  h0.helpAllCount + ' expanded, through the real toggle');
+    }
     /* v46 PART D: the real minimap. Its whole render body is unreachable from
        the plain boot unless the card is actually up and something is standing
        on it, so this sweeps the branches by hand: a terrain window over every
