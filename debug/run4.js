@@ -293,6 +293,26 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
   }
   console.log('frames pumped, CAUGHT ERROR:', caught ? (caught.stack || caught) : 'none');
 
+  /* v56 PART C: the harness logs in on the NEW-player path (`players: null`
+     in the stub above), so it now boots mid-tutorial — and v56 holds the
+     compass and the minimap back until the Grounds are done. Every existing
+     v35/v46/v51 gate below was written for a player who has finished it,
+     which is the state the game is in for all but the first few minutes of
+     an account's life, so the precondition is established here rather
+     than by weakening any of those assertions. PART C's own gates set it
+     back to false where they need to, and restore it.
+
+     It is a helper rather than a single call because the PIN block further
+     down "genuinely re-logs the client in" (its own comment), and a login
+     re-reads `tutorial_done` off the row — which the table stub never
+     stores — so every re-login puts the client back on a first-ever screen.
+     Any block that needs the two navigational cards up calls this first. */
+  const tutorialAlreadySeen = () => {
+    if (window.debugSetV35) window.debugSetV35({ tutorialDone: true, tutorialActive: false });
+  };
+  tutorialAlreadySeen();
+
+
   // ===== targeted wear-down / taming-gate simulation =====
   // Login above is Beastmaster (class card index 3), so +25% applies.
   // Extend this block whenever new tameable species or modifiers ship.
@@ -6110,6 +6130,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           window.debugSpaceInfo().INTERIOR_N === 160]);
       }
 
+      /* Both navigational cards are held back until Tutorial Grounds is done
+         (v56 PART C), and a login above this one has since re-read the flag
+         off a stub row that never stores it. Re-establish the same
+         precondition the boot sets; the assertions below are unchanged. */
+      tutorialAlreadySeen();
       /* ---- PART D: the real minimap ------------------------------------ */
       if (window.debugMapInfo) {
         const dmi = window.debugMapInfo;
@@ -7240,6 +7265,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         }
       }
 
+      /* Both navigational cards are held back until Tutorial Grounds is done
+         (v56 PART C), and a login above this one has since re-read the flag
+         off a stub row that never stores it. Re-establish the same
+         precondition the boot sets; the assertions below are unchanged. */
+      tutorialAlreadySeen();
       /* ---- PART B: the minimap texture pass ----------------------------- */
       if (window.debugMapInfo) {
         window.updateWorldMap();
@@ -8720,6 +8750,240 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
 
       results.push(['v52+53: the world still runs frames cleanly after every part of this',
+        (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
+    }
+
+    /* ==================================================================
+       v56 — UI CONSISTENCY & ONBOARDING PASS
+       PART A the keybind bar, PART B the 13-element consistency audit,
+       PART C compass/minimap held back until the Grounds are done.
+       ================================================================== */
+    {
+      const doc56 = window.document;
+      const cssStart = html.indexOf('<style>'), cssEnd = html.indexOf('</style>');
+      const css56 = html.slice(cssStart, cssEnd).replace(/\/\*[\s\S]*?\*\//g, '');
+      /* Resolve a property for one selector out of the real stylesheet, last
+         declaration winning, so these gates read the file rather than a
+         claim about it. Comment-stripped, the v50/v51 lesson: v56's own
+         comments quote the values they are explaining. */
+      const declOf = (sel, prop) => {
+        let val = null;
+        const re = /([^{}]+)\{([^{}]*)\}/g;
+        let m;
+        while ((m = re.exec(css56))) {
+          if (!m[1].split(',').map(s => s.trim()).includes(sel)) continue;
+          for (const d of m[2].split(';')) {
+            const i = d.indexOf(':');
+            if (i > 0 && d.slice(0, i).trim() === prop) val = d.slice(i + 1).trim();
+          }
+        }
+        return val;
+      };
+
+      /* ---- PART A: the keybind bar ------------------------------------- */
+      if (window.debugHelpInfo) {
+        const H = window.debugHelpInfo;
+        const h0 = H();
+        results.push([`v56 A: the default line shows only the core keys (${h0.coreCount} of ${h0.coreCount + h0.fullCount} entries)`,
+          h0.coreCount >= 4 && h0.coreCount <= 5 && h0.fullCount >= 8]);
+        /* The spec names the four core entries explicitly. */
+        const coreFlat = h0.coreActions.reduce((a, k) => a.concat(k), []);
+        results.push(['v56 A: and they are the spec\'s own four — move, attack, gather, inventory',
+          h0.coreActions.length === 4 &&
+          ['up', 'left', 'down', 'right'].every(k => coreFlat.includes(k)) &&
+          ['attack', 'interact', 'inventory'].every(k => coreFlat.includes(k)) &&
+          !coreFlat.includes('ability') && !coreFlat.includes('build') &&
+          !coreFlat.includes('travel') && !coreFlat.includes('give')]);
+        results.push(['v56 A: the expanded half really is hidden by default, not merely short',
+          h0.expanded === false && h0.fullShown === false &&
+          doc56.getElementById('helpFull').style.display === 'none']);
+        results.push(['v56 A: there is a real [?] toggle and it says so to a screen reader',
+          h0.toggleExists === true && h0.toggleLabel === '[?]' && h0.toggleAria === 'false']);
+        /* The expand/collapse is driven through the REAL button handler, so
+           a gate proves the UI path and the state agree rather than each on
+           its own — the v52+53 PART A idiom. */
+        doc56.getElementById('helpToggle').onclick();
+        const h1 = H();
+        results.push(['v56 A: clicking it really expands the full reference',
+          h1.expanded === true && h1.fullShown === true &&
+          h1.toggleAria === 'true' && h1.fullText.length > h1.coreText.length]);
+        doc56.getElementById('helpToggle').onclick();
+        const h2 = H();
+        results.push(['v56 A: and clicking it again really collapses it — a working toggle, both ways',
+          h2.expanded === false && h2.fullShown === false && h2.toggleAria === 'false']);
+        /* The structural fix, which is the actual point of PART A: ONE list,
+           and every binding the game has is in it. A future mechanic that
+           appends a row cannot grow the default line. */
+        const KL = gameScript.slice(gameScript.indexOf('const KEYBIND_LABELS = ['),
+                                    gameScript.indexOf('let KEYBINDS = Object.assign'));
+        const bound = (KL.match(/\["(\w+)",/g) || []).map(s => s.slice(2, -2));
+        results.push([`v56 A: every one of the ${bound.length} real bindings appears in the one table`,
+          bound.length >= 17 && bound.every(a => h2.allActions.includes(a))]);
+        results.push(['v56 A: and the table names ACTIONS, never letters — the v23 rule, unbroken',
+          gameScript.indexOf('const HELP_ENTRIES = [') > 0 &&
+          !/keys: \["[wasdeqrbkmigcpf]"\]/.test(
+            gameScript.slice(gameScript.indexOf('const HELP_ENTRIES = ['),
+                             gameScript.indexOf('let helpExpanded'))) &&
+          gameScript.indexOf('e.keys.map(a => keyLabel(KEYBINDS[a]))') > 0]);
+        /* `mount` had a binding, a label and a line in the OLD static markup,
+           but the generated line never listed it — v56 puts it back. */
+        results.push(['v56 A: `mount` is in the reference again — the one binding the game never told you about',
+          h2.allActions.includes('mount') && /\bR mount\b/.test(h2.fullText)]);
+        /* Still generated, so it can still never name a key you rebound.
+           Checked against the RESOLVED labels rather than against "WASD",
+           because gates far above this one rebind `up` onto T and never put
+           it back — a gate that assumed the defaults would be testing the
+           harness's own leftovers instead of this code. */
+        results.push([`v56 A: every core entry names its real current binding (${h2.coreLabels.join(' ')})`,
+          h2.coreLabels.length === 4 &&
+          h2.coreLabels.every(l => l && h2.coreText.indexOf(l) >= 0) &&
+          h2.coreText.indexOf(h2.coreLabels[0]) === 0]);
+        results.push(['v56 A: and so does every entry in the expanded half',
+          h2.fullLabels.length === 10 &&
+          h2.fullLabels.every(l => l && h2.fullText.indexOf(l) >= 0)]);
+        /* And it really does FOLLOW a rebind, proved by doing one. */
+        const beforeInv = h2.coreLabels[3];
+        window.setKeybind('inventory', 'y');
+        const hReb = H();
+        window.setKeybind('inventory', (beforeInv || 'I').toLowerCase());
+        results.push([`v56 A: rebinding a core key really moves the line (${beforeInv} -> Y -> ${H().coreLabels[3]})`,
+          hReb.coreText.indexOf('Y inventory') >= 0 &&
+          H().coreText.indexOf(beforeInv + ' inventory') >= 0]);
+        results.push(['v56 A: the toggle is the only clickable thing on a HUD card, and the CSS gives it back the clicks',
+          declOf('#helpToggle', 'pointer-events') === 'auto' &&
+          declOf('.hud', 'pointer-events') === 'none']);
+      } else {
+        results.push(['v56 A: debugHelpInfo() is reachable', false]);
+      }
+
+      /* ---- PART B: the real 13-element consistency audit ---------------- */
+      {
+        const HUD_CARDS = ['hudPlayer', 'hudWorld', 'hudZone', 'hudPrompt', 'hudTutorial',
+                           'hudUnmaking', 'hudBoss', 'hudMinimap', 'hudMap', 'hudHelp'];
+        const STANDALONE = ['hpBarWrap', 'bossBarWrap', 'toast'];
+        const ALL13 = HUD_CARDS.concat(STANDALONE);
+        results.push([`v56 B: the audit covers all thirteen top-level HUD elements (${ALL13.length})`,
+          ALL13.length === 13 && ALL13.every(id => !!doc56.getElementById(id))]);
+        /* The ten really do share the one class rather than each declaring
+           their own card — the property that made the audit tractable. */
+        results.push(['v56 B: ten of them are the ONE .hud card class, not ten copies of it',
+          HUD_CARDS.every(id => doc56.getElementById(id).classList.contains('hud'))]);
+        /* The three audited values the proof gate names, per element, on the
+           real stylesheet — a genuine per-element check, not a sample. */
+        const RADIUS = '4px', BLUR = 'blur(2px)', FILL = 'var(--panel)';
+        const radii = ALL13.map(id => declOf('#' + id, 'border-radius') ||
+                                      (HUD_CARDS.includes(id) ? declOf('.hud', 'border-radius') : null));
+        results.push([`v56 B: all thirteen carry the identical ${RADIUS} radius (${radii.join(' ')})`,
+          radii.every(r => r === RADIUS)]);
+        const blurs = ALL13.map(id => declOf('#' + id, 'backdrop-filter') ||
+                                      (HUD_CARDS.includes(id) ? declOf('.hud', 'backdrop-filter') : null));
+        results.push([`v56 B: and the identical ${BLUR} backdrop`, blurs.every(b => b === BLUR)]);
+        const fills = ALL13.map(id => declOf('#' + id, 'background') ||
+                                      (HUD_CARDS.includes(id) ? declOf('.hud', 'background') : null));
+        results.push([`v56 B: and the --panel fill, never a hand-mixed near-copy of it`,
+          fills.every(f => f === FILL)]);
+        results.push(['v56 B: every one of the thirteen takes its edge from --panel-edge or the ONE card accent',
+          ALL13.every(id => {
+            const bc = declOf('#' + id, 'border-color');
+            const b = declOf('#' + id, 'border') ||
+                      (HUD_CARDS.includes(id) ? declOf('.hud', 'border') : null);
+            const edge = bc || (b || '').replace('1px solid ', '');
+            return edge === 'var(--panel-edge)' ||
+                   edge === 'rgba(232,182,76,0.4)' || edge === 'rgba(200,72,56,0.55)';
+          })]);
+        /* The specific drifts the audit found, pinned so they cannot come
+           back. Each of these was a real, different value before v56. */
+        results.push(['v56 B: FOUND+FIXED — the HP/boss bars were a hand-mixed rgba(8,10,16,0.85), not --panel',
+          css56.indexOf('rgba(8,10,16,0.85)') < 0]);
+        results.push(['v56 B: FOUND+FIXED — and wore an 8px radius against the 4px everything else wears',
+          declOf('#hpBarWrap', 'border-radius') === '4px' &&
+          declOf('#bossBarWrap', 'border-radius') === '4px']);
+        results.push(['v56 B: FOUND+FIXED — the toast had no backdrop blur and no line-height at all',
+          declOf('#toast', 'backdrop-filter') === 'blur(2px)' &&
+          declOf('#toast', 'line-height') === '1.5']);
+        results.push(['v56 B: FOUND+FIXED — and its own 8px 20px padding, against the card 8px 14px',
+          declOf('#toast', 'padding') === declOf('.hud', 'padding')]);
+        results.push(['v56 B: FOUND+FIXED — #hudPrompt and #toast wore the INTERACTIVE gold, not the card gold',
+          declOf('#hudPrompt', 'border-color') === 'rgba(232,182,76,0.4)' &&
+          (declOf('#toast', 'border') || '').indexOf('rgba(232,182,76,0.4)') > 0]);
+        results.push(['v56 B: FOUND+FIXED — the two widget cards disagreed about their inset (0 vs 4px)',
+          declOf('#hudMinimap', 'padding') === '4px' && declOf('#hudMap', 'padding') === '4px']);
+        results.push(['v56 B: FOUND+FIXED — and the compass dial overflowed its own card by 2px since v35',
+          declOf('#hudMinimap', 'width') === '150px' && declOf('#hudMinimap', 'height') === '150px' &&
+          declOf('#mmDial', 'margin') === null && declOf('#mmDial', 'width') === '140px']);
+        /* The two deliberate remaining differences, pinned as deliberate so a
+           later pass does not "fix" them into a regression. */
+        results.push(['v56 B: the toast still outranks the cards it appears over — a notification must',
+          declOf('#toast', 'z-index') === '20' && declOf('.hud', 'z-index') === '5']);
+        results.push(['v56 B: and the help line keeps its dim 12px secondary-text treatment',
+          declOf('#hudHelp', 'font-size') === '12px' && declOf('#hudHelp', 'color') === 'var(--text-dim)']);
+        /* Not one new component style: the [?] is #settingsBtn's rule, one
+           selector wider, exactly as six versions before this managed. */
+        results.push(['v56 B: the pass invented no new hover language — the [?] joined #settingsBtn\'s own rule',
+          css56.indexOf('#settingsBtn:hover, #helpToggle:hover {') > 0]);
+      }
+
+      /* ---- PART C: the first login stops shouting ----------------------- */
+      if (window.debugSetV35 && window.debugMapInfo) {
+        const dmi56 = window.debugMapInfo;
+        const compass = () => doc56.getElementById('hudMinimap').style.display;
+        const W56 = window.debugWorldInfo();
+        window.debugSetPlayer({ x: W56.SPAWN.x, y: W56.SPAWN.y, hp: 100 });
+        /* Put the harness back where a brand new account actually starts. */
+        window.debugSetV35({ tutorialDone: false, tutorialActive: true });
+        /* Driven through the game's OWN refresh rather than left at whatever
+           the harness's earlier poking left in the DOM, so the card below is
+           genuinely derived from the state and not incidentally true. */
+        window.refreshTutorialHud();
+        window.render(1);
+        results.push(['v56 C: on a brand new account the compass is not on the first screen',
+          compass() === 'none']);
+        results.push(['v56 C: and neither is the minimap', dmi56().visible === false]);
+        /* And the thing the first screen is FOR is still on it — the spec's
+           "nothing else during the tutorial is affected". Deliberately says
+           nothing about the tutorial WOLF: `wilds` has been rebuilt, tamed
+           out of and repopulated by several thousand lines of gates above
+           this one, so its contents here are the harness's doing and not
+           PART C's. A fresh boot has the wolf; that is v35's gate, not this
+           one's. What IS this part's business is that the tutorial's own
+           card still renders while the two navigational cards are held. */
+        const v35mid = window.debugV35Info();
+        results.push([`v56 C: while the tutorial line it clears the way for is still up (step ${v35mid.tutorialStep + 1}/3)`,
+          doc56.getElementById('hudTutorial').style.display === 'block' &&
+          v35mid.tutorialActive === true &&
+          v35mid.TUTORIAL_STEPS.join(',') === 'move,fight,tame']);
+        /* Completing it brings both cards back, on the next frame, with no
+           extra wiring — they are refreshed from the per-frame HUD pass. */
+        window.debugSetV35({ tutorialDone: true, tutorialActive: false });
+        window.refreshTutorialHud();
+        window.render(2);
+        results.push(['v56 C: finishing the Grounds brings both back on the very next frame',
+          compass() === 'block' && dmi56().visible === true]);
+        results.push(['v56 C: and the tutorial card goes as the two navigational ones arrive',
+          doc56.getElementById('hudTutorial').style.display === 'none']);
+        /* Skipping is the same door: endTutorial() sets the same flag either
+           way, which is why the gate is the flag and not a "completed" test. */
+        results.push(['v56 C: and SKIPPING is the same door — one flag, set by endTutorial either way',
+          /function endTutorial\(completed\) \{[\s\S]*?tutorialDone = true;/.test(gameScript) &&
+          gameScript.indexOf('!me || inInterior() || !tutorialDone') > 0 &&
+          (gameScript.match(/!me \|\| inInterior\(\) \|\| !tutorialDone/g) || []).length === 2]);
+        /* A returning player never pays for this: the flag comes off their
+           row at login, so somebody who saw the Grounds once keeps both. */
+        results.push(['v56 C: a returning player never loses them — the flag comes off their row at login',
+          gameScript.indexOf('tutorialDone = !tutorialShouldRun(p);') > 0]);
+        /* And the interior rule it was bolted onto still holds on its own. */
+        window.debugSetV35({ tutorialDone: true });
+        results.push(['v56 C: the v35/v46 interior rule still works independently of the new one',
+          window.debugV35Info().tutorialDone === true]);
+        results.push(['v56 C: nothing about this touched Tutorial Grounds\' own logic',
+          gameScript.indexOf('function tutorialAdvance(key)') > 0 &&
+          gameScript.indexOf('function tutorialTick()') > 0 &&
+          gameScript.indexOf('TUTORIAL_WOLF_ID = "tutorial:wolf"') > 0]);
+      } else {
+        results.push(['v56 C: the tutorial and map harness hooks are reachable', false]);
+      }
+
+      results.push(['v56: and the world still runs frames cleanly after every part of this',
         (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
     }
 

@@ -140,6 +140,17 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
   }
   console.log('frames pumped, CAUGHT ERROR:', caught ? (caught.stack || caught) : 'none');
 
+  /* v56 PART C: the harness logs in on the NEW-player path (`players: null`
+     in the stub above), so it now boots mid-tutorial — and v56 holds the
+     compass and the minimap back until the Grounds are done. Every existing
+     v35/v46/v51 gate below was written for a player who has finished it,
+     which is the state the game is in for all but the first few minutes of
+     an account's life, so the precondition is established here ONCE rather
+     than by weakening any of those assertions. PART C's own gates set it
+     back to false where they need to, and restore it. */
+  if (window.debugSetV35) window.debugSetV35({ tutorialDone: true, tutorialActive: false });
+
+
   // ===== exhaustive branch-coverage sweep =====
   // Executes every class/weapon/armor/species/mob-state combination once.
   // The 5-frame boot above can't reach content spawned far from camera —
@@ -799,6 +810,60 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       for (let f = 0; f < 3; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
       window.debugSetGuild({ granted: grantedBefore });
       console.log('guild nameplates rendered — five hashed guilds plus the admin-granted sixth');
+    }
+
+    /* ---- v56: the branches this version adds -------------------------------
+       PART A's collapsed/expanded help line is a real render path with two
+       states and a real click handler, and PART C adds a THIRD hide branch to
+       both navigational cards beside the interior one v46 already sweeps
+       above. Neither is reachable from the plain boot. */
+    if (window.debugHelpInfo && window.toggleHelpFull) {
+      const h = window.debugHelpInfo;
+      /* Both states of the bar, driven through the real button, and drawn —
+         the card is on screen in both, so both are render paths. */
+      const seenStates = [];
+      for (let i = 0; i < 2; i++) {
+        doc.getElementById('helpToggle').onclick();
+        seenStates.push(h().fullShown);
+        for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      }
+      if (seenStates.join(',') !== 'true,false') {
+        console.log('COVERAGE GAP: the help bar did not expand and collapse through its own button');
+        process.exit(1);
+      }
+      /* And every entry rendered with a REBOUND key, so the generated path is
+         swept rather than only the default-letters one. */
+      if (window.setKeybind) {
+        window.setKeybind('inventory', 'y');
+        const reb = h();
+        if (reb.coreText.indexOf('Y inventory') < 0) {
+          console.log('COVERAGE GAP: the core line did not follow a rebound key');
+          process.exit(1);
+        }
+        window.setKeybind('inventory', 'i');   // back to the v23 default
+        n += 1;
+      }
+      console.log('help bar swept — collapsed, expanded, and following a rebind');
+    }
+    if (window.debugSetV35 && window.debugMapInfo && window.updateMinimap) {
+      const wi56 = window.debugWorldInfo();
+      window.debugSetPlayer({ x: wi56.SPAWN.x, y: wi56.SPAWN.y, hp: 100 });
+      /* The pre-tutorial branch of BOTH cards, then back. */
+      window.debugSetV35({ tutorialDone: false, tutorialActive: true });
+      window.updateMinimap(); window.updateWorldMap();
+      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      const heldBack = doc.getElementById('hudMinimap').style.display === 'none' &&
+                       window.debugMapInfo().visible === false;
+      window.debugSetV35({ tutorialDone: true, tutorialActive: false });
+      window.updateMinimap(); window.updateWorldMap();
+      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      const cameBack = doc.getElementById('hudMinimap').style.display === 'block' &&
+                       window.debugMapInfo().visible === true;
+      if (!heldBack || !cameBack) {
+        console.log('COVERAGE GAP: the compass/minimap tutorial hold did not engage and release');
+        process.exit(1);
+      }
+      console.log('compass + minimap tutorial hold swept — held on a new account, released after');
     }
 
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
