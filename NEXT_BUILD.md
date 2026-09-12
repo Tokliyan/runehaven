@@ -1,1 +1,1 @@
-Build exactly per "Confirmed, locked spec for the version after next — UI Consistency & Onboarding Pass" in README.md.
+Build exactly per "Confirmed, locked spec for a future version — Animation & A Living World Pass" in README.md.
