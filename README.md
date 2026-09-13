@@ -710,3 +710,38 @@ confirm a mismatched loadout takes zero penalty relative to current
 behavior, confirm the bonus is real and measured against the base
 `reduce` value for each tier, not a vague "small boost".
 
+
+---
+
+## QUEUED, AFTER THE GEAR BONUS PASS — do not build until all specs above ship.
+## Confirmed, locked spec for a future version (World Encounters — Roaming Boss & Bounty Board)
+
+**Confirmed live: deterministic idle-wander logic already exists,
+leash-bound to each creature's own `leashRadius`.** This spec extends
+that proven pattern rather than building new movement logic.
+
+**PART A — a roaming world boss, separate from the Elder Drake.** The
+Elder Drake stays exactly fixed at the Volcano, per the bible — this is
+a new, additional Boss-tier creature with no fixed home, given a
+dramatically larger wander range than any current creature (effectively
+unleashed, moving slowly across biome boundaries over real time rather
+than being pinned to one spot). Real, findable coordinates at any
+moment (no teleporting, no despawn/respawn trick) — a player who
+tracks it should be able to actually catch up. Reuses the existing
+boss-bar and Elder-tier music cue from prior versions rather than
+building new combat UI.
+
+**PART B — a rotating bounty board.** A new interaction point at Spawn
+or the Bazaar (build's choice, either fits the "safe hub" role) naming
+one existing creature as today's bounty, refreshing on a real timer
+(propose once per in-game day, tied to the same day-counter other
+daily systems already use). Killing or taming that specific creature
+while the bounty is active grants a bonus reward — reuse existing loot/
+reward patterns rather than a new currency.
+
+**Proof gates:** standard gauntlet plus confirm the roaming boss's
+position is always real and queryable (no teleport-style position
+snapping), confirm it never enters a Safe Zone, confirm the bounty
+board's target rotates on the stated real timer and the bonus reward
+only triggers for the currently-active bounty species specifically.
+
