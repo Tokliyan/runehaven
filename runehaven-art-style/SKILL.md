@@ -53,6 +53,290 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-13 (v57 — Animation & A Living World Pass)
+
+Five parts and every one of them is rendering, which is the second version
+running that has been true. **Not one palette entry, biome colour, facet
+multiplier, projection constant, silhouette, `SPECIES_K`, `MOB_K` or
+`MOB_TALL` was touched, and not one shape was redrawn** — everything here
+MOVES geometry that was already approved, or adds a treatment beside one.
+Twelve real canvas gradients before and twelve after, which is v55's own
+number held for the third version.
+
+- **⚠️ THE HEADLINE, AND IT IS ABOUT THE SPEC RATHER THAN THE CODE: TWO OF
+  THE FIVE "CONFIRMED LIVE" CLAIMS WERE NOT TRUE OF THE FILE.** The spec
+  opens by stating that "no floating damage numbers exist anywhere in the
+  game" and that "no water tile has any ripple/motion". Both were checked
+  before a line was written, as the spec's own PART D asks ("confirm whether
+  it is currently used for sway and, if not, add"), and both are wrong:
+  - **PART A already exists, in full, and has since v9.** `addFloat()` is a
+    single mint, `floatTexts` is a single array, and all three hit sources
+    the spec names reach it — `mobHit` for a player hitting a mob, `dealHit`
+    for PvP, `applyDamage` for a mob hitting the player. The crit
+    distinction it asks for is there too and is v10's: an amber `#ffb340`
+    with a trailing `!` and a `big` flag, against `#ffe9b0` for a normal
+    hit. **No game code was written for PART A.** What it got instead is
+    nine permanent proof gates that DRIVE all three paths and assert the
+    crit reads differently in both colour and weight, so the thing the spec
+    thought was missing can never actually go missing.
+  - **PART C's surface was not static either.** Water has carried a v6 chop
+    stroke on a 1400ms cycle since the beginning and SHALLOW has carried
+    animated shoreline foam since 2026-07-11. What genuinely did not exist
+    is the technique the spec actually specifies — concentric fading rings —
+    so PART C is real work, but it is an ADDITION beside a treatment that
+    was already moving, not the first motion on a dead surface.
+  - **PART D's own claim was the honest one, and confirming it was the
+    ask.** `drawTree(f, t)` has taken a time parameter since v8 and has
+    never once read it. It reads it now.
+- **⚠️ THE FIND, and it is the same shape: `drawSpecies` has taken a
+  `moving` parameter since v15 and has never read it either.** Every call
+  site computes it honestly — `pet.moving` for a companion, `m.state ===
+  "aggro"` for a mob, `!downed` for a flier — and then threw it away. PART B
+  needed exactly that information and needed no new plumbing anywhere to get
+  it: the walk cycle is what that parameter was always for.
+- **PART B is one function and it is the version's real work.** `walkStep()`
+  is `Math.sin(t / per)` with the `abs` taken off the bob's own expression,
+  and **dropping the abs is the whole trick** — the sign is what says which
+  leg is forward, so two legs on one sine with opposite signs is a walk.
+  `WALK_MS` is 110 because that is literally the period `Math.abs(Math.sin(t
+  / 110)) * 1.6` already runs the player's bob on; the legs and the body
+  cannot fall out of step because they are the same clock.
+- **It is a SWING and deliberately never a lift, and that is the call most
+  worth knowing.** The vertical half of a step already exists — it is the
+  bob, and it has since v10 — so a second vertical term would have fought
+  it. At these sizes a lift also opens a visible gap between a leg and the
+  body it hangs off: a wolf's paw is a 2px `fillRect`. The bob supplies the
+  up-and-down, the swing supplies the alternation, and the two compose.
+- **The approved art was MOVED, never redrawn.** A hero leg is wrapped in a
+  `save`/`translate`/`restore` rather than having its reference-sheet
+  polygon coordinates edited; a creature paw takes `+ legA` on the one
+  coordinate that is its position. **At step 0 every body in the game paints
+  at exactly the coordinates v15 approved**, which is what makes this safe
+  to apply to concept art at all — and a still creature is at step 0 on
+  every frame, because `walkStep` returns a hard zero rather than a decay.
+- **Sixteen walking species, five class bodies, and the exclusions are
+  principled rather than incidental.** Wolf, boar, bear, shadowfox,
+  lightfox, stag, unicorn, salamander_king, unicorn_elder, duskfox_elder,
+  elder_drake and all five dragons through the one shared `dragonV2` body.
+  **The Mystic is excluded because it has no legs** — the v15 rule is
+  "floor-length robe, NO legs", and it already carries a hem sway.
+  **Golem, Crystal Golem and Golem Elder are excluded because they have no
+  legs either**: a solid block body down to the baseline, whose stomp bob IS
+  its gait. **Basilisk and Krakenling have no legs to alternate.** And
+  **fliers are excluded in code, not by omission** — `drawPet`'s flier
+  branch passes a permanently-true `moving`, so a bare read would have had a
+  hovering Griffin pumping its legs in mid-air.
+- **A stroked leg swings from the HIP.** Stag, Unicorn and Unicorn Elder
+  draw their legs as strokes rather than rects, so only the hoof end travels
+  and the top endpoint stays welded under the barrel — a leg can never
+  detach from the body it hangs off. The rect-footed species take the swing
+  whole, which at 2px is the same read for a fraction of the arithmetic.
+- **⚠️ The Elder Drake's legs are assigned the opposite way round, and that
+  is not a typo.** Its head is at NEGATIVE x — the v48 fix that finally
+  routed the boss to its own body — so the leg at `-8` is the FRONT one and
+  gets `legB`, the leading side, where every forward-facing body in the game
+  gets `legA` there. Each of its legs carries its own claw inside the same
+  translate so a foot can never separate from the leg above it.
+- **PART C's rings are ellipses, and that is the whole reason they read as
+  water rather than as decals.** They open on the ground plane at the tile's
+  own `IH2 / IW2` ratio, so a ripple lies flat in the isometric world
+  instead of facing the camera. Flat hard strokes fading as they widen, no
+  gradient — the v6 foam and v8 lava-shimmer language, a third time. The
+  ring ORIGIN drifts on its own slow sine so a tile is not a fixed pond with
+  a fixed centre.
+- **⚠️ SHALLOW AND WATER ONLY. DEEP OCEAN IS DELIBERATELY EXCLUDED, and
+  that is both the spec's own wording and the entire cost argument.** Deep
+  water is by far the largest surface in the world; putting a ring on every
+  tile of it would have been the one place this pass could have cost a real
+  frame. It keeps the single v6 chop stroke it has always had, which is the
+  right read for open water anyway — concentric rings mean shallows, where
+  something is underneath. Measured rather than claimed: a water tile draws
+  at most `RIPPLE_RINGS` strokes and usually one, because a ring outside its
+  own 0..1 life is skipped **before any path opens**, and only tiles over a
+  0.66 per-tile hash carry a set at all. The measured number, standing on a
+  real waterline over six frames of one cycle: **130 rings against a 594
+  worst case** (33 eligible tiles x 3 rings x 6 frames), about **0.17 rings
+  per drawn tile**, and no ring ever wider than the 18.92px `RIPPLE_R`
+  allows.
+- **PART D's sway is a BEND, not a slide, and `swayAt(fy)` is what makes it
+  one.** Every canopy vertex is offset in proportion to how far up the
+  canopy it sits — the apex travels the full amount, a mid-height shoulder a
+  third of it, and **every vertex sitting on the canopy base travels exactly
+  zero**. The trunk is not in the expression at all, which is the spec's own
+  instruction and is what keeps a tree rooted instead of sliding around its
+  own stump. Both archetypes (tall faceted and wide flat-top) bend; the
+  amplitude is multiplied by that tree's own `scale`, so a sapling and a
+  full canopy bend by the same PROPORTION rather than the same pixels.
+- **The grass half of PART D was already done and is left alone.** v8's
+  player-proximity grass tufts have swayed on `Math.sin(t / 420 + ...)`
+  since they were written. What had no motion is the `flowers` and
+  `wildflowers` DECOR — flat stem-and-bloom rects — and both sway now on a
+  PER-BLOOM phase, so three flowers on one tile move against each other
+  rather than as one rigid object. 0.7px against the canopy's 1.9, which is
+  "the same treatment at a smaller scale" as a number.
+- **⚠️ SWAY IS VISUAL ONLY, AND IT IS PROVED STRUCTURALLY RATHER THAN
+  ASSERTED.** The spec's own proof gate asks that tree/grass sway not affect
+  hitbox or gather-range detection. Nothing downstream of a tree reads a
+  drawn coordinate: `nearestGatherable()` runs on `f.x` / `f.y` at
+  `GATHER_RANGE`, which this pass never touches. A gate now greps the whole
+  gather path for `TREE_SWAY` and `swayAt` and the whole tree-drawing path
+  for `GATHER_RANGE`, and fails if the two ever meet.
+- **PART E is `uiReveal()`, and it exists because of a bug v24 already paid
+  for.** A CSS transition does not run from a `display: none` before-change
+  style; the intro card popped in for exactly that reason and the fix there
+  — a synchronous layout read to commit the entry state — is the fix here.
+  `void el.offsetWidth` is load-bearing, not decoration.
+- **`display` still toggles, and that is deliberate rather than
+  incidental.** Every harness gate and every `inInterior()`-style hide in
+  this file asks a card whether its `style.display` is `"none"`, so
+  replacing the mechanism would have meant rewriting working assertions to
+  prove the same thing a different way. The fade rides on top of the toggle
+  — **not one existing boss-bar gate had to change.**
+- **Appearing fades; disappearing is instant.** The spec names "the boss bar
+  itself on first appearing", and a card goes away because the thing it
+  describes is gone — a boss died. Lingering on that is a card telling you
+  something that has stopped being true.
+- **The inventory needed one thing it did not have: a way for a rebuilt row
+  to know what it was a moment ago.** `data-it` is that key (the item type,
+  which is already the identity every branch keys off) and `uiInvSeen` is
+  the snapshot. A genuinely NEW row fades in; a row whose COUNT moved
+  flashes the card gold wash and settles. The panel is still rebuilt
+  wholesale through `innerHTML` — diffing the DOM to animate it would be the
+  "new animation system" this part is explicitly told not to build.
+- **⚠️ A count-flash has to survive a paint before it is taken off.** The
+  `row-bump` class is removed on a 30ms timer, not in the same tick: remove
+  it synchronously and the browser renders the flash exactly never. Same
+  family of mistake as the v24 one above, caught while writing it rather
+  than after.
+- **⚠️ NOTHING IN THIS VERSION HAS BEEN SEEN RENDERED.** Every part of it is
+  motion, and the harnesses stub the canvas — they count calls and never
+  rasterise, and jsdom has no computed transitions at all. What is proved is
+  that the branches run, that the values behave, and that the cost is
+  unchanged. **Whether a 1.15-unit leg swing and a 1.9px canopy bend read as
+  "alive" or as "jitter" at ant scale is a screenshot question and it has
+  not been answered.** Those two numbers are the first things to move.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus the two places its own
+stated facts were not true of the file. All shipped through the full gate
+(parse clean, `run3` `CAUGHT ERROR: none`, `run4` **1625/1625 with zero
+FAIL** including 43 new gates, `run5` **1531** coverage draws clean against
+1324 before, 63/63 greps including the preservation half, and seven
+deliberate mutations each turning the relevant gates red) — refinements to
+consider, not unfinished work. The first is by far the most important.
+
+1. **⚠️ PART A SHIPPED AS A NO-OP, DELIBERATELY, AND THIS IS THE ONE CALL TO
+   OVERRULE IF ANY OF THEM SHOULD BE.** The spec asks for a feature that has
+   existed since v9 and satisfies every clause it states, including the crit
+   distinction and the "reuse the existing text technique rather than a new
+   system" instruction — which the existing one does by definition. Building
+   a second damage-number system to satisfy the letter of a stale
+   confirmation would have violated the spec's own proof gate ("confirm
+   every part reuses a named existing technique rather than introducing a
+   parallel system"). So nothing was built and nine gates were added
+   instead. **If PART A was meant to be an UPGRADE to numbers that already
+   existed — bigger, longer-lived, a different font, stacking offsets for
+   rapid hits — that is a real and reasonable thing to want, and it is not
+   what the spec says.** Same call v27 made when its spec opened "v26 shipped
+   successfully" and v26 had not, and v46 made when its spec named a
+   `canBlock()` that does not exist: report it, do not silently correct it.
+2. **⚠️ "Synced to actual movement speed" is read as "runs only while
+   movement speed is non-zero", not as "the phase advances proportionally to
+   speed".** PART B's two clauses genuinely conflict: it asks for the cycle
+   to be "driven by the existing movement-phase value already computed for
+   bob animation", and that value is a FIXED-rate `t / 110`. The spec's own
+   proof gate settles it — "confirm the walk-cycle only animates while
+   actual movement speed is non-zero and stops cleanly" — so the gate is
+   what the word was taken to mean. **A genuinely speed-proportional phase
+   is a one-line change** (accumulate `speed * dt` instead of reading `t`)
+   and would be the better animation; it would also mean every entity
+   carrying a phase accumulator, which is state rather than a tunable.
+3. **`WALK_SWING` is 1.15 local units and `TREE_SWAY` is 1.9px, and both are
+   guesses at an ant scale nobody has looked at.** One hero sheet unit is
+   about 0.83 screen px, so a leg travels roughly ±1px. That is deliberately
+   at the timid end — this pass touches every creature in the game on every
+   frame, and the failure mode of too much is a world that vibrates. Both
+   are single constants.
+4. **`BEAST_WALK_MS` is 130 and is a midpoint rather than a measurement.**
+   Creatures' bobs are computed by their CALLERS at two different periods —
+   140 for a companion, 120 for an aggro mob — and `drawSpecies` sees
+   neither. 130 is the midpoint. The alternative was threading a period
+   through a fifth call site for a value no one will be able to see the
+   difference in.
+5. **Wild creatures do not step, and that is the call site's own statement
+   rather than an omission.** `drawWild` passes `moving: false` while a wild
+   genuinely drifts 0.9 tiles on a 9000ms wander — but `false` is what the
+   game says about it, and changing it would be editing a movement state
+   from inside an art pass. They keep their v11 idle hop. One argument to
+   change if a wandering wild should visibly walk.
+6. **Only the boss bar goes through `uiReveal()`, though five other HUD
+   cards also snap.** `#hudPrompt`, `#hudZone`, `#hudTutorial`,
+   `#hudUnmaking` and the `.panel` set all toggle `display` instantly. The
+   spec names the boss bar and names it "on first appearing", and
+   `#hudUnmaking` in particular is the ten-second doom countdown — the one
+   card in the game that must be readable the instant it exists. **The audit
+   was done and this is its result rather than an unfinished list**:
+   `uiReveal()` takes an element, so extending it to any of the five is one
+   call site each.
+7. **A row-bump fires on a count moving in EITHER direction.** The spec says
+   "inventory counts changing" and spending five wood is as much a change as
+   gathering it. One `!==` to make it an increase only.
+8. **`uiInvSeen` is session-local and starts empty**, so the first refresh
+   after login marks everything as seen rather than fading the whole pack in
+   at once. It is display state and nothing reads it back as truth about the
+   inventory.
+9. **The `run4` canvas stub learned to count draw operations, and it is
+   purely additive.** The stub already returned a fresh no-op closure on
+   every method access; it increments a counter inside that closure now. It
+   is the only way to measure cost from a gate, because the Proxy's `set`
+   trap swallows any attempt to patch an individual method. Nothing that
+   already passed can see it, and it is what lets "the walk cycle costs zero
+   extra draw ops" be a MEASUREMENT across all sixteen walking species and
+   all five class bodies rather than a claim.
+10. **Two harness gates were written wrong first and both are worth
+    recording.** `applyDamage` is `(dmg, FROM, opts)` — putting the crit
+    flag in the middle argument silently tests a non-crit, which is exactly
+    what the first draft did. And the incoming-damage gates had to be driven
+    from **outside the safe zone**: `applyDamage` and `dealHit` both return
+    early inside one, `SAFE_RADIUS` is large, and spawn+40 is deep inside
+    it — the same trap v39's combat-music gate fell into when that radius
+    scaled. Both were found by the gates failing, not by reading.
+11. **`run5` gained a v57 sweep and no coverage list needed extending** — no
+    species, mob, weapon kind or class was added this version. What it adds
+    is the branches a plain boot cannot reach: every walking species at four
+    points around one cycle both moving and still, four fliers proving they
+    do NOT step, five class bodies at three step values, a real shoreline
+    found by search (not assumed at spawn) rendered over eight frames of one
+    ripple cycle, both canopy archetypes and both flower decors across a
+    full bend, the boss bar's reveal, and both inventory row branches. It
+    hard-fails rather than passing quietly if any branch was unreachable.
+    1324 -> **1531**.
+12. **⚠️ THE FIRST VERSION OF THE COST GATE LOOKED LIKE A MEASUREMENT AND
+    WAS NOT ONE, AND A MUTATION IS WHAT EXPOSED IT.** It counted every
+    `ellipse` op a frame at the waterline against every one inland — a
+    number that moves with whatever creatures happen to be on screen. The
+    mutation that removed an INCOMING DAMAGE NUMBER, which has nothing to
+    do with water, flipped it red. It counts the ripple's own geometry
+    now: the only ellipses in this file at exactly the IH2/IW2 = 0.5
+    ground ratio are a ripple ring and the Spawn safe-zone boundary, and
+    the boundary is hundreds of pixels wide, so bounding the radius leaves
+    only the ripple. **This is the single best argument in this build for
+    mutation-testing a gate rather than trusting it because it passed.**
+13. **⚠️ And the inland floor is not zero, which was chased rather than
+    waved through.** The local player's weapon-pulse ring is
+    `6 + prog * 13` by half of itself — exactly the 0.5 ratio, inside the
+    radius bound — so it sits in the count too. The gate says so in its own
+    output rather than pretending, and what it actually asserts is that the
+    waterline shows that floor many times over while carrying orders of
+    magnitude more eligible water.
+14. **The push to `main` that the README's step 8 invites was deliberately
+    not attempted.** This session is instructed to develop and push only on
+    its designated branch. The README calls a blocked push to `main` a
+    nice-to-have and explicitly not a failure, so the build lands on the
+    branch as usual and a human can sync it. Same call every version since
+    Expansion 2b has made.
+
 ### 2026-09-11 (v56 — UI Consistency & Onboarding Pass)
 
 Three parts and all three are rendering, which is the first time that has been

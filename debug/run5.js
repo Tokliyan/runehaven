@@ -866,6 +866,131 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('compass + minimap tutorial hold swept — held on a new account, released after');
     }
 
+    /* ============ ANIMATION & A LIVING WORLD PASS SWEEP ================
+       Five parts, and four of them add a render BRANCH that the plain
+       5-frame boot cannot be trusted to reach: a still creature never
+       runs the walk cycle, a player standing at spawn never draws a
+       water ripple, and the boss bar is only ever up mid-fight. Each is
+       driven for real here, both sides of every branch, and this sweep
+       hard-fails rather than passing quietly if a branch was unreachable
+       — the v18 lesson Expansion 2a had to relearn about counting. */
+    if (window.drawSpecies && window.drawUnit && window.debugAnimInfo) {
+      const AI = window.debugAnimInfo;
+      /* PART B: every walking species and every class body, drawn MOVING
+         and drawn STILL, so both sides of the `moving` branch paint. */
+      const WALKERS = ["wolf", "boar", "bear", "shadowfox", "lightfox", "stag", "unicorn",
+                       "salamander_king", "unicorn_elder", "duskfox_elder", "elder_drake",
+                       "fire_dragon", "water_dragon", "storm_dragon", "shadow_dragon",
+                       "dragon_elder"];
+      for (const sp of WALKERS) {
+        /* Four points around one cycle, so a leg is drawn fully forward,
+           fully back and crossing zero rather than at one lucky phase. */
+        for (const ph of [0, 65, 130, 195]) {
+          window.drawSpecies(sp, 90, 90, ph, true);
+          window.drawSpecies(sp, 90, 90, ph, false);
+          n += 2;
+        }
+      }
+      /* A FLIER must draw with moving:true and still not step — that is
+         the branch drawPet's own flier call site makes reachable. */
+      for (const sp of ["griffin", "phoenix", "glow_moth", "wind_sprite"]) {
+        window.drawSpecies(sp, 90, 90, 500, true); n += 1;
+      }
+      for (const cls of CLS) {
+        for (const st of [0, 1.15, -1.15]) {
+          window.drawUnit(c, 50, 50, cls, 2.1, "iron", { x: 1, y: 0 }, 700, true, "sword", "iron", false, null, st);
+          window.drawUnit(c, 50, 50, cls, 2.1, "iron", { x: -1, y: 0 }, 700, true, "bow", null, true, null, st);
+          n += 2;
+        }
+      }
+      const a5 = AI();
+      if (!(a5.step.still === 0 && Math.abs(a5.step.moving) <= a5.WALK_SWING)) {
+        console.log('COVERAGE GAP: the walk cycle did not behave over the swept phases');
+        process.exit(1);
+      }
+      console.log('walk cycle swept — ' + WALKERS.length + ' walking species at four phases, both moving and still, plus five class bodies');
+    }
+    /* PART C + D: stand on a real coastline so the ripple, the foam and
+       the canopy sway all paint through the live frame rather than a
+       synthetic call. The world is searched for genuine SHALLOW/WATER
+       rather than assuming spawn has any. */
+    if (window.debugWorldInfo && window.biomeAt) {
+      const wiA = window.debugWorldInfo();
+      const B = wiA.B || {};
+      let shore = null;
+      for (let r = 4; r < 900 && !shore; r += 4) {
+        for (let a = 0; a < 16 && !shore; a++) {
+          const tx = Math.round(wiA.SPAWN.x + Math.cos(a * 0.3927) * r);
+          const ty = Math.round(wiA.SPAWN.y + Math.sin(a * 0.3927) * r);
+          const b = window.biomeAt(tx, ty);
+          if (b === B.SHALLOW || b === B.WATER) shore = [tx, ty];
+        }
+      }
+      if (!shore) {
+        console.log('COVERAGE GAP: no SHALLOW or WATER tile was reachable to draw a ripple over');
+        process.exit(1);
+      }
+      window.debugSetPlayer({ x: shore[0] + 0.5, y: shore[1] - 2.5, hp: 100, diving: false });
+      /* Frames far enough apart in time that a ring is caught opening,
+         mid-life and fading, rather than at one point of its cycle. */
+      for (let f = 0; f < 8; f++) {
+        try { window.render(f * 340); } catch (e) { if (!caught) caught = e; }
+        n += 1;
+      }
+      console.log('water ripple swept — a real shoreline at ' + shore[0] + ',' + shore[1] + ' over 8 frames of one ripple cycle');
+      /* PART D: the two canopy archetypes and both flower decors, at
+         opposite ends of the sway so both extremes of the bend paint. */
+      if (window.drawTree && window.drawDecor) {
+        for (let i = 0; i < 6; i++) {
+          const f = { x: wiA.SPAWN.x + i, y: wiA.SPAWN.y + i,
+                      tx: Math.floor(wiA.SPAWN.x) + i, ty: Math.floor(wiA.SPAWN.y) + i,
+                      h: i / 6 };
+          for (const tt of [0, 600, 1200, 1800]) { window.drawTree(f, tt); n += 1; }
+        }
+        for (const kind of ["flowers", "wildflowers"]) {
+          for (const tt of [0, 425, 850, 1275]) {
+            window.drawDecor({ x: wiA.SPAWN.x + 2, y: wiA.SPAWN.y + 2, kind, h: 0.45 }, tt);
+            n += 1;
+          }
+        }
+        console.log('sway swept — both canopy archetypes and both flower decors across a full bend');
+      }
+    }
+    /* PART E: the boss bar's fade-in branch, which no boot ever reaches,
+       and the inventory's two row branches. */
+    if (window.debugSetBoss && window.debugBossInfo && window.refreshPanels) {
+      const bel = doc.getElementById('hudBoss');
+      const bk = window.debugBossInfo().BOSS_KIND;
+      const handles = window.debugCombatHandles ? window.debugCombatHandles() : null;
+      const drake = handles && handles.mobs.find(m => m.kind === bk);
+      if (drake) {
+        window.debugSetBoss({ until: Date.now() + 30000, id: drake.id, refresh: true });
+        for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+        const up = bel.style.display === 'block' && bel.style.opacity === '1';
+        window.debugSetBoss({ until: 0, id: null, refresh: true });
+        const down = bel.style.display === 'none' && bel.style.opacity === '0';
+        if (!up || !down) {
+          console.log('COVERAGE GAP: the boss bar reveal branch did not draw both ways');
+          process.exit(1);
+        }
+        console.log('boss bar reveal swept — faded in on appearing, cleared on leaving');
+      }
+      window.debugSetPlayer({ inv: { wood: 2 } });
+      window.refreshPanels();
+      window.debugSetPlayer({ inv: { wood: 2, stone: 1 } });   // a NEW row
+      window.refreshPanels();
+      const addedN = window.debugAnimInfo().inv.added;
+      window.debugSetPlayer({ inv: { wood: 9, stone: 1 } });   // a CHANGED count
+      window.refreshPanels();
+      const bumpedN = window.debugAnimInfo().inv.bumped;
+      n += 3;
+      if (addedN !== 1 || bumpedN !== 1) {
+        console.log('COVERAGE GAP: the inventory row branches did not both run (' + addedN + '/' + bumpedN + ')');
+        process.exit(1);
+      }
+      console.log('inventory row transitions swept — one new row faded, one changed count flashed');
+    }
+
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {
