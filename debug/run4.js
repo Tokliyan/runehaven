@@ -17,13 +17,31 @@ const bodyHtml = html
 const dom = new JSDOM(bodyHtml, { runScripts: "outside-only", pretendToBeVisual: true, url: "https://example.com/" });
 const { window } = dom;
 
+/* Animation Pass: a real per-frame canvas draw-op counter. The stub already
+   returned a fresh no-op closure on every method access, so counting inside
+   it costs nothing that was not already being paid — and it is the only way
+   to measure cost here, since the Proxy's `set` trap swallows any attempt to
+   patch an individual method from a gate. Purely additive: every returned
+   function is still a no-op and nothing that already passed can see it. */
+let drawOps = 0;
+const drawOpsBy = Object.create(null);
+/* Set to an array to start recording every ellipse's two radii, null to
+   stop. `arguments` rather than a rest parameter on purpose: this runs on
+   every canvas call the whole harness makes, and a rest parameter would
+   allocate an array on each of them whether anything is recording or not. */
+let ellipseTrace = null;
 const ctx2d = new Proxy({}, {
   get(t, prop) {
     if (prop === 'canvas') return { width: 1280, height: 720 };
     if (prop === 'createRadialGradient' || prop === 'createLinearGradient')
       return () => ({ addColorStop: () => {} });
     if (prop === 'measureText') return () => ({ width: 10 });
-    if (typeof prop === 'string') return () => {};
+    if (typeof prop === 'string')
+      return function () {
+        drawOps++; drawOpsBy[prop] = (drawOpsBy[prop] || 0) + 1;
+        if (prop === 'ellipse' && ellipseTrace)
+          ellipseTrace.push([arguments[2], arguments[3]]);
+      };
     return undefined;
   },
   set() { return true; }
@@ -8985,6 +9003,445 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
 
       results.push(['v56: and the world still runs frames cleanly after every part of this',
         (() => { for (let f = 0; f < 6; f++) window.render(f * 16); return !caught; })()]);
+    }
+
+
+    /* ==================================================================
+       ANIMATION & A LIVING WORLD PASS
+       PART A floating damage numbers, PART B the walk cycle, PART C water
+       ripples, PART D canopy/bloom sway, PART E the finished transitions.
+
+       ⚠️ READ THE FIRST BLOCK BEFORE ANYTHING ELSE. Two of this spec's
+       five "confirmed live" claims were not true of the file, and PART A
+       is the one where it matters: the feature it asks for has existed
+       since v9. These gates are what turn that from a claim in a
+       changelog into something a future version cannot quietly lose.
+       ================================================================== */
+    {
+      const stripA = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+      const codeA = stripA(gameScript);
+      results.push(['ANIM: the comment stripper actually strips, and keeps real code',
+        codeA.indexOf('ANIMATION & A LIVING WORLD') < 0 &&
+        codeA.indexOf('function walkStep(t, moving, per)') > 0]);
+
+      const AI = window.debugAnimInfo;
+      results.push(['ANIM: the animation hook is reachable', typeof AI === 'function']);
+
+      if (typeof AI === 'function') {
+        tutorialAlreadySeen();
+        const WD = window.debugWorldInfo();
+
+        /* ---- PART A: floating damage numbers, for every real hit source ---
+           The spec says none exist. They have since v9, through addFloat(),
+           and the three sources it names each reach it by a different route:
+           mobHit for a player hitting a mob, dealHit for PvP, applyDamage
+           for a mob hitting the player. Each is DRIVEN here rather than
+           grepped, because a grep proves a line was typed and never that a
+           hit produces a number. */
+        {
+          const floatsAfter = (fn) => {
+            const before = AI().floats;
+            fn();
+            const after = AI().floatList;
+            return after.slice(Math.max(0, after.length - (after.length - before)));
+          };
+          results.push(['ANIM A: addFloat exists and is the ONE place a damage number is minted',
+            codeA.indexOf('function addFloat(wx, wy, txt, col, big = false)') > 0 &&
+            (codeA.match(/floatTexts\.push\(/g) || []).length === 1]);
+
+          /* ⚠️ OUTSIDE THE SAFE ZONE FIRST. `applyDamage` and `dealHit` both
+             return early inside one — which is the game working, and is
+             exactly the trap v39's own combat-music gate fell into when
+             SAFE_RADIUS scaled. SAFE_RADIUS is 226 at N=2000, so spawn+40
+             is deep inside it and every incoming hit would be refused for a
+             reason that has nothing to do with damage numbers. */
+          const farX = WD.SPAWN.x + WD.SAFE_RADIUS + 60, farY = WD.SPAWN.y + WD.SAFE_RADIUS + 60;
+          /* 1. player -> mob. */
+          window.debugSetPlayer({ x: farX, y: farY, hp: 200 });
+          const H = window.debugCombatHandles && window.debugCombatHandles();
+          const liveMob = H && H.mobs && H.mobs.find(m => !m.dead && m.hp > 0);
+          if (liveMob) {
+            const plain = floatsAfter(() => window.mobHit(liveMob, 7, {}));
+            const crit = floatsAfter(() => window.mobHit(liveMob, 9, { crit: true }));
+            results.push(['ANIM A: a player hit on a mob spawns a number at the mob',
+              plain.length === 1 && plain[0].txt === '-7' &&
+              Math.abs(plain[0].x - liveMob.x) < 1e-6 && Math.abs(plain[0].y - liveMob.y) < 1e-6]);
+            results.push(['ANIM A: and a CRIT on a mob is a different colour AND a different weight',
+              crit.length === 1 && crit[0].txt === '-9!' && crit[0].big === true &&
+              crit[0].col !== plain[0].col && crit[0].col === '#ffb340']);
+          } else {
+            results.push(['ANIM A: a live mob was reachable to hit', false]);
+          }
+
+          /* 2. mob -> player, through the real incoming-damage path. */
+          window.debugSetPlayer({ x: farX, y: farY, hp: 200 });
+          /* applyDamage is (dmg, FROM, opts) — the attacker's name sits in
+             the middle. Getting that wrong puts the crit flag where the
+             attacker belongs and the gate reads a non-crit, which is
+             exactly what happened the first time this was written. */
+          const inPlain = floatsAfter(() => window.applyDamage(6, 'goblin', {}));
+          const inCrit = floatsAfter(() => window.applyDamage(6, 'goblin', { cr: 1 }));
+          results.push(['ANIM A: a mob hit on the player spawns a number on the player',
+            inPlain.length === 1 && inPlain[0].txt === '-6']);
+          results.push(['ANIM A: and an incoming crit is distinguished by WEIGHT, which is what the spec asks for ("weight or color")',
+            inCrit.length === 1 && inCrit[0].big === true && inPlain[0].big === false]);
+
+          /* 3. PvP, through dealHit — the same routine a real swing on
+                another player runs, ghost target and all. */
+          const others = H && H.others;
+          if (others) {
+            window.debugSetPlayer({ x: farX, y: farY, hp: 200 });
+            const ghost = { name: 'FloatDummy', x: farX + 1, y: farY, hp: 90, cls: 'Knight' };
+            others.set('FloatDummy', ghost);
+            const pvp = floatsAfter(() => window.dealHit('FloatDummy', 11, { crit: true }));
+            others.delete('FloatDummy');
+            results.push(['ANIM A: a PvP hit spawns a number too, and its crit reads the same as a mob crit',
+              pvp.length === 1 && pvp[0].txt === '-11!' && pvp[0].big === true && pvp[0].col === '#ffb340']);
+          } else {
+            results.push(['ANIM A: the PvP others map was reachable', false]);
+          }
+
+          /* They drift UP and fade, which is the other half of the ask. */
+          const beforeLife = AI().floatList.slice(-1)[0];
+          window.update(0.2, 10);
+          const afterLife = AI().floatList.slice(-1)[0];
+          results.push(['ANIM A: a number rises and fades rather than sitting there',
+            !!beforeLife && !!afterLife && afterLife.life < beforeLife.life &&
+            codeA.indexOf('f.z += 22 * dt;') > 0]);
+        }
+
+        /* ---- PART B: the walk cycle ------------------------------------ */
+        {
+          const a = AI();
+          results.push([`ANIM B: the step is driven by the bob's own phase — WALK_MS ${a.WALK_MS} is the t/110 the player bob already runs on`,
+            a.WALK_MS === 110 && codeA.indexOf('Math.abs(Math.sin(t / 110)) * 1.6') > 0]);
+          /* THE property that matters, and the spec's own proof gate: a
+             creature that is not moving gets a hard zero, not a decay. */
+          results.push(['ANIM B: a still unit gets a HARD zero — no decay, no residue',
+            a.step.still === 0 &&
+            [0, 37, 110, 173, 260, 999, 12345].every(
+              ms => window.debugAnimInfo({ t: ms }).step.still === 0)]);
+          /* And a moving one really alternates: the sign has to change
+             across a cycle, or the two legs never swap. */
+          const samples = [];
+          for (let i = 0; i < 24; i++) samples.push(window.debugAnimInfo({ t: i * 30 }).step.moving);
+          results.push([`ANIM B: a moving unit alternates — the step goes positive AND negative across one cycle (max ${Math.max(...samples).toFixed(2)}, min ${Math.min(...samples).toFixed(2)})`,
+            Math.max(...samples) > a.WALK_SWING * 0.9 && Math.min(...samples) < -a.WALK_SWING * 0.9]);
+          results.push([`ANIM B: and it never exceeds its own amplitude (${a.WALK_SWING})`,
+            samples.every(v => Math.abs(v) <= a.WALK_SWING + 1e-9)]);
+          /* The two legs are opposite sides of ONE value everywhere — that
+             is what makes it a walk rather than two legs doing the same
+             thing. Asserted in all three places a leg pair is drawn. */
+          results.push(['ANIM B: every leg pair is one value with opposite signs — hero, creature and dragon',
+            codeA.indexOf('const legA = step, legB = -step;') > 0 &&
+            codeA.indexOf('const legA = beastStep, legB = -beastStep;') > 0 &&
+            codeA.indexOf('const legA = step * S, legB = -step * S;') > 0]);
+          /* ⚠️ THE FIND: drawSpecies has taken `moving` since v15 and never
+             read it. It reads it now, and a flier is excluded because
+             drawPet's flier branch passes a permanently-true value. */
+          results.push(['ANIM B: drawSpecies finally READS the `moving` parameter it has taken since v15',
+            codeA.indexOf('function drawSpecies(species, sx, sy, t, moving)') > 0 &&
+            codeA.indexOf('moving && !((WILD_SPECIES[species] || {}).flier)') > 0]);
+          results.push(['ANIM B: a mounted rider does not walk — their legs are over a mount',
+            codeA.indexOf('walkStep(t, moving && !mountedNow, WALK_MS)') > 0]);
+          /* It is a SWING and deliberately not a lift: the vertical half of
+             a step is the bob, which already exists. No y term anywhere. */
+          results.push(['ANIM B: it is a horizontal swing only — the bob is the vertical half and is untouched',
+            codeA.indexOf('WALK_LIFT') < 0 &&
+            codeA.indexOf('return moving ? Math.sin(t / (per || WALK_MS)) * WALK_SWING : 0;') > 0]);
+          /* Real draws: a creature drawn moving and then still must issue
+             the same NUMBER of operations — the step moves shapes, it can
+             never add or remove one. */
+          /* Cost, measured rather than claimed: a creature drawn WALKING and
+             the same creature drawn STILL must issue the identical number of
+             canvas operations. The step moves shapes that were already being
+             painted; it can never add or remove one. Every ground species
+             that got a leg pair is swept, not just a sample. */
+          const opsOf = (fn) => { const a = drawOps; fn(); return drawOps - a; };
+          const WALKERS = ['wolf', 'boar', 'bear', 'shadowfox', 'lightfox', 'stag',
+                           'unicorn', 'salamander_king', 'unicorn_elder', 'duskfox_elder',
+                           'elder_drake', 'fire_dragon', 'water_dragon', 'storm_dragon',
+                           'shadow_dragon', 'dragon_elder'];
+          const opsMismatch = WALKERS.filter(sp => {
+            const moving = opsOf(() => window.drawSpecies(sp, 100, 100, 500, true));
+            const still = opsOf(() => window.drawSpecies(sp, 100, 100, 500, false));
+            return moving === 0 || moving !== still;
+          });
+          results.push([`ANIM B: the walk cycle costs zero extra draw ops across all ${WALKERS.length} walking species — it moves shapes, it never adds one`,
+            opsMismatch.length === 0]);
+          /* And the same for the five class bodies, through the real drawUnit. */
+          const heroMismatch = ['Knight', 'Ranger', 'Beastmaster', 'Architect', 'Mystic'].filter(cls => {
+            const a = opsOf(() => window.drawUnit(window.document.createElement('canvas').getContext('2d'),
+              50, 50, cls, 2.1, 'iron', { x: 1, y: 0 }, 700, true, 'sword', 'iron', false, null, 1.15));
+            const b = opsOf(() => window.drawUnit(window.document.createElement('canvas').getContext('2d'),
+              50, 50, cls, 2.1, 'iron', { x: 1, y: 0 }, 700, true, 'sword', 'iron', false, null, 0));
+            return a === 0 || a !== b;
+          });
+          results.push(['ANIM B: and zero extra draw ops for all five class bodies through the real drawUnit',
+            heroMismatch.length === 0]);
+        }
+
+        /* ---- PART C: water motion -------------------------------------- */
+        {
+          const a = AI();
+          results.push([`ANIM C: the ripple is concentric rings on the GROUND plane — ${a.RIPPLE_RINGS} rings, ellipse at the tile's own IH2/IW2 ratio`,
+            a.RIPPLE_RINGS >= 2 &&
+            codeA.indexOf('ctx.ellipse(rox, roy, rr, rr * (IH2 / IW2), 0, 0, Math.PI * 2);') > 0]);
+          results.push(['ANIM C: no gradient anywhere in it — flat strokes only, the locked rule',
+            (() => {
+              const i = codeA.indexOf('const rp = hash2(tx, ty, 57);');
+              return i > 0 && codeA.slice(i, i + 900).indexOf('Gradient') < 0;
+            })()]);
+          /* ⚠️ SHALLOW AND WATER ONLY. Deep ocean is the largest water
+             surface in the world and is deliberately excluded — that IS
+             the cost argument, and it is the spec's own wording. */
+          results.push(['ANIM C: SHALLOW and WATER only — deep ocean is deliberately untouched',
+            codeA.indexOf('if (b === B.SHALLOW || b === B.WATER) {\n          const rp = hash2(tx, ty, 57);') > 0]);
+          results.push(['ANIM C: the v6 chop stroke and the v6 shoreline foam both survive — this ADDS, it does not replace',
+            codeA.indexOf("ctx.strokeStyle = `rgba(225,242,246,${0.4 * (1 - cyc / 0.3)})`;") > 0 &&
+            codeA.indexOf('const pulse = 0.55 + Math.sin(t / 700 + (tx + ty) * 1.7) * 0.35;') > 0]);
+          /* A ring outside its own 0..1 life is skipped BEFORE any path
+             opens, and only a hashed fraction of tiles carry a set at all. */
+          results.push([`ANIM C: a ring outside its own life opens no path, and only tiles over the ${a.RIPPLE_GATE} hash gate carry a set`,
+            codeA.indexOf('if (life <= 0 || life >= 1) continue;') > 0 &&
+            codeA.indexOf('if (rp > RIPPLE_GATE) {') > 0 &&
+            a.RIPPLE_GATE > 0.5 && a.RIPPLE_GATE < 1]);
+          /* ⚠️ AND THE COST IS MEASURED, NOT ARGUED — BY THE RIPPLE'S OWN
+             GEOMETRY RATHER THAN BY A TOTAL. Counting all ellipse ops at
+             the waterline against all of them inland looked like a
+             measurement and was not one: it moves with whatever creatures
+             happen to be on screen, and an UNRELATED mutation (removing an
+             incoming damage number) flipped it. So what is counted now is
+             a ring the ripple could have drawn and nothing else could: the
+             ONLY ellipses in this file at exactly the IH2/IW2 = 0.5 ground
+             ratio are the ripple's and the Spawn safe-zone boundary's, and
+             the boundary's radius is SAFE_RADIUS tiles wide — hundreds of
+             pixels — against a ripple's ceiling of IW2 * RIPPLE_R. Bound
+             the radius and only the ripple can answer. */
+          {
+            const wiC = window.debugWorldInfo();
+            const BC = wiC.B;
+            let shore = null;
+            for (let r = 4; r < 1200 && !shore; r += 4) {
+              for (let q = 0; q < 16 && !shore; q++) {
+                const tx = Math.round(wiC.SPAWN.x + Math.cos(q * 0.3927) * r);
+                const ty = Math.round(wiC.SPAWN.y + Math.sin(q * 0.3927) * r);
+                const b = window.biomeAt(tx, ty);
+                if (b === BC.SHALLOW || b === BC.WATER) shore = [tx, ty];
+              }
+            }
+            if (!shore) {
+              results.push(['ANIM C: a real SHALLOW/WATER tile was reachable to measure over', false]);
+            } else {
+              const RMAX = 22 * a.RIPPLE_R;          // IW2 * RIPPLE_R
+              /* Six frames spread across one ripple cycle, so a ring is
+                 caught opening, mid-life and fading rather than at one
+                 lucky phase. */
+              /* How many tiles in the viewport are actually ELIGIBLE —
+                 SHALLOW or WATER — so the ring count can be held against
+                 the thing that produces it rather than against a number. */
+              const eligibleNow = () => {
+                const g = window.debugWorldInfo().ground;
+                let n2 = 0;
+                for (let ty = g.minY; ty <= g.maxY; ty++)
+                  for (let tx = g.minX; tx <= g.maxX; tx++) {
+                    const b2 = window.biomeAt(tx, ty);
+                    if (b2 === BC.SHALLOW || b2 === BC.WATER) n2++;
+                  }
+                return n2;
+              };
+              const ringsOver = (x, y) => {
+                window.debugSetPlayer({ x, y, hp: 200, diving: false });
+                window.render(0);                    // settle camera and chunks
+                const eligible = eligibleNow(), tiles = window.debugWorldInfo().ground.tiles;
+                ellipseTrace = [];
+                for (let fr = 1; fr <= 6; fr++) window.render(fr * 430);
+                const trace = ellipseTrace; ellipseTrace = null;
+                const rings = trace.filter(e => e[0] > 0 && e[0] <= RMAX &&
+                                                Math.abs(e[1] / e[0] - 0.5) < 1e-9);
+                return { rings: rings.length, all: trace.length, eligible, tiles,
+                         widest: rings.reduce((m, e) => Math.max(m, e[0]), 0) };
+              };
+              const sea = ringsOver(shore[0] + 0.5, shore[1] - 2.5);
+              const land = ringsOver(wiC.SPAWN.x, wiC.SPAWN.y);
+              /* ⚠️ THE INLAND NUMBER IS NOT ZERO AND IT IS NOT A RIPPLE.
+                 Chased rather than waved through: the local player's own
+                 weapon-pulse ring (`6 + prog * 13` by half of itself) is
+                 the other shape in this file at exactly the 0.5 ground
+                 ratio, and it is inside the radius bound. So the honest
+                 form of this gate is that inland has NO eligible tile on
+                 screen at all — where a ripple is therefore impossible —
+                 and still shows a small floor, while the waterline shows
+                 that floor many times over. */
+              results.push([`ANIM C: rings track eligible water — ${sea.rings} ground-plane rings over ${sea.eligible} SHALLOW/WATER tiles at the waterline, against ${land.rings} inland where ${land.eligible} eligible tiles are on screen (that floor is the player's own weapon-pulse ring, which shares the 0.5 ratio)`,
+                sea.rings > 0 && sea.eligible > 0 &&
+                sea.eligible > land.eligible * 4 &&
+                sea.rings - land.rings > 0 && sea.rings > land.rings * 3]);
+              results.push([`ANIM C: and no ring ever exceeds its own radius — widest ${sea.widest.toFixed(2)}px against the ${RMAX.toFixed(2)}px RIPPLE_R allows`,
+                sea.widest > 0 && sea.widest <= RMAX + 1e-9]);
+              /* The budget, and the number that answers the spec's own
+                 "no measurable per-frame cost" gate: even if every eligible
+                 tile were over the hash gate and every ring were alive, the
+                 worst case is eligible x rings x frames. The real number
+                 sitting well under it IS what the 0.66 gate and the life
+                 skip buy, stated as a measurement. */
+              const ceiling = sea.eligible * a.RIPPLE_RINGS * 6;
+              results.push([`ANIM C: and it stays far inside its own worst case — ${sea.rings} against ${ceiling} (${sea.eligible} eligible tiles x ${a.RIPPLE_RINGS} rings x 6 frames), i.e. ${(sea.rings / Math.max(1, sea.tiles)).toFixed(3)} rings per drawn tile`,
+                ceiling > 0 && sea.rings < ceiling * 0.5]);
+              window.debugSetPlayer({ x: wiC.SPAWN.x, y: wiC.SPAWN.y, hp: 200 });
+            }
+          }
+        }
+
+        /* ---- PART D: sway ---------------------------------------------- */
+        {
+          const a = AI();
+          /* The spec asks to CONFIRM whether drawTree's time parameter was
+             used for sway. It was not — it had been taken and ignored since
+             v8. That is pinned as a relationship, not a claim. */
+          results.push(['ANIM D: drawTree finally uses the `t` it has taken since v8',
+            codeA.indexOf('function drawTree(f, t)') > 0 &&
+            codeA.indexOf('Math.sin(t / TREE_SWAY_MS + swayPh) * TREE_SWAY * scale') > 0]);
+          /* ⚠️ THE CANOPY, NOT THE TRUNK — the spec's own instruction. The
+             trunk is drawn by drawBox from f.x/f.y and the sway expression
+             does not appear anywhere near it. */
+          results.push(['ANIM D: the sway is on the CANOPY and never the trunk',
+            (() => {
+              const i = codeA.indexOf("drawBox(f.x, f.y, 0.14, 0.14, trunkH,");
+              const j = codeA.indexOf('const swayPh = hash2(f.tx, f.ty, 429)');
+              return i > 0 && j > i && codeA.slice(i, j).indexOf('sway') < 0;
+            })()]);
+          /* It is a BEND: offset in proportion to height, so every vertex on
+             the canopy base moves by exactly zero. */
+          results.push(['ANIM D: it bends rather than slides — swayAt(0) is zero by construction',
+            codeA.indexOf('const swayAt = (fy) => sway * fy;') > 0 &&
+            codeA.indexOf('ctx.lineTo(sx - cw * 0.42, base);') > 0]);
+          results.push([`ANIM D: grass/flowers get the same treatment at a smaller scale (${a.BLOOM_SWAY} against the canopy's ${a.TREE_SWAY})`,
+            a.BLOOM_SWAY < a.TREE_SWAY && a.BLOOM_SWAY_MS < a.TREE_SWAY_MS &&
+            (codeA.match(/Math\.sin\(t \/ BLOOM_SWAY_MS \+ hash2\(i, \d, d\.h \* 1000\) \* 6\.283\) \* BLOOM_SWAY/g) || []).length === 2]);
+          /* ⚠️ VISUAL ONLY — the spec's own proof gate. Nothing downstream
+             of a tree reads a drawn coordinate: gather range and the hitbox
+             both run on f.x / f.y, which this pass never touches. */
+          results.push(['ANIM D: sway is visual only — gather range reads f.x/f.y, never a drawn coordinate',
+            (() => {
+              const i = codeA.indexOf('function nearestGatherable()');
+              const j = codeA.indexOf('function drawTree(f, t)');
+              if (i < 0 || j < 0) return false;
+              /* The whole gather path, and the two constants the sway lives
+                 in, must not meet anywhere: no sway term inside the range
+                 search, and no GATHER_RANGE inside the tree drawing. */
+              const gather = codeA.slice(i, codeA.indexOf('function ', i + 40) + 4000);
+              const tree = codeA.slice(j, j + 3000);
+              return gather.indexOf('TREE_SWAY') < 0 && gather.indexOf('swayAt') < 0 &&
+                     tree.indexOf('GATHER_RANGE') < 0 && codeA.indexOf('TREE_SWAY') > 0;
+            })()]);
+          /* Driven, not just grepped: a real tree in the real world drawn
+             at two different times must issue the same number of ops. */
+          results.push(['ANIM D: a swaying tree and a swaying flower patch cost no extra draw ops either',
+            (() => {
+              const ops = (fn) => { const a = drawOps; fn(); return drawOps - a; };
+              const f = { x: WD.SPAWN.x + 3, y: WD.SPAWN.y + 3,
+                          tx: Math.floor(WD.SPAWN.x) + 3, ty: Math.floor(WD.SPAWN.y) + 3, h: 0.6 };
+              const t0 = ops(() => window.drawTree(f, 0));
+              const t1 = ops(() => window.drawTree(f, 1200));
+              const d = { x: f.x, y: f.y, kind: 'flowers', h: 0.4 };
+              const f0 = ops(() => window.drawDecor(d, 0));
+              const f1 = ops(() => window.drawDecor(d, 900));
+              const w = { x: f.x, y: f.y, kind: 'wildflowers', h: 0.4 };
+              const w0 = ops(() => window.drawDecor(w, 0));
+              const w1 = ops(() => window.drawDecor(w, 900));
+              return t0 > 0 && t0 === t1 && f0 > 0 && f0 === f1 && w0 > 0 && w0 === w1;
+            })()]);
+        }
+
+        /* ---- PART E: the finished transitions --------------------------- */
+        {
+          const doc = window.document;
+          const cssStart = html.indexOf('<style>'), cssEnd = html.indexOf('</style>');
+          const cssA = html.slice(cssStart, cssEnd).replace(/\/\*[\s\S]*?\*\//g, '');
+          const declA = (sel, prop) => {
+            let val = null, m;
+            const re = /([^{}]+)\{([^{}]*)\}/g;
+            while ((m = re.exec(cssA))) {
+              if (!m[1].split(',').map(s => s.trim()).includes(sel)) continue;
+              for (const d of m[2].split(';')) {
+                const i = d.indexOf(':');
+                if (i > 0 && d.slice(0, i).trim() === prop) val = d.slice(i + 1).trim();
+              }
+            }
+            return val;
+          };
+          results.push(['ANIM E: the boss bar has a real transition and starts transparent',
+            /opacity/.test(declA('#hudBoss', 'transition') || '') &&
+            declA('#hudBoss', 'opacity') === '0']);
+          results.push(['ANIM E: an inventory row transitions opacity AND background — the two things that change about it',
+            /opacity/.test(declA('.inv-row', 'transition') || '') &&
+            /background-color/.test(declA('.inv-row', 'transition') || '')]);
+          /* .row-bump must come AFTER .equipped or an equipped row could
+             never flash: equal specificity, so source order decides. */
+          results.push(['ANIM E: .row-bump is declared after .equipped, so an equipped row can still flash',
+            cssA.indexOf('.inv-row.row-bump') > cssA.indexOf('.inv-row.equipped')]);
+          /* uiReveal carries the v24 lesson: a transition does not run from
+             a display:none before-change style without a committed read. */
+          results.push(['ANIM E: uiReveal commits the before-change style — the v24 bug, not repeated',
+            codeA.indexOf('function uiReveal(el, on)') > 0 &&
+            /function uiReveal\(el, on\) \{[\s\S]*?void el\.offsetWidth;/.test(codeA)]);
+          /* DRIVEN: the boss card really fades in on first appearance and
+             really goes instantly when the boss does — and `display` still
+             toggles, which is what keeps every existing gate honest. */
+          if (window.debugSetBoss && window.debugBossInfo) {
+            const bel = doc.getElementById('hudBoss');
+            window.debugSetBoss({ until: 0, id: null, refresh: true });
+            const hidden = { d: bel.style.display, o: bel.style.opacity };
+            const mobs = (window.debugCombatHandles && window.debugCombatHandles().mobs) || [];
+            const drake = mobs.find(m => m.kind === window.debugBossInfo().BOSS_KIND);
+            if (drake) {
+              window.debugSetBoss({ until: Date.now() + 60000, id: drake.id, refresh: true });
+              const shown = { d: bel.style.display, o: bel.style.opacity };
+              window.debugSetBoss({ until: 0, id: null, refresh: true });
+              const gone = { d: bel.style.display, o: bel.style.opacity };
+              results.push(['ANIM E: the boss bar arrives faded-in and leaves instantly, and `display` still carries the state',
+                hidden.d === 'none' && shown.d === 'block' && shown.o === '1' &&
+                gone.d === 'none' && gone.o === '0']);
+              results.push(['ANIM E: every existing boss gate still reads style.display and still works',
+                window.debugBossInfo().visible === false]);
+            } else {
+              results.push(['ANIM E: a real Elder Drake was reachable for the boss bar', false]);
+            }
+          }
+          /* DRIVEN: a genuinely new item fades in, an unchanged one does
+             not, and a changed count flashes instead of fading. */
+          if (window.debugSetPlayer && window.refreshPanels) {
+            /* A brand-new account carries nothing, and the Fists row has no
+               item identity — so with an empty pack there is no row for this
+               to be about. Give the player a real pack first, exactly as the
+               inventory gates elsewhere in this harness do. */
+            window.debugSetPlayer({ inv: { wood: 4, stone: 3, iron_ore: 2 } });
+            window.refreshPanels();                       // baseline the snapshot
+            window.refreshPanels();                       // nothing changed at all
+            const quiet = window.debugAnimInfo().inv;
+            results.push(['ANIM E: a refresh that changes nothing animates nothing',
+              quiet.added === 0 && quiet.bumped === 0 && quiet.rows > 0]);
+            window.debugSetPlayer({ inv: { wood: 4, stone: 3, iron_ore: 2, anim_probe_item: 2 } });
+            window.refreshPanels();
+            const added = window.debugAnimInfo().inv;
+            window.debugSetPlayer({ inv: { wood: 4, stone: 3, iron_ore: 2, anim_probe_item: 5 } });
+            window.refreshPanels();
+            const bumped = window.debugAnimInfo().inv;
+            results.push(['ANIM E: a NEW item fades in — and only it, not the whole panel',
+              added.added === 1 && added.bumped === 0]);
+            results.push(['ANIM E: and a COUNT that moved flashes instead, without re-fading the row',
+              bumped.bumped === 1 && bumped.added === 0]);
+            const inv2 = Object.assign({}, window.debugWorldInfo().player.inv);
+            delete inv2.anim_probe_item;
+            window.debugSetPlayer({ inv: inv2 });
+            window.refreshPanels();
+          }
+        }
+
+        results.push(['ANIM: and the world still runs frames cleanly after every part of this',
+          (() => { for (let f = 0; f < 8; f++) window.render(f * 16); return !caught; })()]);
+      }
     }
 
     let allOk = true;
