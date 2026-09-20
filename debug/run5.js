@@ -866,6 +866,83 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('compass + minimap tutorial hold swept — held on a new account, released after');
     }
 
+    /* ---- v58: the branches this version adds -------------------------------
+       No new species, mob, weapon kind or class shipped this build, so the
+       four coverage lists above are complete as they stand. What IS new is a
+       fifth inventory-row branch and four HUD effect lines, none of which the
+       plain boot can reach — a brand new account carries no consumable and
+       has no timer running, so every one of them is dead to this sweep
+       unless it is put there deliberately. Every consumable is swept, not a
+       representative one. */
+    if (window.debugConsumableInfo && window.useItem && window.refreshPanels) {
+      const CT58 = window.debugConsumableInfo().CONSUMABLES;
+      const keys58 = Object.keys(CT58);
+      const wi58 = window.debugWorldInfo();
+      window.debugSetPlayer({ x: wi58.SPAWN.x, y: wi58.SPAWN.y, hp: 60 });
+      /* Each consumable row on its own, drawn, then used through the real
+         action so the post-use repaint is drawn too. */
+      let rowsSeen = 0, usedSeen = 0;
+      for (const k of keys58) {
+        window.debugSetConsumable({ food: 0, speed: 0, breath: 0, fire: 0 });
+        window.debugSetPlayer({ inv: { [k]: 2 } });
+        window.refreshPanels();
+        if (doc.querySelectorAll('#invList [data-use]').length === 1) rowsSeen++;
+        for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+        if (window.useItem(k)) usedSeen++;
+        window.refreshPanels();
+        /* The HUD line this one lights, drawn while it is genuinely running. */
+        window.updateHUD(0.3);
+        for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      }
+      if (rowsSeen !== keys58.length || usedSeen !== keys58.length) {
+        console.log('COVERAGE GAP: not every consumable rendered a Use control and consumed through it');
+        process.exit(1);
+      }
+      /* All four running at once — the only state in which all four HUD
+         lines are on screen together — and then all four expired, which is
+         the other half of every one of those branches. */
+      const far58 = Date.now() + 60000;
+      window.debugSetConsumable({ food: far58, speed: far58, breath: far58, fire: far58 });
+      window.updateHUD(0.3);
+      const allOnTxt = doc.getElementById('hudPlayer').textContent;
+      for (let f = 0; f < 3; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      /* And the mounted branch of the Swiftfoot line, which is its own
+         string and is otherwise never drawn. */
+      if (window.debugSetMount) {
+        window.debugSetMount({ mounted: true });
+        window.updateHUD(0.3);
+        const mountedTxt = doc.getElementById('hudPlayer').textContent;
+        for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+        window.debugSetMount({ mounted: false });
+        if (mountedTxt.indexOf('held while mounted') < 0) {
+          console.log('COVERAGE GAP: the mounted branch of the Swiftfoot HUD line never drew');
+          process.exit(1);
+        }
+      }
+      window.debugSetConsumable({ food: 1, speed: 1, breath: 1, fire: 1 });
+      window.updateHUD(0.3);
+      const allOffTxt = doc.getElementById('hudPlayer').textContent;
+      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      if (allOnTxt.indexOf('Fireward') < 0 || allOffTxt.indexOf('Fireward') >= 0) {
+        console.log('COVERAGE GAP: the consumable HUD lines did not appear and clear');
+        process.exit(1);
+      }
+      /* The craft rows for all four, at the real forge, drawn — the fifth
+         statTxt branch, which no other recipe in the table reaches. */
+      const SF5 = window.debugDuskfoxInfo().SPAWN_FORGE;
+      window.debugSetPlayer({ x: SF5.x, y: SF5.y, inv: { rare_herb: 9, magic_essence: 9, wood: 9, stone: 9, iron_ore: 9, raw_meat: 9 } });
+      window.refreshPanels();
+      const craftTxt5 = doc.getElementById('craftList').textContent;
+      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      if (!keys58.every(k => craftTxt5.indexOf(window.consumableEffectText(CT58[k])) >= 0)) {
+        console.log('COVERAGE GAP: a consumable craft row did not state its own effect');
+        process.exit(1);
+      }
+      window.debugSetPlayer({ inv: {} });
+      window.refreshPanels();
+      console.log('consumables swept — ' + keys58.length + ' rows, used, HUD on/off, mounted branch and craft rows');
+    }
+
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {

@@ -9444,6 +9444,408 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
     }
 
+      /* =====================================================================
+         v58 — CONSUMABLES. The locked spec's own proof gates, plus the
+         preservation half. Everything below is DRIVEN through the real
+         functions — useItem(), update(), applyDamage(), breathMax(),
+         refreshPanels() and the rendered DOM control — rather than asserted
+         about the source, except where the assertion is genuinely about the
+         source (that exactly one consumption path exists at all).
+         ===================================================================== */
+      if (window.debugConsumableInfo && window.useItem && window.debugSetConsumable) {
+        const CI = window.debugConsumableInfo;
+        const setC = window.debugSetConsumable;
+        const dsp58 = window.debugSetPlayer;
+        const wi58 = window.debugWorldInfo();
+        const K58 = CI().constants;
+        const doc58 = window.document;
+        const inv58 = o => { dsp58({ inv: o }); };
+        /* Somewhere real, outside every safe zone and clear of any mob, so
+           update() and applyDamage() both run their real paths and nothing
+           else can move the HP the food gates measure. Searched rather than
+           assumed, the same way the v50 landmark gates search. */
+        const mobs58 = (window.debugCombatHandles && window.debugCombatHandles().mobs) || [];
+        let SPOT58 = null;
+        for (let r = wi58.SAFE_RADIUS + 40; r < wi58.SAFE_RADIUS + 400 && !SPOT58; r += 20) {
+          const cx = wi58.SPAWN.x + r + 0.5, cy = wi58.SPAWN.y + r + 0.5;
+          if (cx >= wi58.N - 3 || cy >= wi58.N - 3) break;
+          if (window.inSafeZone(cx, cy)) continue;
+          if (mobs58.some(m => !m.dead && Math.hypot(m.x - cx, m.y - cy) < 30)) continue;
+          SPOT58 = { x: cx, y: cy };
+        }
+        results.push(['v58: a real spot outside every safe zone and clear of mobs was found to drive this from',
+          !!SPOT58]);
+        if (SPOT58) {
+          dsp58({ x: SPOT58.x, y: SPOT58.y, hp: 100, armor: null, charm: null, diving: false });
+          if (window.debugSetAbility) window.debugSetAbility({ guardBreakUntil: 0 });
+          if (window.debugSetMount) window.debugSetMount({ mounted: false });
+          setC({ food: 0, speed: 0, breath: 0, fire: 0 });
+
+          /* ---------- PART A — the "use item" action ---------------------- */
+          results.push(['v58 A: useItem() exists and is the ONE consumption path in the whole file',
+            gameScript.split('function useItem(').length === 2 &&
+            gameScript.split('invSpend({ [type]: 1 });').length === 2]);
+          results.push(['v58 A: and it goes through the EXISTING invSpend(), not a second hand-rolled decrement',
+            gameScript.indexOf('function useItem(') > 0 &&
+            /function useItem\(type\) \{[\s\S]*?invSpend\(\{ \[type\]: 1 \}\);/.test(gameScript)]);
+          /* DRIVEN: exactly one leaves a stack of three. */
+          inv58({ cooked_meat: 3 });
+          const usedOk = window.useItem('cooked_meat');
+          const after1 = window.debugWorldInfo().player.inv.cooked_meat;
+          results.push([`v58 A: using one removes EXACTLY one from the stack (3 -> ${after1})`,
+            usedOk === true && after1 === 2]);
+          /* DRIVEN: the last one empties the row rather than leaving a zero. */
+          inv58({ cooked_meat: 1 });
+          window.useItem('cooked_meat');
+          const emptied = window.debugWorldInfo().player.inv;
+          results.push(['v58 A: and the last one leaves no zero-count row behind',
+            !('cooked_meat' in emptied)]);
+          /* DRIVEN: the spec's own gate — an empty count cannot be used, and
+             nothing at all happens when it is tried. */
+          setC({ food: 0 });
+          inv58({});
+          const emptyUse = window.useItem('cooked_meat');
+          results.push(['v58 A: a consumable CANNOT be used from an empty count — and no timer moves when it is tried',
+            emptyUse === false && CI().until.food === 0 && CI().active.food === false]);
+          inv58({ cooked_meat: 0 });
+          const zeroUse = window.useItem('cooked_meat');
+          results.push(['v58 A: an explicit count of 0 is refused the same way',
+            zeroUse === false && CI().until.food === 0]);
+          results.push(['v58 A: and a type that is not a consumable at all is refused',
+            window.useItem('wood') === false && window.useItem('nonsense_item') === false]);
+          /* DRIVEN THROUGH THE REAL DOM: the Use control is rendered inside
+             the panel's own existing row and really consumes when clicked. */
+          setC({ food: 0 });
+          inv58({ cooked_meat: 2, wood: 3 });
+          window.refreshPanels();
+          const useEls = doc58.querySelectorAll('#invList [data-use]');
+          const useRow = useEls[0] && useEls[0].closest('.inv-row');
+          results.push(['v58 A: the Use control renders inside the panel\'s OWN existing .inv-row, not a new row type',
+            useEls.length === 1 && !!useRow && useRow.className === 'inv-row' &&
+            useRow.getAttribute('data-it') === 'cooked_meat']);
+          results.push(['v58 A: a plain material row has no Use control — only consumables get one',
+            Array.from(doc58.querySelectorAll('#invList .inv-row'))
+              .filter(el => el.getAttribute('data-it') === 'wood')
+              .every(el => !el.querySelector('[data-use]'))]);
+          useEls[0].onclick({ stopPropagation() {} });
+          results.push(['v58 A: clicking it really consumes one through the rendered control',
+            window.debugWorldInfo().player.inv.cooked_meat === 1 && CI().active.food === true]);
+          results.push(['v58 A: it adds no new stylesheet rule — the control is the v25 Feed control\'s own shape',
+            gameScript.indexOf('[data-use]') > 0 && html.indexOf('.inv-row [data-use]') < 0 &&
+            html.indexOf('data-use {') < 0]);
+
+          /* ---------- PART B — real food ---------------------------------- */
+          const ci = CI();
+          results.push(['v58 B: raw_meat drops off the two canon beasts that already had loot tables',
+            ci.meatDrops.length === 2 &&
+            ci.meatDrops.every(d => d.meat.length === 1 && d.meat[0].qty >= 1 && d.meat[0].chance > 0)]);
+          const WD58 = window.debugWorldInfo().MOBS;
+          results.push(['v58 B: and those tables\' EXISTING wood/stone entries are untouched — this adds, it does not replace',
+            WD58.boar.loot.some(l => l.type === 'wood' && l.qty === 2 && l.chance === 0.7) &&
+            WD58.boar.loot.some(l => l.type === 'stone' && l.qty === 1 && l.chance === 0.5) &&
+            WD58.bear.loot.some(l => l.type === 'wood' && l.qty === 3 && l.chance === 0.8) &&
+            WD58.bear.loot.some(l => l.type === 'stone' && l.qty === 2 && l.chance === 0.5)]);
+          const cookR = ci.recipes.find(r => r.out === 'cooked_meat');
+          results.push(['v58 B: cooked meat is the spec\'s Forge interaction turning the raw material into a cooked one',
+            !!cookR && cookR.where === 'forge' && cookR.mats.raw_meat >= 1 &&
+            Object.keys(cookR.mats).join(',') === 'raw_meat']);
+          /* DRIVEN: the heal is real, measured, rate-correct and finite. */
+          setC({ food: 0, speed: 0, breath: 0, fire: 0 });
+          dsp58({ x: SPOT58.x, y: SPOT58.y, hp: 50 });
+          inv58({ cooked_meat: 1 });
+          window.useItem('cooked_meat');
+          const hp0 = window.debugWorldInfo().player.hp;
+          for (let i = 0; i < 10; i++) window.update(0.1, 600000 + i * 100);
+          const hp1 = window.debugWorldInfo().player.hp;
+          results.push([`v58 B: eating really heals, at the live rate — ${(hp1 - hp0).toFixed(2)} HP over 1.0s against ${K58.FOOD_REGEN_RATE}/s`,
+            Math.abs((hp1 - hp0) - K58.FOOD_REGEN_RATE) < 0.2]);
+          /* And it STOPS. Expire the timer and pump the same frames again. */
+          setC({ food: Date.now() - 1 });
+          const hp2 = window.debugWorldInfo().player.hp;
+          for (let i = 0; i < 10; i++) window.update(0.1, 601000 + i * 100);
+          results.push(['v58 B: and it is genuinely temporary — once the timer is past, the healing stops dead',
+            Math.abs(window.debugWorldInfo().player.hp - hp2) < 0.001]);
+          /* And it clamps at maxHp rather than overshooting. */
+          setC({ food: Date.now() + 60000 });
+          dsp58({ hp: 99 });
+          for (let i = 0; i < 10; i++) window.update(0.5, 602000 + i * 500);
+          results.push(['v58 B: the heal clamps at maxHp, exactly as the safe zone\'s own regen does',
+            window.debugWorldInfo().player.hp === window.debugWorldInfo().player.maxHp]);
+          setC({ food: 0 });
+
+          /* ---------- PART C — herb and essence become real ingredients --- */
+          const potions = ci.recipes.filter(r => r.out !== 'cooked_meat');
+          results.push(['v58 C: three potions, all craftable at a plain Forge from existing materials',
+            potions.length === 3 && potions.every(r => r.where === 'forge')]);
+          results.push(['v58 C: and EVERY one of them uses rare_herb and magic_essence — the spec\'s own shape',
+            potions.every(r => r.mats.rare_herb >= 1 && r.mats.magic_essence >= 1)]);
+          results.push(['v58 C: plus a tier-appropriate common resource in each, and no invented gatherable anywhere',
+            potions.every(r => Object.keys(r.mats).every(m =>
+              ['rare_herb', 'magic_essence', 'wood', 'stone', 'iron_ore'].indexOf(m) >= 0))]);
+          /* THE HEADLINE GATE: herb and essence have a use for the first time
+             in this project's history — measured against the live table, not
+             against a memory of it. */
+          const herbRecipes = gameScript.split('rare_herb:').length - 1;
+          const essRecipes = gameScript.split('magic_essence:').length - 1;
+          results.push([`v58 C: rare_herb and magic_essence are ingredients in a real recipe for the FIRST time (herb in ${potions.filter(r => r.mats.rare_herb).length}, essence in ${potions.filter(r => r.mats.magic_essence).length})`,
+            potions.filter(r => r.mats.rare_herb).length === 3 &&
+            potions.filter(r => r.mats.magic_essence).length === 3 &&
+            herbRecipes > 0 && essRecipes > 0]);
+          /* DRIVEN: crafting one really works at a forge and really spends
+             the herb and the essence. */
+          /* DRIVEN at the real Spawn Forge — stood ON it, not near spawn:
+             SPAWN_FORGE is SPAWN + (4, 2) and nearForge()'s radius is 4, so
+             the spawn point itself is 4.47 tiles away and does NOT answer.
+             Asserted rather than skipped, so this can never silently stop
+             running if either value moves. */
+          const SF58 = window.debugDuskfoxInfo().SPAWN_FORGE;
+          dsp58({ x: SF58.x, y: SF58.y });
+          results.push(['v58 C: the real Spawn Forge was reachable to brew at',
+            window.nearForge() === true]);
+          {
+            const sp = potions.find(r => r.out === 'speed_potion');
+            inv58(Object.assign({}, sp.mats));
+            /* The real craft(), handed the real recipe shape it reads — out,
+               mats and where, which is every field it touches. */
+            window.craft({ out: sp.out, mats: sp.mats, where: sp.where, label: sp.label });
+            const afterCraft = window.debugWorldInfo().player.inv;
+            results.push(['v58 C: brewing a draught at the Spawn Forge really spends the herb and the essence',
+              afterCraft.speed_potion === 1 && !('rare_herb' in afterCraft) &&
+              !('magic_essence' in afterCraft)]);
+            /* And it is genuinely gated on the forge, exactly as every other
+               recipe in the table is: the same craft() call away from one
+               spends nothing and mints nothing. */
+            dsp58({ x: SPOT58.x, y: SPOT58.y });
+            inv58(Object.assign({}, sp.mats));
+            window.craft({ out: sp.out, mats: sp.mats, where: sp.where, label: sp.label });
+            const awayFrom = window.debugWorldInfo().player.inv;
+            results.push(['v58 C: and brewing away from any forge mints nothing and spends nothing',
+              window.nearForge() === false && !('speed_potion' in awayFrom) &&
+              awayFrom.rare_herb === sp.mats.rare_herb]);
+          }
+          dsp58({ x: SPOT58.x, y: SPOT58.y, hp: 100 });
+
+          /* ---- SPEED: the stacking rule, against mount AND guild --------- */
+          setC({ speed: 0 });
+          if (window.debugSetMount) window.debugSetMount({ mounted: false });
+          const mult0 = CI().speedMult;
+          setC({ speed: Date.now() + 60000 });
+          const multFoot = CI().speedMult;
+          if (window.debugSetMount) window.debugSetMount({ mounted: true });
+          const multMounted = CI().speedMult;
+          if (window.debugSetMount) window.debugSetMount({ mounted: false });
+          results.push([`v58 C/D: the draught multiplies movement on foot and is EXACTLY 1 while mounted (${mult0} / ${multFoot} / ${multMounted})`,
+            mult0 === 1 && multFoot === K58.POTION_SPEED_MULT && multMounted === 1]);
+          results.push(['v58 D: so it cannot compound with a mount at all — checked against the live MOUNT_SPEED_MULT',
+            K58.POTION_SPEED_MULT < CI().against.MOUNT_SPEED_MULT &&
+            K58.POTION_SPEED_MULT * 1 === K58.POTION_SPEED_MULT]);
+          /* GUILD, both tiers, all five: not one of them touches movement
+             speed, so the multiplier must not move under any of them. This is
+             the spec's "check against both directly" rather than assumed. */
+          if (window.debugGuildInfo && window.debugSetGuild) {
+            const wasTier58 = window.debugGuildInfo().tierRaw;
+            const wasGrant58 = window.debugGuildInfo().granted;
+            const seen = new Set();
+            for (const t of [1, 2]) {
+              window.debugSetGuild({ tierRaw: t });
+              seen.add(CI().speedMult);
+              window.debugSetGuild({ granted: 'nameless_tide' });
+              seen.add(CI().speedMult);
+              window.debugSetGuild({ granted: wasGrant58 });
+            }
+            window.debugSetGuild({ tierRaw: wasTier58, granted: wasGrant58 });
+            results.push(['v58 C/D: and NO guild buff at either tier moves it — the speed multiplier is identical under all of them',
+              seen.size === 1 && seen.has(K58.POTION_SPEED_MULT)]);
+            results.push(['v58 C/D: which is a property of the file, not a coincidence — no guild function multiplies PLAYER_SPEED',
+              gameScript.split('PLAYER_SPEED *').length === 2 &&
+              /const spd = PLAYER_SPEED \* [\s\S]{0,200}\* mountMult \* speedPotionMult\(\);/.test(gameScript)]);
+          }
+          setC({ speed: 0 });
+
+          /* ---- BREATH: flat, and never multiplied by the guild ----------- */
+          const bmBare0 = (dsp58({ charm: null }), CI().breathMax);
+          setC({ breath: Date.now() + 60000 });
+          const bmBare1 = CI().breathMax;
+          setC({ breath: 0 });
+          dsp58({ charm: 'divers_charm' });
+          const bmCharm0 = CI().breathMax;
+          setC({ breath: Date.now() + 60000 });
+          const bmCharm1 = CI().breathMax;
+          results.push([`v58 C: the breath draught is a FLAT bonus — +${bmBare1 - bmBare0} bare and +${bmCharm1 - bmCharm0} charmed, both exactly POTION_BREATH_BONUS`,
+            (bmBare1 - bmBare0) === K58.POTION_BREATH_BONUS &&
+            (bmCharm1 - bmCharm0) === K58.POTION_BREATH_BONUS]);
+          if (window.debugSetGuild && window.debugGuildInfo) {
+            const wasTier59 = window.debugGuildInfo().tierRaw;
+            window.debugSetGuild({ tierRaw: 1 });
+            setC({ breath: 0 }); const g1a = CI().breathMax;
+            setC({ breath: Date.now() + 60000 }); const g1b = CI().breathMax;
+            window.debugSetGuild({ tierRaw: 2 });
+            setC({ breath: 0 }); const g2a = CI().breathMax;
+            setC({ breath: Date.now() + 60000 }); const g2b = CI().breathMax;
+            window.debugSetGuild({ tierRaw: wasTier59 });
+            results.push([`v58 C/D: and a guild multiplier can never multiply it — +${g1b - g1a} at Tier 1 and +${g2b - g2a} at Tier 2, both flat`,
+              (g1b - g1a) === K58.POTION_BREATH_BONUS &&
+              (g2b - g2a) === K58.POTION_BREATH_BONUS]);
+          }
+          /* DRIVEN: the tank really grows, and really shrinks back, through
+             updateBreath()'s own per-frame recompute — no second code path. */
+          setC({ breath: Date.now() + 60000 });
+          dsp58({ x: SPOT58.x, y: SPOT58.y, diving: false, breath: 999 });
+          window.update(0.016, 610000);
+          const tankUp = window.debugWorldInfo().player;
+          setC({ breath: Date.now() - 1 });
+          window.update(0.016, 610100);
+          const tankDown = window.debugWorldInfo().player;
+          results.push([`v58 C: the live tank really grows and clamps back down when it expires (${tankUp.maxBreath} -> ${tankDown.maxBreath})`,
+            tankUp.maxBreath === tankDown.maxBreath + K58.POTION_BREATH_BONUS &&
+            tankUp.breath === tankUp.maxBreath && tankDown.breath === tankDown.maxBreath]);
+          results.push(['v58 C: and the draught outlasts a full tank, so the tank is always the limit rather than the timer',
+            K58.POTION_BREATH_MS / 1000 > tankUp.maxBreath]);
+          setC({ breath: 0 });
+          dsp58({ charm: null });
+
+          /* ---- FIRE: one source, multiplicative, floor of 1 -------------- */
+          const fm = CI().fireMobs;
+          results.push([`v58 C: fire is exactly the volcano/caldera creatures, and every one is a real mob (${fm.join(', ')})`,
+            fm.length === 3 && fm.every(k => !!WD58[k]) &&
+            fm.indexOf('elder_drake') >= 0 && fm.indexOf('phoenix') >= 0 &&
+            fm.indexOf('salamander_king') >= 0]);
+          results.push(['v58 C: and the Demon Knights that guard the drake are deliberately NOT fire',
+            fm.indexOf('demon_knight') < 0 && fm.indexOf('basilisk') < 0]);
+          results.push(['v58 C: both mob attack call sites flag their own fire from the one predicate',
+            gameScript.split('fire: mobIsFiery(m.kind)').length === 3]);
+          /* DRIVEN through the real applyDamage, bare-chested so nothing else
+             is in the way. */
+          const hitFor = (dmg, opts) => {
+            dsp58({ x: SPOT58.x, y: SPOT58.y, hp: 100, armor: null });
+            if (window.debugSetAbility) window.debugSetAbility({ guardBreakUntil: 0 });
+            window.applyDamage(dmg, 'Elder Drake', opts);
+            return 100 - window.debugWorldInfo().player.hp;
+          };
+          setC({ fire: 0 });
+          const plainNoPot = hitFor(20, { fire: true });
+          setC({ fire: Date.now() + 60000 });
+          const fireWithPot = hitFor(20, { fire: true });
+          const nonFireWithPot = hitFor(20, {});
+          results.push([`v58 C: a fire hit is reduced by exactly the live constant (${plainNoPot} -> ${fireWithPot} of 20)`,
+            plainNoPot === 20 &&
+            fireWithPot === Math.max(1, Math.round(20 * (1 - K58.POTION_FIRE_REDUCE)))]);
+          results.push([`v58 C: and a hit that is NOT fire is untouched by it (${nonFireWithPot} of 20)`,
+            nonFireWithPot === 20]);
+          /* It multiplies with armour rather than summing into an immunity —
+             the same shape Guard Break already uses. */
+          dsp58({ inv: { runic_armor: 1 } });
+          dsp58({ armor: 'runic_armor' });
+          const armReduce = CI().against.ARMOR_REDUCE.runic_armor;
+          dsp58({ x: SPOT58.x, y: SPOT58.y, hp: 100 });
+          if (window.debugSetAbility) window.debugSetAbility({ guardBreakUntil: 0 });
+          window.applyDamage(20, 'Elder Drake', { fire: true });
+          const bothOn = 100 - window.debugWorldInfo().player.hp;
+          const expectBoth = Math.max(1, Math.round(
+            Math.max(1, Math.round(20 * (1 - armReduce))) * (1 - K58.POTION_FIRE_REDUCE)));
+          results.push([`v58 D: armour and the draught MULTIPLY rather than sum — ${bothOn} taken, never an immunity`,
+            bothOn === expectBoth && bothOn >= 1]);
+          dsp58({ armor: null, inv: {} });
+          /* And the floor of 1 survives even a 1-damage fire hit. */
+          const floorHit = hitFor(1, { fire: true });
+          results.push(['v58 D: and the 1-damage floor survives it — a fire hit can never reduce to zero',
+            floorHit === 1]);
+          setC({ fire: 0 });
+
+          /* ---------- PART D — nothing here is permanent ------------------ */
+          const CT = CI().CONSUMABLES;
+          results.push(['v58 D: every consumable effect is finite and temporary — no permanent power anywhere in this build',
+            Object.keys(CT).length === 4 &&
+            Object.keys(CT).every(k => CT[k].ms > 0 && isFinite(CT[k].ms) && CT[k].ms <= 180000)]);
+          results.push(['v58 D: the fire resist sits UNDER runic armour\'s permanent reduction and under Guard Break',
+            K58.POTION_FIRE_REDUCE < CI().against.ARMOR_REDUCE.runic_armor &&
+            K58.POTION_FIRE_REDUCE < CI().against.GUARD_BREAK_REDUCE]);
+          results.push(['v58 D: the food total is a top-up, not a health bar — well under half of maxHp',
+            (K58.FOOD_REGEN_RATE * K58.FOOD_REGEN_MS / 1000) < window.debugWorldInfo().player.maxHp / 2]);
+          results.push(['v58 D: and its rate is within touching distance of the safe zone\'s own 2.5/s, not a multiple of it',
+            K58.FOOD_REGEN_RATE > CI().against.SAFE_ZONE_REGEN &&
+            K58.FOOD_REGEN_RATE < CI().against.SAFE_ZONE_REGEN * 1.5]);
+          /* DRIVEN: expire everything at once and confirm the world is back
+             to exactly where it started. */
+          setC({ food: Date.now() - 1, speed: Date.now() - 1,
+                 breath: Date.now() - 1, fire: Date.now() - 1 });
+          const allOff = CI();
+          results.push(['v58 D: with every timer past, every effect is genuinely gone at once',
+            allOff.active.food === false && allOff.active.speed === false &&
+            allOff.active.breath === false && allOff.active.fire === false &&
+            allOff.speedMult === 1]);
+
+          /* ---------- the spec\'s "measured and stated" gate --------------- */
+          const stated = Object.keys(CT).map(k => window.consumableEffectText(CT[k]));
+          results.push(['v58: every consumable states a real measured magnitude AND duration — no vague "temporary boost" anywhere',
+            stated.length === 4 && stated.every(t => /\d/.test(t) && /\ds\b/.test(t)) &&
+            stated.some(t => t.indexOf(String(K58.POTION_BREATH_BONUS) + 's breath') >= 0) &&
+            stated.some(t => t.indexOf(String(Math.round((K58.POTION_SPEED_MULT - 1) * 100)) + '%') >= 0) &&
+            stated.some(t => t.indexOf(String(Math.round(K58.POTION_FIRE_REDUCE * 100)) + '%') >= 0) &&
+            stated.every(t => t.toLowerCase().indexOf('temporary boost') < 0)]);
+          /* And the PANEL really says it — the inventory row and the craft
+             row, from the one helper, so they cannot drift apart. */
+          inv58({ breath_potion: 2 });
+          window.refreshPanels();
+          const bpRow = Array.from(doc58.querySelectorAll('#invList .inv-row'))
+            .find(el => el.getAttribute('data-it') === 'breath_potion');
+          results.push(['v58: and the rendered inventory row states it, not just the table',
+            !!bpRow && bpRow.textContent.indexOf(window.consumableEffectText(CT.breath_potion)) >= 0]);
+          const craftTxt = doc58.getElementById('craftList').textContent;
+          results.push(['v58: and so does the craft row, from the same single helper',
+            Object.keys(CT).every(k => craftTxt.indexOf(window.consumableEffectText(CT[k])) >= 0)]);
+          /* The HUD carries each running effect, through the existing card. */
+          setC({ food: Date.now() + 60000, speed: Date.now() + 60000,
+                 breath: Date.now() + 60000, fire: Date.now() + 60000 });
+          window.updateHUD(0.3);
+          const hudTxt = doc58.getElementById('hudPlayer').textContent;
+          results.push(['v58: the HUD names all four running effects, in the card that already carries the Shrine blessing\'s',
+            hudTxt.indexOf('Well fed') >= 0 && hudTxt.indexOf('Swiftfoot') >= 0 &&
+            hudTxt.indexOf('Deep lungs') >= 0 && hudTxt.indexOf('Fireward') >= 0]);
+          setC({ food: 0, speed: 0, breath: 0, fire: 0 });
+          window.updateHUD(0.3);
+          const hudOff = doc58.getElementById('hudPlayer').textContent;
+          results.push(['v58: and names none of them when none is running — the breath readout\'s own rule',
+            hudOff.indexOf('Well fed') < 0 && hudOff.indexOf('Swiftfoot') < 0 &&
+            hudOff.indexOf('Deep lungs') < 0 && hudOff.indexOf('Fireward') < 0]);
+
+          /* ---------- PRESERVATION ---------------------------------------- */
+          results.push(['v58 P: every pre-v58 recipe is still in the table, the Diver\'s Charm included',
+            gameScript.indexOf('{ out: "divers_charm",      mats: { iron_bar: 2, wood: 3 }') > 0 &&
+            gameScript.indexOf('{ out: "dragonsteel_shield",mats: { dragonsteel: 3, iron_bar: 2 }') > 0 &&
+            gameScript.indexOf('{ out: "trail_bait",        mats: { wood: 2, stone: 1 }') > 0]);
+          results.push(['v58 P: applyDamage\'s existing order — block, then armour, then Guard Break — is untouched',
+            gameScript.indexOf('const blocked = isBlocking() && !opts.rn;') <
+            gameScript.indexOf('const arm = ARMORS[me.armor];') &&
+            gameScript.indexOf('const arm = ARMORS[me.armor];') <
+            gameScript.indexOf('if (guardBreakUntil > performance.now() && !opts.mk) {') &&
+            gameScript.indexOf('if (guardBreakUntil > performance.now() && !opts.mk) {') <
+            gameScript.indexOf('if (opts.fire && fireResistActive()) {')]);
+          results.push(['v58 P: drowning still routes through applyDamage unflagged, so the fire draught can never protect against the deep',
+            gameScript.indexOf('applyDamage(DROWN_DPS, "the deep");') > 0 &&
+            gameScript.split('applyDamage(DROWN_DPS, "the deep");').length === 2]);
+          results.push(['v58 P: the four timers are session-local — no new players column, savePlayer\'s fixed list untouched',
+            gameScript.indexOf('foodRegenUntil') > 0 &&
+            gameScript.split('foodRegenUntil').length > 2 &&
+            /* savePlayer()'s own body, read out and checked for every one of
+               the four names — the fixed column list must not have learned
+               about a single timer, which is what keeps this schema-free. */
+            (() => {
+              const at = gameScript.indexOf('async function savePlayer() {');
+              if (at < 0) return false;
+              const end = gameScript.indexOf('.eq("username", me.username);', at);
+              const body = gameScript.slice(at, end);
+              return ['foodRegenUntil', 'speedPotionUntil', 'breathPotionUntil', 'fireResistUntil']
+                .every(nm => body.indexOf(nm) < 0);
+            })()]);
+          results.push(['v58 P: aquatic_essence and void_shard are still recipe-free — this build widened nothing the spec did not name',
+            ci.recipes.every(r => !('aquatic_essence' in r.mats) && !('void_shard' in r.mats))]);
+          results.push(['v58: and the world still runs frames cleanly after every part of this',
+            (() => { for (let f = 0; f < 8; f++) window.render(f * 16); return !caught; })()]);
+          inv58({});
+        }
+      }
+
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
     process.exit(allOk && !caught ? 0 : 1);

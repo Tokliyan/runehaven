@@ -1052,6 +1052,31 @@ const ITEM_META = {
      spec, deliberately built out of common materials so a new player can
      craft one before ever reaching an Underwater Cave. */
   divers_charm: { name: "Diver's Charm", color: "#7fd8e8", charm: true },
+  /* ============ v58 — CONSUMABLES =====================================
+     Six new items, and every one of them is DESIGNED content rather than
+     bible content being implemented: a direct search of RUNEHAVEN_BIBLE.md
+     for food, meat, cook, potion, consumable, eat, hunger and fish returns
+     nothing at all. Flagged here the same way divers_charm (v21) and
+     void_shard (v32) were, for the same reason.
+
+     raw_meat is the one thing here that is not craftable — it comes off the
+     two canon beasts the bible already names in Forests and Plains (Boar,
+     Bear), whose loot tables until now were wood and stone. That is the
+     locked spec's own "reuse whatever raw-meat-equivalent loot already
+     drops, or gate behind a Forge interaction turning a raw material into a
+     cooked one": there WAS no raw-meat-equivalent loot (confirmed — every
+     loot entry in MOBS is wood/stone/iron_ore/iron_bar/runic_stone/
+     dragonsteel), so it is the second half of that sentence, with the raw
+     half added to loot tables that already existed rather than a new
+     gatherable node, a new mob or a new biome. */
+  raw_meat:     { name: "Raw Meat",      color: "#c2564e" },
+  cooked_meat:  { name: "Cooked Meat",   color: "#d08a4a" },
+  speed_potion: { name: "Swiftfoot Draught", color: "#78d0a8" },
+  /* The breath draught wears the EXACT colour the breath readout and the
+     Diver's Charm already wear, and the fire draught wears the locked Lava
+     palette entry. Neither is a new colour. */
+  breath_potion:{ name: "Deep Lung Draught", color: "#7fd8e8" },
+  fire_potion:  { name: "Fireward Draught",  color: "#ff7a3c" },
 };
 
 /* v21: the dive/breath mechanic's numbers. Every one of these is a designed
@@ -1070,6 +1095,85 @@ const CHARM_DIVE_REGEN = 1.5;   // hp/sec while diving with the charm equipped
 const CHARMS = {
   divers_charm: { name: "Diver's Charm", tier: "iron", maxBreath: BREATH_CHARM_MAX, diveRegen: CHARM_DIVE_REGEN },
 };
+
+/* ============ v58 — CONSUMABLES: every number, and what it was sized
+   against =================================================================
+   The bible specifies NO food, NO potion and no consumable effect of any
+   kind, so all eight values below are designed TUNABLES. None of them was
+   picked in isolation: each names the live value it was checked against,
+   which is the locked spec's PART D in the only form that can be verified
+   ("confirm every proposed number against what already exists rather than
+   in isolation"). run4 asserts each relationship from the live constants
+   rather than trusting these comments.
+
+   FOOD — the Spawn Safe Zone regenerates 2.5 HP/s with no limit and no
+   cost. Food is barely faster, and it STOPS: 3 HP/s for 8s is 24 HP, under
+   a quarter of the 100 maxHp, against an Elder Drake swing of 28 and a
+   Demon Knight's 26. It is a between-fights top-up that happens to still
+   tick during one, never a second health bar.
+
+   SPEED — MOUNT_SPEED_MULT is 1.6 (3.2 on the Duskfox Elder). The draught
+   is 1.25, well under a mount, and it does NOT stack with one: see
+   speedPotionMult(). No guild buff touches movement speed at all — checked
+   directly against all five advantages and both tiers (breath, ore, tame,
+   mob damage, regen), none of which multiplies PLAYER_SPEED — so a mount is
+   the only thing it could ever have compounded with, and it cannot.
+
+   BREATH — breathMax() is (30 bare | 50 charmed) x the Drowned Court's
+   1.5/2.25, so the live ceiling is 113s. The bonus is FLAT and added AFTER
+   that multiply, so the guild can never multiply the draught: the new
+   ceiling is 143s, not 254s. 180s of draught comfortably outlasts a full
+   143s tank, so the tank is always the limit rather than the timer.
+
+   FIRE — armour reduce runs 0.15 / 0.28 / 0.42 and Guard Break is 0.50.
+   0.25 sits UNDER runic armour, and it applies to exactly one damage source
+   rather than all of them. It multiplies with armour the same way Guard
+   Break already does, so nothing here can sum into an immunity. */
+const FOOD_REGEN_RATE     = 3;        // TUNABLE — hp/sec, against the safe zone's 2.5
+const FOOD_REGEN_MS       = 8000;     // TUNABLE — 24 HP total on a 100 maxHp
+const POTION_SPEED_MULT   = 1.25;     // TUNABLE — against MOUNT_SPEED_MULT's 1.6
+const POTION_SPEED_MS     = 20000;    // TUNABLE
+const POTION_BREATH_BONUS = 30;       // TUNABLE — flat seconds, applied after the guild multiply
+const POTION_BREATH_MS    = 180000;   // TUNABLE — outlasts a full 143s tank
+const POTION_FIRE_REDUCE  = 0.25;     // TUNABLE — under runic armour's 0.28
+const POTION_FIRE_MS      = 30000;    // TUNABLE
+
+/* Which damage is FIRE damage. Deliberately a short, defensible list rather
+   than a guess at every hot-looking thing in the world: the Elder Drake (the
+   volcano's own boss, placed on VOLROCK/ROCK/CALDERA by edPlace()), the
+   Phoenix (biomes: [B.VOLROCK]) and the Salamander King (biomes:
+   [B.CALDERA]). That is every hostile creature whose home is the volcano or
+   the caldera, which is exactly the spec's "tying naturally to
+   Volcano/Caldera expeditions". The two Demon Knights that stand beside the
+   drake are NOT on it — they guard the volcano, they are not made of it, and
+   guessing them in would quietly make the draught a general boss-fight
+   resist instead of a fire one. Lava itself is in BLOCKED, so no player ever
+   stands in it and there is no environmental fire damage to cover. */
+const FIRE_MOBS = new Set(["elder_drake", "phoenix", "salamander_king"]);
+function mobIsFiery(kind) { return FIRE_MOBS.has(kind); }
+
+/* The consumable table. Same shape as CHARMS/ARMORS/COSMETICS above: adding
+   a second food or a fourth potion is a data change, not a code change. */
+const CONSUMABLES = {
+  cooked_meat:   { name: "Cooked Meat",       kind: "heal",   verb: "Eat",   rate: FOOD_REGEN_RATE,     ms: FOOD_REGEN_MS },
+  speed_potion:  { name: "Swiftfoot Draught", kind: "speed",  verb: "Drink", mult: POTION_SPEED_MULT,   ms: POTION_SPEED_MS },
+  breath_potion: { name: "Deep Lung Draught", kind: "breath", verb: "Drink", bonus: POTION_BREATH_BONUS, ms: POTION_BREATH_MS },
+  fire_potion:   { name: "Fireward Draught",  kind: "fire",   verb: "Drink", reduce: POTION_FIRE_REDUCE, ms: POTION_FIRE_MS },
+};
+/* The one place a consumable's real magnitude and duration is turned into
+   words, so the inventory row and the craft row cannot ever disagree about
+   what an item does. The spec asks for exactly this: "every potion's real
+   duration/magnitude is measured and stated, not left as a vague temporary
+   boost" — so every string below is computed from the live constant. */
+function consumableEffectText(c) {
+  if (!c) return "";
+  const secs = Math.round(c.ms / 1000);
+  if (c.kind === "heal")   return `+${Math.round(c.rate * c.ms / 1000)} HP over ${secs}s`;
+  if (c.kind === "speed")  return `+${Math.round((c.mult - 1) * 100)}% move speed for ${secs}s, on foot`;
+  if (c.kind === "breath") return `+${c.bonus}s breath for ${secs}s`;
+  if (c.kind === "fire")   return `−${Math.round(c.reduce * 100)}% fire damage for ${secs}s`;
+  return "";
+}
 
 /* v10: single-slot armor — flat % damage reduction, conservative on purpose */
 const ARMORS = {
@@ -1271,6 +1375,28 @@ const RECIPES = [
      the dive mechanic, not by a crafting wall, so the charm must be craftable
      before you have ever been down there. No bootstrapping problem. */
   { out: "divers_charm",      mats: { iron_bar: 2, wood: 3 },                 where: "forge",   label: "Craft Diver's Charm" },
+  /* ============ v58 — the four consumable recipes ======================
+     rare_herb (v17) and magic_essence (v17) have been gatherable, drawn and
+     pickable for forty-one versions with no recipe anywhere in this table —
+     confirmed by search before this build, and these four lines are the
+     first time either has ever been an ingredient in anything.
+
+     Every recipe is the spec's own shape: "herb, essence, plus a
+     tier-appropriate common resource", all at a plain Forge rather than the
+     Ancient one, because nothing here is dragonsteel-tier.
+
+     DELIBERATELY NOT aquatic_essence in the breath draught, tempting as the
+     theme is: aquatic_essence is only gatherable by DIVING, so the item that
+     exists to let you dive longer would have been gated behind already
+     diving. That is exactly the bootstrapping wall v21 wrote itself a note
+     about when it priced the Diver's Charm in iron and wood. aquatic_essence
+     and void_shard therefore still have no recipe after this build; the
+     locked spec names herb and essence and only those, and widening it here
+     would be inventing scope rather than building it. */
+  { out: "cooked_meat",       mats: { raw_meat: 2 },                          where: "forge",   label: "Cook Meat" },
+  { out: "speed_potion",      mats: { rare_herb: 2, magic_essence: 1, wood: 2 },     where: "forge",   label: "Brew Swiftfoot Draught" },
+  { out: "breath_potion",     mats: { rare_herb: 1, magic_essence: 2, stone: 2 },    where: "forge",   label: "Brew Deep Lung Draught" },
+  { out: "fire_potion",       mats: { rare_herb: 2, magic_essence: 2, iron_ore: 2 }, where: "forge",   label: "Brew Fireward Draught" },
   { out: "dragonsteel_sword", mats: { dragonsteel: 3, runic_stone: 2 },       where: "ancient", label: "Forge Dragonsteel Sword" },
   { out: "dragonsteel_bow",   mats: { dragonsteel: 2, runic_stone: 2, wood: 3 }, where: "ancient", label: "Forge Dragonsteel Bow" },
   { out: "dragonsteel_axe",   mats: { dragonsteel: 3, runic_stone: 2, wood: 1 }, where: "ancient", label: "Forge Dragonsteel Axe" },
@@ -1692,6 +1818,35 @@ let activePet = null;                // currently-following roster row
 let taming = null;                   // { wild, start, chance, baited } while E is held near one
 let bondBonuses = new Map();         // v12: wildId -> resist-and-stay stacks (max 3)
 let tameBuffUntil = 0;               // v12: shrine blessing end (local, ms)
+/* ============ v58 — the four consumable timers ==========================
+   Deliberately the same shape, the same lifetime and the same storage as
+   tameBuffUntil directly above: a plain top-level `let` holding a Date.now()
+   deadline, session-local, with NO players column, NO schema change and
+   nothing for savePlayer()'s fixed column list to learn. A logout ends every
+   effect; the ITEMS themselves live in `inventory` and persist normally, which
+   is the same split v35's cosmetics already made.
+
+   Death does not clear them, for consistency with tameBuffUntil, which a
+   death has never cleared either. */
+let foodRegenUntil    = 0;
+let speedPotionUntil  = 0;
+let breathPotionUntil = 0;
+let fireResistUntil   = 0;
+function foodRegenActive()    { return Date.now() < foodRegenUntil; }
+function speedPotionActive()  { return Date.now() < speedPotionUntil; }
+function breathPotionActive() { return Date.now() < breathPotionUntil; }
+function fireResistActive()   { return Date.now() < fireResistUntil; }
+/* THE STACKING RULE, and it is one line on purpose. The locked spec leaves
+   it "TBD against mount speed and guild buffs" and requires that it not
+   compound into something absurd — so a mount does not compound with it AT
+   ALL rather than compounding by a merely tolerable amount. A player who is
+   being carried is not running, and 9.2 x 3.2 x 1.25 = 36.8 tiles/s on a
+   Duskfox Elder is the exact absurdity the spec names. Guild buffs need no
+   clause here because not one of the five touches movement speed. */
+function speedPotionMult() {
+  if (!speedPotionActive()) return 1;
+  return (me && me.mounted) ? 1 : POTION_SPEED_MULT;
+}
 let shrineGlowUntil = 0;             // v12: world shrine glow (any player's buff)
 /* v12: blood window — full +15% for 8h after a PvP kill, linear to 0 by 28h */
 function bloodDecayFrac() {
@@ -2566,6 +2721,44 @@ function debugSetSpace(patch) {
 }
 function debugUwcaveAnchor(tx, ty) { return uwcaveClusterAnchor(tx, ty); }
 /* v28 mounting hook — same shape as debugAbilityInfo/debugSetAbility. */
+/* v58: harness hooks, the same shape and the same reason as every pair
+   above. All four timers are top-level `let`s no harness can reach, and the
+   proof gates have to read one, set one and expire one without waiting out a
+   real three minutes. Everything returned is a copy except CONSUMABLES and
+   FIRE_MOBS, which are read-only tables. */
+function debugConsumableInfo() {
+  return {
+    CONSUMABLES,
+    constants: { FOOD_REGEN_RATE, FOOD_REGEN_MS, POTION_SPEED_MULT, POTION_SPEED_MS,
+                 POTION_BREATH_BONUS, POTION_BREATH_MS, POTION_FIRE_REDUCE, POTION_FIRE_MS },
+    fireMobs: Array.from(FIRE_MOBS),
+    until: { food: foodRegenUntil, speed: speedPotionUntil,
+             breath: breathPotionUntil, fire: fireResistUntil },
+    active: { food: foodRegenActive(), speed: speedPotionActive(),
+              breath: breathPotionActive(), fire: fireResistActive() },
+    speedMult: speedPotionMult(),
+    mounted: !!(me && me.mounted),
+    breathMax: me ? breathMax() : null,
+    /* The comparison values PART D is checked against, read LIVE rather than
+       restated, so a gate can assert the relationship instead of the number. */
+    against: { PLAYER_SPEED, MOUNT_SPEED_MULT, SAFE_ZONE_REGEN: 2.5,
+               ARMOR_REDUCE: Object.keys(ARMORS).reduce((o, k) => { o[k] = ARMORS[k].reduce; return o; }, {}),
+               GUARD_BREAK_REDUCE, BREATH_MAX, BREATH_CHARM_MAX,
+               GUILD_BREATH_MULT, GUILD_BREATH_MULT_T2, guildBreathMult: guildBreathMult() },
+    recipes: RECIPES.filter(r => !!CONSUMABLES[r.out])
+                    .map(r => ({ out: r.out, mats: Object.assign({}, r.mats), where: r.where, label: r.label })),
+    meatDrops: ["boar", "bear"].map(k => ({ kind: k,
+      meat: (MOBS[k].loot || []).filter(l => l.type === "raw_meat") })),
+  };
+}
+function debugSetConsumable(patch) {
+  if (!patch) return debugConsumableInfo();
+  if ("food" in patch)   foodRegenUntil    = patch.food;
+  if ("speed" in patch)  speedPotionUntil  = patch.speed;
+  if ("breath" in patch) breathPotionUntil = patch.breath;
+  if ("fire" in patch)   fireResistUntil   = patch.fire;
+  return debugConsumableInfo();
+}
 function debugMountInfo() {
   return {
     MOUNTABLE: Array.from(MOUNTABLE_SPECIES),
@@ -2700,9 +2893,14 @@ const MOBS = {
      Demon Knight. No `hp`, `dmg`, `aggroRadius` or tame `base` moves anywhere
      in this build — this is density, and only for creatures a player tames. */
   boar:    { name: "Boar",    biomes: [B.PLAINS, B.MEADOW], hp: 50, dmg: 7,  atkRange: 1.3, atkCooldownMs: 1300, windupMs: 520, aggroRadius: 4.5, leashRadius: 10, moveSpeed: 2.1, count: 24, tameable: true,
-    loot: [{ type: "wood", qty: 2, chance: 0.7 }, { type: "stone", qty: 1, chance: 0.5 }] },
+    /* v58: raw_meat joins a table that already existed. The wood and stone
+       entries and their chances are untouched, and taming still forfeits the
+       lot exactly as it always has. */
+    loot: [{ type: "wood", qty: 2, chance: 0.7 }, { type: "stone", qty: 1, chance: 0.5 }, { type: "raw_meat", qty: 1, chance: 0.7 }] },
   bear:    { name: "Bear",    biomes: [B.FOREST],           hp: 80, dmg: 13, atkRange: 1.6, atkCooldownMs: 1800, windupMs: 700, aggroRadius: 5.5, leashRadius: 11, moveSpeed: 1.7, count: 24, tameable: true,
-    loot: [{ type: "wood", qty: 3, chance: 0.8 }, { type: "stone", qty: 2, chance: 0.5 }] },
+    /* v58: the same addition, and the Bear carries more of it than the Boar
+       for the same reason its wood entry is already larger. */
+    loot: [{ type: "wood", qty: 3, chance: 0.8 }, { type: "stone", qty: 2, chance: 0.5 }, { type: "raw_meat", qty: 2, chance: 0.8 }] },
   griffin: { name: "Griffin", biomes: [B.PEAK],             hp: 70, dmg: 11, atkRange: 1.6, atkCooldownMs: 1500, windupMs: 600, aggroRadius: 8,   leashRadius: 14, moveSpeed: 2.0, count: 12, tameable: true,
     loot: [{ type: "iron_bar", qty: 1, chance: 0.6 }, { type: "iron_ore", qty: 2, chance: 0.5 }] },
   phoenix: { name: "Phoenix", biomes: [B.VOLROCK],          hp: 75, dmg: 11, atkRange: 1.5, atkCooldownMs: 1500, windupMs: 600, aggroRadius: 6.5, leashRadius: 12, moveSpeed: 1.9, count: 11, tameable: true,
@@ -3701,7 +3899,14 @@ function equippedCharm() { return (me && CHARMS[me.charm]) || null; }
    unequipping either one is already handled. */
 function breathMax() {
   const c = equippedCharm();
-  return Math.round((c ? c.maxBreath : BREATH_MAX) * guildBreathMult());
+  /* v58 PART C: the draught is added AFTER the guild multiply and is FLAT,
+     which is the whole of its stacking rule against the Drowned Court: a
+     x2.25 guild cannot multiply a +30s bonus into +67s. The live ceiling
+     goes 113s -> 143s and no further. updateBreath() already recomputes this
+     every single frame, so the bonus arrives and leaves on its own with no
+     second code path and nothing to invalidate. */
+  return Math.round((c ? c.maxBreath : BREATH_MAX) * guildBreathMult())
+       + (breathPotionActive() ? POTION_BREATH_BONUS : 0);
 }
 /* v21: F toggles diving. Surfacing while still standing ON deep water is
    refused rather than allowed: me.diving would go false with the player on a
@@ -7911,7 +8116,8 @@ function updateMob(m, dt, t, now) {
             const dMe = Math.hypot(me.x - m.x, me.y - m.y);
             if (dMe <= reach && Math.abs(Math.atan2(me.y - m.y, me.x - m.x) - aim) <= half) {
               applyDamage(Math.round(bmDmg * (phase === 3 ? 1.15 : 0.9)), def.name,
-                { kx: (me.x - m.x) / (dMe || 1), ky: (me.y - m.y) / (dMe || 1), kb: 0.6 });
+                { kx: (me.x - m.x) / (dMe || 1), ky: (me.y - m.y) / (dMe || 1), kb: 0.6,
+                  fire: mobIsFiery(m.kind) });   // v58 PART C
               shakeT = performance.now();
             }
             m.atkAt = now;
@@ -7920,7 +8126,8 @@ function updateMob(m, dt, t, now) {
           }
         }
         if (petInterposes(m, def)) petTakeDamage(bmDmg);
-        else applyDamage(bmDmg, def.name, { kx: (me.x - m.x) / d, ky: (me.y - m.y) / d, kb: 0.3 });
+        else applyDamage(bmDmg, def.name, { kx: (me.x - m.x) / d, ky: (me.y - m.y) / d, kb: 0.3,
+                                            fire: mobIsFiery(m.kind) });   // v58 PART C
       }
     }
   }
@@ -8937,6 +9144,39 @@ function invAdd(type, qty = 1) {
   refreshPanels();
 }
 function invHas(mats) { return Object.entries(mats).every(([t, q]) => (me.inv[t] || 0) >= q); }
+/* ============ v58 PART A — THE "USE ITEM" ACTION =======================
+   Confirmed before this build: no useItem(), no consumeItem() and no
+   consumable effect of any kind existed anywhere in this file. This is the
+   whole of the new action, and it deliberately sits in the INVENTORY /
+   ITEMS block beside invAdd/invHas/invSpend rather than in a system of its
+   own — using an item is an inventory operation that happens to have a
+   consequence, not a new subsystem.
+
+   The count gate is the spec's own proof gate and this is the only path a
+   consumable can leave the pack by, so there is no second route that could
+   skip it: an empty or absent count returns false and NOTHING happens — no
+   timer moves, no toast, no save. Exactly one leaves the stack, through the
+   existing invSpend() rather than a second hand-rolled decrement.
+
+   Re-using an item that is already running REFRESHES its timer rather than
+   extending it, which is what makes a stack of five a supply rather than a
+   forty-second buff nobody can interrupt. */
+function useItem(type) {
+  const c = CONSUMABLES[type];
+  if (!me || dead || !c) return false;
+  if ((me.inv[type] || 0) <= 0) return false;
+  invSpend({ [type]: 1 });
+  const now = Date.now();
+  if (c.kind === "heal")   foodRegenUntil    = now + c.ms;
+  if (c.kind === "speed")  speedPotionUntil  = now + c.ms;
+  if (c.kind === "breath") breathPotionUntil = now + c.ms;
+  if (c.kind === "fire")   fireResistUntil   = now + c.ms;
+  toast(`${c.verb === "Eat" ? "Ate" : "Drank"} ${c.name} — ${consumableEffectText(c)}`);
+  burst(me.x, me.y, ITEM_META[type].color, 8, 1.8);
+  refreshPanels();
+  savePlayer();
+  return true;
+}
 function invSpend(mats) {
   for (const [t, q] of Object.entries(mats)) {
     me.inv[t] -= q;
@@ -9601,6 +9841,17 @@ function applyDamage(dmg, from, opts = {}) {
     guardBreakUntil = 0;                       // "next hit taken" — exactly one
     dmg = Math.max(1, Math.round(dmg * (1 - GUARD_BREAK_REDUCE)));
     addFloat(me.x, me.y, "GUARDED", "#aab6c4");
+  }
+  /* v58 PART C: the fire resist draught, and it is deliberately the LAST
+     reduction rather than the first — it sits beside the armour and Guard
+     Break reduces it stacks with, uses their identical multiplicative
+     Math.max(1, Math.round(...)) shape so nothing can sum into an immunity,
+     and a floor of 1 damage survives every combination. It only ever sees a
+     hit the CALLER flagged as fire; every unflagged hit in the game, PvP and
+     drowning included, reaches this line exactly as it always has. */
+  if (opts.fire && fireResistActive()) {
+    dmg = Math.max(1, Math.round(dmg * (1 - POTION_FIRE_REDUCE)));
+    addFloat(me.x, me.y, "RESISTED", "#ff7a3c");
   }
   me.hp -= dmg;
   combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;   // v24: combat music signal
@@ -11499,6 +11750,21 @@ function refreshPanels() {
       const cd = COSMETICS[type];
       html += `<div class="inv-row weapon ${(me.cos && me.cos[cd.slot]) === type ? "equipped" : ""}" data-k="${type}" data-it="${type}">
         <span class="iconwrap">${ic(meta.color)}<span>${meta.name}</span></span><span class="qty">${cd.slot}${qty > 1 ? " ×" + qty : ""}</span></div>`;
+    } else if (CONSUMABLES[type]) {
+      /* v58 PART A: the one new interaction point, and it reuses the panel's
+         OWN existing item row rather than adding a UI. Structurally this is
+         the plain material row directly below with two additions: the
+         right-hand column states the real measured effect instead of only a
+         count, and a Use control sits inside it — which is the v25 pet Feed
+         control's exact shape, span, cursor, underline and colour included.
+         No new element, no new class, no new stylesheet rule.
+
+         data-it is still the type, so the Animation Pass's added/bumped row
+         animations keep working on a consumable exactly as on anything else. */
+      const cn = CONSUMABLES[type];
+      html += `<div class="inv-row" data-it="${type}"><span class="iconwrap">${ic(meta.color)}<span>${meta.name}</span></span>` +
+        `<span class="qty">${consumableEffectText(cn)} &nbsp;•&nbsp; ×${qty} &nbsp;` +
+        `<span data-use="${type}" style="cursor:pointer;text-decoration:underline;color:#bee078">${cn.verb}</span></span></div>`;
     } else {
       html += `<div class="inv-row" data-it="${type}"><span class="iconwrap">${ic(meta.color)}<span>${meta.name}</span></span><span class="qty">×${qty}</span></div>`;
     }
@@ -11542,6 +11808,15 @@ function refreshPanels() {
     }
   });
   uiInvSeen = invNow;
+  /* v58 PART A: the Use control's own click, wired exactly as v25's Feed
+     control is. A consumable row is a plain `.inv-row` and never
+     `.inv-row.weapon`, so this cannot collide with the equip handler below —
+     but it still stops its own click, for the same reason the Feed control
+     does: nothing should be able to grow a row-level handler later and have
+     Use silently trigger it too. */
+  list.querySelectorAll("[data-use]").forEach(el => {
+    el.onclick = (ev) => { ev.stopPropagation(); useItem(el.dataset.use); };
+  });
   list.querySelectorAll(".inv-row.weapon").forEach(el => {
     el.onclick = () => {
       if (el.dataset.a) {
@@ -11582,10 +11857,16 @@ function refreshPanels() {
     const w = WEAPONS[r.out];
     const ar = ARMORS[r.out];
     const ch = CHARMS[r.out];        // v21
+    const cn58 = CONSUMABLES[r.out]; // v58
     const tierCls = w ? "tier-" + w.tier : ar ? "tier-" + ar.tier : ch ? "tier-" + ch.tier : "";
     const statTxt = w ? ` <span class="qty">(${w.dmg} dmg)</span>`
       : ar ? ` <span class="qty">(−${Math.round(ar.reduce * 100)}% dmg taken)</span>`
-      : ch ? ` <span class="qty">(${ch.maxBreath}s breath, heals while diving)</span>` : "";
+      : ch ? ` <span class="qty">(${ch.maxBreath}s breath, heals while diving)</span>`
+      /* v58: a consumable's real magnitude and duration on its own craft row,
+         from the same single helper the inventory row uses — so the two can
+         never drift apart, and the spec's "measured and stated" is true of
+         the place a player first meets the item as well as the pack. */
+      : cn58 ? ` <span class="qty">(${consumableEffectText(cn58)})</span>` : "";
     return `<div class="craft-row ${tierCls}">
       <div>${r.label}${statTxt}</div>
       <div class="mats">${mats}</div>
@@ -11746,7 +12027,7 @@ function update(dt, t) {
       const mountMult = (me.mounted && activePet && activePet.species === "duskfox_elder")
         ? MOUNT_SPEED_MULT * 2 : (me.mounted ? MOUNT_SPEED_MULT : 1);
       const spd = PLAYER_SPEED * (SLOW.has(here) ? 0.55 : 1) * (isBlocking() ? 0.5 : 1)
-                * mountMult;   // v28, v52 hotfix: Duskfox Elder 2x
+                * mountMult * speedPotionMult();   // v28, v52 hotfix: Duskfox Elder 2x; v58: the draught, which returns 1 while mounted
       const nx = me.x + (dx / len) * spd * dt;
       const ny = me.y + (dy / len) * spd * dt;
       /* v21: the one movement gate the dive toggle touches — diveBlocked()
@@ -11800,6 +12081,16 @@ function update(dt, t) {
        walk-it-off rather than a second health bar. */
     if (myGuild() === "nameless_tide" && me.hp < me.maxHp) {
       me.hp = Math.min(me.maxHp, me.hp + GUILD_TIDE_REGEN * dt);
+    }
+    /* v58 PART B: food's heal-over-time, placed beside the safe zone's own
+       regen and the Nameless Tide's because it is the same one-line shape
+       and the same clamp — three sources, one convention, nothing new. It
+       ticks everywhere including mid-fight, which is deliberate and is why
+       the rate is what it is: 3 HP/s against an Elder Drake landing 28 every
+       1.4s is 20 HP/s of incoming. It tops you up between fights; it cannot
+       out-heal one. */
+    if (foodRegenActive() && me.hp < me.maxHp) {
+      me.hp = Math.min(me.maxHp, me.hp + FOOD_REGEN_RATE * dt);
     }
     updateBreath(dt);          // v21: dive breath / drowning / charm regen
     tutorialTick();            // v35: the tutorial's one proximity step
@@ -18341,6 +18632,21 @@ function updateHUD(dayT) {
       ? `<br><span style="color:${me.breath <= 0 ? "#ff7a68" : "#7fd8e8"}">` +
         `Breath ${Math.ceil(me.breath)}/${me.maxBreath}${me.diving ? " — diving" : ""}` +
         `${me.breath <= 0 ? " — DROWNING" : ""}</span>` : "") +
+    /* v58: the four effect timers, in the card that already carries the
+       Shrine blessing's, through the same fmtLeft() and the same one-line
+       shape. Each appears only while it is actually running, exactly as the
+       breath readout above appears only when it means something. The
+       Swiftfoot line says so when a mount is holding it, because an effect
+       that is running but doing nothing has to say which it is. */
+    (foodRegenActive()
+      ? `<br><span style="color:#d08a4a">Well fed ${fmtLeft(foodRegenUntil)}</span>` : "") +
+    (speedPotionActive()
+      ? `<br><span style="color:#78d0a8">Swiftfoot ${fmtLeft(speedPotionUntil)}` +
+        `${me.mounted ? " — held while mounted" : ""}</span>` : "") +
+    (breathPotionActive()
+      ? `<br><span style="color:#7fd8e8">Deep lungs ${fmtLeft(breathPotionUntil)}</span>` : "") +
+    (fireResistActive()
+      ? `<br><span style="color:#ff7a3c">Fireward ${fmtLeft(fireResistUntil)}</span>` : "") +
     petHudLine();
 
   const phase = dayT < 0.25 ? "Morning" : dayT < 0.5 ? "Afternoon" : dayT < 0.62 ? "Dusk" : "Night";

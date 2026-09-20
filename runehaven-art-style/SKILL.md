@@ -53,6 +53,160 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-20 (v58 — Consumables)
+
+Mostly a mechanics version, and the rendering-scope half of it is small and
+deliberately additive: **one new inventory-row branch, four new HUD lines,
+one new craft-row stat branch, five new item icon colours, and nothing
+else.** **The canvas was never entered.** No palette entry, biome colour,
+facet multiplier, projection constant, silhouette, sprite or draw call was
+touched, and the canvas gradient count is 13 before and 13 after — which is
+v57's number, not v56's twelve, because v57 added one.
+
+⚠️ **This file has no v57 entry.** v57 (Animation & A Living World) shipped
+`runehaven.html` and `debug/run4.js` from another machine and never wrote its
+changelog here, so the entry directly below this one is v56's. That gap is
+recorded rather than filled: writing a v57 entry now would mean inventing an
+account of work this session did not do.
+
+- **The new inventory row is the panel's OWN row with two additions, and
+  that is the whole of PART A's UI.** A consumable renders as a plain
+  `.inv-row` — same class, same `data-it` key, same `.iconwrap`/`.qty`
+  structure — with the right-hand column stating the real measured effect
+  instead of only a count, and a Use control sitting inside it. **That
+  control is the v25 pet Feed control's exact shape**: a bare `<span>` with
+  an inline `cursor: pointer`, `text-decoration: underline` and the same
+  `#bee078`, stopping its own click for the same reason the Feed control
+  does. **Zero new component styles, the tenth version running**, and
+  `grep '[data-use]'` finds nothing at all in the stylesheet.
+- **Because the row keeps `data-it`, the Animation Pass's own row
+  animations keep working on it for free** — a new draught fades in and a
+  changed count flashes exactly as wood and stone do. That was the reason to
+  extend the existing row rather than build a consumable row beside it.
+- **The four HUD lines are `tameBuffUntil`'s line, four times.** Same card
+  (`#hudPlayer`), same `fmtLeft()`, same `<br><span style="color:…">`
+  one-liner, same rule that a line appears only while it means something —
+  which is the v21 breath readout's rule as well. No new HUD element, no new
+  card, no new CSS, nothing added to the thirteen v56 audited.
+- **Two of the five new icon colours are not new colours at all.** The
+  breath draught wears `#7fd8e8`, which is the exact value the breath
+  readout and the Diver's Charm already wear, and the fire draught wears
+  `#ff7a3c`, which is the locked Lava palette entry verbatim. The HUD lines
+  wear the same two, so an item and the line it lights match by
+  construction.
+- **The other three are new hexes and are listed as such**: `#c2564e` raw
+  meat, `#d08a4a` cooked meat (also its HUD line), `#78d0a8` Swiftfoot (also
+  its HUD line). ITEM_META icon dots have never been drawn from the locked
+  biome palette — they are per-item identity swatches — but three is three,
+  and they are the easiest thing here to want re-picked.
+- **The craft row gained a fifth `statTxt` branch and states a real
+  number.** Weapons show damage, armour shows a reduction, a charm shows
+  breath seconds — a consumable now shows its magnitude and duration, from
+  `consumableEffectText()`, **the same single helper the inventory row uses,
+  so the two can never drift apart.** That is the spec's own "measured and
+  stated, not a vague temporary boost" applied to the place a player first
+  meets the item as well as to the pack.
+- **`run5` gained a consumables sweep, and it sweeps all four rather than a
+  representative one.** A brand new account carries no consumable and has no
+  timer running, so every one of these branches is dead to the coverage
+  harness unless it is put there deliberately — each row rendered, each one
+  used through the real action, the post-use repaint drawn, all four HUD
+  lines on together and then all four off, the mounted branch of the
+  Swiftfoot line (its own string, otherwise never drawn), and all four craft
+  rows at the real Spawn Forge. 1324 coverage draws before, 1349 after.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent or where the world had moved
+under it. All shipped through the full gate (parse clean, `run3`
+`CAUGHT ERROR: none`, `run4` **1681/1681 with zero FAIL** including 56 new
+v58 gates, `run5` 1349 coverage draws clean, a 59-line grep checklist with
+zero misses) — refinements to consider, not unfinished work. The mechanics
+and balance half of these also lives in the commit message, per the README's
+split.
+
+1. **⚠️ THE SPEC'S OPENING PREMISE HAS PARTLY EXPIRED, AND IT IS WORTH
+   KNOWING BEFORE ANYTHING ELSE HERE.** It states that herb and essence are
+   "pure dead weight right now: a player can gather them and nothing in the
+   game ever asks for them again." **Half of that is no longer true** —
+   v25's Salamander King feeding consumes `rare_herb`, and its own comment
+   says so ("Feeding reuses rare_herb, gatherable but with no purpose at all
+   since v17"). The spec's **bolded** claim, "used in zero crafting recipes
+   anywhere in the current file", was still exactly true at build time and
+   is the half this version fixes. Built to the bolded claim; flagged rather
+   than quietly corrected, because the spec was written before v25 landed
+   and someone may want to re-read it with that in mind.
+2. **⚠️ THE ONE GENUINELY UNSPECIFIED DECISION: where raw meat comes
+   from.** PART B says "reuse whatever raw-meat-equivalent loot already
+   drops, or gate behind a Forge interaction turning a raw material into a
+   cooked one". **There was no raw-meat-equivalent** — every loot entry in
+   every mob in the file was wood, stone, iron_ore, iron_bar, runic_stone or
+   dragonsteel, verified directly. So this is the sentence's second half,
+   and `raw_meat` was added to the loot tables of the **two canon beasts the
+   bible already names** (Boar in Plains/Meadow, Bear in Forest), whose
+   tables until now were wood and stone. **No new mob, no new biome, no new
+   gatherable node and no bible content was invented** — two items were
+   added and both are flagged non-canon in the file, exactly as
+   `divers_charm` (v21) and `void_shard` (v32) are. The existing wood/stone
+   entries and their chances are untouched and `run4` pins them.
+   **This is the single most reversible decision here**: if raw meat should
+   come from somewhere else, it is two loot lines and one recipe.
+3. **A Forge cooks the meat, and a forge is an odd oven.** It is the spec's
+   own proposed mechanism and it reuses the entire existing crafting gate
+   rather than inventing a campfire, but it is worth a second look.
+4. **THE STACKING RULE: the Swiftfoot Draught does not stack with a mount at
+   all.** The spec leaves this "TBD ... must not compound into something
+   absurd, check against both directly", so both were checked directly.
+   **Mount**: `MOUNT_SPEED_MULT` is 1.6 and the Duskfox Elder's is 3.2, so a
+   multiplicative draught would have put a mounted Duskfox rider at
+   9.2 × 3.2 × 1.25 = **36.8 tiles/s** — the exact absurdity named. Rather
+   than pick a tolerable number, `speedPotionMult()` returns **1 while
+   mounted**, so compounding is impossible by construction rather than by
+   tuning. The HUD says "held while mounted" so a player is never confused
+   about a timer that is running and doing nothing. **Guild**: checked
+   against all five advantages at both tiers, and **not one of them
+   multiplies `PLAYER_SPEED`** — `run4` drives the multiplier under every
+   guild at both tiers and asserts it never moves.
+5. **The breath bonus is FLAT and added AFTER the guild multiply, which is
+   its whole stacking rule.** The Drowned Court's Tier 2 is ×2.25; had the
+   bonus gone inside the multiply it would have become +67s. The live
+   ceiling goes 113s → 143s and no further, driven and asserted at both
+   tiers.
+6. **Re-using an item that is already running REFRESHES its timer rather
+   than extending it.** Unspecified, and this is the direction that keeps a
+   stack of five a supply rather than one long uninterruptible buff.
+7. **The four timers are session-local, with no database column.**
+   Deliberately `tameBuffUntil`'s own storage — no schema change, no
+   migration, nothing added to `savePlayer()`'s fixed column list (pinned by
+   a gate that reads the function body). A logout ends every effect; the
+   items themselves live in `inventory` and persist normally, which is the
+   split v35's cosmetics already made. **Death does NOT clear them**, for
+   consistency with `tameBuffUntil`, which a death has never cleared either.
+8. **"Fire" is exactly three creatures: Elder Drake, Phoenix, Salamander
+   King.** Every hostile whose home is the volcano or the caldera, which is
+   the spec's "tying naturally to Volcano/Caldera expeditions". **The two
+   Demon Knights that guard the drake are deliberately excluded** — they
+   guard the volcano, they are not made of it, and including them would
+   quietly turn the draught into a general boss-fight resist. Lava is in
+   `BLOCKED`, so no player ever stands in it and there is no environmental
+   fire to cover.
+9. **`aquatic_essence` and `void_shard` still have no recipe after this
+   build, and that is deliberate.** The breath draught was the obvious home
+   for aquatic essence, but aquatic essence is only gatherable **by
+   diving** — the item that exists to let you dive longer would have been
+   gated behind already diving, which is the exact bootstrapping wall v21
+   wrote itself a note about when it priced the Diver's Charm in iron and
+   wood. The spec names herb and essence and only those.
+10. **Every number is a TUNABLE and every one was sized against a live value
+    rather than in isolation** (the spec's PART D): food 3 HP/s for 8s = 24
+    HP, against the safe zone's own 2.5 HP/s and a maxHp of 100; speed ×1.25
+    against a mount's 1.6; breath +30s flat against a 113s ceiling; fire −25%
+    against runic armour's permanent −28% and Guard Break's −50%, one damage
+    source only, multiplying with armour rather than summing so nothing can
+    reach immunity, with the existing 1-damage floor intact. `run4` asserts
+    each of those **relationships from the live constants**, not the numbers
+    from this list.
+
 ### 2026-09-11 (v56 — UI Consistency & Onboarding Pass)
 
 Three parts and all three are rendering, which is the first time that has been
