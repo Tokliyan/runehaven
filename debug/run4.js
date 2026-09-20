@@ -9452,6 +9452,17 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          about the source, except where the assertion is genuinely about the
          source (that exactly one consumption path exists at all).
          ===================================================================== */
+      /* ⚠️ ASSERTED OUTSIDE THE GUARD ON PURPOSE. Every other block in this
+         harness is wrapped in a hook-existence check, which means renaming a
+         hook makes its gates evaporate while run4 still reports all-PASS and
+         zero FAIL. That is a silent skip, and it is exactly the failure this
+         suite exists to prevent — so the existence of the three hooks these
+         56 gates need is itself a gate. */
+      results.push(['v58: the three consumable harness hooks exist, so none of the gates below can silently vanish',
+        typeof window.debugConsumableInfo === 'function' &&
+        typeof window.useItem === 'function' &&
+        typeof window.debugSetConsumable === 'function' &&
+        typeof window.consumableEffectText === 'function']);
       if (window.debugConsumableInfo && window.useItem && window.debugSetConsumable) {
         const CI = window.debugConsumableInfo;
         const setC = window.debugSetConsumable;
@@ -9585,12 +9596,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           /* THE HEADLINE GATE: herb and essence have a use for the first time
              in this project's history — measured against the live table, not
              against a memory of it. */
-          const herbRecipes = gameScript.split('rare_herb:').length - 1;
-          const essRecipes = gameScript.split('magic_essence:').length - 1;
-          results.push([`v58 C: rare_herb and magic_essence are ingredients in a real recipe for the FIRST time (herb in ${potions.filter(r => r.mats.rare_herb).length}, essence in ${potions.filter(r => r.mats.magic_essence).length})`,
+          /* The load-bearing half only. An earlier draft also counted textual
+             occurrences of 'rare_herb:' / 'magic_essence:' anywhere in the
+             script and required them to be > 0 — which was already true
+             before v58 (ITEM_META, the gather tables, comments), i.e.
+             tautological. The RECIPES table is the only place that can
+             answer this question, so it is the only place asked. */
+          results.push([`v58 C: rare_herb and magic_essence are ingredients in a real recipe for the FIRST time (herb in ${potions.filter(r => r.mats.rare_herb).length}, essence in ${potions.filter(r => r.mats.magic_essence).length} of 3)`,
             potions.filter(r => r.mats.rare_herb).length === 3 &&
-            potions.filter(r => r.mats.magic_essence).length === 3 &&
-            herbRecipes > 0 && essRecipes > 0]);
+            potions.filter(r => r.mats.magic_essence).length === 3]);
           /* DRIVEN: crafting one really works at a forge and really spends
              the herb and the essence. */
           /* DRIVEN at the real Spawn Forge — stood ON it, not near spawn:
@@ -9637,8 +9651,48 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           results.push([`v58 C/D: the draught multiplies movement on foot and is EXACTLY 1 while mounted (${mult0} / ${multFoot} / ${multMounted})`,
             mult0 === 1 && multFoot === K58.POTION_SPEED_MULT && multMounted === 1]);
           results.push(['v58 D: so it cannot compound with a mount at all — checked against the live MOUNT_SPEED_MULT',
-            K58.POTION_SPEED_MULT < CI().against.MOUNT_SPEED_MULT &&
-            K58.POTION_SPEED_MULT * 1 === K58.POTION_SPEED_MULT]);
+            K58.POTION_SPEED_MULT < CI().against.MOUNT_SPEED_MULT]);
+          /* DRIVEN AS REAL DISPLACEMENT. The three assertions above only read
+             speedPotionMult(), i.e. they assert that the function returns
+             what the function returns — the only evidence the multiplier
+             ever reaches `spd` was a source regex. So walk the player, for
+             real, through update()'s own movement branch, and measure how
+             far he actually got. */
+          /* Through a real dispatched KeyboardEvent, which is this harness's
+             own idiom at the v21 dive gate — `keys` is a top-level `let` and
+             top-level lets never land on window, so there is nothing to poke
+             directly even if poking it were the right thing to do. */
+          const press58 = (key, type) => window.dispatchEvent(
+            new window.KeyboardEvent(type, { key, bubbles: true }));
+          /* ⚠️ EXACTLY ONE TICK, and that is the whole reason this gate is
+             stable. A 20-tick walk was genuinely flaky: `spd` also carries
+             SLOW.has(here) at 0.55, so the faster run crosses a terrain band
+             at a different moment than the slower one and the ratio comes out
+             wrong through no fault of the multiplier — observed live at 1.294
+             against 1.25 on a spot whose biome changed mid-walk. One tick
+             from an identical start keeps every other factor in `spd`
+             — terrain, block state, mount — bit-identical between the two
+             measurements, so they cancel in the ratio and the only thing
+             left is the draught. */
+          const walk58 = (tBase) => {
+            dsp58({ x: SPOT58.x, y: SPOT58.y });
+            press58('d', 'keydown');
+            window.update(0.05, tBase);
+            press58('d', 'keyup');
+            const p = window.debugWorldInfo().player;
+            return Math.hypot(p.x - SPOT58.x, p.y - SPOT58.y);
+          };
+          setC({ speed: 0 });
+          const distPlain = walk58(700000);
+          setC({ speed: Date.now() + 60000 });
+          const distFast = walk58(800000);
+          /* Deliberately left RUNNING: the guild sweep directly below reads
+             speedPotionMult() and needs a live effect to read. Turning it off
+             here is what made that sweep see a flat 1 under every guild and
+             "pass" for the wrong reason. */
+          results.push([`v58 C/D: and the multiplier really reaches movement — ${distPlain.toFixed(4)} tiles in one tick plain against ${distFast.toFixed(4)} drinking, a live ratio of ${(distFast / distPlain).toFixed(4)} against ${K58.POTION_SPEED_MULT}`,
+            distPlain > 0.05 &&
+            Math.abs((distFast / distPlain) - K58.POTION_SPEED_MULT) < 1e-6]);
           /* GUILD, both tiers, all five: not one of them touches movement
              speed, so the multiplier must not move under any of them. This is
              the spec's "check against both directly" rather than assumed. */
@@ -9701,6 +9755,74 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             tankUp.breath === tankUp.maxBreath && tankDown.breath === tankDown.maxBreath]);
           results.push(['v58 C: and the draught outlasts a full tank, so the tank is always the limit rather than the timer',
             K58.POTION_BREATH_MS / 1000 > tankUp.maxBreath]);
+          /* ⚠️ THE REGRESSION GATE FOR THE ONE REAL BUG A FRESH-CONTEXT
+             REVIEW CAUGHT IN THIS BUILD. updateBreath() only ADDS to
+             me.breath in its two regen branches, and both require that you
+             are not diving — so a draught that raised only the CEILING was a
+             complete no-op in the one situation the item exists for: drunk
+             at 12 air on B.DEEP it left the tank at 12, drowned you on the
+             same frame, and displayed "Breath 12/143" while doing it.
+             Everything above this line passed with that bug present, because
+             every one of those gates sets `diving: false` first. This one
+             drinks WHILE DOWN, which is the only way to see it. */
+          {
+            /* Scanned the way the v21 dive gate scans, rather than by ring
+               sweep: open ocean is nowhere near the spawn point, and a
+               16-spoke sweep out to 300 tiles found nothing at all. Strided
+               to keep a 1000x1000 map cheap, and held outside the safe zone
+               so nothing here is protected. */
+            const wi58b = window.debugWorldInfo();
+            let deepTile = null;
+            for (let y = 4; y < wi58b.N - 4 && !deepTile; y += 3) {
+              for (let x = 4; x < wi58b.N - 4; x += 3) {
+                if (window.biomeAt(x, y) !== wi58b.B.DEEP) continue;
+                if (Math.hypot(x - wi58b.SPAWN.x, y - wi58b.SPAWN.y) < wi58b.SAFE_RADIUS + 24) continue;
+                deepTile = [x, y]; break;
+              }
+            }
+            results.push(['v58 C: a real B.DEEP tile was found to drink underwater on',
+              !!deepTile]);
+            if (deepTile) {
+              setC({ breath: 0 });
+              dsp58({ x: deepTile[0] + 0.5, y: deepTile[1] + 0.5, charm: null,
+                      diving: true, hp: 100 });
+              window.update(0.016, 900000);              // settle maxBreath
+              dsp58({ breath: 12 });
+              inv58({ breath_potion: 1 });
+              const airBefore = window.debugWorldInfo().player.breath;
+              const tankBefore = window.debugWorldInfo().player.maxBreath;
+              window.useItem('breath_potion');
+              const afterP = window.debugWorldInfo().player;
+              /* Both halves, separately: the CEILING went up by the bonus AND
+                 the AIR went up by the bonus. The bug was that only the first
+                 of those was true. */
+              results.push([`v58 C: drinking WHILE DIVING really grants air, not just a ceiling — ${airBefore} -> ${afterP.breath} air in a ${tankBefore} -> ${afterP.maxBreath} tank`,
+                afterP.maxBreath === tankBefore + K58.POTION_BREATH_BONUS &&
+                afterP.breath === airBefore + K58.POTION_BREATH_BONUS]);
+              results.push(['v58 C: and the air it grants is exactly the bonus, never more than the ceiling allows',
+                afterP.breath === Math.min(afterP.maxBreath, airBefore + K58.POTION_BREATH_BONUS) &&
+                afterP.breath <= afterP.maxBreath]);
+              /* And the drain really runs from the new, higher figure — the
+                 seconds are real seconds, not a number on a card. */
+              const beforeDrain = window.debugWorldInfo().player.breath;
+              for (let i = 0; i < 10; i++) window.update(0.1, 901000 + i * 100);
+              const afterDrain = window.debugWorldInfo().player.breath;
+              results.push([`v58 C: and those are real seconds — the tank drains from the new figure at the live rate (${beforeDrain} -> ${afterDrain.toFixed(2)})`,
+                Math.abs((beforeDrain - afterDrain) - 1) < 0.05]);
+              /* Overfill is impossible: drink on a full tank and nothing
+                 exceeds the ceiling. */
+              setC({ breath: 0 });
+              dsp58({ x: SPOT58.x, y: SPOT58.y, diving: false, breath: 999 });
+              window.update(0.016, 902000);
+              inv58({ breath_potion: 1 });
+              window.useItem('breath_potion');
+              const full = window.debugWorldInfo().player;
+              results.push(['v58 C: drinking on a full tank cannot overfill it',
+                full.breath === full.maxBreath]);
+              setC({ breath: 0 });
+              dsp58({ x: SPOT58.x, y: SPOT58.y, diving: false, hp: 100 });
+            }
+          }
           setC({ breath: 0 });
           dsp58({ charm: null });
 
@@ -9712,8 +9834,38 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             fm.indexOf('salamander_king') >= 0]);
           results.push(['v58 C: and the Demon Knights that guard the drake are deliberately NOT fire',
             fm.indexOf('demon_knight') < 0 && fm.indexOf('basilisk') < 0]);
-          results.push(['v58 C: both mob attack call sites flag their own fire from the one predicate',
-            gameScript.split('fire: mobIsFiery(m.kind)').length === 3]);
+          /* THREE sites now: the drake's own local swing, the ordinary mob
+             swing, and — added after a fresh-context review caught it — the
+             drake's cone as it goes out to every OTHER player. All three read
+             the same predicate; not one of them re-tests the kind inline. */
+          results.push(['v58 C: all three mob damage sites flag their own fire from the one predicate, none inline',
+            gameScript.split('fire: mobIsFiery(m.kind)').length === 4 &&
+            gameScript.indexOf('FIRE_MOBS.has(m.kind)') < 0]);
+          /* ⚠️ THE SECOND THING THE FRESH-CONTEXT REVIEW CAUGHT. The Elder
+             Drake's phase-2 sweep and phase-3 breath are the one place in the
+             game where a mob damages players OTHER than the one it is locally
+             targeting, and those go out over the wire through dealHit(),
+             whose payload is a FIXED field list. An opts flag that is not
+             named in that list does not survive the broadcast — so without
+             `fire` in it, the draught protected exactly one player in the
+             cone and silently let everyone else eat the full hit. A
+             single-client harness can never reach that path by playing, so it
+             is pinned at both ends instead. */
+          results.push(['v58 C: the drake\'s cone flags fire for OTHER players too, not only its local target',
+            gameScript.indexOf('dealHit(o2.name || o2.u, Math.round(bmDmg * 0.8),') > 0 &&
+            /dealHit\(o2\.name \|\| o2\.u, Math\.round\(bmDmg \* 0\.8\),\s*\n\s*\{ kb: 0\.5, fire: mobIsFiery\(m\.kind\) \}\);/.test(gameScript)]);
+          results.push(['v58 C: and dealHit\'s fixed payload actually carries the flag, or it would not survive the wire',
+            /channel\.send\(\{ type: "broadcast", event: "hit", payload: \{[\s\S]{0,1400}?fire: !!opts\.fire,\s*\n\s*\} \}\);/.test(gameScript)]);
+          /* DRIVEN: a remote hit arriving with the flag really resists, which
+             is the receiving half of that same path. */
+          setC({ fire: Date.now() + 60000 });
+          dsp58({ x: SPOT58.x, y: SPOT58.y, hp: 100, armor: null });
+          if (window.debugSetAbility) window.debugSetAbility({ guardBreakUntil: 0 });
+          window.applyDamage(20, 'Elder Drake', { fire: true, kx: 0, ky: 0, kb: 0 });
+          const remoteFire = 100 - window.debugWorldInfo().player.hp;
+          results.push([`v58 C: a hit arriving from the wire with the flag resists exactly as a local one does (${remoteFire} of 20)`,
+            remoteFire === Math.max(1, Math.round(20 * (1 - K58.POTION_FIRE_REDUCE)))]);
+          setC({ fire: 0 });
           /* DRIVEN through the real applyDamage, bare-chested so nothing else
              is in the way. */
           const hitFor = (dmg, opts) => {
@@ -9762,9 +9914,18 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             K58.POTION_FIRE_REDUCE < CI().against.GUARD_BREAK_REDUCE]);
           results.push(['v58 D: the food total is a top-up, not a health bar — well under half of maxHp',
             (K58.FOOD_REGEN_RATE * K58.FOOD_REGEN_MS / 1000) < window.debugWorldInfo().player.maxHp / 2]);
-          results.push(['v58 D: and its rate is within touching distance of the safe zone\'s own 2.5/s, not a multiple of it',
-            K58.FOOD_REGEN_RATE > CI().against.SAFE_ZONE_REGEN &&
-            K58.FOOD_REGEN_RATE < CI().against.SAFE_ZONE_REGEN * 1.5]);
+          /* The safe zone's regen has no named constant — it is an inline
+             literal in update(). Read the REAL one out of the source rather
+             than comparing against a copy that could drift: a gate that
+             compares a number to its own duplicate proves nothing. */
+          const liveSafeRegen = (() => {
+            const m = /if \(inSafeZone\(me\.x, me\.y\) && me\.hp < me\.maxHp\) \{\s*\n\s*me\.hp = Math\.min\(me\.maxHp, me\.hp \+ ([\d.]+) \* dt\);/.exec(gameScript);
+            return m ? parseFloat(m[1]) : null;
+          })();
+          results.push([`v58 D: and its rate is within touching distance of the safe zone's own live ${liveSafeRegen}/s, not a multiple of it`,
+            liveSafeRegen !== null &&
+            K58.FOOD_REGEN_RATE > liveSafeRegen &&
+            K58.FOOD_REGEN_RATE < liveSafeRegen * 1.5]);
           /* DRIVEN: expire everything at once and confirm the world is back
              to exactly where it started. */
           setC({ food: Date.now() - 1, speed: Date.now() - 1,
@@ -9783,6 +9944,14 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             stated.some(t => t.indexOf(String(Math.round((K58.POTION_SPEED_MULT - 1) * 100)) + '%') >= 0) &&
             stated.some(t => t.indexOf(String(Math.round(K58.POTION_FIRE_REDUCE * 100)) + '%') >= 0) &&
             stated.every(t => t.toLowerCase().indexOf('temporary boost') < 0)]);
+          /* The display name is duplicated: ITEM_META carries one and
+             CONSUMABLES carries another, and the toast reads c.name while the
+             inventory row reads meta.name. Nothing structural stops those two
+             drifting, so this is what stops it. */
+          const nm58 = CI().itemNames;
+          results.push(['v58: every consumable\'s name agrees between ITEM_META and CONSUMABLES, which nothing structural enforces',
+            Object.keys(CT).length === Object.keys(nm58).length &&
+            Object.keys(nm58).every(k => !!nm58[k].meta && nm58[k].meta === nm58[k].table)]);
           /* And the PANEL really says it — the inventory row and the craft
              row, from the one helper, so they cannot drift apart. */
           inv58({ breath_potion: 2 });

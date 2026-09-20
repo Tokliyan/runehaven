@@ -88,6 +88,12 @@ account of work this session did not do.
   one-liner, same rule that a line appears only while it means something —
   which is the v21 breath readout's rule as well. No new HUD element, no new
   card, no new CSS, nothing added to the thirteen v56 audited.
+- **The Swiftfoot line says "suppressed while mounted", and the word matters.**
+  It shipped as "held", which reads as *preserved* — and the deadline is an
+  absolute `Date.now()` figure that keeps running while you ride, exactly as
+  the Shrine blessing's does, so nothing is held at all. A draught drunk in
+  the saddle is spent for nothing. Caught by the fresh-context review below;
+  the string is now the one that is true, and `run5` greps for the new word.
 - **Two of the five new icon colours are not new colours at all.** The
   breath draught wears `#7fd8e8`, which is the exact value the breath
   readout and the Diver's Charm already wear, and the fire draught wears
@@ -115,11 +121,119 @@ account of work this session did not do.
   Swiftfoot line (its own string, otherwise never drawn), and all four craft
   rows at the real Spawn Forge. 1324 coverage draws before, 1349 after.
 
+
+## WHAT THE FRESH-CONTEXT REVIEW FOUND (and it was worth running)
+
+NEXT_BUILD.md asked for ECC's fresh-context review workflow against this
+diff, and for an honest report of what it found "even if the answer is
+'nothing new'". **The answer is not "nothing new".**
+
+⚠️ **First, the ECC part, because it is the actual data point asked for: ECC
+never ran.** The repo declares it in `.claude/settings.json`, but
+`~/.claude/plugins/installed_plugins.json` holds an empty plugin map in this
+environment — no ECC skill, no hook, no GateGuard was present, and nothing
+intercepted a single command at any point in this build. **As configured,
+invoking it is currently a no-op.** The review was run anyway, as a genuinely
+separate pass over the diff by a reviewer that had not written it, which is
+the substance of what the instruction wanted.
+
+**It found two real defects that the full 56-gate suite had passed over, and
+both are now fixed with regression gates that provably fail without the fix.**
+
+1. **⚠️ THE BREATH DRAUGHT WAS A COMPLETE NO-OP UNDERWATER — the one
+   situation the item exists for.** `updateBreath()` only ever ADDS to
+   `me.breath` in its two regen branches, and **both require that you are not
+   diving**; while you are down on `B.DEEP` the only thing that runs is the
+   drain. The draught raised the CEILING only, so drinking at 12 air left
+   left the tank at 12, drowned you on exactly the frame you would have
+   drowned anyway, and displayed **"Breath 12/143"** while doing it — which
+   reads as though air had been gained. The advertised effect string,
+   "+30s breath for 180s", was false in the only case that mattered, and
+   the spec's Part C calls this item "a direct, in-world answer to the
+   underwater-reachability conversation".
+   **Every one of the original breath gates passed with this bug present,
+   because every one of them sets `diving: false` before it looks.** The fix
+   is two lines in `useItem()` — drinking air now gives air, clamped to the
+   ceiling it just raised. The new gate drinks WHILE DOWN on a real
+   `B.DEEP` tile, and reverting the fix fails it: `12 -> 12 air in a
+   30 -> 30 tank`.
+2. **⚠️ THE ELDER DRAKE'S FIRE BREATH WAS NOT FIRE FOR ANYONE BUT ITS LOCAL
+   TARGET.** The phase-2 sweep and phase-3 breath are **the one place in the
+   game where a mob damages players other than the one it is locally
+   targeting**, and those go out over the wire through `dealHit()`, whose
+   broadcast payload is a **fixed field list**. An `opts` flag not named in
+   that list does not survive the wire — so the Fireward Draught protected
+   exactly one player in the cone and silently let everyone else eat the full
+   hit, with no `RESISTED` float to hint at it. **A single-client harness can
+   never reach that path by playing**, so it is pinned at both ends instead:
+   the cone's call site, `dealHit()`'s payload, and a driven receive.
+
+**Four harness weaknesses it also caught, all fixed:**
+- **The entire 56-gate block sat inside `if (hooks exist)` with no outer
+  assertion.** Renaming any one hook would have made all 56 gates evaporate
+  while run4 still printed all-PASS and zero FAIL. **That is precisely the
+  silent skip this suite exists to prevent**, so the existence of the hooks
+  is a gate now, asserted outside the guard.
+- **The speed gate asserted that a function returns what the function
+  returns** — it only read `speedPotionMult()`. It now **walks the player for
+  real** through `update()`'s movement branch with a dispatched
+  `KeyboardEvent` and measures displacement: 9.20 tiles plain against 11.50
+  drinking, a live ratio of 1.250. (Worth knowing: `keys` is a top-level
+  `let`, and top-level lets never land on `window` — a first attempt to poke
+  `window.keys` directly would have silently done nothing.)
+- **The herb/essence "FIRST time" gate had a tautological half** that counted
+  textual occurrences of `rare_herb:` anywhere in the script and required
+  them to be > 0 — already true before v58. Removed; the RECIPES table is
+  the only place that can answer the question, so it is the only place asked.
+- **A comment claimed the PART D comparison values were "read LIVE rather
+  than restated", and one of them was restated:** the Spawn Safe Zone's
+  regen rate has **no named constant anywhere in the file** — it is an inline
+  `2.5` in `update()`. The gate was comparing the food rate against a
+  duplicate that could silently drift. It is no longer exported at all; the
+  gate reads the real literal out of the source.
+
+**Two things it flagged that are deliberately NOT changed, recorded so the
+decision is visible rather than missed:**
+- **Part D was never checked against PvP, and that is a genuine gap in the
+  spec's own framing.** Every number here is sized against mob damage,
+  safe-zone regen, mount speed, armour and guild buffs — **not against a
+  player.** There is no `useItem()` cooldown, no interrupt on damage, and no
+  restriction inside the Colosseum or during a duel, which pays
+  `DUEL_REWARD_RUNIC`. Sustained healing is **capped at 3 HP/s** whatever
+  the stack size, because re-using refreshes rather than extends — against
+  12.5 DPS from fists that is ~24% negation, not the deadlock first
+  suspected, and ~7% at dragonsteel tier. Left as is because re-tuning
+  against PvP is a balance decision the locked spec does not ask for, but
+  **a food cooldown or a damage interrupt is the obvious lever** if duels
+  start feeling spongy.
+- **`raw_meat` measurably increases `ground_items` volume.** Boar and Bear
+  have the two highest counts in the game (24 each), and expected drops per
+  kill go 1.2 -> 1.9 and 1.3 -> 2.1 — roughly **+60% persisted rows from the
+  two mobs players kill most.** Every client loads the whole table at login
+  with **no filter and no expiry**, and unpicked meat accumulates forever.
+  That missing expiry is pre-existing and systemic rather than something this
+  build introduced, and adding one is well outside a Consumables spec — but
+  **the two drop chances (0.7 and 0.8) are the cheap lever** if the table
+  starts to hurt, and an age filter on the login read is the real fix.
+- **One further note it raised, recorded as a fact rather than a fix:**
+  `opts.fire` on a broadcast hit is attacker-controlled, because the hit
+  handler spreads the whole remote payload into `opts`. It is left
+  unvalidated deliberately and the comment now says so — the branch only ever
+  subtracts, so **the worst a forged flag can do is make the sender's own hit
+  weaker.** There is no direction in which it pays to lie.
+
+**Verdict on the exercise: the review earned its keep.** Two shipped defects,
+one of them invisible to every gate written alongside the feature and in the
+item's single most important use case, plus four gates that would have
+outlived their own usefulness. The pass cost one round trip and it did not
+override the existing gate discipline — RED stayed RED, and every fix went
+back through the full gauntlet.
+
 ## JUDGMENT CALLS THIS VERSION
 
 Calls made where the locked spec was silent or where the world had moved
 under it. All shipped through the full gate (parse clean, `run3`
-`CAUGHT ERROR: none`, `run4` **1681/1681 with zero FAIL** including 56 new
+`CAUGHT ERROR: none`, `run4` **1692/1692 with zero FAIL** including 67 new
 v58 gates, `run5` 1349 coverage draws clean, a 59-line grep checklist with
 zero misses) — refinements to consider, not unfinished work. The mechanics
 and balance half of these also lives in the commit message, per the README's

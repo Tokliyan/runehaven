@@ -914,7 +914,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         const mountedTxt = doc.getElementById('hudPlayer').textContent;
         for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
         window.debugSetMount({ mounted: false });
-        if (mountedTxt.indexOf('held while mounted') < 0) {
+        if (mountedTxt.indexOf('suppressed while mounted') < 0) {
           console.log('COVERAGE GAP: the mounted branch of the Swiftfoot HUD line never drew');
           process.exit(1);
         }

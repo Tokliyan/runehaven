@@ -1053,7 +1053,7 @@ const ITEM_META = {
      craft one before ever reaching an Underwater Cave. */
   divers_charm: { name: "Diver's Charm", color: "#7fd8e8", charm: true },
   /* ============ v58 — CONSUMABLES =====================================
-     Six new items, and every one of them is DESIGNED content rather than
+     Five new items, and every one of them is DESIGNED content rather than
      bible content being implemented: a direct search of RUNEHAVEN_BIBLE.md
      for food, meat, cook, potion, consumable, eat, hunger and fish returns
      nothing at all. Flagged here the same way divers_charm (v21) and
@@ -2732,6 +2732,13 @@ function debugConsumableInfo() {
     constants: { FOOD_REGEN_RATE, FOOD_REGEN_MS, POTION_SPEED_MULT, POTION_SPEED_MS,
                  POTION_BREATH_BONUS, POTION_BREATH_MS, POTION_FIRE_REDUCE, POTION_FIRE_MS },
     fireMobs: Array.from(FIRE_MOBS),
+    /* The display name is DUPLICATED — ITEM_META carries one and CONSUMABLES
+       carries another, the toast reads c.name and the inventory row reads
+       meta.name, and nothing structural stops those two drifting apart. Both
+       sides are exported so a gate can hold them together. */
+    itemNames: Object.keys(CONSUMABLES).reduce((o, k) => {
+      o[k] = { meta: (ITEM_META[k] || {}).name, table: CONSUMABLES[k].name }; return o;
+    }, {}),
     until: { food: foodRegenUntil, speed: speedPotionUntil,
              breath: breathPotionUntil, fire: fireResistUntil },
     active: { food: foodRegenActive(), speed: speedPotionActive(),
@@ -2739,9 +2746,16 @@ function debugConsumableInfo() {
     speedMult: speedPotionMult(),
     mounted: !!(me && me.mounted),
     breathMax: me ? breathMax() : null,
-    /* The comparison values PART D is checked against, read LIVE rather than
-       restated, so a gate can assert the relationship instead of the number. */
-    against: { PLAYER_SPEED, MOUNT_SPEED_MULT, SAFE_ZONE_REGEN: 2.5,
+    /* The comparison values PART D is checked against. Every one of these is
+       the LIVE binding, so a gate can assert the relationship instead of the
+       number — with one deliberate exception, called out because an earlier
+       draft of this comment claimed otherwise: the Spawn Safe Zone's regen
+       rate has no named constant anywhere in the file. It is an inline 2.5
+       in update(). Rather than restate it here and let a gate compare the
+       food rate against a duplicate that could silently drift, it is NOT
+       exported at all — the gate that needs it reads the real literal out of
+       the source, which is the only way that check can stay honest. */
+    against: { PLAYER_SPEED, MOUNT_SPEED_MULT,
                ARMOR_REDUCE: Object.keys(ARMORS).reduce((o, k) => { o[k] = ARMORS[k].reduce; return o; }, {}),
                GUARD_BREAK_REDUCE, BREATH_MAX, BREATH_CHARM_MAX,
                GUILD_BREATH_MULT, GUILD_BREATH_MULT_T2, guildBreathMult: guildBreathMult() },
@@ -8111,7 +8125,8 @@ function updateMob(m, dt, t, now) {
               const d2 = Math.hypot(o2.x - m.x, o2.y - m.y);
               if (d2 > reach) continue;
               if (Math.abs(Math.atan2(o2.y - m.y, o2.x - m.x) - aim) > half) continue;
-              dealHit(o2.name || o2.u, Math.round(bmDmg * 0.8), { kb: 0.5 });
+              dealHit(o2.name || o2.u, Math.round(bmDmg * 0.8),
+                      { kb: 0.5, fire: mobIsFiery(m.kind) });   // v58 PART C
             }
             const dMe = Math.hypot(me.x - m.x, me.y - m.y);
             if (dMe <= reach && Math.abs(Math.atan2(me.y - m.y, me.x - m.x) - aim) <= half) {
@@ -9169,8 +9184,27 @@ function useItem(type) {
   const now = Date.now();
   if (c.kind === "heal")   foodRegenUntil    = now + c.ms;
   if (c.kind === "speed")  speedPotionUntil  = now + c.ms;
-  if (c.kind === "breath") breathPotionUntil = now + c.ms;
   if (c.kind === "fire")   fireResistUntil   = now + c.ms;
+  if (c.kind === "breath") {
+    breathPotionUntil = now + c.ms;
+    /* ⚠️ THE CEILING IS NOT THE AIR, and these two lines are the whole
+       difference between this item working and this item being a complete
+       no-op in the one situation it exists for.
+
+       updateBreath() only ever ADDS to me.breath in its two regen branches,
+       and BOTH require that you are not diving — while you are down on
+       B.DEEP the only thing that runs is the drain. So raising maxBreath
+       on its own would buy a diver exactly zero extra seconds: drinking at
+       12 air left would leave the tank at 12, drown you on the same frame
+       you would have drowned anyway, and show "Breath 12/143" while doing
+       it, which reads as though air had been gained.
+
+       Drinking air gives you air. Clamped to the ceiling the line above
+       just raised, so it can never overfill, and harmless on land where
+       the regen branch has already filled the tank. */
+    me.maxBreath = breathMax();
+    me.breath = Math.min(me.maxBreath, me.breath + c.bonus);
+  }
   toast(`${c.verb === "Eat" ? "Ate" : "Drank"} ${c.name} — ${consumableEffectText(c)}`);
   burst(me.x, me.y, ITEM_META[type].color, 8, 1.8);
   refreshPanels();
@@ -9615,6 +9649,14 @@ function dealHit(targetName, dmg, opts = {}) {
     kx: +(opts.kx || 0).toFixed(2), ky: +(opts.ky || 0).toFixed(2), kb: opts.kb || 0,
     rn: opts.ranged ? 1 : 0,
     mk: opts.marked ? 1 : 0,      // v27: a Marked Shot ignores Guard Break
+    /* v58 PART C: the payload's field list is FIXED, so an opts flag that is
+       not named here simply does not survive the wire. The Elder Drake's
+       phase-2 sweep and phase-3 breath are the one place in the game where a
+       mob damages players OTHER than the one it is locally targeting, and
+       they route through here — so without this line the Fireward Draught
+       would have protected exactly one player in the cone and silently let
+       everyone else eat the full hit. */
+    fire: !!opts.fire,
   } });
   markPvpEngaged(targetName);   // v16: we are now in combat with them
   noteCombatDamage();           // v47 PART E: damage DEALT opens the logout window
@@ -9847,8 +9889,15 @@ function applyDamage(dmg, from, opts = {}) {
      Break reduces it stacks with, uses their identical multiplicative
      Math.max(1, Math.round(...)) shape so nothing can sum into an immunity,
      and a floor of 1 damage survives every combination. It only ever sees a
-     hit the CALLER flagged as fire; every unflagged hit in the game, PvP and
-     drowning included, reaches this line exactly as it always has. */
+     hit the caller flagged as fire; every unflagged hit in the game, PvP and
+     drowning included, reaches this line exactly as it always has.
+
+     ⚠️ ON A BROADCAST HIT THE "CALLER" IS A REMOTE PAYLOAD, so opts.fire is
+     attacker-controlled there — see the hit handler, which spreads the whole
+     payload into opts. That is deliberately left unvalidated for the same
+     reason v51 could leave a malformed guild id alone: the worst a forged
+     flag can do is make the SENDER's own hit weaker, because this branch
+     only ever subtracts. There is no direction in which it pays to lie. */
   if (opts.fire && fireResistActive()) {
     dmg = Math.max(1, Math.round(dmg * (1 - POTION_FIRE_REDUCE)));
     addFloat(me.x, me.y, "RESISTED", "#ff7a3c");
@@ -18642,7 +18691,10 @@ function updateHUD(dayT) {
       ? `<br><span style="color:#d08a4a">Well fed ${fmtLeft(foodRegenUntil)}</span>` : "") +
     (speedPotionActive()
       ? `<br><span style="color:#78d0a8">Swiftfoot ${fmtLeft(speedPotionUntil)}` +
-        `${me.mounted ? " — held while mounted" : ""}</span>` : "") +
+        /* NOT "held": the deadline keeps running while you ride, exactly as
+           the Shrine blessing's does. Suppressed is what actually happens,
+           and the line has to say the true one. */
+        `${me.mounted ? " — suppressed while mounted" : ""}</span>` : "") +
     (breathPotionActive()
       ? `<br><span style="color:#7fd8e8">Deep lungs ${fmtLeft(breathPotionUntil)}</span>` : "") +
     (fireResistActive()
