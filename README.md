@@ -21,6 +21,26 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
 
 ## The standard process (non-negotiable)
 
+0. **Verify ECC is actually installed in THIS environment before starting
+   any spec work.** Confirmed live once already: the repo's
+   `.claude/settings.json` only REGISTERS that the ecc@ecc plugin is
+   wanted — it does not install it. The actual plugin lives in a
+   per-machine location (`~/.claude/plugins/installed_plugins.json`),
+   separate from this git repo entirely. If your build environment starts
+   fresh each run, that file starts empty every single time regardless of
+   what settings.json says. Check it directly
+   (`cat ~/.claude/plugins/installed_plugins.json` or equivalent) before
+   assuming ECC is active. If it is empty or missing the ecc@ecc entry,
+   run its install step for real in this session
+   (`npx ecc-universal@2.2.1 setup --mode claude-plugin --scope project
+   --hooks standard --yes`, or the native `/plugin install ecc@ecc` if
+   available) before proceeding. Once genuinely active, run its
+   fresh-context review pass against this version's own diff before
+   marking the build done, and report exactly what it found in the
+   changelog entry — including a genuine "nothing new" result, which is
+   itself real information. This does not replace or relax steps 1-5
+   below; it runs alongside them.
+
 1. **Read `runehaven-art-style/SKILL.md` in full** before touching any
    rendering code, even a small tweak.
 2. Apply changes as **surgical, targeted patches** — never a full rewrite of
