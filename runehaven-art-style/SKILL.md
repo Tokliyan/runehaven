@@ -53,6 +53,156 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-21 (v59 — Matched-Tier Gear Bonus)
+
+A mechanics version, and the rendering-scope half of it is the smallest one
+of these yet: **one new branch inside the armour inventory row, one new HUD
+line, and nothing else.** **The canvas was never entered.** No palette entry,
+biome colour, facet multiplier, projection constant, silhouette, sprite or
+draw call was touched, the canvas gradient count is 13 before and 13 after,
+and **zero new hex colours were introduced** — both new pieces of UI wear
+`tierColor()`, the three-value tier palette the armour row's own `tier-`
+class and every weapon row have used since v9.
+
+Exactly **two lines were deleted from `runehaven.html` in the whole build**:
+the armour line inside `applyDamage()` and the armour inventory row. Every
+other changed line is new or a comment.
+
+- **The armour row is the panel's OWN row with the number swapped for the
+  one that is actually being applied.** A `.inv-row` with the same class,
+  the same `data-a`/`data-it` keys, the same `.iconwrap`/`.qty` structure —
+  the right-hand column simply reads `armorReduceNow()` instead of the table
+  when this is the armour you are wearing AND the tiers match, and appends a
+  bare `matched` tag in the tier's own colour. **Zero new component styles,
+  the eleventh version running**, and `grep 'matched'` finds nothing at all
+  in the stylesheet.
+- **A mismatched row is the row it always was, down to the character** —
+  same number, no tag. So is every unequipped armour sitting in the pack,
+  even while a different, matched one is worn: the bonus belongs to the
+  loadout, not to the item, and the row says so. Both are gated.
+- **Because the row keeps `data-it`, the Animation Pass's row animations
+  keep working on it for free**, exactly as v58 found for the consumable
+  row. That is again the reason to extend the existing row rather than build
+  a second one beside it.
+- **The HUD line is `tameBuffUntil`'s line once more** — same card
+  (`#hudPlayer`), same `<br><span style="color:…">` one-liner, same rule
+  that a line appears only while it means something. **It is the first one
+  in that card with no countdown**, deliberately: this is a passive, not an
+  effect. It is true exactly as long as the loadout is and it leaves the
+  instant either slot changes, so a timer would be a lie. Nothing new was
+  added to the thirteen HUD elements v56 audited.
+- **⚠️ THE LINE STATES BOTH REAL PERCENTAGES AND NEVER THE BONUS ALONE, and
+  that is v58's "suppressed while mounted" lesson applied before shipping
+  rather than after.** "+5%" would read as *5% less damage taken*, and
+  +0.05 on `reduce` is not that — it is 5.9% less damage at iron and 8.6% at
+  dragonsteel. The line reads `Matched Iron gear — armour −20% instead of
+  −15%`, and both figures are read live from the same helper the hit itself
+  uses, so the card cannot advertise a reduction the damage math is not
+  applying. `run4` pins both numbers and `run5` draws the line on and off at
+  every tier.
+
+## WHAT THE REVIEW FOUND
+
+⚠️ **ECC did not run this build either, and this time it could not be
+installed at all.** Per the README's Step 0 the plugin map was checked
+directly first: `~/.claude/plugins/installed_plugins.json` holds
+`{"version": 2, "plugins": {}}` in this environment, exactly as v58 found —
+`.claude/settings.json` registers `ecc@ecc` and installs nothing. The
+install command Step 0 names was then run for real and was **refused by this
+environment's own permission layer** (the sandbox classifies a plugin
+install as self-modification), so there was no ECC skill, hook or GateGuard
+present and nothing intercepted a single command at any point.
+
+**What replaced it is weaker than v58's substitute and is labelled as such:
+a deliberate adversarial re-read of the diff by the same session that wrote
+it, not a genuinely fresh context.** That distinction is the whole value of
+the exercise, so it is recorded rather than glossed. It found no defect. The
+one thing it did change was a gate — see the note below — and **the honest
+reading of "nothing found" here is that a self-review is the weakest
+possible version of this check, not that the diff is clean.** Two shipped
+defects got through v58's 56 gates and were caught only by a reviewer that
+had not written them.
+
+What the pass did verify by hand, since it could not be delegated:
+- **Every path that reduces a player's incoming damage was re-enumerated**,
+  and `applyDamage()` is still the only one — the presence payload's `at:`
+  armour tier (a rendering field for other players' sprites) is untouched,
+  and a hit you deal to another player is reduced by *their* client through
+  *their* own `applyDamage()`, which this build did not change the shape of.
+- **The bonus can never attach to an armour you are not wearing.** The row
+  branch requires `me.armor === type` *before* it compares tiers, which is
+  what keeps a second armour of the same tier (none exists today) from
+  quietly showing a bonus it is not granting.
+- **No float surprise at dragonsteel.** `0.42 + 0.05` is
+  `0.47000000000000003` in IEEE754; it rounds to 47% for display and to 11
+  damage from a 20-damage hit, both identical to the exact arithmetic.
+
+**One gate was updated and it is recorded as an update, not a relaxation.**
+v27's `'Guard Break reuses the armour reduce math beside it'` asserted the
+source literal `dmg * (1 - arm.reduce)`, which this build moved to
+`dmg * (1 - armorReduceNow())` — the same thing v55 PART H did to the gate
+directly below it. The multiplicative shape and the order did not move at
+all; only the value did, behind one helper. The gate now requires the new
+literal **and a third clause the old one did not have**: the old inline read
+must be *gone*, so the file can never carry two competing armour reductions
+at once. It is strictly stronger than it was.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent. All shipped through the full
+gate (parse clean, `run3` `CAUGHT ERROR: none`, `run4` **1729/1729 with zero
+FAIL** including 37 new gates, `run5` **1363** coverage draws clean, a
+32-line grep checklist with zero misses) — refinements to consider, not
+unfinished work. The mechanics and balance half of these also lives in the
+commit message, per the README's split.
+
+1. **⚠️ THE ONE REAL DECISION: the bonus is FLAT +0.05, not a percentage of
+   `reduce`.** The spec asks for "one modest passive ... a small bonus to
+   the armor's own `reduce` value" and names no number, so this is a
+   TUNABLE. A proportional bonus (×1.2, say) would hand dragonsteel +0.084
+   and iron only +0.030 — **backwards**, since the tier that costs the most
+   to assemble would be paid the most for assembling it. Flat keeps the gain
+   in a narrow band at all three tiers: **+6.25% / +7.46% / +9.43%
+   effective HP** for iron / runic / dragonsteel. `run4` asserts that band
+   from the live table rather than from those three numbers, and the
+   strongest matched loadout in the game reaches **0.47, never half**.
+   **This is the single most reversible decision here: it is one constant.**
+2. **THE ENTIRE UI HALF IS A JUDGMENT CALL — the spec describes a mechanic
+   and says nothing whatever about surfacing it.** A passive a player cannot
+   see is a passive they will never deliberately build toward, which is the
+   spec's own stated point ("rewards deliberate, coherent gear choices"), so
+   it is stated in the two places gear is already read: the row you equip
+   from and the card that already carries every other live modifier. Both
+   could be dropped without touching the mechanic.
+3. **The dragonsteel-tier "armour" is `dragonsteel_shield`, and it is a
+   shield.** The spec's confirmed values name only `iron_armor` and
+   `runic_armor`, but its PART A explicitly names "Dragonsteel-with-
+   Dragonsteel" — and the only `dragonsteel`-tier entry in `ARMORS` is the
+   shield v38 added as a hotfix. So matching a Dragonsteel weapon to it
+   grants the bonus. Flagged because "matched set" reads oddly when the
+   third piece is a shield; the alternative was to silently exclude the tier
+   the spec names, which would be worse.
+4. **THE CHARM SLOT IS DELIBERATELY EXCLUDED, although charms carry a
+   `tier`.** The spec is explicit that this is about "the actual choice a
+   player makes with two real slots", and the Diver's Charm is a third. A
+   gate reads `matchedGearTier()`'s own body and fails if `CHARMS` ever
+   appears in it, so this stays a decision rather than drifting.
+5. **The bonus applies in PvP, duels and the Colosseum exactly as it does
+   against mobs, and it is symmetric** — both duelists can match, and either
+   can choose not to. `applyDamage()` is one path and this build did not
+   give it a PvP branch. Noted explicitly because v58's review flagged the
+   *absence* of PvP sizing as a real gap in its own spec; here the passive
+   is small, two-sided and permanent rather than a consumable burst, so it
+   was left alone rather than split.
+6. **The version number.** The spec names no version; v58 was the last
+   shipped, so this is v59. A naming choice, nothing more.
+7. **The HUD line's length.** It is the longest line in `#hudPlayer`
+   (`min-width: 190px`) and will wrap onto a second line at the default
+   width. The card has no fixed height and nothing else moves, so this is
+   cosmetic — but it is the one thing here most likely to want shortening,
+   and the short version would have to give up stating both percentages,
+   which is judgment call 2's whole point.
+
 ### 2026-09-20 (v58 — Consumables)
 
 Mostly a mechanics version, and the rendering-scope half of it is small and

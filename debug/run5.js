@@ -943,6 +943,60 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('consumables swept — ' + keys58.length + ' rows, used, HUD on/off, mounted branch and craft rows');
     }
 
+    /* ---- MATCHED-TIER GEAR BONUS: the branches this version adds -----------
+       No new species, mob, weapon kind or class shipped this build either, so
+       the four coverage lists above stay complete as they are. What IS new is
+       a matched branch inside the armour inventory row and one new HUD line,
+       and neither is reachable from a plain boot: a brand new account owns no
+       armour at all, so both branches are dead to this sweep unless they are
+       put there deliberately.
+
+       EVERY tier is swept rather than a representative one, and each is swept
+       BOTH ways — matched and mismatched — because the "no tag, table's own
+       number" half is a branch of its own and is the half PART B protects. */
+    if (window.debugGearBonusInfo && window.refreshPanels && window.updateHUD) {
+      const gb5 = window.debugGearBonusInfo();
+      const wi5g = window.debugWorldInfo();
+      const armorIds5 = Object.keys(gb5.base);
+      const wt5 = gb5.weaponTiers;
+      const weaponOfTier5 = t => Object.keys(wt5).find(k => wt5[k] === t) || null;
+      window.debugSetPlayer({ x: wi5g.SPAWN.x, y: wi5g.SPAWN.y, hp: 100 });
+      let matchedRows = 0, plainRows = 0, hudOnSeen = 0, hudOffSeen = 0;
+      for (const aid of armorIds5) {
+        const t = gb5.base[aid].tier;
+        const same = weaponOfTier5(t);
+        const diff = Object.keys(wt5).find(k => wt5[k] && wt5[k] !== t);
+        for (const [wid, wantMatch] of [[same, true], [diff, false]]) {
+          const inv5 = {}; inv5[aid] = 1; if (wid) inv5[wid] = 1;
+          window.debugSetPlayer({ inv: inv5 });
+          window.debugSetPlayer({ armor: aid, equipped: wid || null, charm: null });
+          window.refreshPanels();
+          const row5 = Array.from(doc.querySelectorAll('#invList .inv-row'))
+            .find(el => el.getAttribute('data-a') === aid);
+          const tagged = !!row5 && row5.textContent.indexOf('matched') >= 0;
+          if (wantMatch && tagged) matchedRows++;
+          if (!wantMatch && row5 && !tagged) plainRows++;
+          /* The HUD line in both states, drawn for real. */
+          window.updateHUD(0.3);
+          const hudTxt5 = doc.getElementById('hudPlayer').textContent;
+          if (wantMatch && hudTxt5.indexOf('Matched') >= 0) hudOnSeen++;
+          if (!wantMatch && hudTxt5.indexOf('Matched') < 0) hudOffSeen++;
+          for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+        }
+      }
+      if (matchedRows !== armorIds5.length || plainRows !== armorIds5.length ||
+          hudOnSeen !== armorIds5.length || hudOffSeen !== armorIds5.length) {
+        console.log('COVERAGE GAP: the matched/mismatched row and HUD branches did not both draw at every tier');
+        process.exit(1);
+      }
+      window.debugSetPlayer({ inv: {} });
+      window.debugSetPlayer({ armor: null, equipped: null });
+      window.refreshPanels();
+      window.updateHUD(0.3);
+      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      console.log('matched-tier gear swept — ' + armorIds5.length + ' tiers, row tag and HUD line both on and off');
+    }
+
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {
