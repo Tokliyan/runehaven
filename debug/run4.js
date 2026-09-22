@@ -2634,9 +2634,25 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['the v10 melee crit and per-weapon knockback table is untouched',
         gameScript.indexOf('wk === "axe" ? 1.1 : wk === "dagger" ? 0.2 : wk === "spear" ? 0.6') > 0 &&
         gameScript.indexOf('Math.round(w.dmg * 1.6)') > 0]);
+      /* v59 MOVED THIS LITERAL AND THE GATE IS UPDATED, NOT RELAXED — the
+         v55 PART H note below is the precedent and this follows it exactly.
+         The armour line now reads `armorReduce()` instead of `arm.reduce`,
+         because the matched-tier bonus has to be decided in ONE place or the
+         number a player is shown and the number they are hit for can drift.
+         What this gate has always protected is unchanged and is now asserted
+         more strictly than before: Guard Break still uses the identical
+         `dmg * (1 - X)` multiplicative shape sitting directly beside the
+         armour's, the armour is still looked up out of ARMORS[me.armor] on
+         the line above it, and there is still exactly ONE armour reduction
+         line in the whole file rather than a second system beside it. */
       results.push(['Guard Break reuses the armour reduce math beside it, not a new system',
         gameScript.indexOf('dmg * (1 - GUARD_BREAK_REDUCE)') > 0 &&
-        gameScript.indexOf('dmg * (1 - arm.reduce)') > 0]);
+        gameScript.indexOf('dmg * (1 - armorReduce())') > 0 &&
+        gameScript.split('dmg = Math.max(1, Math.round(dmg * (1 - armorReduce())));').length === 2 &&
+        gameScript.indexOf('const arm = ARMORS[me.armor];') <
+          gameScript.indexOf('dmg * (1 - armorReduce())') &&
+        gameScript.indexOf('dmg * (1 - armorReduce())') <
+          gameScript.indexOf('dmg * (1 - GUARD_BREAK_REDUCE)')]);
       /* v55 PART H MOVED THIS LITERAL AND THE GATE IS UPDATED, NOT RELAXED.
          The ring loop now passes `ring.rgb || ABILITY_RING_RGB` so one
          primitive can serve three travel signatures as well as the two
@@ -10012,6 +10028,243 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           results.push(['v58: and the world still runs frames cleanly after every part of this',
             (() => { for (let f = 0; f < 8; f++) window.render(f * 16); return !caught; })()]);
           inv58({});
+        }
+      }
+
+
+      /* =====================================================================
+         v59 — MATCHED-TIER GEAR BONUS. The locked spec's own three proof
+         gates, plus the preservation half. Everything that can be DRIVEN is
+         driven through the real applyDamage(), the real equip fields and the
+         real rendered panels; the source is asserted only where the claim is
+         genuinely about the source.
+         ===================================================================== */
+      /* ⚠️ ASSERTED OUTSIDE THE GUARD, for v58's reason: renaming the hook
+         would otherwise make every gate below evaporate while run4 still
+         printed all-PASS and zero FAIL. */
+      results.push(['v59: the gear harness hook exists, so none of the gates below can silently vanish',
+        typeof window.debugGearInfo === 'function' &&
+        typeof window.debugSetPlayer === 'function' &&
+        typeof window.applyDamage === 'function']);
+      if (window.debugGearInfo && window.debugSetPlayer) {
+        const GI = window.debugGearInfo;
+        const dsp59 = window.debugSetPlayer;
+        const wi59 = window.debugWorldInfo();
+        const doc59 = window.document;
+        /* Somewhere real, outside every safe zone and clear of any mob, so
+           applyDamage() runs its real path and nothing else can move the HP
+           these gates measure. Searched, not assumed — v58's own search. */
+        const mobs59 = (window.debugCombatHandles && window.debugCombatHandles().mobs) || [];
+        let SPOT59 = null;
+        for (let r = wi59.SAFE_RADIUS + 40; r < wi59.SAFE_RADIUS + 400 && !SPOT59; r += 20) {
+          const cx = wi59.SPAWN.x + r + 0.5, cy = wi59.SPAWN.y + r + 0.5;
+          if (cx >= wi59.N - 3 || cy >= wi59.N - 3) break;
+          if (window.inSafeZone(cx, cy)) continue;
+          if (mobs59.some(m => !m.dead && Math.hypot(m.x - cx, m.y - cy) < 30)) continue;
+          SPOT59 = { x: cx, y: cy };
+        }
+        results.push(['v59: a real spot outside every safe zone and clear of mobs was found to drive this from',
+          !!SPOT59]);
+        if (SPOT59) {
+          const G0 = GI();
+          const BONUS = G0.MATCHED_TIER_BONUS;
+          const ARM59 = G0.armorTiers;       // live ARMORS: { tier, reduce }
+          const WEP59 = G0.weaponTiers;      // live WEAPONS: id -> tier
+          /* One clean loadout, one real hit, the HP it actually cost. */
+          const hitWith = (weapon, armor, dmg, opts) => {
+            dsp59({ x: SPOT59.x, y: SPOT59.y, hp: 100, charm: null, diving: false,
+                    equipped: weapon, armor: armor,
+                    inv: Object.assign({}, armor ? { [armor]: 1 } : {}, weapon ? { [weapon]: 1 } : {}) });
+            if (window.debugSetAbility) window.debugSetAbility({ guardBreakUntil: 0 });
+            if (window.debugSetMount) window.debugSetMount({ mounted: false });
+            if (window.debugSetConsumable) window.debugSetConsumable({ food: 0, speed: 0, breath: 0, fire: 0 });
+            window.applyDamage(dmg, 'a proof gate', opts || {});
+            return 100 - window.debugWorldInfo().player.hp;
+          };
+          /* What applyDamage() did BEFORE v59, restated here once so every
+             mismatch below is measured against the old behaviour itself. */
+          const preV59 = (dmg, reduce) => Math.max(1, Math.round(dmg * (1 - reduce)));
+
+          const armorIds = Object.keys(ARM59);
+          const weaponIds = Object.keys(WEP59);
+
+          /* ---------- PART A — one real bonus per matched tier ------------ */
+          results.push(['v59 A: the bonus is a single named constant, a real positive number, not a vague boost',
+            typeof BONUS === 'number' && BONUS > 0 && BONUS < 0.25 &&
+            gameScript.indexOf('const MATCHED_TIER_BONUS = ') > 0 &&
+            gameScript.split('const MATCHED_TIER_BONUS = ').length === 2]);
+          results.push(['v59 A: it is applied to the ARMOUR\'S OWN reduce — no new stat, no new field, no new slot',
+            gameScript.indexOf('return a.reduce + (gearTierMatched() ? MATCHED_TIER_BONUS : 0);') > 0 &&
+            armorIds.every(k => Object.keys(window.debugGearInfo().armorTiers[k]).length === 2)]);
+          /* Every armour in the table, matched against a real weapon of its
+             own tier, measured against ITS OWN base reduce — not a number
+             restated here. Three tiers, all three driven. */
+          let tiersProven = 0, tierLines = [];
+          for (const aId of armorIds) {
+            const base = ARM59[aId].reduce, tier = ARM59[aId].tier;
+            const sameTierWeapon = weaponIds.find(w => WEP59[w] === tier);
+            if (!sameTierWeapon) continue;
+            const mismatchWeapon = weaponIds.find(w => typeof WEP59[w] === 'string' && WEP59[w] !== tier);
+            const tookMatched = hitWith(sameTierWeapon, aId, 100);
+            const gMatched = GI();
+            const tookMixed = hitWith(mismatchWeapon, aId, 100);
+            const okMatched = gMatched.matched === true &&
+              Math.abs(gMatched.effectiveReduce - (base + BONUS)) < 1e-9 &&
+              tookMatched === preV59(100, base + BONUS) &&
+              tookMatched < tookMixed;
+            if (okMatched) tiersProven++;
+            tierLines.push(tier + ' ' + Math.round(base * 100) + '%->' +
+                           Math.round((base + BONUS) * 100) + '% (' + tookMixed + ' -> ' + tookMatched + ' of 100)');
+          }
+          results.push(['v59 A: every tier in ARMORS gains exactly the bonus over ITS OWN base reduce, driven through real damage — ' + tierLines.join(', '),
+            tiersProven === armorIds.length && armorIds.length === 3]);
+          results.push(['v59 A: and matched gear measurably OUTPERFORMS the same gear level mismatched, at every tier',
+            tierLines.length === 3 && tiersProven === 3]);
+
+          /* ---------- the "identical strings only" gate ------------------- */
+          /* EVERY armour against EVERY weapon in the file, once each: the
+             bonus is live if and only if the two tier strings are identical,
+             and the damage taken is the right one of the two formulas. */
+          let combos = 0, comboBad = [];
+          for (const aId of armorIds) {
+            for (const wId of weaponIds) {
+              const base = ARM59[aId].reduce;
+              const shouldMatch = typeof WEP59[wId] === 'string' &&
+                                  typeof ARM59[aId].tier === 'string' &&
+                                  WEP59[wId] === ARM59[aId].tier;
+              const took = hitWith(wId, aId, 100);
+              const g = GI();
+              combos++;
+              const want = shouldMatch ? preV59(100, base + BONUS) : preV59(100, base);
+              if (g.matched !== shouldMatch || took !== want ||
+                  Math.abs(g.effectiveReduce - (shouldMatch ? base + BONUS : base)) > 1e-9) {
+                comboBad.push(wId + '+' + aId);
+              }
+            }
+          }
+          results.push(['v59 A: across all ' + combos + ' weapon x armour loadouts in the file, the bonus is live ONLY on genuinely identical tier strings',
+            combos === armorIds.length * weaponIds.length && comboBad.length === 0]);
+          /* The two "nearly a match" cases that must not count. Fists carry
+             tier null and equippedWeapon() falls back to them, so bare-handed
+             is two nulls — never a match. */
+          const bareTook = hitWith(null, 'iron_armor', 100);
+          const bareG = GI();
+          results.push(['v59 A: bare-handed never matches — two nulls are not identical tiers (' + bareTook + ' of 100, the plain iron figure)',
+            bareG.matched === false && bareG.weaponTier === null &&
+            bareTook === preV59(100, ARM59.iron_armor.reduce)]);
+          const nakedTook = hitWith('iron_sword', null, 100);
+          const nakedG = GI();
+          results.push(['v59 A: and an unarmoured player has no reduction to bonus at all — the slot must hold a real ARMORS row',
+            nakedG.matched === false && nakedG.effectiveReduce === 0 && nakedTook === 100]);
+
+          /* ---------- PART B — a mismatch takes ZERO penalty -------------- */
+          /* The spec's own example, driven: dragonsteel weapon over iron
+             armour takes EXACTLY what it took before this version existed. */
+          const mixTook = hitWith('dragonsteel_sword', 'iron_armor', 100);
+          results.push(['v59 B: the spec\'s own mismatch — Dragonsteel over Iron — takes exactly the pre-v59 figure, ' + mixTook + ' of 100',
+            mixTook === preV59(100, ARM59.iron_armor.reduce)]);
+          let mismatchBad = [];
+          for (const aId of armorIds) {
+            for (const wId of weaponIds) {
+              if (WEP59[wId] === ARM59[aId].tier) continue;
+              for (const dmg of [1, 3, 7, 20, 100]) {
+                if (hitWith(wId, aId, dmg) !== preV59(dmg, ARM59[aId].reduce)) mismatchBad.push(wId + '+' + aId + '@' + dmg);
+              }
+            }
+          }
+          results.push(['v59 B: and EVERY mismatched loadout at five damage sizes takes the identical pre-v59 arithmetic — a bonus for coherence, never a tax on mixing',
+            mismatchBad.length === 0]);
+          results.push(['v59 B: armorReduce() returns the raw table value untouched when nothing matches, which is what makes that true by construction',
+            (() => { hitWith('dragonsteel_sword', 'iron_armor', 1); const g = GI();
+                     return g.matched === false && g.effectiveReduce === g.baseReduce &&
+                            g.effectiveReduce === ARM59.iron_armor.reduce; })()]);
+
+          /* ---------- it cannot become an immunity ------------------------ */
+          const gbr59 = (window.debugConsumableInfo && window.debugConsumableInfo().against.GUARD_BREAK_REDUCE) || 0.5;
+          results.push(['v59: no matched value reaches Guard Break\'s own reduction (' + Math.round(gbr59 * 100) + '%), let alone immunity',
+            armorIds.every(k => ARM59[k].reduce + BONUS < gbr59)]);
+          results.push(['v59: the 1-damage floor survives the strongest matched loadout in the game',
+            hitWith('dragonsteel_sword', 'dragonsteel_shield', 1) === 1]);
+          /* It multiplies with Guard Break rather than summing, exactly as
+             the raw armour reduce already did — the reduce line is untouched
+             in shape, only in the value it reads. */
+          if (window.debugSetAbility) {
+            dsp59({ x: SPOT59.x, y: SPOT59.y, hp: 100, equipped: 'runic_blade', armor: 'runic_armor',
+                    inv: { runic_blade: 1, runic_armor: 1 }, charm: null, diving: false });
+            window.debugSetAbility({ guardBreakUntil: window.performance.now() + 60000 });
+            window.applyDamage(100, 'a proof gate', {});
+            const bothTook = 100 - window.debugWorldInfo().player.hp;
+            window.debugSetAbility({ guardBreakUntil: 0 });
+            const expectBoth = Math.max(1, Math.round(
+              preV59(100, ARM59.runic_armor.reduce + BONUS) * (1 - gbr59)));
+            results.push(['v59: matched armour and Guard Break MULTIPLY rather than sum — ' + bothTook + ' taken, never an immunity',
+              bothTook === expectBoth && bothTook >= 1]);
+          }
+
+          /* ---------- the panels say the true number --------------------- */
+          dsp59({ x: SPOT59.x, y: SPOT59.y, hp: 100, equipped: 'runic_blade', armor: 'runic_armor',
+                  inv: { runic_blade: 1, runic_armor: 1, iron_armor: 1 } });
+          window.refreshPanels();
+          const rowOf = id => Array.from(doc59.querySelectorAll('#invList .inv-row'))
+            .find(el => el.getAttribute('data-it') === id);
+          const runicRow = rowOf('runic_armor'), ironRow = rowOf('iron_armor');
+          const matchedPct = Math.round((ARM59.runic_armor.reduce + BONUS) * 100);
+          results.push(['v59: the EQUIPPED armour\'s row states the matched figure it is actually being hit for (−' + matchedPct + '%)',
+            !!runicRow && runicRow.textContent.indexOf('−' + matchedPct + '%') >= 0 &&
+            runicRow.textContent.indexOf('matched') >= 0]);
+          results.push(['v59: and an unequipped armour in the same pack still states its own base — the bonus belongs to a loadout, not an item',
+            !!ironRow && ironRow.textContent.indexOf('−' + Math.round(ARM59.iron_armor.reduce * 100) + '%') >= 0 &&
+            ironRow.textContent.indexOf('matched') < 0]);
+          window.updateHUD(0.3);
+          const hudMatched = doc59.getElementById('hudPlayer').textContent;
+          dsp59({ equipped: 'dragonsteel_sword' });
+          window.refreshPanels();
+          window.updateHUD(0.3);
+          const hudMixed = doc59.getElementById('hudPlayer').textContent;
+          const mixedRow = rowOf('runic_armor');
+          results.push(['v59: the HUD names the matched tier and its real reduction while it is live, in the card that already carries every other effect',
+            hudMatched.indexOf('Matched') >= 0 && hudMatched.indexOf('runic') >= 0 &&
+            hudMatched.indexOf('−' + matchedPct + '%') >= 0]);
+          results.push(['v59: and says nothing at all once the loadout is mismatched — the breath readout\'s own rule, and the row drops back to base',
+            hudMixed.indexOf('Matched') < 0 &&
+            !!mixedRow && mixedRow.textContent.indexOf('−' + Math.round(ARM59.runic_armor.reduce * 100) + '%') >= 0 &&
+            mixedRow.textContent.indexOf('matched') < 0]);
+
+          /* ---------- PRESERVATION --------------------------------------- */
+          results.push(['v59 P: the three ARMORS rows still carry their original reduce values — this version added a bonus, it did not re-tune the table',
+            ARM59.iron_armor.reduce === 0.15 && ARM59.runic_armor.reduce === 0.28 &&
+            ARM59.dragonsteel_shield.reduce === 0.42 &&
+            gameScript.indexOf('iron_armor:  { name: "Iron Armor",  tier: "iron",  reduce: 0.15 }') > 0 &&
+            gameScript.indexOf('runic_armor: { name: "Runic Armor", tier: "runic", reduce: 0.28 }') > 0]);
+          results.push(['v59 P: applyDamage still looks the armour up exactly as it did, and the reduce line keeps its 1-damage floor and its shape',
+            gameScript.indexOf('const arm = ARMORS[me.armor];') > 0 &&
+            gameScript.split('const arm = ARMORS[me.armor];').length === 2 &&
+            gameScript.indexOf('if (arm) dmg = Math.max(1, Math.round(dmg * (1 - armorReduce())));') > 0 &&
+            gameScript.indexOf('arm.reduce') < 0]);
+          results.push(['v59 P: armorReduce() is the ONE place the effective reduction is decided, so the shown number and the hit number cannot drift',
+            gameScript.split('function armorReduce()').length === 2 &&
+            gameScript.split('function gearTierMatched()').length === 2]);
+          results.push(['v59 P: nothing persists — no new players column, and savePlayer\'s fixed list never learns about any of this',
+            (() => {
+              const at = gameScript.indexOf('async function savePlayer() {');
+              if (at < 0) return false;
+              const end = gameScript.indexOf('.eq("username", me.username);', at);
+              const body = gameScript.slice(at, end);
+              return ['MATCHED_TIER_BONUS', 'gearTierMatched', 'armorReduce'].every(nm => body.indexOf(nm) < 0);
+            })()]);
+          results.push(['v59 P: no new stylesheet rule — the matched marker rides the panel\'s OWN .qty column, the eleventh version running',
+            html.indexOf('<style>') > 0 &&
+            html.slice(html.indexOf('<style>'), html.indexOf('</style>')).indexOf('matched') < 0]);
+          results.push(['v59 P: no new gear slot and no new field on an armour row — the two tiered slots the game has ever had are still the two it has',
+            armorIds.length === 3 &&
+            armorIds.every(k => { const r = GI().armorTiers[k];
+              return Object.keys(r).length === 2 && typeof r.tier === 'string' && typeof r.reduce === 'number'; }) &&
+            gameScript.indexOf('setBonus') < 0 && gameScript.indexOf('me.armor2') < 0 &&
+            gameScript.indexOf('me.offhand') < 0]);
+          results.push(['v59: and the world still runs frames cleanly after every part of this',
+            (() => { for (let f = 0; f < 8; f++) window.render(f * 16); return !caught; })()]);
+          dsp59({ equipped: null, armor: null, inv: {} });
+          window.refreshPanels();
         }
       }
 

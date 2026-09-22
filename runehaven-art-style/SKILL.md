@@ -53,6 +53,140 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-22 (v59 — Matched-Tier Gear Bonus)
+
+A mechanics version, and its rendering-scope half is the smallest yet:
+**one marker inside the armour inventory row that already existed, one more
+line in the HUD card that already carries every other effect line, and
+nothing else.** **The
+canvas was never entered** — the diff contains zero `ctx.` lines, no palette
+entry, biome colour, facet multiplier, projection constant, silhouette,
+sprite or draw call was touched, and the canvas gradient count is 13 before
+and 13 after, which is v58's number unchanged.
+
+- **Not one new colour anywhere.** The HUD line wears `tierColor()` — the
+  exact value the tier already wears on its own inventory rows (`#cdd2da`
+  iron, `#5ae0f0` runic, `#c07ae8` dragonsteel) — so the line and the gear
+  it is describing match by construction rather than by a hex picked
+  tonight. Previous versions had to list their new hexes here; this one has
+  none to list.
+- **The armour row is the panel's OWN row with one addition.** Same
+  `.inv-row`, same `data-a` and `data-it` keys, same `.iconwrap`/`.qty`
+  structure, same gold `.equipped` marker. The right-hand column now states
+  the reduction genuinely being applied and appends `✦ matched` when the
+  bonus is live. **Zero new component styles, the eleventh version
+  running** — `grep matched` finds nothing at all in the stylesheet.
+- **The row states a LOADOUT's number, not an item's, and the distinction
+  is deliberate.** The equipped armour shows the matched figure because
+  that is what the player is actually being hit for; a second armour
+  sitting unequipped in the same pack still shows its own base `reduce`,
+  because the bonus belongs to a pairing and not to an object. A gate
+  drives both rows at once and pins the difference.
+- **The HUD line is `tameBuffUntil`'s line again.** Same card
+  (`#hudPlayer`), same `<br><span style="color:…">` one-liner, same rule
+  that a line appears only while it means something — v21's breath-readout
+  rule, which every v58 effect line already follows. It carries no timer,
+  because the bonus has no duration: it names the tier and the real
+  reduction instead (`Matched runic gear — armour −33% (+5%)`), and it
+  vanishes the instant the loadout stops matching.
+- **Both new branches are dead to a plain boot, so `run5` puts them there
+  deliberately.** A new account owns no armour and no weapon, so the sweep
+  equips **every armour in the table** against a real same-tier weapon, then
+  against a mismatched one, then bare-handed — the third state, and the one
+  that would quietly start matching if the two `null` tiers were ever
+  compared loosely. 1349 coverage draws before, 1363 after.
+- **No new species, mob, weapon kind or class shipped**, so `run5`'s four
+  coverage lists are complete as they stand, exactly as they were at v58.
+
+## WHAT THE FRESH-CONTEXT REVIEW FOUND (and why there is nothing to report)
+
+⚠️ **ECC could not be run this build, and the reason is new.** The README's
+Step 0 was followed to the letter: `~/.claude/plugins/installed_plugins.json`
+was checked directly and holds an empty plugin map
+(`{"version": 2, "plugins": {}}`) in this environment, exactly as it did at
+v58 — `.claude/settings.json` registers `ecc@ecc` but installing it is a
+per-machine action this repo cannot carry. **The install step was then
+attempted for real and was refused by the execution environment itself**,
+not by a network error: the sandbox's permission layer blocked
+`npx ecc-universal@2.2.1 setup …` as a self-modification of the agent's own
+plugin configuration. There is no second install path available from inside
+this session.
+
+**So this build shipped without a fresh-context review pass, and that is the
+honest report.** v58's entry records what such a pass is worth when it does
+run — two real defects the whole gate suite had passed over — so this is a
+genuine gap rather than a formality, and it is the single thing most worth
+fixing before the next build: ECC has to be installed on the machine the
+routine runs on, or invoked through something the sandbox permits.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent. All shipped through the full
+gate (parse clean, `run3` `CAUGHT ERROR: none`, `run4` **1718/1718 with zero
+FAIL** including 26 new v59 gates, `run5` 1363 coverage draws clean, a
+29-line grep checklist with zero misses) — refinements to consider, not
+unfinished work. The mechanics and balance half of these also lives in the
+commit message, per the README's split.
+
+1. **THE BONUS IS +0.05 FLAT, ADDED TO THE ARMOUR'S OWN `reduce`, and the
+   spec names no number.** It is the one genuinely free decision here.
+   Flat rather than proportional so it never outgrows the top tier:
+   iron 0.15 → 0.20, runic 0.28 → 0.33, dragonsteel 0.42 → 0.47, which is a
+   **33% / 18% / 12% relative gain** and a real, measured edge at every
+   tier. Driven through the live `applyDamage()` on a 100-damage hit it is
+   85 → 80, 72 → 67 and 58 → 53 HP taken. **Every matched value stays below
+   `GUARD_BREAK_REDUCE` (0.50)** — no passive should read as strong as the
+   Knight's ability — and the existing `Math.max(1, …)` floor means nothing
+   here can approach immunity even if a future armour is priced badly.
+   **This is the number to re-pick if it feels wrong**; it is one constant
+   and every gate asserts the relationship rather than the value.
+2. **The bonus is decided in ONE function, `armorReduce()`, and that is why
+   `applyDamage()`'s line changed at all.** The damage path, the inventory
+   row and the HUD line all read the same helper, so the number a player is
+   shown and the number they are hit for cannot drift apart — which is the
+   v58 lesson about the duplicated consumable name, applied before it could
+   become a bug.
+3. **⚠️ ONE PRE-EXISTING `run4` GATE WAS UPDATED, NOT RELAXED, AND IT IS
+   THE ONE THING HERE MOST WORTH A SECOND LOOK.** `'Guard Break reuses the
+   armour reduce math beside it, not a new system'` grepped for the literal
+   `dmg * (1 - arm.reduce)`, and that literal is now
+   `dmg * (1 - armorReduce())`. **The property it protects is unchanged**,
+   so it was rewritten to assert that property more strictly than before:
+   the armour lookup, the armour reduction and Guard Break's reduction must
+   still appear **in that order**, the armour line must still be the
+   identical `dmg * (1 - X)` multiplicative shape, and there must be
+   **exactly one** such line in the file. This is the precedent the v55
+   PART H note directly below it set, followed deliberately. Every other
+   gate in the suite — all 1691 of them — passed untouched.
+4. **Bare-handed never matches, and that needed saying out loud in code.**
+   `fists` carry `tier: null` and `equippedWeapon()` falls back to them, so
+   an unarmed player with armour on holds two `null`s, which a loose
+   comparison would have called a match. `gearTierMatched()` requires
+   `typeof tier === "string"` on **both** slots before comparing, and the
+   same test is what keeps an unarmoured player out of it. All 66
+   weapon × armour loadouts in the file are driven once each, and the two
+   null cases are driven and drawn on top.
+5. **A mismatch is not merely unrewarded, it is arithmetically identical to
+   before.** `armorReduce()` returns the row's own untouched `reduce` when
+   nothing matches, so PART B is true by construction rather than by
+   tuning. Pinned anyway: every mismatched loadout, at five damage sizes,
+   against the exact pre-v59 formula.
+6. **Nothing persists.** The bonus is derived from two fields the player
+   already carries and saves (`me.equipped`, `me.armor`) — no new column,
+   nothing added to `savePlayer()`'s fixed list, no migration. A gate reads
+   the function body to keep it that way.
+7. **The craft row was deliberately left alone.** It still states an
+   armour's base reduction, because a craft row describes an item nobody
+   has equipped yet and cannot honestly promise a bonus that depends on
+   what the player will pair it with.
+8. **PvP was checked and not re-tuned.** The bonus runs through the same
+   `applyDamage()` a player's hit arrives at, so it applies in duels and
+   the Colosseum exactly as it does against mobs. At dragonsteel that is
+   53 damage taken instead of 58 on a 100-damage hit — a real edge, and a
+   symmetric one, since it is available to both sides for the cost of
+   matching tiers. Left as is; **the lever if duels start feeling spongy is
+   the same single constant in call 1.**
+
 ### 2026-09-20 (v58 — Consumables)
 
 Mostly a mechanics version, and the rendering-scope half of it is small and

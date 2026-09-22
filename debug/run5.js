@@ -943,6 +943,60 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('consumables swept — ' + keys58.length + ' rows, used, HUD on/off, mounted branch and craft rows');
     }
 
+    /* ---- v59: the branches this version adds -------------------------------
+       No new species, mob, weapon kind or class shipped this build either, so
+       the four coverage lists above are still complete as they stand. What IS
+       new is a matched-tier marker inside the existing armour inventory row
+       and one more HUD line, and neither can be reached by a plain boot — a
+       new account owns no armour and no weapon, so the matched branch is dead
+       to this sweep unless a real matched loadout is put on deliberately.
+       Every armour in the table is swept, not a representative one, matched
+       and then mismatched, because both directions are their own branch. */
+    if (window.debugGearInfo && window.debugSetPlayer) {
+      const G59 = window.debugGearInfo();
+      const armorIds59 = Object.keys(G59.armorTiers);
+      const weaponIds59 = Object.keys(G59.weaponTiers);
+      let matchedSeen = 0, mixedSeen = 0;
+      for (const aId of armorIds59) {
+        const tier = G59.armorTiers[aId].tier;
+        const same = weaponIds59.find(w => G59.weaponTiers[w] === tier);
+        const other = weaponIds59.find(w => typeof G59.weaponTiers[w] === 'string' && G59.weaponTiers[w] !== tier);
+        window.debugSetPlayer({ inv: { [aId]: 1, [same]: 1, [other]: 1 }, armor: aId, equipped: same });
+        window.refreshPanels();
+        window.updateHUD(0.3);
+        const onTxt = doc.getElementById('hudPlayer').textContent;
+        const onRow = Array.from(doc.querySelectorAll('#invList .inv-row'))
+          .find(el => el.getAttribute('data-it') === aId);
+        if (onTxt.indexOf('Matched') >= 0 && onRow && onRow.textContent.indexOf('matched') >= 0) matchedSeen++;
+        for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+        /* And the same armour mismatched, which is the other half of both
+           branches — the marker gone and the row back at its base figure. */
+        window.debugSetPlayer({ equipped: other });
+        window.refreshPanels();
+        window.updateHUD(0.3);
+        const offTxt = doc.getElementById('hudPlayer').textContent;
+        const offRow = Array.from(doc.querySelectorAll('#invList .inv-row'))
+          .find(el => el.getAttribute('data-it') === aId);
+        if (offTxt.indexOf('Matched') < 0 && offRow && offRow.textContent.indexOf('matched') < 0) mixedSeen++;
+        for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      }
+      /* Bare-handed over real armour: the third state, and the one that
+         would quietly start matching if the null tiers were ever compared
+         loosely. Drawn, not only asserted. */
+      window.debugSetPlayer({ equipped: null });
+      window.refreshPanels();
+      window.updateHUD(0.3);
+      const bareTxt = doc.getElementById('hudPlayer').textContent;
+      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      if (matchedSeen !== armorIds59.length || mixedSeen !== armorIds59.length || bareTxt.indexOf('Matched') >= 0) {
+        console.log('COVERAGE GAP: the matched-tier row marker and HUD line did not light and clear for every armour');
+        process.exit(1);
+      }
+      window.debugSetPlayer({ armor: null, equipped: null, inv: {} });
+      window.refreshPanels();
+      console.log('matched-tier gear swept — ' + armorIds59.length + ' armours matched, mismatched and bare-handed');
+    }
+
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {
