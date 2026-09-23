@@ -53,6 +53,121 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-23 (v59 — Matched-Tier Gear Bonus)
+
+A mechanics version, and the rendering-scope half of it is the smallest in a
+long while: **one new HUD line and one changed number inside an existing
+inventory row, and nothing else.** **The canvas was never entered.** No
+palette entry, biome colour, facet multiplier, projection constant,
+silhouette, sprite or draw call was touched, and the canvas gradient count is
+13 before and 13 after — v57's number, unchanged for the second version
+running.
+
+- **The HUD line is `tameBuffUntil`'s line again.** Same card (`#hudPlayer`),
+  same `<br><span style="color:…">` one-liner, same rule that a line appears
+  only while it means something — which is the v21 breath readout's rule and
+  v58's rule for its four timers. No new HUD element, no new card, no new
+  CSS, nothing added to the thirteen v56 audited. It sits directly above
+  `petHudLine()`, after v58's four.
+- **It introduces NO new colour, because it wears `tierColor()`.** That
+  helper already exists and already carries the three tier colours the
+  inventory and craft rows wear — `#cdd2da` iron, `#5ae0f0` runic, `#c07ae8`
+  dragonsteel. A matched Runic loadout's HUD line is therefore the exact
+  cyan the Runic rows beside it already are, by construction rather than by
+  a hex copied into a second place. **Zero new hexes this version**, against
+  v58's three.
+- **The line states both numbers and neither is a restated literal.** It
+  reads e.g. `Matched Runic gear — armour −33% (+5%)`, where the 33 comes
+  from `armorReduceNow()` — the same call `applyDamage()` makes — and the 5
+  from `MATCHED_TIER_BONUS` itself. The line physically cannot state a
+  reduction the next hit disagrees with.
+- **The inventory row is the panel's OWN row with one number changed.** An
+  armour renders as the same `.inv-row`, same `data-a`/`data-it` keys, same
+  `.iconwrap`/`.qty` structure — the right-hand column now reads
+  `armorReduceFor(type)` instead of `a.reduce`. **Zero new component styles,
+  the eleventh version running**, and `grep 'tier-'` finds the same three
+  classes it always did.
+- **Because the row keeps `data-it`, the Animation Pass's row animations keep
+  working on it for free** — the number flashes when a weapon swap changes
+  it, exactly as a changed wood count does. That was the reason to change the
+  number inside the existing row rather than append a second element to it.
+- **The row shows the number in force, the craft row still shows the base,
+  and that split is deliberate.** An armour you have equipped alongside a
+  matched weapon states `−33%`; the same armour sitting unequipped two rows
+  below states `−28%`; the forge recipe that would produce it states `−28%`
+  too, because a recipe output is not equipped and cannot be matched by
+  anything. Both readouts and the hit itself go through
+  **`armorReduceFor()`, the single place the effective number is computed**,
+  so the pair can never drift — the v58 `consumableEffectText()` lesson
+  applied to armour.
+- **`run5` gained a matched-tier sweep, and it sweeps all three tiers both
+  ways rather than a representative one.** A brand new account carries no
+  armour at all, so the HUD line and the equipped-armour row are both dead to
+  the coverage harness unless put there deliberately. Each tier is drawn
+  matched and mismatched (the HUD line's colour is a different branch per
+  tier), plus the fists-over-armour third state a new account is actually in,
+  with the harness failing loudly if the line ever draws on a mismatched or
+  weaponless loadout. 1349 coverage draws before, 1363 after.
+
+## WHAT THE FRESH-CONTEXT REVIEW FOUND
+
+**Nothing, because it could not be run — and that is the honest report, not
+a "nothing new".** Step 0 of the standard process was followed as written:
+`~/.claude/plugins/installed_plugins.json` was read directly and found to be
+`{"version": 2, "plugins": {}}`, i.e. ECC registered by `.claude/settings.json`
+but genuinely not installed in this environment, exactly as step 0 predicts
+for a fresh container. The install step
+(`npx ecc-universal@2.2.1 setup --mode claude-plugin --scope project --hooks
+standard --yes`) was then attempted for real and was **refused by this
+environment's own permission layer**, which classified it as self-modification
+of the agent's tooling. No review pass ran against this diff.
+
+This is recorded rather than worked around. It is **not** treated as a RED:
+the five RED conditions are a failing harness, a non-unique anchor, invented
+bible content, and a spec needing a whole missing system — an unavailable
+review tool is none of them, and step 0 says in its own words that it "does
+not replace or relax steps 1-5". Steps 1-5 ran in full and green. But the
+second pair of eyes v58 found two real defects with was not available to this
+build, and the next session should know that before trusting this diff more
+than v58's.
+
+## JUDGMENT CALLS THIS VERSION
+
+1. **`MATCHED_TIER_BONUS = 0.05`, flat and additive — TUNABLE, and the single
+   biggest thing to re-pick.** The spec says "propose a small bonus to the
+   armour's own `reduce` value" and fixes no number; the bible fixes none
+   either. 0.05 makes the bonus real at every tier without approaching an
+   immunity: iron `0.15 -> 0.20`, runic `0.28 -> 0.33`, dragonsteel
+   `0.42 -> 0.47`. In damage terms a matched player takes 80 of a 100-damage
+   hit instead of 85 at iron, 67 instead of 72 at runic, 53 instead of 58 at
+   dragonsteel.
+2. **Flat rather than proportional, deliberately.** A proportional bonus
+   (say +20%) would have grown fastest exactly where the reduction is already
+   largest — dragonsteel would have reached `0.504`, past half of all damage,
+   which is a much bigger balance decision than this spec asked for. Flat
+   gives the biggest *relative* gain to iron, i.e. to the early game, which
+   is where a reason to finish a matched set is most useful.
+3. **The `Math.min(0.95, …)` ceiling is dead code today** — the highest value
+   reachable is 0.47. It is there so that raising the constant or adding a
+   fourth armour tier later cannot silently cross into total immunity. Easy
+   to delete if unwanted.
+4. **The equipped armour's inventory row now shows the effective number, the
+   craft row still shows the base.** Argued above; the alternative (rows
+   always showing the base, HUD carrying the whole story) is equally
+   defensible and is a one-line revert.
+5. **"v59" is this session's own numbering.** `NEXT_BUILD.md` names the spec,
+   not a version number, and v58 was the last numbered build.
+6. **Two existing `run4` gates had their loadout made EXPLICIT, and one had
+   its anchor updated.** All three are described in full in the commit
+   message. The important one: the v27 gate labelled *"Guard Break stacks
+   multiplicatively with Runic Armor (20 -> 14 -> 7)"* was silently inheriting
+   `equipped: 'mystic_staff'` — runic — from the Arcane Burst gates fifty
+   lines above it, which this build turns into a *matched* loadout. It would
+   have kept reporting PASS, because 20 -> 13 -> 7 and 20 -> 14 -> 7 both
+   round to 7, while its own label had quietly become untrue. It now states
+   `equipped: null` and tests the unmatched case it claims to.
+
+
 ### 2026-09-20 (v58 — Consumables)
 
 Mostly a mechanics version, and the rendering-scope half of it is small and

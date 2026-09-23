@@ -1189,6 +1189,55 @@ const ARMORS = {
 };
 
 /* =========================================================
+   MATCHED-TIER GEAR BONUS
+   ARMORS has exactly ONE equip slot (`me.armor`), so a traditional
+   multi-piece set bonus has nothing to attach to. The real choice this game
+   already gives a player is two slots — weapon and armour — so the bonus
+   rewards matching THOSE two tiers, and nothing here adds a third slot.
+
+   PART A: a flat addition to the armour's own `reduce`, never a new stat.
+   PART B: a mismatch is untouched — `armorReduceFor()` returns the base
+   number unchanged, so a Dragonsteel weapon over Iron armour behaves today
+   exactly as it did yesterday. This is a bonus for coherence, never a
+   penalty for mixing.
+
+   ⚠️ TUNABLE. The bible fixes no number here. 0.05 was chosen so the bonus
+   is real at every tier without ever approaching an immunity: iron
+   0.15 -> 0.20, runic 0.28 -> 0.33, dragonsteel 0.42 -> 0.47. Flat rather
+   than proportional deliberately — a proportional bonus would have grown
+   fastest exactly where the reduction is already largest.
+
+   The Math.min(0.95, …) is belt-and-braces, not live: the highest value
+   this can currently produce is 0.47. It exists so that raising the
+   constant or adding a fourth armour tier later can never silently cross
+   into total immunity. */
+const MATCHED_TIER_BONUS = 0.05;
+
+/* True only when the equipped weapon's tier and the equipped armour's tier
+   are genuinely the SAME STRING. Fists (`tier: null`) and an empty armour
+   slot both fall out at the guards above the comparison, so `null === null`
+   can never be read as a match. */
+function matchedTierActive() {
+  const a = ARMORS[me && me.armor];
+  if (!a || !a.tier) return false;
+  const w = WEAPONS[me && me.equipped];
+  if (!w || !w.tier) return false;
+  return w.tier === a.tier;
+}
+/* THE ONE PLACE the effective number is computed. applyDamage(), the HUD
+   line and the inventory row all read it, so the number a player is shown
+   and the number they are actually hit for can never drift apart — the
+   v58 consumableEffectText() lesson applied to armour. */
+function armorReduceFor(type) {
+  const a = ARMORS[type];
+  if (!a) return 0;
+  return (me && me.armor === type && matchedTierActive())
+    ? Math.min(0.95, a.reduce + MATCHED_TIER_BONUS)
+    : a.reduce;
+}
+function armorReduceNow() { return armorReduceFor(me && me.armor); }
+
+/* =========================================================
    v35 PART D — COSMETICS
    Bible (PLAYER CUSTOMISATION): "All cosmetics earned through gameplay only,
    never purchased. Hats — Cap, Hood, Crown, Witch Hat, Knight Helm, Feathered
@@ -2763,6 +2812,27 @@ function debugConsumableInfo() {
                     .map(r => ({ out: r.out, mats: Object.assign({}, r.mats), where: r.where, label: r.label })),
     meatDrops: ["boar", "bear"].map(k => ({ kind: k,
       meat: (MOBS[k].loot || []).filter(l => l.type === "raw_meat") })),
+  };
+}
+/* Matched-Tier Gear Bonus harness hook. Every value here is the LIVE
+   binding or a live call, so a gate can assert the RELATIONSHIP (base
+   + bonus) instead of a number copied out of the table — the v58 rule. */
+function debugGearInfo() {
+  return {
+    MATCHED_TIER_BONUS,
+    armors: Object.keys(ARMORS).reduce((o, k) => {
+      o[k] = { tier: ARMORS[k].tier, base: ARMORS[k].reduce }; return o;
+    }, {}),
+    weaponTiers: Object.keys(WEAPONS).reduce((o, k) => {
+      o[k] = WEAPONS[k].tier; return o;
+    }, {}),
+    equipped: me ? me.equipped : null,
+    armor: me ? me.armor : null,
+    matched: matchedTierActive(),
+    reduceNow: armorReduceNow(),
+    rowFor: Object.keys(ARMORS).reduce((o, k) => {
+      o[k] = armorReduceFor(k); return o;
+    }, {}),
   };
 }
 function debugSetConsumable(patch) {
@@ -9873,7 +9943,12 @@ function applyDamage(dmg, from, opts = {}) {
   if (blocked) dmg = Math.max(1, Math.ceil(dmg * 0.25));
   // v10: armor — flat % reduction on everything, applied after block
   const arm = ARMORS[me.armor];
-  if (arm) dmg = Math.max(1, Math.round(dmg * (1 - arm.reduce)));
+  /* Matched-Tier Gear Bonus: the lookup, the `if (arm)` guard, the
+     multiplicative shape and the floor of 1 are all exactly as they were —
+     the ONLY change is that the number comes from armorReduceFor() now, so
+     a matched loadout is reduced by more and a mismatched one by precisely
+     what it always was. */
+  if (arm) dmg = Math.max(1, Math.round(dmg * (1 - armorReduceNow())));
   /* v27: Knight's Guard Break — the next hit taken inside the window is
      halved. Deliberately the armour reduce math reused, so the two stack
      multiplicatively rather than summing to an accidental immunity. A
@@ -11785,7 +11860,7 @@ function refreshPanels() {
     } else if (meta.armor) {
       const a = ARMORS[type];
       html += `<div class="inv-row weapon ${me.armor === type ? "equipped" : ""} tier-${a.tier}" data-a="${type}" data-it="${type}">
-        <span class="iconwrap">${ic(meta.color)}<span>${meta.name}</span></span><span class="qty">−${Math.round(a.reduce * 100)}% dmg${qty > 1 ? " ×" + qty : ""}</span></div>`;
+        <span class="iconwrap">${ic(meta.color)}<span>${meta.name}</span></span><span class="qty">−${Math.round(armorReduceFor(type) * 100)}% dmg${qty > 1 ? " ×" + qty : ""}</span></div>`;
     } else if (meta.charm) {
       // v21: charm slot — same row treatment as armor, its own single slot
       const ch = CHARMS[type];
@@ -18699,6 +18774,21 @@ function updateHUD(dayT) {
       ? `<br><span style="color:#7fd8e8">Deep lungs ${fmtLeft(breathPotionUntil)}</span>` : "") +
     (fireResistActive()
       ? `<br><span style="color:#ff7a3c">Fireward ${fmtLeft(fireResistUntil)}</span>` : "") +
+    /* Matched-Tier Gear Bonus: one line, the Shrine blessing's exact shape,
+       appearing only while it means something — the breath readout's rule.
+       It wears tierColor(), which is the colour the matched rows already
+       wear, so NO new colour enters the file. The percentages come from
+       armorReduceNow() and the live constant, never from a restated
+       literal, so this line cannot state a number applyDamage disagrees
+       with. */
+    (matchedTierActive()
+      ? (() => {
+          const t = ARMORS[me.armor].tier;
+          return `<br><span style="color:${tierColor(t)}">Matched ` +
+            `${t.charAt(0).toUpperCase() + t.slice(1)} gear — armour ` +
+            `−${Math.round(armorReduceNow() * 100)}% ` +
+            `(+${Math.round(MATCHED_TIER_BONUS * 100)}%)</span>`;
+        })() : "") +
     petHudLine();
 
   const phase = dayT < 0.25 ? "Morning" : dayT < 0.5 ? "Afternoon" : dayT < 0.62 ? "Dusk" : "Night";

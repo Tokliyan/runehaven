@@ -943,6 +943,61 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('consumables swept — ' + keys58.length + ' rows, used, HUD on/off, mounted branch and craft rows');
     }
 
+    /* ---- Matched-Tier Gear Bonus: the branches this version adds ----------
+       A brand new account carries no armour at all, so the matched HUD line
+       and the equipped-armour inventory row are BOTH dead to this harness
+       unless they are put here deliberately — the v58 consumables lesson.
+       Every armour tier is swept matched AND mismatched, because the HUD
+       line's colour comes from tierColor(tier) and is therefore a different
+       branch for each of the three. */
+    if (window.debugGearInfo && window.debugSetPlayer && window.refreshPanels) {
+      const GIC = window.debugGearInfo();
+      const PAIRS = [
+        { armor: 'iron_armor',         match: 'iron_sword',        miss: 'runic_blade',       name: 'Iron' },
+        { armor: 'runic_armor',        match: 'runic_blade',       miss: 'iron_sword',        name: 'Runic' },
+        { armor: 'dragonsteel_shield', match: 'dragonsteel_sword', miss: 'iron_sword',        name: 'Dragonsteel' },
+      ];
+      let sawLine = 0, sawRow = 0;
+      for (const P of PAIRS) {
+        for (const [weapon, matched] of [[P.match, true], [P.miss, false]]) {
+          window.debugSetPlayer({ hp: 100, armor: P.armor, equipped: weapon,
+                                  inv: { [P.armor]: 1, [weapon]: 1 } });
+          window.refreshPanels();
+          window.updateHUD(0.3);
+          const hudTxt = doc.getElementById('hudPlayer').textContent;
+          const rowTxt = doc.getElementById('invList').textContent;
+          const want = '−' + Math.round(
+            (GIC.armors[P.armor].base + (matched ? GIC.MATCHED_TIER_BONUS : 0)) * 100) + '% dmg';
+          if (rowTxt.indexOf(want) >= 0) sawRow += 1;
+          if (matched && hudTxt.indexOf('Matched ' + P.name + ' gear') >= 0) sawLine += 1;
+          if (!matched && hudTxt.indexOf('Matched') >= 0) {
+            console.log('COVERAGE GAP: the matched-tier HUD line drew on a MISMATCHED loadout');
+            process.exit(1);
+          }
+          for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+        }
+      }
+      /* Fists over armour — the third state, neither matched nor mismatched,
+         and the one a new account is actually in. */
+      window.debugSetPlayer({ armor: 'iron_armor', equipped: null, inv: { iron_armor: 1 } });
+      window.refreshPanels();
+      window.updateHUD(0.3);
+      const fistTxt = doc.getElementById('hudPlayer').textContent;
+      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      if (fistTxt.indexOf('Matched') >= 0) {
+        console.log('COVERAGE GAP: the matched-tier HUD line drew with no weapon equipped');
+        process.exit(1);
+      }
+      if (sawLine !== PAIRS.length || sawRow !== PAIRS.length * 2) {
+        console.log('COVERAGE GAP: matched-tier HUD lines drawn ' + sawLine + '/' + PAIRS.length +
+                    ', armour rows stating the live number ' + sawRow + '/' + (PAIRS.length * 2));
+        process.exit(1);
+      }
+      window.debugSetPlayer({ armor: null, equipped: null, inv: {} });
+      window.refreshPanels();
+      console.log('matched-tier gear swept — ' + PAIRS.length + ' tiers matched and mismatched, HUD line on/off, fists branch');
+    }
+
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {
