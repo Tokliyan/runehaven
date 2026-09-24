@@ -53,6 +53,108 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-24 (v59 — Matched-Tier Gear Bonus)
+
+A mechanics version, and the rendering-scope half of it is two branches:
+**one extra word and one recomputed number on the armour inventory row, and
+one HUD line.** **The canvas was never entered.** No palette entry, biome
+colour, facet multiplier, projection constant, silhouette, sprite or draw
+call was touched, and the canvas gradient count is 13 before and 13 after.
+
+- **The HUD line is `tameBuffUntil`'s line again** — same card
+  (`#hudPlayer`), same `<br><span style="color:…">` one-liner, same rule
+  that a line appears only while it means something, which is the v21 breath
+  readout's rule and all four v58 effect lines' rule. No new HUD element, no
+  new card, no new CSS, nothing added to the thirteen v56 audited.
+- **It introduces no colour.** The line wears `tierColor(mtier)` — the
+  existing iron/runic/dragonsteel swatches (`#cdd2da` / `#5ae0f0` /
+  `#c07ae8`) the inventory rows and nameplates already wear — so the line
+  and the gear it describes match by construction rather than by a hex
+  typed twice. `grep` finds no new hex anywhere in this diff.
+- **The armour row is the panel's OWN row, unchanged in shape.** Same
+  `.inv-row weapon` class, same `data-a` and `data-it` keys, same
+  `.iconwrap`/`.qty` structure — the right-hand column simply states the
+  number really in force instead of the table's, and adds the word
+  "matched" when it is the matched one. Because the row keeps `data-it`,
+  the Animation Pass's row animations keep working on it for free.
+- **Zero new component styles, the eleventh version running.**
+- **The number the row and the line both state comes from
+  `armorReduceNow()`** — the same single helper `applyDamage()` multiplies
+  by. There is no second copy of the arithmetic anywhere, so what the player
+  is told and what the hit actually costs cannot drift apart. `run4` proves
+  that by measuring real HP loss and comparing it to what the panels say.
+- **Two pre-existing harness faults surfaced on this diff, and both were
+  fixed rather than worked around** (the full account, with the measured
+  evidence, is in this version's commit message — it is not rendering
+  scope). In short: v27's `Guard Break reuses the armour reduce math`
+  gate asserts the source literal this version renamed, and now asserts
+  the whole shared shape on both sides instead, which is a stronger claim
+  than the two fragments it replaces. And v58's movement gate was handed a
+  spot it could not walk from — the terrain under a fixed coordinate is not
+  stable between runs in this harness, and on one run the spot came back
+  `B.PEAK`, which is BLOCKED — so its search now requires somewhere a
+  player can genuinely stand and step from. Neither gate was weakened,
+  skipped or quarantined, and neither fault was in the game.
+- **`run5` gained a matched-tier sweep, and it sweeps both sides of both
+  branches at all three tiers.** A brand new account wields nothing and
+  wears nothing, so the matched row branch and the matched HUD line are
+  dead to the coverage harness unless the gear is put on deliberately —
+  each armour equipped with a matching weapon and then with a mismatched
+  one, the row and the line drawn each time, on and off. 1349 coverage
+  draws before, 1361 after.
+
+## JUDGMENT CALLS THIS VERSION
+
+- **The size of the bonus: `ARMOR_MATCH_BONUS = 0.05`, flat, added to the
+  armour's base `reduce`.** The spec explicitly asked the build to propose
+  it ("propose a small bonus"), so this is the one genuinely open number
+  here, and it is marked TUNABLE in the source beside the reasoning. It
+  runs iron 0.15 → 0.20, runic 0.28 → 0.33, dragonsteel 0.42 → 0.47. Three
+  real constraints picked it rather than taste: it is far smaller than one
+  tier step (iron → runic is +0.13), so matched iron still takes MORE
+  damage than mismatched runic and matching can never substitute for
+  upgrading; the top of the range lands under Guard Break's 0.50, so the
+  strongest coherent loadout still reduces by less than the Knight's
+  one-hit window; and flat rather than proportional keeps dragonsteel from
+  being paid the most in absolute terms and pushed past 0.50. All three are
+  gates in `run4`, measured, not asserted.
+- **The bonus is shown, not silent.** The spec's proof gates ask only that
+  the bonus be real and measured; they do not ask for UI. A passive a
+  player cannot see is one they cannot deliberately choose, and the whole
+  point of this spec is rewarding a deliberate choice — so the row states
+  the real number and the HUD names the matched tier. Both are additive
+  branches on elements that already existed.
+- **The craft row was deliberately left alone.** A craft row describes the
+  item itself, and an armour's matched value depends on what the player
+  happens to be holding, which the forge cannot know. It continues to state
+  the piece's own base reduction, exactly as it always has.
+- **The word on the row is "matched", lowercase, appended after the
+  number.** A minor naming choice; any of several would read fine.
+- **The version number.** `NEXT_BUILD.md` names the spec by title and no
+  version at all, so this entry is numbered v59 purely because it follows
+  v58 in this file. If the project's own numbering has moved on elsewhere,
+  the number is the only thing here that needs changing.
+
+## WHAT THE FRESH-CONTEXT REVIEW FOUND
+
+⚠️ **ECC never ran, for the second version running, and this time it could
+not be made to.** The repo declares the plugin in `.claude/settings.json`,
+but `~/.claude/plugins/installed_plugins.json` again held an empty plugin
+map in this environment — so step 0 of the standard process was reached,
+checked first-hand exactly as it says to, and the install step it names was
+then **refused by this environment's own permission layer** rather than
+failing on the network. No ECC skill, hook or GateGuard was present at any
+point, and nothing intercepted a single command in this build.
+
+That is the honest data point and it is worth stating plainly: **the ECC
+review half of step 0 did not happen.** Everything else in the gauntlet did
+— the parse check, the grep checklist with its twelve preservation entries,
+and all three harnesses — and the gates below are the real substitute for
+it, not a claim that the review was performed. A human with an interactive
+session can install the plugin and run the pass against this diff directly;
+nothing about this version blocks that afterwards.
+
+
 ### 2026-09-20 (v58 — Consumables)
 
 Mostly a mechanics version, and the rendering-scope half of it is small and

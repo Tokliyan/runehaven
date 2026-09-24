@@ -943,6 +943,48 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('consumables swept — ' + keys58.length + ' rows, used, HUD on/off, mounted branch and craft rows');
     }
 
+
+    /* ---- MATCHED-TIER GEAR BONUS: the branches this version adds ----------
+       No new species, mob, weapon kind or class shipped this build, so the
+       four coverage lists above are complete as they stand. What IS new is a
+       matched branch on the armour inventory row and a matched HUD line —
+       and a brand new account carries no armour and wields nothing, so both
+       are dead to this sweep unless the gear is put on deliberately. Every
+       armour is swept both ways, matched AND mismatched, rather than one
+       representative piece, because each branch has two sides. */
+    if (window.debugGearInfo && window.refreshPanels) {
+      const GIC = window.debugGearInfo();
+      const ATc = GIC.ARMOR_TIERS, WTc = GIC.WEAPON_TIERS;
+      const wic = window.debugWorldInfo();
+      const armsC = Object.keys(ATc), wepsC = Object.keys(WTc);
+      window.debugSetPlayer({ x: wic.SPAWN.x, y: wic.SPAWN.y });
+      let drewMatched = 0, drewPlain = 0;
+      for (const a of armsC) {
+        const mw = wepsC.find(k => WTc[k] === ATc[a]);
+        const xw = wepsC.find(k => WTc[k] && WTc[k] !== ATc[a]);
+        /* matched — the new row branch and the new HUD line, both drawn */
+        window.debugSetPlayer({ equipped: mw, armor: a, inv: { [a]: 1 } });
+        window.refreshPanels(); window.updateHUD(0.3);
+        if (doc.getElementById('invList').textContent.indexOf('matched') >= 0 &&
+            doc.getElementById('hudPlayer').textContent.indexOf('Matched ' + ATc[a] + ' gear') >= 0) drewMatched++;
+        for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+        /* mismatched — the other side of both branches, which is the half a
+           matched-only sweep would leave permanently undrawn */
+        window.debugSetPlayer({ equipped: xw });
+        window.refreshPanels(); window.updateHUD(0.3);
+        if (doc.getElementById('invList').textContent.indexOf('matched') < 0 &&
+            doc.getElementById('hudPlayer').textContent.indexOf('Matched') < 0) drewPlain++;
+        for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      }
+      if (drewMatched !== armsC.length || drewPlain !== armsC.length) {
+        console.log('COVERAGE GAP: the matched-tier row and HUD line did not both draw and clear at every tier');
+        process.exit(1);
+      }
+      window.debugSetPlayer({ equipped: null, armor: null, inv: {} });
+      window.refreshPanels();
+      console.log('matched-tier gear swept — ' + armsC.length + ' tiers, matched and mismatched, inventory row and HUD line both ways');
+    }
+
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {

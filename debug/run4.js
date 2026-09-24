@@ -2634,9 +2634,24 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['the v10 melee crit and per-weapon knockback table is untouched',
         gameScript.indexOf('wk === "axe" ? 1.1 : wk === "dagger" ? 0.2 : wk === "spear" ? 0.6') > 0 &&
         gameScript.indexOf('Math.round(w.dmg * 1.6)') > 0]);
+      /* THE MATCHED-TIER GEAR BONUS MOVED THIS LITERAL AND THE GATE IS
+         UPDATED, NOT RELAXED — the same thing v55 PART H did to the ability
+         ring constant directly below, and it caught this honestly: the
+         armour side now multiplies by armorReduceNow(), the one helper that
+         returns arm.reduce UNTOUCHED on a mismatch and arm.reduce +
+         ARMOR_MATCH_BONUS on a match, so the operand's name changed while
+         the math either side of it did not. What is asserted now is the
+         WHOLE shared shape on both sides rather than the two fragments,
+         which is a strictly stronger claim than the line it replaces:
+         identical `Math.max(1, Math.round(dmg * (1 - x)))` reductions, still
+         multiplicative, still incapable of summing into an immunity — and
+         the driven gear gate far below measures that same stacking in real
+         HP rather than in source text. */
       results.push(['Guard Break reuses the armour reduce math beside it, not a new system',
-        gameScript.indexOf('dmg * (1 - GUARD_BREAK_REDUCE)') > 0 &&
-        gameScript.indexOf('dmg * (1 - arm.reduce)') > 0]);
+        gameScript.indexOf('dmg = Math.max(1, Math.round(dmg * (1 - GUARD_BREAK_REDUCE)));') > 0 &&
+        gameScript.indexOf('dmg = Math.max(1, Math.round(dmg * (1 - armorReduceNow())));') > 0 &&
+        gameScript.indexOf('const arm = ARMORS[me.armor];') > 0 &&
+        gameScript.split('function armorReduceNow()').length === 2]);
       /* v55 PART H MOVED THIS LITERAL AND THE GATE IS UPDATED, NOT RELAXED.
          The ring loop now passes `ring.rgb || ABILITY_RING_RGB` so one
          primitive can serve three travel signatures as well as the two
@@ -9055,7 +9070,34 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
              SAFE_RADIUS scaled. SAFE_RADIUS is 226 at N=2000, so spawn+40
              is deep inside it and every incoming hit would be refused for a
              reason that has nothing to do with damage numbers. */
-          const farX = WD.SPAWN.x + WD.SAFE_RADIUS + 60, farY = WD.SPAWN.y + WD.SAFE_RADIUS + 60;
+          /* ⚠️ SEARCHED, NOT ASSUMED — a real fix, not tidying, and the gate
+             it saves was not weakened to get it. SPAWN + SAFE_RADIUS + 60
+             clears the SPAWN zone and nothing else, but inSafeZone() is also
+             the Bazaar and every scattered v20 Other Safe Zone, and those
+             move with the world, which is NOT the same from one run of this
+             harness to the next. Measured live: on one run in five this
+             fixed point landed inside one of them, applyDamage() and
+             dealHit() both refused their hit exactly as the game is supposed
+             to inside a safe zone, and the three gates below failed saying
+             nothing whatever about damage numbers — while the mobHit gate
+             above them, which needs no such thing, passed in the same run.
+             That is the trap this block's own comment already warns about,
+             one zone type later. So the point is now found by asking
+             inSafeZone() itself, sweeping angles outward from the same
+             distance band it always used — the v46 openSpot46 idiom. */
+          const [farX, farY] = (() => {
+            for (let r = WD.SAFE_RADIUS + 60; r < WD.SAFE_RADIUS + 900; r += 30) {
+              for (let a = 0; a < 16; a++) {
+                const x = WD.SPAWN.x + Math.cos(a / 16 * Math.PI * 2) * r;
+                const y = WD.SPAWN.y + Math.sin(a / 16 * Math.PI * 2) * r;
+                if (x > 4 && y > 4 && x < WD.N - 4 && y < WD.N - 4 && !window.inSafeZone(x, y))
+                  return [x, y];
+              }
+            }
+            return [WD.SPAWN.x + WD.SAFE_RADIUS + 60, WD.SPAWN.y + WD.SAFE_RADIUS + 60];
+          })();
+          results.push(['ANIM A: a point genuinely outside EVERY safe zone — spawn, Bazaar and the scattered ones — was found to take a hit at',
+            !window.inSafeZone(farX, farY)]);
           /* 1. player -> mob. */
           window.debugSetPlayer({ x: farX, y: farY, hp: 200 });
           const H = window.debugCombatHandles && window.debugCombatHandles();
@@ -9476,13 +9518,52 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
            else can move the HP the food gates measure. Searched rather than
            assumed, the same way the v50 landmark gates search. */
         const mobs58 = (window.debugCombatHandles && window.debugCombatHandles().mobs) || [];
+        /* ⚠️ THE WALKABILITY TEST BELOW IS A REAL FIX, NOT TIDYING, AND THE
+           GATE IT SAVES WAS NEVER RELAXED TO GET IT.
+
+           This search originally asked for two things — outside every safe
+           zone, clear of every mob — and then handed its answer to walk58(),
+           which assumes a third thing it never checked: that a player can
+           actually STAND there and take a step. The terrain under a fixed
+           coordinate is NOT stable from run to run in this harness, and that
+           was measured rather than reasoned: the identical spot
+           (2492.5, 2502.5) came back B.PLAINS (4) in three consecutive runs
+           and B.PEAK (9) in a fourth — and B.PEAK is in BLOCKED, as is the
+           tile east and the tile north of it in that world. On that fourth
+           run the PART C/D movement gate below walked a player who could not
+           move at all, measured 0.0000 tiles against 0.0000, and FAILED on a
+           ratio of NaN.
+
+           That FAIL was correct and loud — `distPlain > 0.05` caught it — but
+           it said nothing whatever about the speed draught, which is what the
+           gate exists to measure. So the precondition is now established
+           instead of assumed: the spot must be a tile the player can stand on
+           AND step from, tested with `diveBlocked()`, the very predicate
+           update() itself gates movement on. The sweep also runs angles
+           around SPAWN rather than one diagonal ray, so the added requirement
+           has somewhere to find an answer and cannot starve the search into
+           the "no spot found" gate above. Nothing about what is measured, or
+           what would make it fail, has changed. */
+        const stand58 = (cx, cy) => {
+          const tx = Math.floor(cx), ty = Math.floor(cy);
+          /* The tile itself, plus the two walk58's own keypress steps into:
+             'd' is KEYBINDS.right, and update()'s isometric rotation turns
+             that into +x and -y, each gated on its own axis. */
+          return !window.diveBlocked(window.biomeAt(tx, ty)) &&
+                 !window.diveBlocked(window.biomeAt(tx + 1, ty)) &&
+                 !window.diveBlocked(window.biomeAt(tx, ty - 1));
+        };
         let SPOT58 = null;
         for (let r = wi58.SAFE_RADIUS + 40; r < wi58.SAFE_RADIUS + 400 && !SPOT58; r += 20) {
-          const cx = wi58.SPAWN.x + r + 0.5, cy = wi58.SPAWN.y + r + 0.5;
-          if (cx >= wi58.N - 3 || cy >= wi58.N - 3) break;
-          if (window.inSafeZone(cx, cy)) continue;
-          if (mobs58.some(m => !m.dead && Math.hypot(m.x - cx, m.y - cy) < 30)) continue;
-          SPOT58 = { x: cx, y: cy };
+          for (let a = 0; a < 12 && !SPOT58; a++) {
+            const cx = wi58.SPAWN.x + Math.cos(a / 12 * Math.PI * 2) * r + 0.5;
+            const cy = wi58.SPAWN.y + Math.sin(a / 12 * Math.PI * 2) * r + 0.5;
+            if (cx < 3 || cy < 3 || cx >= wi58.N - 3 || cy >= wi58.N - 3) continue;
+            if (window.inSafeZone(cx, cy)) continue;
+            if (mobs58.some(m => !m.dead && Math.hypot(m.x - cx, m.y - cy) < 30)) continue;
+            if (!stand58(cx, cy)) continue;
+            SPOT58 = { x: cx, y: cy };
+          }
         }
         results.push(['v58: a real spot outside every safe zone and clear of mobs was found to drive this from',
           !!SPOT58]);
@@ -10012,6 +10093,249 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           results.push(['v58: and the world still runs frames cleanly after every part of this',
             (() => { for (let f = 0; f < 8; f++) window.render(f * 16); return !caught; })()]);
           inv58({});
+        }
+      }
+
+
+      /* =====================================================================
+         MATCHED-TIER GEAR BONUS. The locked spec's own proof gates, plus the
+         preservation half. Everything below is DRIVEN through the real
+         applyDamage() and the real rendered DOM — the numbers these gates
+         compare are HP a player actually lost — rather than asserted about
+         the source, except where the assertion is genuinely about the source
+         (that the bonus is added in exactly one place in the whole file).
+         ===================================================================== */
+      /* ⚠️ ASSERTED OUTSIDE THE GUARD ON PURPOSE, for the reason v58's own
+         hook gate states: a renamed hook must FAIL here rather than quietly
+         evaporate every gate below it while run4 still reports zero FAIL. */
+      results.push(['gear: the three matched-tier hooks exist, so none of the gates below can silently vanish',
+        typeof window.debugGearInfo === 'function' &&
+        typeof window.matchedGearTier === 'function' &&
+        typeof window.armorReduceNow === 'function']);
+      if (window.debugGearInfo && window.matchedGearTier && window.armorReduceNow) {
+        const GI = window.debugGearInfo;
+        const dspG = window.debugSetPlayer;
+        const wiG = window.debugWorldInfo();
+        const docG = window.document;
+        const G0 = GI();
+        const BONUS = G0.ARMOR_MATCH_BONUS;
+        /* Somewhere real and outside every safe zone — applyDamage() returns
+           immediately inside one, so every measured gate below would read a
+           flat zero there. Searched rather than assumed, the same way v58's
+           own spot is. Mobs are kept well clear so nothing else can move the
+           HP these gates measure. */
+        const mobsG = (window.debugCombatHandles && window.debugCombatHandles().mobs) || [];
+        let SPOTG = null;
+        for (let r = wiG.SAFE_RADIUS + 40; r < wiG.SAFE_RADIUS + 400 && !SPOTG; r += 20) {
+          const cx = wiG.SPAWN.x + r + 0.5, cy = wiG.SPAWN.y + r + 0.5;
+          if (cx >= wiG.N - 3 || cy >= wiG.N - 3) break;
+          if (window.inSafeZone(cx, cy)) continue;
+          if (mobsG.some(m => !m.dead && Math.hypot(m.x - cx, m.y - cy) < 30)) continue;
+          SPOTG = { x: cx, y: cy };
+        }
+        results.push(['gear: a real spot outside every safe zone was found to drive applyDamage from',
+          !!SPOTG]);
+        if (SPOTG) {
+          if (window.debugSetAbility) window.debugSetAbility({ guardBreakUntil: 0 });
+          if (window.debugSetMount) window.debugSetMount({ mounted: false });
+          if (window.debugSetConsumable) window.debugSetConsumable({ food: 0, speed: 0, breath: 0, fire: 0 });
+          const AT = G0.ARMOR_TIERS, AR = G0.ARMOR_REDUCE, WT = G0.WEAPON_TIERS;
+          const armorKeys = Object.keys(AT);
+          const weaponKeys = Object.keys(WT);
+          /* The real HP a hit actually costs with a given loadout. hp is put
+             back to a full 100 before every single hit, and 60 is used
+             throughout: big enough that one tier of reduction is several
+             whole HP apart from the next, small enough that no loadout here
+             can ever die and take enterDeath() into the middle of a gate. */
+          const HITDMG = 60;
+          dspG({ x: SPOTG.x, y: SPOTG.y, hp: 100, charm: null, diving: false });
+          const lossWith = (weapon, armor) => {
+            dspG({ hp: 100, equipped: weapon, armor: armor });
+            const before = window.debugWorldInfo().player.hp;
+            window.applyDamage(HITDMG, 'a proof gate', {});
+            return before - window.debugWorldInfo().player.hp;
+          };
+          /* What applyDamage's own arithmetic says a hit should cost at a
+             given reduction — the multiply and the floor of 1, restated once
+             here so every gate below compares against the real shape rather
+             than a hand-typed number. */
+          const costAt = red => Math.max(1, Math.round(HITDMG * (1 - red)));
+
+          /* ---------- PART A — one real bonus per matched tier ------------ */
+          results.push(['gear A: every armour tier has a real weapon at the same tier to match it, so the bonus is reachable at all three',
+            armorKeys.every(a => weaponKeys.some(w => WT[w] === AT[a]))]);
+          /* DRIVEN, all three tiers: the matched loadout costs exactly what
+             base + BONUS costs, measured as real HP lost. */
+          const matchedRows = armorKeys.map(a => {
+            const w = weaponKeys.find(k => WT[k] === AT[a]);
+            return { a, w, tier: AT[a], base: AR[a], loss: lossWith(w, a) };
+          });
+          results.push([`gear A: a MATCHED loadout really reduces by base + ${BONUS} at every tier (${matchedRows.map(r => r.tier + ' ' + r.loss).join(', ')})`,
+            matchedRows.length === 3 &&
+            matchedRows.every(r => r.loss === costAt(r.base + BONUS))]);
+          /* And the helper the HUD and the inventory row read agrees with
+             what combat just measured, at every tier — one number, three
+             readers, no drift possible. */
+          results.push(['gear A: and armorReduceNow() reports exactly the reduction combat just applied, at every tier',
+            matchedRows.every(r => {
+              dspG({ equipped: r.w, armor: r.a });
+              const g = GI();
+              return g.matched === r.tier && g.base === r.base &&
+                     Math.abs(g.effective - (r.base + BONUS)) < 1e-9;
+            })]);
+          /* The spec's "meaningfully outperforms mismatched at the same gear
+             level" — measured against the SAME armour, mismatched. */
+          const pairRows = armorKeys.map(a => {
+            const w = weaponKeys.find(k => WT[k] === AT[a]);
+            const wm = weaponKeys.find(k => WT[k] && WT[k] !== AT[a]);
+            return { a, tier: AT[a], matched: lossWith(w, a), mismatched: lossWith(wm, a) };
+          });
+          results.push([`gear A: matched beats mismatched with the SAME armour, at every tier (${pairRows.map(r => r.tier + ' ' + r.matched + '<' + r.mismatched).join(', ')})`,
+            BONUS > 0 && pairRows.every(r => r.matched < r.mismatched)]);
+          /* The bonus is modest BY MEASUREMENT, not by assertion: it is
+             smaller than one tier step, so matching never substitutes for
+             upgrading — matched iron still takes more than MISmatched runic. */
+          const ironA = armorKeys.find(k => AT[k] === 'iron');
+          const runicA = armorKeys.find(k => AT[k] === 'runic');
+          const ironW = weaponKeys.find(k => WT[k] === 'iron');
+          const dsW = weaponKeys.find(k => WT[k] === 'dragonsteel');
+          results.push(['gear A: the bonus is smaller than one tier step — matched iron still takes MORE than mismatched runic, so matching never replaces upgrading',
+            !!ironA && !!runicA && lossWith(ironW, ironA) > lossWith(dsW, runicA)]);
+          results.push([`gear A: and the strongest matched loadout stays under Guard Break's ${G0.GUARD_BREAK_REDUCE} — nothing here approaches an immunity`,
+            Math.max.apply(null, armorKeys.map(a => AR[a])) + BONUS < G0.GUARD_BREAK_REDUCE]);
+
+          /* ---------- PART B — a mismatch takes ZERO penalty -------------- */
+          /* Every genuinely mismatched pair in the real tables, driven — the
+             loss must be EXACTLY what the armour's own untouched reduce
+             costs, which is byte-for-byte the pre-bonus behaviour. */
+          let mmPairs = 0, mmExact = 0;
+          for (const a of armorKeys) {
+            for (const w of weaponKeys) {
+              if (WT[w] === AT[a]) continue;
+              mmPairs++;
+              if (lossWith(w, a) === costAt(AR[a])) mmExact++;
+            }
+          }
+          results.push([`gear B: every mismatched pair in the real tables takes EXACTLY its old damage — zero penalty (${mmExact}/${mmPairs})`,
+            mmPairs > 0 && mmExact === mmPairs]);
+          results.push(['gear B: and a mismatched loadout\'s effective reduce IS the armour\'s own base reduce, not a shaved one',
+            armorKeys.every(a => {
+              const wm = weaponKeys.find(k => WT[k] !== AT[a]);
+              dspG({ equipped: wm, armor: a });
+              const g = GI();
+              return g.matched === null && g.effective === AR[a];
+            })]);
+          /* The bare-handed case, which is where a careless identity check
+             breaks: Fists carry tier null and an empty armour slot has no
+             tier, and `null === null` would read as a match. */
+          results.push(['gear B: bare hands never match anything — not armour, and not an empty armour slot either',
+            (() => {
+              dspG({ equipped: null, armor: ironA });
+              const bareHand = GI();
+              dspG({ equipped: ironW, armor: null });
+              const bareChest = GI();
+              dspG({ equipped: null, armor: null });
+              const bareBoth = GI();
+              return bareHand.matched === null && bareHand.effective === AR[ironA] &&
+                     bareChest.matched === null && bareChest.effective === 0 &&
+                     bareBoth.matched === null && bareBoth.effective === 0;
+            })()]);
+          /* The whole cross product, both directions at once: matched is
+             non-null EXACTLY when the two tier strings are identical. */
+          let combos = 0, agreed = 0;
+          for (const a of armorKeys.concat([null])) {
+            for (const w of weaponKeys.concat([null])) {
+              dspG({ equipped: w, armor: a });
+              const g = GI();
+              const want = (g.weaponTier && g.armorTier && g.weaponTier === g.armorTier)
+                ? g.armorTier : null;
+              combos++;
+              if (g.matched === want) agreed++;
+            }
+          }
+          results.push([`gear B: across every weapon x armour combination the game really has, matched is non-null EXACTLY when the two tier strings are identical (${agreed}/${combos})`,
+            combos > 24 && agreed === combos]);
+
+          /* ---------- the stacking floor, unchanged ---------------------- */
+          /* The matched reduce multiplies with Guard Break exactly as the
+             armour's own always did, and the floor of 1 survives it. */
+          if (window.debugSetAbility) {
+            const dsA = armorKeys.find(k => AT[k] === 'dragonsteel');
+            dspG({ x: SPOTG.x, y: SPOTG.y, hp: 100, equipped: dsW, armor: dsA, charm: null, diving: false });
+            window.debugSetAbility({ guardBreakUntil: window.performance.now() + 5000 });
+            const beforeGB = window.debugWorldInfo().player.hp;
+            window.applyDamage(HITDMG, 'a proof gate', {});
+            const gbLoss = beforeGB - window.debugWorldInfo().player.hp;
+            const wantGB = Math.max(1, Math.round(costAt(AR[dsA] + BONUS) * (1 - G0.GUARD_BREAK_REDUCE)));
+            results.push([`gear: the matched reduce still MULTIPLIES with Guard Break rather than summing into an immunity (${gbLoss} = ${wantGB})`,
+              gbLoss === wantGB]);
+            window.debugSetAbility({ guardBreakUntil: 0 });
+            dspG({ hp: 100 });
+            const beforeFloor = window.debugWorldInfo().player.hp;
+            window.applyDamage(1, 'a proof gate', {});
+            results.push(['gear: and the floor of 1 damage survives the strongest matched loadout — no hit is ever reduced to nothing',
+              beforeFloor - window.debugWorldInfo().player.hp === 1]);
+          }
+
+          /* ---------- what the player is actually told ------------------- */
+          dspG({ x: SPOTG.x, y: SPOTG.y, hp: 100, equipped: ironW, armor: ironA,
+                 inv: { iron_armor: 1, runic_armor: 1 } });
+          window.refreshPanels();
+          const rowOf = k => Array.from(docG.querySelectorAll('#invList .inv-row'))
+            .find(el => el.getAttribute('data-a') === k);
+          const matchedRow = rowOf(ironA), otherRow = rowOf(runicA);
+          results.push([`gear: the equipped armour's own row states the MATCHED number, not the table's (−${Math.round((AR[ironA] + BONUS) * 100)}%)`,
+            !!matchedRow &&
+            matchedRow.textContent.indexOf(Math.round((AR[ironA] + BONUS) * 100) + '% dmg') >= 0 &&
+            matchedRow.textContent.indexOf('matched') >= 0]);
+          results.push(['gear: and an unequipped row still states its own plain base number, with no matched word on it',
+            !!otherRow &&
+            otherRow.textContent.indexOf(Math.round(AR[runicA] * 100) + '% dmg') >= 0 &&
+            otherRow.textContent.indexOf('matched') < 0]);
+          dspG({ equipped: dsW });
+          window.refreshPanels();
+          const mismRow = rowOf(ironA);
+          results.push(['gear: and the moment the weapon stops matching, that same row drops straight back to the base number',
+            !!mismRow &&
+            mismRow.textContent.indexOf(Math.round(AR[ironA] * 100) + '% dmg') >= 0 &&
+            mismRow.textContent.indexOf('matched') < 0]);
+          /* The HUD line, in the card that already carries the Shrine
+             blessing's and the four v58 effect lines. */
+          dspG({ equipped: ironW, armor: ironA });
+          window.updateHUD(0.3);
+          const hudOn = docG.getElementById('hudPlayer').textContent;
+          dspG({ equipped: dsW });
+          window.updateHUD(0.3);
+          const hudOff = docG.getElementById('hudPlayer').textContent;
+          results.push(['gear: the HUD names the matched tier and its real number while the two tiers match',
+            hudOn.indexOf('Matched iron gear') >= 0 &&
+            hudOn.indexOf(Math.round((AR[ironA] + BONUS) * 100) + '% dmg taken') >= 0]);
+          results.push(['gear: and says nothing at all the moment they do not — the breath readout\'s own rule',
+            hudOff.indexOf('Matched') < 0]);
+
+          /* ---------- PRESERVATION --------------------------------------- */
+          results.push(['gear P: the three real armour values are untouched — 0.15 / 0.28 / 0.42, exactly as confirmed live in the spec',
+            AR.iron_armor === 0.15 && AR.runic_armor === 0.28 && AR.dragonsteel_shield === 0.42]);
+          results.push(['gear P: and no fourth equip slot appeared — one ARMORS table, three pieces, the one me.armor slot',
+            armorKeys.length === 3 && gameScript.split('const ARMORS = {').length === 2]);
+          results.push(['gear P: the bonus is added in EXACTLY ONE place in the whole file, so combat and the panels can never disagree',
+            gameScript.split('arm.reduce + ARMOR_MATCH_BONUS').length === 2]);
+          results.push(['gear P: applyDamage multiplies by armorReduceNow() and no longer reads arm.reduce directly',
+            gameScript.indexOf('dmg = Math.max(1, Math.round(dmg * (1 - armorReduceNow())));') > 0 &&
+            gameScript.indexOf('dmg = Math.max(1, Math.round(dmg * (1 - arm.reduce)));') < 0 &&
+            gameScript.indexOf('const arm = ARMORS[me.armor];') > 0]);
+          results.push(['gear P: nothing here is persisted — savePlayer\'s fixed column list never learned the word',
+            (() => {
+              const at = gameScript.indexOf('async function savePlayer() {');
+              if (at < 0) return false;
+              const body = gameScript.slice(at, gameScript.indexOf('.eq("username", me.username);', at));
+              return body.indexOf('ARMOR_MATCH_BONUS') < 0 && body.indexOf('matchedGearTier') < 0 &&
+                     body.indexOf('armorReduceNow') < 0;
+            })()]);
+          results.push(['gear: and the world still runs frames cleanly after every part of this',
+            (() => { for (let f = 0; f < 8; f++) window.render(f * 16); return !caught; })()]);
+          dspG({ equipped: null, armor: null, inv: {}, hp: 100 });
+          window.refreshPanels();
         }
       }
 
