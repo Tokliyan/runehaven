@@ -53,6 +53,339 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-09-29 (v60 — World Encounters: Roaming Boss & Bounty Board)
+
+Two parts, and both of them reach the canvas — the first version since v56
+where that is true. PART A puts a second boss-tier creature in the world and
+gives it a body; PART B puts a new interaction point in the Spawn hub and
+gives it a prop. **One new `MOB_K` entry, one new `MOB_TALL` entry, a sixth
+`DRAGON_PAL` palette, a sixth `dragonV2` variant branch, one new `drawSpecies`
+branch, one new world prop, one widened `drawMob` route and one HUD prompt
+branch.** Not one locked palette entry, biome colour, facet multiplier,
+projection constant or existing silhouette was touched, and the canvas
+gradient count is 13 before and 13 after.
+
+**⚠️ ONE NUMBER IN PART A MOVED TWICE AFTER THE FIRST GREEN GAUNTLET, because
+the harness's world is not the same world on every run and the second and third
+worlds found what the first could not.** The account is in judgment call 5 and
+it is the most useful thing in this entry: the creature's own pace was wrong on
+some worlds, in two independent ways, and the gate that caught it is kept at
+full strength rather than widened to fit what shipped.
+
+- **⚠️ THE CREATURE IS THE BIBLE'S OWN, and that is the first thing worth
+  checking on this build.** The spec asks for "a new, additional Boss-tier
+  creature" and names none, while the bible's MOBS table is a closed list
+  whose only Boss-tier row is the Elder Drake — which the same spec pins to
+  the Volcano. The creature built is the **Adult Wild Dragon**, which the
+  bible names in DRAGONSTEEL — ACQUISITION & STAKES: dragonsteel is obtained
+  by "Killing an adult wild dragon in the world". Confirmed before a line was
+  written that it existed nowhere in the file in any form. It is the same
+  structural position v48's Demon Knight and Dungeons' Basilisk were both in:
+  a bible line naming a killable creature with nowhere in the game for it to
+  happen. **Nothing about it is invented** — not the creature, not the name
+  (the bible's own phrase, and "Adult Golem" already set the naming precedent
+  for the same "adults are hostile enemies" idea), and not its drop.
+  It is deliberately **not** one of the four named dragon species: each of
+  those has a bible home, and this spec's whole premise is a creature with
+  none.
+- **Its body is one line of art, exactly as v21, v22 and v39 each were** —
+  the shared `dragonV2` and a sixth `DRAGON_PAL` entry. That is not a
+  shortcut, it is the read: the bible files the four species as things you
+  tame "as hatchling", so the adult HAS to be the same animal at size.
+- **The palette is the one hue the dragon line did not have.** The four are
+  elements and the Dragon Elder is a metal; this one is the one that simply
+  lives here, so it is a saturated green (`#2f8f5c` / `#1d6440`) and the only
+  dragon whose ridge, horn, bone and claw are **bone** (`#e8f0c0` /
+  `#cfeccd`) rather than its own hue. The v25 Crystal Golem rule a sixth
+  time: the same animal re-cut in another material, so "that is a dragon —
+  but not one of those" lands at distance with no label, which matters more
+  for this creature than for any other in the file because it is the one you
+  meet without knowing where you are.
+  **⚠️ Green is also the hue of the ground it will most often stand on**, and
+  this is the single easiest thing in this version to want re-picked against
+  a screenshot. It is deliberately far more saturated and bluer than Forest
+  `#75a355` and much brighter than Dark Forest `#3c5c36`, and the bone ridge
+  is what carries the silhouette whatever is underneath — but that is an
+  argument, not a sighting.
+- **The sixth `dragonV2` variant is the only one that does not come out of
+  the muzzle.** The other five say what a dragon is made of; this one is
+  about the only thing that makes this creature different — it has been
+  somewhere. Four pale bone flecks fall away behind the body and **sink**
+  rather than rise: travel dust off something that has been in the air, not
+  an element it breathes. Same flat `fillRect` language, no gradient, no new
+  effect system.
+- **⚠️ IT IS THE TALLEST PAINTED CREATURE IN THE WORLD, and that is measured
+  rather than accidental — it is also the number most worth a screenshot.**
+  `MOB_K` has never been a painted size; it is a scale factor over native arts
+  of very different heights, which this file has known since Tuning/Polish
+  (the Sea Serpent paints 107.6px at 3.42 while the drake paints 62.1px at
+  4.35). `dragonV2`'s body tops out **31.4 local units** above its baseline
+  against the drake art's 14.28, so at `MOB_K` **4.10** it paints **128.7px
+  tall and 145px wide**. The drake is still the heavier silhouette by a
+  distance — **235.7px wide**, a low long quadruped — and still the hardest
+  thing in the world, which is what v30's "unambiguously the largest and
+  hardest" was protecting, and it keeps the largest `MOB_K` in the file. The
+  new creature is **+68%** over the four hatchling dragons' `SPECIES_K` 2.44,
+  which is the "adults are hostile enemies" read v47's Adult Golem used along
+  the same axis (+24% over the young Golem).
+  **⚠️ It does exceed the Dragon Elder's 3.60.** v39's "scale alone says
+  Elder" is a WITHIN-LINE claim — Elder against the four hatchlings — and
+  `run4` asserts exactly that, untouched. But a wild adult now stands taller
+  than the Elder, and if that read is unwanted, `MOB_K.adult_dragon` is the
+  one number to move.
+- **`MOB_TALL.adult_dragon` is 111, measured off the real art like every
+  other value on that line.** The topmost paint is the far wing spar at -31.4
+  local units; at 4.10 that is 128.7px, and the "!" tell and the HP bar draw
+  at `sy - 20 - MOB_TALL`, so 111 puts them at 131 — **2.3px of clearance**,
+  the same family as the Demon Knight's 2.1, the Basilisk's 2.1 and the Adult
+  Golem's 2.0. A new creature has to ARRIVE with this entry: the Elder Drake
+  shipped without one for a whole version and drew its tell 30px inside its
+  own chest.
+- **It joins the Elder Drake's own `drawMob` route rather than getting one of
+  its own, and that is v48's lesson applied in advance.** It is
+  `tameable: false`, so without a branch there it would have fallen through
+  the humanoid chain and painted **as a Bandit** — precisely the bug that sat
+  open on the drake from v30 to v48. `m.kind` replaces the hardcoded species
+  so one branch serves both; nothing else in that route moved.
+- **The boss bar and the Elder-tier music cue are REUSED, not rebuilt**, which
+  is the spec's own instruction. v52+53's single scoped kind became
+  `BOSS_KINDS`, a set of exactly the two creatures the game fights as bosses.
+  The scoping argument that version wrote is unchanged and is why this is a
+  set and not `isElderCombatant()`: that predicate also matches the three
+  Elder PETS, and a boss bar over a Unicorn Elder you are trying to tame
+  would be exactly as wrong with two bosses as with one. **Still one
+  `#hudBoss`, one `#bossBar`, one music URL and one linger window** — all
+  four asserted.
+- **The bar now names the creature it is actually about.** It read
+  `MOBS[BOSS_KIND]`, which was harmless with one boss in the world and would
+  have made a bar over the roaming one say "Elder Drake" — the one thing a
+  boss bar must never do. It reads the mob it already resolved.
+- **PART B is a wooden board, deliberately not more pale stone.** The Shrine
+  and the Oracle are the civilisation that was here before; a notice board is
+  something the living put up this morning. So it is `#a06a34`, which is
+  `ITEM_META.wood`'s own colour — the v33 rule that a built thing wears the
+  colour its material already has — and **not one new palette entry enters
+  the file for it.** Two posts, a plank face, a weather ledge, three cream
+  notices, ruled lines and one brass pin. Every solid is `drawBox` on the
+  locked 0.72 / 0.55 split, it takes the standard sun shadow and it sorts by
+  `x + y`, so it occludes and is occluded like any tree or wall.
+- **Its one moving part is the topmost notice's corner lifting on a slow
+  sine.** A board with nothing alive on it reads as scenery; a page that
+  stirs reads as somewhere a name gets changed.
+- **It stands at Spawn, and that is not a coin toss.** The spec offers Spawn
+  or the Bazaar. Every player in the world starts at Spawn and the Tutorial
+  Grounds end there, so it is the only placement that is found without being
+  signposted — the standing note v22, v38 and v39 all wrote about unmarked
+  landmarks. It also arrives beside the Shrine and the Oracle, the two things
+  in this world you already walk up to and ask something of. 7.0 tiles from
+  the Oracle against a 1.8 + 1.8 reach, so it can never take a keypress from
+  either, and that is asserted as the arithmetic rather than assumed.
+- **The prompt names today's creature rather than saying "read the board".**
+  The whole point of a bounty board is that it is readable from where you
+  stand. Both of its strings — a name to claim and a name already claimed —
+  are drawn by `run5`, because the second is otherwise never painted at all.
+- **`run5` gained a World Encounters sweep, and it closed three pre-existing
+  coverage gaps while it was open.** `MOBK` has never contained
+  `elder_drake`, `demon_knight` or `basilisk`, so **the two hardest creatures
+  in the game had never been drawn by the coverage harness in any state** —
+  found while adding the one this version requires, and the drake matters
+  most of the three because it shares its `drawMob` route with the new
+  creature. The sweep also walks the player to the board and to the roaming
+  boss's real clock-derived position and pumps real frames over real terrain,
+  which is the only way the depth sort, the shadow, the overlay offset and
+  the new palette are exercised on ground rather than on a blank canvas.
+  1,361 coverage draws before, **1,450** after.
+
+## JUDGMENT CALLS THIS VERSION
+
+Calls made where the locked spec was silent, plus one harness fault this diff
+surfaced. All shipped through the full gate (parse clean, `run2` and `run3`
+`CAUGHT ERROR: none`, `run4` **1,772/1,772 with zero FAIL over three
+consecutive runs on three different harness worlds** — 1,718 before, so **+54
+gates net** (55 lines carry the World Encounters label; one of them is an
+existing roster pin renamed as it was widened) — `run5` 1,450
+coverage draws clean, a 90-entry grep checklist with zero misses) —
+refinements to consider, not unfinished work. The mechanics half of these also
+lives in the commit message, per the README's split.
+
+1. **⚠️ WHICH CREATURE THE ROAMING BOSS IS — the one decision the spec left
+   entirely open, and the one to re-read first.** See the top of this entry:
+   it is the bible's own "adult wild dragon", chosen because the bible's
+   Boss-tier row is taken and pinned by the same spec, and because that phrase
+   is the only other killable creature the bible names. The alternative was
+   inventing a creature, which the README's RED rule forbids outright. If a
+   different creature was meant, this is a `MOBS` row, a `drawSpecies` branch
+   and a palette.
+2. **Every stat is a TUNABLE and each was sized against a live value rather
+   than in isolation.** hp 520 x dmg 24 = **12,480**, which sits between the
+   Demon Knight's 7,280 and the Elder Drake's 25,200 — so it is the second
+   most dangerous thing in the world and the drake is still the hardest, and
+   `MOB_K` 4.10 sits between their 3.80 and 4.35 for the same reason, keeping
+   the file's "size sorts exactly as threat does" rule true with one more
+   creature in it. `run4` asserts those as RELATIONSHIPS off the live table,
+   never as the numbers from this list.
+3. **`ADULT_DRAGON_RESPAWN_MS` = 4 real hours.** Unstated. Its drop is a
+   guaranteed dragonsteel, so the flat 60-second `MOB_RESPAWN_MS` would make
+   it a dragonsteel tap for anyone standing on its path. Four hours sits
+   between the Demon Knight's three and the drake's six.
+4. **THE ROAM IS FOUR LINES, and that is the spec's own instruction taken
+   literally** ("extends that proven pattern rather than building new movement
+   logic"). Every mob already idle-wanders around `m.hx, m.hy` and leashes
+   back to it; the only thing added moves that home along a circuit and
+   carries the body by the same delta, so the creature's offset from its home
+   is exactly what the existing state machine computed and `fromHome` is
+   untouched by the roam. No new state, no second movement system, and the
+   body is deliberately **not** carried while it is mid-swing — dragging a
+   dragon sideways during an attack would be the position snap the spec
+   forbids.
+   **`run4` measures the v30 hotfix's own concern on it rather than arguing
+   it away**: that hotfix scaled the idle/leash threshold after a mob was
+   caught flipping state 164 times in 10 seconds, and a moving home is exactly
+   what could reopen it. Driven at a real 50ms cadence for ten real seconds:
+   **0 state changes.**
+5. **`ROAM_LAP_MS` = 6 real hours, and the speed that falls out of it is
+   measured, not chosen.** 12 waypoints, one per 30 degrees, at a hashed
+   radius in a 0.34–0.72 band of the map half-width. Measured over a full lap:
+   **0.307–0.363 tiles/s** across four harness worlds, against a player's 9.2
+   — the spec's own "a player who tracks it should be able to actually catch
+   up" with well over an order of magnitude to spare.
+   **⚠️ THE PACE IS CONSTANT, AND GETTING THERE TOOK TWO REAL CORRECTIONS THIS
+   GATE CAUGHT RATHER THAN A DESIGN DECISION.** Both are worth reading, because
+   both were invisible until the circuit was sampled on a world other than the
+   first one:
+   **(a) the lap was split evenly per SEGMENT.** Waypoint spacing varies with
+   the world, so on one harness world a single leg came out six times the mean
+   length and was therefore walked six times as fast — a worst sampled step of
+   34.4 tiles against a 5.7 mean. The circuit is walked by **arc length** now
+   (`roamPathMetrics()` settles the cumulative distances at worldgen beside the
+   path itself), so lap fraction is distance travelled.
+   **(b) the safe-zone repel was bending one leg.** The repel is continuous and
+   can never snap a position, but projecting a chord that passes through a
+   keep-out circle onto that circle's edge makes the point travel a longer arc
+   in the same time, and the closer the chord passes to the centre the sharper
+   the speed-up. That alone still gave a worst step of 22.1 tiles against a 5.4
+   mean. So a leg that would need repelling is **no longer accepted as part of
+   the circuit** — `roamSegClear()` is an exact point-to-segment test (not a
+   sampled one, which can step over a small circle) applied to the arriving leg
+   of every waypoint and to the leg that closes the loop. The repel stays
+   exactly where it was as the hard guarantee, and is now a no-op on a
+   well-formed circuit, which is the same belt-and-braces shape the step guard
+   in `mobBlocked()` has.
+   Measured after both, on three consecutive runs over three different harness
+   worlds: **4.604 against a mean of 4.602, 5.138 against 5.133, and 5.362
+   against 5.357** — the pace is the mean to within the sampling grid. `run4`
+   holds the worst step to **1.5x the mean**, which is a genuine snap detector
+   now rather than a measure of how unevenly the waypoints happened to land,
+   and asserts the structural reason beside it (`segsClear`).
+6. **⚠️ `ROAM_SAFE_MARGIN` = 36 IS NOT A TASTE NUMBER — it is the largest
+   margin the world's own separations allow, and the whole "never enters a
+   Safe Zone" proof rests on it.** A Safe Zone keeps `ZONE_SEP` (664) from
+   SPAWN and from every other zone; SPAWN protects `SAFE_RADIUS` (452) and a
+   zone `ZONE_R` (136). Keep-out circles of radius + M never overlap while
+   452 + 136 + 2M <= 664, i.e. **M <= 38** — which is what makes the repel a
+   single pass per zone rather than a fixpoint nobody can bound. 36 also
+   exceeds the creature's own `leashRadius` of 24, so the BODY's clearance is
+   a consequence of the path's rather than a second hope: 12 tiles of
+   protected ground it can never reach into. Swept over a full lap:
+   **0 of 1,441 samples inside a Safe Zone, closest approach 36.0 tiles
+   outside the nearest boundary.** If that separation is ever retuned, this
+   is the number that has to move with it.
+7. **The path is pushed clear of zones CONTINUOUSLY, which is why it is a
+   radial push onto the keep-out circle and not a search for a legal tile.** A
+   point arriving at the boundary is moved by zero, so the repel cannot
+   introduce the position snap the spec forbids. Measured: **worst 1ms step
+   0.00085 tiles**, and the lap seam closes to 0.00065.
+8. **⚠️ IT FLIES OVER WATER BETWEEN WAYPOINTS, deliberately.** All twelve
+   waypoints are real standable ground (`!BLOCKED`, asserted), but a straight
+   segment between two of them may cross a bay — and a dragon crossing a bay
+   is what a dragon does. What the spec actually needs is that it is on land
+   at the twelve points a player can plan to meet it at, and that it is never
+   inside a Safe Zone anywhere. Both are swept. This does inherit the open
+   v21 note that **a creature drawn on a deep-water tile still looks like it
+   is standing** — the same cost v39 recorded for the Unicorn Elder, now on a
+   creature that moves.
+9. **Its id is `adult_dragon:roaming` and carries no coordinates.** Every
+   other mob id in the file is `kind:tx,ty` off its spawn tile, which is
+   stable only because those creatures never leave it. This one's spawn
+   position is a function of the CLOCK, so two clients logging in an hour
+   apart would have minted two different ids for one creature and neither
+   would ever have resolved the other's `mob_hit` / `mob_dead` / `mob_sync`
+   packets. One fixed id is what keeps it one creature world-wide, and
+   `run4` asserts the id contains no digits.
+10. **The board is at Spawn rather than the Bazaar** — the spec's explicit
+    build's choice. Reasoning in the entry above; it is one constant.
+11. **⚠️ ONE CLAIM PER WORLD DAY — the one real design decision in PART B.**
+    The spec says a qualifying kill or tame "grants a bonus reward" and does
+    not say how often. Unbounded, the Goblin day would pay 41 x 5 Runic Stone
+    to anyone with an afternoon, making the board the best resource node in
+    the game rather than a reason to go and find something. A bounty is a job
+    you complete. **Deleting the guard is one condition** if repeatable was
+    meant.
+12. **`BOUNTY_REWARD_RUNIC` = 5, which is `DUEL_REWARD_RUNIC`'s own number.**
+    The spec says reuse existing loot/reward patterns rather than a new
+    currency, and the file already has exactly one bonus-reward precedent.
+    No new item, no new currency, no new table — all three asserted.
+13. **The claim is client-side, in localStorage, keyed by username.**
+    `savePlayer()` writes a fixed column list and the players table has no
+    column for it; adding one is a schema change this build has no way to
+    verify — the exact call v21 made for the charm slot and v58 made for its
+    four timers. It degrades to session-local if storage throws or is
+    blocked, never to "claim it again", which is the safe direction.
+    **⚠️ It is therefore per-browser, not per-account-across-devices**: the
+    same player on a second machine gets a second claim that day. The real
+    fix is a column or a `bounty_claims` table and belongs in a spec.
+14. **Nine names on the board, and every absence has a stated reason** rather
+    than being an oversight — the two bosses, the Demon Knight, the Golem
+    Elder, the two count:0 creatures, and the Sea Serpent, which is the one
+    row that could have made a bounty unreachable for a player with no
+    Diver's Charm. The pool is a hand-written literal, deliberately NOT
+    derived from `MOBS`, which is the Oracle's own discipline and for the same
+    reason: a generated list is a list a future version can quietly put an
+    Elder or a boss into. `run4` asserts both the literal and the absences.
+15. **⚠️ A PRE-EXISTING HARNESS FAULT SURFACED ON THIS DIFF AND WAS FIXED
+    RATHER THAN WORKED AROUND — and it is v59's own lesson a second time.**
+    `run4`'s ANIM C ripple gate takes the FIRST SHALLOW/WATER tile out from
+    spawn, which on some runs is an inland puddle: **one observed run measured
+    over a shore with just 8 eligible tiles in the whole viewport and produced
+    no ripple above the inland floor**, failing a gate about ripples for
+    reasons with nothing to do with them. A ripple is a hash-gated per-tile
+    event, so measuring it over 8 tiles is measuring a coin toss. The
+    assertion is **byte-identical**; what changed is that candidate shores are
+    now collected across the whole sweep and the one with the most eligible
+    water genuinely in view is measured over, with the count printed so a thin
+    one can never go quiet again. Three consecutive runs since: 1,954 / 1,266 /
+    1,697 rings over 393 / 290 / 396 eligible tiles. **The fault was in the
+    harness, not in the game**, and the underlying cause is the one v59 wrote
+    down — the terrain under a fixed coordinate is not stable between runs
+    here.
+16. **Five `run4` literals were updated, not relaxed**, and three of the five
+    were strengthened while they were open. The "hardest ordinary mob"
+    exclusion list names the new boss and now asserts its singleton-ness
+    beside it; the mob-roster pin gains one creature so a future version still
+    cannot add a mob without this gate noticing; the boss-bar source literal
+    follows the set, with the behavioural half (three Elder pets raise no bar)
+    driven and untouched, plus a new assertion that the set is exactly the two
+    bosses and no Elder pet; the localStorage write count moves 5 -> 6 and now
+    also states WHAT the new write stores; and `run4` had to restore the world
+    with `buildFeatureList()` before the new gates, because the v52+53 block
+    above empties the live `mobs` array twice and never refills it — every
+    block after it has been running in an empty world.
+17. **⚠️ ECC never ran, for the third version running, and step 0 of the
+    README says not to keep trying.** That step records the install as
+    structurally refused by this environment's permission layer rather than
+    transiently failing, and instructs builds not to spend time on it. No ECC
+    skill, hook or GateGuard was present and nothing intercepted a command.
+    **The ECC review half did not happen**, stated plainly; everything else in
+    the gauntlet did. A human with an interactive session can run the pass
+    against this diff directly.
+18. **The push to `main` that the README's step 8 invites was deliberately not
+    attempted.** This session is instructed to develop and push only on its
+    designated branch, and that instruction is the stronger authority over a
+    repository file. The README itself calls a blocked push to `main` a
+    nice-to-have and explicitly not a failure, so the build lands on the
+    branch as usual and a human can sync it. Same call every version since
+    Expansion 2b has made.
+
 ### 2026-09-24 (v59 — Matched-Tier Gear Bonus)
 
 A mechanics version, and the rendering-scope half of it is two branches:

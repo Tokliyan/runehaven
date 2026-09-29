@@ -1669,6 +1669,149 @@ function askOracle() {
   burst(ORACLE.x, ORACLE.y, "#8fd8f0", 9, 2);
   return h;
 }
+
+/* ============ World Encounters PART B — THE BOUNTY BOARD ================
+   "A new interaction point at Spawn or the Bazaar (build's choice, either
+   fits the 'safe hub' role) naming one existing creature as today's bounty,
+   refreshing on a real timer (propose once per in-game day, tied to the same
+   day-counter other daily systems already use)."
+
+   SPAWN, and the choice is not a coin toss. Every player in the world starts
+   here and the Tutorial Grounds end here, so a board at Spawn is the only
+   placement that is found without being signposted — which is the standing
+   note v22, v38 and v39 all wrote about landmarks nothing marks. It also puts
+   it beside the Shrine and the Oracle, the two things in this world you
+   already walk up to and ask something of, so it arrives into an existing
+   habit rather than starting a new one. Flagged as a judgment call either
+   way: the Bazaar is one constant.
+
+   NOTHING IS INVENTED HERE. The pool is a hand-written literal of creatures
+   that already exist in `MOBS` — the same deliberately-not-derived shape the
+   Oracle's own pool uses, and for the same reason: a list generated from a
+   table is a list a future version can quietly put an Elder or a boss into.
+   The reward is Runic Stone through `invAdd`, which is `DUEL_REWARD_RUNIC`'s
+   own pattern, so there is no new currency, no new item and no new table. */
+const BOUNTY = { x: SPAWN.x + 5, y: SPAWN.y + 3 };   // clear of Shrine, Oracle and the Dev Chest
+const BOUNTY_R = 1.8;                                // interact reach, the Oracle's own
+const BOUNTY_REWARD_RUNIC = 5;                       // TUNABLE — DUEL_REWARD_RUNIC's own number
+/* The pool. Nine creatures, every one of them a `MOBS` row that really spawns
+   on the surface, so a bounty is never a day a player cannot act on.
+   Deliberately absent, and each for a stated reason rather than an oversight:
+     elder_drake / adult_dragon — the two bosses. A boss is an expedition, not
+       a day's work, and both already pay a guaranteed dragonsteel.
+     demon_knight            — stationed at the Volcano guarding the drake.
+     golem_elder             — an Elder, and one of the three the Oracle is
+                               forbidden from naming; a board that points at
+                               one would undo that rule from a different desk.
+     basilisk, salamander_king — both carry count:0 and exist only when
+                               something else puts them in the world.
+     sea_serpent             — cave interiors only, behind a dive. It is
+                               findable, but it is the one row that could
+                               make a bounty unreachable for a player with no
+                               Diver's Charm, so it is left out. One line to
+                               add if the harder day is wanted.
+   Every one of the nine can be KILLED, and the four fight-to-tame beasts in
+   it can also be TAMED, which is what makes the spec's "killing or taming"
+   a real either/or rather than a phrase. */
+const BOUNTY_POOL = [
+  ["goblin",      "Goblin"],
+  ["bandit",      "Bandit"],
+  ["troll",       "Troll"],
+  ["dark_wraith", "Dark Wraith"],
+  ["adult_golem", "Adult Golem"],
+  ["boar",        "Boar"],
+  ["bear",        "Bear"],
+  ["griffin",     "Griffin"],
+  ["phoenix",     "Phoenix"],
+];
+/* The rotation, and it is deliberately one expression. `worldDayNum()` is the
+   file's single day counter — the Krakenling gate, the Blood Moon, the rare
+   population caps and the HUD all read it and there is a written rule not to
+   add a second — so the board turning over and the world's day turning over
+   are the same event by construction, for every client, with nothing stored
+   and nothing broadcast. */
+function bountyTarget() {
+  if (!BOUNTY_POOL.length) return null;
+  return BOUNTY_POOL[worldDayNum() % BOUNTY_POOL.length];
+}
+/* One claim per world day, and this is the one real design decision in PART
+   B. The spec says a qualifying kill or tame "grants a bonus reward" and does
+   not say how often. Unbounded, the Goblin day would pay 41 x 5 Runic Stone
+   to anyone with an afternoon — which would make the board the best resource
+   node in the game rather than a reason to go and find something. A bounty is
+   a job you complete. TUNABLE in the strongest sense: deleting the guard is
+   one condition.
+
+   ⚠️ IT IS CLIENT-SIDE, deliberately. `savePlayer()` writes a fixed column
+   list and the players table has no column for this; adding one is a schema
+   change this build has no way to verify, which is the exact call v21 made
+   for the charm slot and v58 made for its four timers. localStorage keyed by
+   username is the guarded pattern the credentials and the settings already
+   use, and it degrades to session-local if storage throws or is blocked —
+   never to "claim it again", which is the safe direction. */
+const LS_BOUNTY = "rh_bounty_day";
+let bountyClaimDay = 0;                      // session mirror of the stored day
+function bountyClaimKey() { return LS_BOUNTY + ":" + ((me && me.username) || ""); }
+function bountyClaimedDay() {
+  try {
+    const v = localStorage.getItem(bountyClaimKey());
+    if (v !== null) return (+v) || 0;
+  } catch (e) {}
+  return bountyClaimDay;
+}
+function bountyClaimedToday() { return bountyClaimedDay() === worldDayNum(); }
+function setBountyClaimedDay(d) {
+  bountyClaimDay = d;
+  try { localStorage.setItem(bountyClaimKey(), String(d)); } catch (e) {}
+}
+function nearBounty() { return Math.hypot(me.x - BOUNTY.x, me.y - BOUNTY.y) < BOUNTY_R; }
+function readBountyBoard() {
+  const b = bountyTarget();
+  if (!b) { toast("The board is bare today."); return null; }
+  toast(bountyClaimedToday()
+    ? `Bounty: ${b[1]} — claimed. A new name goes up tomorrow.`
+    : `Bounty: ${b[1]} — bring one down or tame it for ${BOUNTY_REWARD_RUNIC} Runic Stone.`);
+  burst(BOUNTY.x, BOUNTY.y, "#e8b64c", 9, 2);
+  return b;
+}
+/* The single point both halves of "killing or taming" pass through, called
+   from mobKill() and from resolveTaming() — the two places in the file that
+   already resolve one of those and already run for the acting client alone.
+   A creature that is not today's target falls straight back out, which is
+   what makes the spec's "only for the currently-active bounty species
+   specifically" true at the one gate rather than at two call sites. */
+function noteBountyTake(kind) {
+  const b = bountyTarget();
+  if (!b || kind !== b[0]) return false;
+  if (bountyClaimedToday()) return false;
+  setBountyClaimedDay(worldDayNum());
+  invAdd("runic_stone", BOUNTY_REWARD_RUNIC);
+  toast(`Bounty claimed — ${b[1]}. +${BOUNTY_REWARD_RUNIC} Runic Stone`);
+  burst(me.x, me.y, "#5ac8e0", 12, 2.4);
+  savePlayer();
+  return true;
+}
+/* Harness hook. `BOUNTY_POOL`, the reward and the claim day are top-level
+   and never land on `window` — the same reason every other hook in this file
+   exists. Copies, plus the two setters a gate needs to cross a day boundary
+   and to clear a claim without playing a whole day. */
+function debugBountyInfo() {
+  const b = bountyTarget();
+  return {
+    BOUNTY: { x: BOUNTY.x, y: BOUNTY.y }, BOUNTY_R, BOUNTY_REWARD_RUNIC,
+    pool: BOUNTY_POOL.map(r => r[0]),
+    poolNames: BOUNTY_POOL.map(r => r[1]),
+    day: worldDayNum(),
+    target: b ? b[0] : null, targetName: b ? b[1] : null,
+    claimedDay: bountyClaimedDay(), claimedToday: bountyClaimedToday(),
+    near: nearBounty(),
+  };
+}
+function debugSetBounty(patch) {
+  if (!patch) return debugBountyInfo();
+  if ("claimedDay" in patch) setBountyClaimedDay(patch.claimedDay | 0);
+  return debugBountyInfo();
+}
 /* ============ v35 PART B — TUTORIAL GROUNDS ======================
    Bible (TUTORIAL & NAVIGATION): "Tutorial Grounds — A small guided area
    within the Spawn Safe Zone teaching movement, basic combat, and pet taming
@@ -2912,6 +3055,55 @@ const MOBS = {
     moveSpeed: 1.6, count: 1, tameable: false,
     loot: [{ type: "dragonsteel", qty: 1, chance: 1.0 },
            { type: "runic_stone", qty: 3, chance: 1.0 }] },
+  /* ============ World Encounters PART A — THE ADULT WILD DRAGON =========
+     Bible, verbatim, from DRAGONSTEEL — ACQUISITION & STAKES: dragonsteel is
+     obtained by "Killing an adult wild dragon in the world". Confirmed before
+     a line was written: the creature existed nowhere in this file, in any
+     form — `grep -i "adult.*dragon"` returned nothing at all. It is the same
+     structural position the Demon Knight (v48) and the Basilisk (Dungeons)
+     were both in: a bible line naming a creature, with nowhere in the game
+     for it to happen.
+
+     ⚠️ NO BIBLE CONTENT IS INVENTED HERE, and that is worth stating because
+     the spec asks for "a new, additional Boss-tier creature" without naming
+     one. The bible's MOBS table is a closed list whose only Boss-tier row is
+     the Elder Drake, and the spec is explicit that the drake stays fixed at
+     the Volcano. The adult wild dragon is the one OTHER killable creature the
+     bible names — the grown form of the four species it files as "tame as
+     hatchling" — and its drop is named for it by the bible directly. The name
+     is the bible's own phrase, and "Adult Wild Dragon" is the naming
+     precedent "Adult Golem" already set for the same "adults are hostile
+     enemies" idea.
+
+     It is deliberately NOT one of the four named species. Each of those has a
+     bible home (Storm Dragon — The Shattered Peaks, Shadow Dragon — The
+     Abyssal Hollow, and the two cave dragons), and this spec's whole premise
+     is a creature with NO fixed home. The bible's own phrase for it is
+     species-less, so the creature is too.
+
+     Every number below is a designed TUNABLE, sized against the live table
+     rather than in isolation. hp x dmg = 12,480 sits between the Demon
+     Knight's 7,280 and the Elder Drake's 25,200 — so it is the second most
+     dangerous thing in the world and the drake is still unambiguously the
+     hardest, which v30's own words make a must-not-regress. `MOB_K` 4.10
+     sits between their 3.80 and 4.35 for the same reason, so the file's
+     "size sorts exactly as threat does" rule holds with one more creature in
+     it, and the drake keeps the largest MOB_K in the file.
+
+     biomes:[] and count:1 are the Elder Drake's own pattern, for the same
+     reason: it is not a population the hashed loop scatters. What is new is
+     `roams` — see ROAM_LAP_MS and roamingBossHome() — which is the ONLY
+     thing in this table that moves a creature's home, and it is read in
+     exactly one place, at the top of updateMob(). */
+  adult_dragon: { name: "Adult Wild Dragon", biomes: [], hp: 520, dmg: 24, atkRange: 2.6,
+    atkCooldownMs: 1500, windupMs: 800, aggroRadius: 12, leashRadius: 24,
+    moveSpeed: 1.9, count: 1, tameable: false, roams: true,
+    /* The bible names dragonsteel for this creature specifically — it is one
+       of the four sources on its own acquisition list — so the first row is
+       not a design decision. The second is: runic_stone x2 at 0.8 is a
+       designed TUNABLE, the same shape the Elder Drake's second row is. */
+    loot: [{ type: "dragonsteel", qty: 1, chance: 1.0 },
+           { type: "runic_stone", qty: 2, chance: 0.8 }] },
   /* ============ v51 PART C — THE COMBAT MOBS OUTGREW THEIR COUNTS ======
      Measured off this table before a digit moved, which is the discipline
      every prior density pass used. The real current spread of the OVERWORLD
@@ -3202,8 +3394,17 @@ function mobRespawnMs(kind) {
   if (kind === "elder_drake") return ELDER_DRAKE_RESPAWN_MS;
   if (kind === "golem_elder") return GOLEM_ELDER_RESPAWN_MS;
   if (kind === "demon_knight") return DEMON_KNIGHT_RESPAWN_MS;
+  if (kind === "adult_dragon") return ADULT_DRAGON_RESPAWN_MS;
   return MOB_RESPAWN_MS;
 }
+/* World Encounters PART A: the roaming boss's own timer, the fourth entry on
+   this helper and the one number its own spec does not state. Its drop is a
+   GUARANTEED dragonsteel, exactly as the drake's and the knights' are, so the
+   flat 60-second MOB_RESPAWN_MS would make it a dragonsteel tap for anyone
+   who happened to be standing on its path. Four hours sits between the Demon
+   Knight's three and the Elder Drake's six: harder to farm than a stationed
+   guard, and still the smaller event of the two bosses. TUNABLE. */
+const ADULT_DRAGON_RESPAWN_MS = 4 * 60 * 60 * 1000;   // World Encounters: 4 real hours
 const DW_BOLT_MS = 240;            // v18: Dark Wraith ranged-strike bolt lifetime
 let mobs = [];
 
@@ -5644,6 +5845,221 @@ function voidRiftSpot() {
   return null;
 }
 
+/* ============ World Encounters PART A — WHERE THE ROAMING BOSS IS ========
+   The spec's own framing, taken literally: "Real, findable coordinates at any
+   moment (no teleporting, no despawn/respawn trick) — a player who tracks it
+   should be able to actually catch up."
+
+   So this is not a spawn point. It is a CLOSED PATH through the world and a
+   position on it that is a pure, continuous function of the wall clock:
+   `roamingBossHome(t)` can be asked for any instant, past or future, and two
+   instants a millisecond apart answer a fraction of a tile apart. Nothing is
+   stored, nothing is broadcast and nothing is rolled — every client computes
+   the same position from the same `Date.now()` and the same `worldSeed`,
+   which is exactly the discipline v31's Blood Moon and Meteor Shower use for
+   world state nobody owns.
+
+   Twelve waypoints, one per 30 degrees of arc around the map centre, each at
+   a hashed radius inside a band — so the tour is a real circuit across biome
+   boundaries rather than a circle, and the creature genuinely crosses forest,
+   plain, rock and shore on its way round. Every waypoint is real standable
+   ground (`!BLOCKED`) and clear of every Safe Zone; the straight segments
+   between them are additionally pushed clear by roamSafeClear(), so the path
+   as a whole can never enter one.
+
+   ⚠️ IT FLIES OVER WATER BETWEEN WAYPOINTS, and that is deliberate rather
+   than unhandled: a segment may cross a bay, and a dragon crossing a bay is
+   what a dragon does. What matters for the spec's "a player should be able to
+   catch up" is that it is on land at the twelve points a player can plan to
+   meet it at, and that it is never inside a Safe Zone anywhere on the lap.
+   Both are measured in `run4`, swept over the whole circuit, not asserted. */
+const ROAM_WAYPOINTS = 12;                    // one per 30 degrees of the circuit
+const ROAM_LAP_MS = 6 * 60 * 60 * 1000;       // TUNABLE — one full lap of the world, 6 real hours
+const ROAM_R_MIN = 0.34, ROAM_R_MAX = 0.72;   // the radius band, as a fraction of N/2
+/* ⚠️ 36 IS NOT A TASTE NUMBER, it is the largest margin the world's own
+   separations allow, and the clearance the "never enters a Safe Zone" gate
+   rests on. A Safe Zone keeps `ZONE_SEP` (664) from SPAWN and from every
+   other zone; SPAWN's protected radius is `SAFE_RADIUS` (452) and a zone's is
+   `ZONE_R` (136). Keep-out circles of radius+M never overlap while
+   452 + 136 + 2M <= 664, i.e. M <= 38 — so no push out of one zone can ever
+   shove the path into another, and the repel below is a single pass per zone
+   rather than a fixpoint nobody can bound. 36 also comfortably exceeds the
+   creature's own `leashRadius` of 24, which is what makes the BODY's
+   clearance provable and not just the path's: it can chase a player at most
+   24 tiles from its home, leaving 12 tiles of protected ground it can never
+   reach into. */
+const ROAM_SAFE_MARGIN = 36;
+let ROAM_PATH = [];   // World Encounters PART A: settled at worldgen, like VOID_RIFT
+/* ⚠️ THE CIRCUIT IS WALKED BY ARC LENGTH, NOT BY SEGMENT INDEX, and that is a
+   correction this build made after measuring rather than a refinement.
+   Splitting the lap evenly per segment is the obvious implementation and it is
+   wrong: waypoint spacing varies with the world, so on one harness world a
+   single segment came out SIX TIMES the mean length and was therefore walked
+   six times as fast — 2.29 tiles/s against a 0.32 mean. Nothing about that is
+   a teleport (the position stays continuous to the millisecond), but a boss
+   whose pace changes six-fold as it crosses the map is not the "moving slowly
+   across biome boundaries" the spec asks for, and it is not something a player
+   tracking it can predict.
+   These two are the cumulative distance to each waypoint and the circuit's
+   total length, so lap fraction maps to DISTANCE travelled and the creature
+   moves at one constant speed the whole way round. `run4` bounds the worst
+   sampled step against the mean, which is now a genuine snap detector rather
+   than a measure of how unevenly the waypoints happened to land. */
+let ROAM_CUM = [], ROAM_LEN = 0;
+
+/* The continuous safe-zone repel. A point inside a zone's keep-out circle is
+   pushed radially out ONTO that circle — which is continuous at the boundary
+   (a point arriving at the circle is moved by zero) and therefore never
+   introduces the position snap the spec forbids. One pass per zone is enough;
+   see the ROAM_SAFE_MARGIN note above for why the circles cannot overlap. */
+/* The one list of every protected circle in the world, so the repel below and
+   the segment test under it can never disagree about what a Safe Zone is. */
+function roamKeepCircles() {
+  const zones = [[SPAWN.x, SPAWN.y, SAFE_RADIUS], [BAZAAR.x, BAZAAR.y, BAZAAR_R]];
+  for (const z of OTHER_SAFE_ZONES) zones.push([z.x, z.y, ZONE_R]);
+  return zones;
+}
+/* ⚠️ THIS IS WHAT MAKES THE CREATURE'S PACE CONSTANT, and it is a correction
+   made after measuring rather than a nicety. The repel below is continuous, so
+   it can never snap a position — but projecting a chord that passes through a
+   keep-out circle onto that circle's edge makes the point travel a longer arc
+   in the same time, and the closer the chord passes to the centre the sharper
+   that speed-up gets. Measured on one harness world: a worst sampled step of
+   22.1 tiles against a 5.4 mean, purely from one segment clipping one zone.
+   So a segment that would need repelling is simply not accepted as part of the
+   circuit. The repel stays exactly where it is as the hard guarantee — it is
+   now a no-op on a well-formed circuit, which is the belt-and-braces shape the
+   step guard in mobBlocked() already has.
+   Exact point-to-segment distance, not a sampled approximation: a sampled test
+   can step straight over a small circle. */
+function roamSegClear(a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const ll = dx * dx + dy * dy;
+  for (const [zx, zy, zr] of roamKeepCircles()) {
+    const keep = zr + ROAM_SAFE_MARGIN;
+    let t = ll > 0 ? ((zx - a[0]) * dx + (zy - a[1]) * dy) / ll : 0;
+    t = Math.max(0, Math.min(1, t));
+    const px = a[0] + dx * t, py = a[1] + dy * t;
+    if (Math.hypot(px - zx, py - zy) < keep) return false;
+  }
+  return true;
+}
+function roamSafeClear(x, y) {
+  let cx = x, cy = y;
+  const zones = roamKeepCircles();
+  for (const [zx, zy, zr] of zones) {
+    const keep = zr + ROAM_SAFE_MARGIN;
+    const d = Math.hypot(cx - zx, cy - zy);
+    if (d >= keep) continue;
+    if (d < 1e-6) { cx = zx + keep; cy = zy; continue; }   // dead centre: any direction
+    cx = zx + (cx - zx) / d * keep;
+    cy = zy + (cy - zy) / d * keep;
+  }
+  return [cx, cy];
+}
+
+/* The twelve waypoints, chosen once at worldgen off `worldSeed` so every
+   client walks the identical circuit. One hashed candidate stream per
+   waypoint inside its own 30-degree sector, first hit wins — the same
+   "stream of uniform draws, first hit" shape duskfoxElderTile() uses, rather
+   than a search over a filtered list. A sector that cannot be satisfied at
+   all (an arc that is all ocean on this seed) falls back to its own sector
+   centre pushed clear of the zones, so the circuit always closes. */
+function roamPathSpots() {
+  const out = [];
+  const half = N / 2;
+  /* Two widths of search, and the second exists so a sector that is all ocean
+     or all zone at the first band still closes the circuit rather than falling
+     back to a spot that needs repelling. Both are the same stream shape. */
+  const bands = [[ROAM_R_MIN, ROAM_R_MAX], [ROAM_R_MIN - 0.06, ROAM_R_MAX + 0.08]];
+  for (let i = 0; i < ROAM_WAYPOINTS; i++) {
+    const a0 = (i / ROAM_WAYPOINTS) * Math.PI * 2;
+    const last = i === ROAM_WAYPOINTS - 1;
+    let spot = null;
+    for (let bi = 0; bi < bands.length && !spot; bi++) {
+      const [rlo, rhi] = bands[bi];
+      for (let a = 0; a < 4000 && !spot; a++) {
+        const ang = a0 + hash2(a, 311 + i + bi * 97, worldSeed + 7717) * (Math.PI * 2 / ROAM_WAYPOINTS);
+        const rr = (rlo + hash2(a, 419 + i + bi * 89, worldSeed + 7723) * (rhi - rlo)) * half;
+        const tx = Math.round(half + Math.cos(ang) * rr);
+        const ty = Math.round(half + Math.sin(ang) * rr);
+        if (tx < 4 || ty < 4 || tx >= N - 4 || ty >= N - 4) continue;
+        if (BLOCKED.has(biomeAt(tx, ty))) continue;
+        const cand = [tx + 0.5, ty + 0.5];
+        const [cx, cy] = roamSafeClear(cand[0], cand[1]);
+        /* The clear() must not have MOVED it — a waypoint that had to be pushed
+           was inside a zone, and the point of a waypoint is that it is somewhere
+           a player can stand and wait. */
+        if (Math.hypot(cx - cand[0], cy - cand[1]) > 1e-6) continue;
+        /* And the leg that arrives here, plus the leg that closes the circuit
+           if this is the last one, must clear every zone too — see
+           roamSegClear's own note for why that is the pace and not just tidy. */
+        if (i > 0 && !roamSegClear(out[i - 1], cand)) continue;
+        if (last && !roamSegClear(cand, out[0])) continue;
+        spot = cand;
+      }
+    }
+    if (!spot) {
+      const rr = ((ROAM_R_MIN + ROAM_R_MAX) / 2) * half;
+      spot = roamSafeClear(half + Math.cos(a0) * rr, half + Math.sin(a0) * rr);
+    }
+    out.push(spot);
+  }
+  return out;
+}
+
+/* The position itself. Piecewise-linear along the closed circuit, wrapped, so
+   it is continuous everywhere including across the seam at the end of a lap.
+   Pure and clock-injectable, so a harness can sample the whole circuit
+   without waiting six real hours for it. */
+function roamPathMetrics(path) {
+  const cum = [0];
+  for (let i = 0; i < path.length; i++) {
+    const a = path[i], b = path[(i + 1) % path.length];
+    cum.push(cum[i] + Math.hypot(b[0] - a[0], b[1] - a[1]));
+  }
+  return { cum, len: cum[cum.length - 1] };
+}
+function roamingBossHome(atMs) {
+  if (!ROAM_PATH.length) return [SPAWN.x, SPAWN.y];
+  const n = ROAM_PATH.length;
+  const lap = ((atMs % ROAM_LAP_MS) + ROAM_LAP_MS) % ROAM_LAP_MS;   // negative-safe
+  /* A degenerate circuit (every waypoint on one tile) would divide by zero;
+     it cannot happen with a real path and the fallback is the first waypoint
+     rather than a NaN either way. */
+  if (!(ROAM_LEN > 0) || ROAM_CUM.length !== n + 1) return roamSafeClear(ROAM_PATH[0][0], ROAM_PATH[0][1]);
+  const want = (lap / ROAM_LAP_MS) * ROAM_LEN;
+  let i = 0;
+  while (i < n - 1 && ROAM_CUM[i + 1] <= want) i++;
+  const segLen = ROAM_CUM[i + 1] - ROAM_CUM[i];
+  const f = segLen > 0 ? (want - ROAM_CUM[i]) / segLen : 0;
+  const a = ROAM_PATH[i], b = ROAM_PATH[(i + 1) % n];
+  return roamSafeClear(a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f);
+}
+
+/* Harness hook. `ROAM_PATH` and every constant above is a top-level `let` or
+   `const`, which never lands on `window` — the same reason debugScaleInfo()
+   and debugLightInfo() exist. Copies plus a pure probe, so a gate can sample
+   the real circuit at any instant without moving anything. */
+function debugRoamInfo(q) {
+  const at = (q && "t" in q) ? +q.t : Date.now();
+  const m = mobs.find(x => x.kind === "adult_dragon") || null;
+  return {
+    ROAM_WAYPOINTS, ROAM_LAP_MS, ROAM_SAFE_MARGIN, ROAM_R_MIN, ROAM_R_MAX,
+    ADULT_DRAGON_RESPAWN_MS,
+    path: ROAM_PATH.map(p => [p[0], p[1]]),
+    lapLenTiles: ROAM_LEN, cum: ROAM_CUM.slice(),
+    /* Whether any leg of the circuit would need the repel at all. On a
+       well-formed circuit this is true and the repel is a no-op. */
+    segsClear: ROAM_PATH.length === ROAM_WAYPOINTS &&
+               ROAM_PATH.every((p, i) => roamSegClear(p, ROAM_PATH[(i + 1) % ROAM_PATH.length])),
+    at, home: roamingBossHome(at),
+    placed: !!m,
+    mob: m ? { id: m.id, x: m.x, y: m.y, hx: m.hx, hy: m.hy, hp: m.hp,
+               state: m.state, dead: !!m.dead, boss: !!m.boss, roams: !!m.roams } : null,
+  };
+}
+
 /* ============ v39 PART C — WHERE THE UNICORN ELDER SPAWNS ========
    Bible: "Spawns randomly anywhere in the world, no pattern or hint."
 
@@ -6243,6 +6659,12 @@ function buildFeatureList() {
      frame and must never run a 576,000-draw search to answer. Re-run by the
      world reset for free, since that calls buildFeatureList() again. */
   VOID_RIFT = voidRiftSpot();
+  /* World Encounters PART A: the roaming boss's circuit, settled here for
+     exactly the reason the Void Rift is — it is a one-off hashed sweep and
+     the per-frame path lookup must never run one. Re-run by the world reset
+     for free, since that calls buildFeatureList() again. */
+  ROAM_PATH = roamPathSpots();
+  { const rm = roamPathMetrics(ROAM_PATH); ROAM_CUM = rm.cum; ROAM_LEN = rm.len; }
   /* v39 PART A: the Golem Elder, placed by hand after the loop for the same
      reason the Elder Drake is — biomes:[] means the loop never sees it. One
      in the world, on the single deepest ruin tile there is. */
@@ -6320,6 +6742,36 @@ function buildFeatureList() {
         });
       });
     }
+  }
+  /* World Encounters PART A: the roaming boss, placed by hand after the loop
+     for the same reason the Elder Drake and the Golem Elder are — biomes:[]
+     means the hashed loop never sees it.
+
+     ⚠️ ITS ID IS FIXED AND CARRIES NO COORDINATES, and that is the one thing
+     here that had to differ from every other hand-placed singleton. Every
+     other mob id in the file is `kind:tx,ty` off its spawn tile, which is
+     stable only because those creatures never leave it. This one's spawn
+     position is a function of the CLOCK, so two clients logging in an hour
+     apart would mint two different ids for the same creature and neither
+     would ever resolve the other's `mob_hit` / `mob_dead` / `mob_sync`
+     packets. One fixed id is what keeps it one creature world-wide.
+
+     It carries `boss: true` — the drake's own flag — and `roams: true`, read
+     only by updateMob(). Its home is the circuit's position RIGHT NOW, so a
+     player who logs in mid-lap finds it exactly where the clock says it is,
+     never back at some origin. */
+  {
+    const ad = MOBS.adult_dragon;
+    const [rx, ry] = roamingBossHome(Date.now());
+    mobs.push({
+      id: "adult_dragon:roaming", kind: "adult_dragon",
+      x: rx, y: ry, hx: rx, hy: ry,
+      hp: Math.round(ad.hp * bloodMoonMobMult()),
+      maxHp: Math.round(ad.hp * bloodMoonMobMult()), state: "idle", target: null,
+      atkAt: 0, windupStart: 0, winding: false, flash: 0, boltT: 0,
+      ph: 5.1, dead: false, respawnAt: 0, lastSync: 0, fx: 0, fy: 1,
+      boss: true, roams: true,
+    });
   }
   for (const R of RUINS) buildRuinCluster(R, Math.floor(hash2(R.x, R.y, worldSeed + 77) * 3));
   /* Dungeons PART A: derived from the pieces that were just built, so the
@@ -7999,6 +8451,12 @@ async function mobKill(m, iKilled) {
      A tamed creature is a `pets` row and can never reach this function, which
      is what keeps a tamed-then-killed dragon from returning a slot. */
   noteRareTake(m.kind);
+  /* World Encounters PART B: the KILL half of "killing or taming". It sits
+     beside the rare-take line for the same reason that line is here — everything
+     above this point runs for the client that landed the kill and nobody
+     else, so a bounty is paid exactly once world-wide. A creature that is not
+     today's target falls straight back out of the helper. */
+  noteBountyTake(m.kind);
   /* ============ Dungeons PART E — THE KEY DROPS ON DEATH ==============
      "Locked until the player defeats that dungeon's own Demon Knight and
      takes a key it drops specifically on death" — so it is minted here, in
@@ -8051,6 +8509,14 @@ function mobBlocked(m, tx, ty) {
        it is guarding, and once the door is open it is floor for both. */
     return interiorBlocksAt(interiorCache.get(m.space), tx, ty);
   }
+  /* World Encounters PART A: a roaming boss can never take a step into a Safe
+     Zone, and this is the hard floor rather than the argument. ROAM_SAFE_MARGIN
+     already keeps its home 36 tiles clear of every zone against a leashRadius
+     of 24, so the arithmetic says it cannot reach one — this line is what makes
+     that true BY CONSTRUCTION instead of by a margin somebody might later
+     retune. It is scoped to `roams`, so no other creature's movement changes by
+     a pixel. */
+  if (m.roams && inSafeZone(tx + 0.5, ty + 0.5)) return true;
   return BLOCKED.has(biomeAt(tx, ty));
 }
 
@@ -8059,6 +8525,29 @@ function updateMob(m, dt, t, now) {
   /* Only simulate a mob that shares your space. Without this an interior
      Sea Serpent would be ticked by every player standing on the surface. */
   if ((m.space || "main") !== (me.space || "main")) return;
+  /* ============ World Encounters PART A — THE ROAM ======================
+     The whole of the roaming boss's movement, and it is deliberately four
+     lines rather than a second movement system. The spec's own words: this
+     "extends that proven pattern rather than building new movement logic".
+
+     Every mob in this file already idle-wanders around `m.hx, m.hy` and
+     leashes back to it; the ONLY thing this does is move that home along the
+     circuit and carry the body with it by the same delta, so the creature's
+     offset from its own home — the wander, or a chase in progress — is
+     exactly what the existing state machine below computed. Nothing in that
+     machine learns a new state, and `fromHome` is untouched by the roam, so
+     the idle/leash threshold behaves precisely as it does for a Goblin.
+
+     The body is NOT carried while it is actually engaged: a dragon dragged
+     sideways mid-swing would be the position snap this spec forbids, and
+     leaving it behind is also what makes the leash meaningful — break line of
+     sight and it walks back to a home that has meanwhile moved on. */
+  if (def.roams) {
+    const [rhx, rhy] = roamingBossHome(Date.now());
+    const rdx = rhx - m.hx, rdy = rhy - m.hy;
+    m.hx = rhx; m.hy = rhy;
+    if (m.state !== "aggro" && m.state !== "attack" && !m.dead) { m.x += rdx; m.y += rdy; }
+  }
   /* hotfix: smooth, continuous correction toward the last mob_sync target,
      replacing the old instant on-packet snap. Converges within a few
      hundred ms, spread across many frames instead of one visible pop. */
@@ -8285,6 +8774,13 @@ async function resolveTaming() {
        the wild either way — a failed insert must not silently give the slot
        back. A non-capped species falls straight back out of noteRareTake. */
     noteRareTake(w.species);
+    /* World Encounters PART B: the TAME half, at the other of the two places
+       the file already resolves a creature leaving the world for good, and
+       for the same reason the rare-take line above it is here. A fight-to-tame
+       beast reaches here carrying `w.species`, which IS its `MOBS` kind — the
+       same string the kill path passes — so one helper serves both verbs with
+       no second list to keep in step. */
+    noteBountyTake(w.species);
     if (w.mob) {
       // v14: taming forfeits the loot — the creature leaves the world as a mob
       w.mob.dead = true; w.mob.hp = 0;
@@ -10256,6 +10752,16 @@ async function doInteract() {
   if (nearOracle()) {
     lastGather = now;
     askOracle();
+    return;
+  }
+  /* World Encounters PART B: the bounty board answers on the same interact
+     key, checked beside the Shrine and the Oracle because all three are fixed
+     spawn-zone fixtures you walk up to and use. It can never take a keypress
+     from either of them — it stands 7 tiles from the Oracle and 11 from the
+     Shrine, against a 1.8-tile reach. */
+  if (nearBounty()) {
+    lastGather = now;
+    readBountyBoard();
     return;
   }
   /* v39 PART B: the Dragon Elder Altar answers on the same interact key,
@@ -14236,6 +14742,22 @@ const DRAGON_PAL = {
      claw), so it reads as the same animal cast in a different metal rather
      than as a fifth colour of dragon. */
   elder:  { lit:"#6a5230", mid:"#43331c", belly:"#e2c886", bandLine:"#b08a3c", scale:"#54401f", ridge:"#f2cf6b", head:"#6a5230", horn:"#33260f", hornLit:"#e8b64c", wing:"#7c5f36", wingMid:"#4e3b1e", wingDark:"#332612", bone:"#f0dca8", boneDark:"#6a5230", claw:"#fff0c0", eye:"#fff0b0", pupil:"#2a1c06" },
+  /* World Encounters PART A: a SIXTH palette on the same body — the Adult
+     Wild Dragon. The four hatchlings are elements and the Elder is a metal;
+     this one is the one that simply LIVES here, so it is the only saturated
+     green in the dragon line and the only one whose structure (ridge, horn,
+     bone, claw) is bone rather than its own hue. That is the v25 Crystal
+     Golem rule a sixth time: the same animal re-cut in another material, so
+     "that is a dragon — but not one of those" lands at distance with no
+     label, which matters more here than for any other creature in the file
+     because this is the one you meet without knowing where you are.
+     ⚠️ Green is the one hue no dragon had, and it is also the hue of the
+     ground it will most often be standing on. It is deliberately far more
+     saturated and bluer than Forest `#75a355` and much brighter than Dark
+     Forest `#3c5c36` so the silhouette separates, and the bone ridge is the
+     read that carries it whatever it is standing on — but this is the single
+     easiest thing in this version to want re-picked against a screenshot. */
+  wild:   { lit:"#2f8f5c", mid:"#1d6440", belly:"#c8e8c4", bandLine:"#7cc49a", scale:"#27784c", ridge:"#e8f0c0", head:"#2f8f5c", horn:"#16482e", hornLit:"#5cc088", wing:"#41a86c", wingMid:"#2a7a4e", wingDark:"#1d6440", bone:"#cfeccd", boneDark:"#2a6a46", claw:"#eefae8", eye:"#eaffd0", pupil:"#0c2a1a" },
 };
 
 /* v18: shared dragon body, reused by every dragon variant. The palette
@@ -14345,6 +14867,20 @@ function dragonV2(sx, sy, PAL, t, variant, S, step = 0) {
       const ph = (t / 900 + i * 0.34) % 1;
       ctx.fillStyle = `rgba(244,207,107,${0.8 * (1 - ph)})`;
       ctx.fillRect(X(14.6 + ph * 7), Y(-21 + Math.sin(t / 480 + i * 2) * 1.6), 1.6 * S, 1.6 * S);
+    }
+  } else if (variant === "wild") {
+    /* World Encounters PART A: a sixth branch, in the same shape as the five
+       above and deliberately the only one that does not come out of the
+       MUZZLE. The other five say what a dragon is made of; this one is about
+       the only thing that makes it different — it has been somewhere. Pale
+       bone flecks fall away BEHIND the body (positive X is the tail side) and
+       sink rather than rise, which is travel dust off a creature that has
+       been in the air, not an element it breathes. Same flat fillRect
+       language, no gradient, no new effect system. */
+    for (let i = 0; i < 4; i++) {
+      const ph = (t / 1100 + i * 0.25) % 1;
+      ctx.fillStyle = `rgba(226,238,206,${0.55 * (1 - ph)})`;
+      ctx.fillRect(X(6 + i * 2.6), Y(-16 + ph * 12 + Math.sin(t / 620 + i) * 1.2), 1.5 * S, 1.5 * S);
     }
   }
 }
@@ -14569,9 +15105,33 @@ const SPECIES_K = {
    it keeps the Elder Drake's 4.35 the largest MOB_K in the file. Measured, it
    paints 58.9px above its baseline against the drake's real 62.1px: a big
    armoured figure that is unmistakably not the boss it is standing next to. */
+/* World Encounters PART A: adult_dragon 4.10. Its threat (520 x 24 = 12,480)
+   sits between the Demon Knight's 7,280 and the Elder Drake's 25,200, so its
+   scale sits between their 3.80 and 4.35 — the same rule adult_golem and
+   demon_knight were both placed by, and the drake keeps the largest MOB_K in
+   the file exactly as v30 set it.
+
+   ⚠️ IT IS THE TALLEST PAINTED CREATURE IN THE WORLD, and that is measured
+   rather than accidental. `MOB_K` has never been a painted size — it is a
+   scale factor over native arts of very different heights, which the file has
+   known since Tuning/Polish (the Sea Serpent paints 107.6px at 3.42 while the
+   drake paints 62.1px at 4.35). This creature is `dragonV2`, whose body tops
+   out 31.4 local units above its baseline against the drake art's 14.28, so
+   at 4.10 it paints 128.7px tall and 145px wide. The drake is still the
+   heavier silhouette by a distance — 235.7px WIDE, a low long quadruped —
+   and it is still the hardest thing in the world, which is what v30's
+   "unambiguously the largest and hardest" was protecting.
+   It is +68% over the four hatchling dragons' SPECIES_K 2.44, which is the
+   "adults are hostile enemies" read v47's Adult Golem used along the same
+   axis (+24% over the young Golem).
+   ⚠️ It does exceed the Dragon Elder's 3.60. v39's "scale alone says Elder"
+   is a WITHIN-LINE claim — Elder against the four hatchlings — and `run4`
+   asserts exactly that, untouched. But a wild adult now stands taller than
+   the Elder, and if that read is unwanted THIS number is the one to move. */
 const MOB_K = { goblin: 1.50, bandit: 1.85, troll: 2.33, dark_wraith: 1.40, sea_serpent: 3.42,
   adult_golem: 3.10,     // v47 PART C
   demon_knight: 3.80,    // v48 PART C
+  adult_dragon: 4.10,    // World Encounters PART A
   elder_drake: 4.35 };   // v30: the largest thing in the world, by design
 /* hotfix: sea_serpent was already the single largest creature in the game
    by a wide margin (2.60, next highest was troll at 1.94) — bumped more
@@ -14662,7 +15222,17 @@ const MOB_K = { goblin: 1.50, bandit: 1.85, troll: 2.33, dark_wraith: 1.40, sea_
    as it does on those. A new creature has to ARRIVE with this entry: the
    Elder Drake shipped without one for a whole version and drew its tell 30px
    inside its own chest. */
-const MOB_TALL = { troll: 31, bandit: 5, boar: 7, bear: 17, griffin: 21, phoenix: 24, dark_wraith: 6, sea_serpent: 78, adult_golem: 24, demon_knight: 41, salamander_king: 4, golem_elder: 54, elder_drake: 46, basilisk: 30 };
+/* World Encounters PART A: adult_dragon 111, measured off the real art the
+   same way every other value on this line was, never guessed. `dragonV2`'s
+   topmost paint is the far wing spar at -31.4 in local units; at MOB_K 4.10
+   that is 128.7px above the baseline, and the "!" tell and the HP bar draw at
+   `sy - 20 - MOB_TALL`. 111 puts them at 131 — 2.3px of clearance over the
+   wing, the same family as the Demon Knight's 2.1, the Basilisk's 2.1 and the
+   Adult Golem's 2.0, so the v13 fairness rule reads on this creature exactly
+   as it does on those. A new creature has to ARRIVE with this entry: the
+   Elder Drake shipped without one for a whole version and drew its tell 30px
+   inside its own chest. */
+const MOB_TALL = { troll: 31, bandit: 5, boar: 7, bear: 17, griffin: 21, phoenix: 24, dark_wraith: 6, sea_serpent: 78, adult_golem: 24, demon_knight: 41, salamander_king: 4, golem_elder: 54, elder_drake: 46, basilisk: 30, adult_dragon: 111 };
 
 const KIT = {
   Ranger:      { trim: "#2e4a22", accent: "#c8b078", cloth: "#5a4a30" },
@@ -15050,7 +15620,14 @@ function drawMob(m, t) {
      below is already inside drawMob's body transform — the tameable branch
      above is the existing shape for exactly this, and this is that shape with
      the MOB_K scale it needs wrapped around it. */
-  if (m.kind === "elder_drake") {
+  /* World Encounters PART A: the Adult Wild Dragon joins this route rather
+     than getting one of its own. It is `tameable: false` like the drake, so
+     without a branch here it would fall through to the humanoid chain and
+     paint as a Bandit — which is the exact bug the block above documents,
+     and the whole reason a new non-tameable creature with its own art has to
+     arrive WITH its route rather than after it. `m.kind` replaces the
+     hardcoded species so one branch serves both; nothing else here moves. */
+  if (m.kind === "elder_drake" || m.kind === "adult_dragon") {
     ctx.fillStyle = `rgba(20,32,44,${SUN.alpha})`;
     ctx.beginPath();
     ctx.ellipse(sx, sy + 1, 5.6 * mk, 2.4 * mk, 0, 0, Math.PI * 2);
@@ -15059,7 +15636,7 @@ function drawMob(m, t) {
     ctx.translate(sx, sy);
     ctx.scale(flip * mk, mk);
     ctx.translate(-sx, -sy);
-    drawSpecies("elder_drake", sx, sy, t, m.state === "aggro" || m.state === "leash");
+    drawSpecies(m.kind, sx, sy, t, m.state === "aggro" || m.state === "leash");
     ctx.restore();
     drawMobOverlays(m, sx, sy, t, def);
     return;
@@ -15673,6 +16250,52 @@ function drawOracleEntity(t) {
   ctx.textAlign = "center";
   ctx.fillStyle = "rgba(232,182,76,0.85)";
   ctx.fillText("THE ORACLE", sx, sy - 30);
+}
+
+/* ============ World Encounters PART B — THE BOUNTY BOARD'S ART ==========
+   Two posts carrying a plank face with notices pinned to it, and that is the
+   whole composition. Deliberately NOT the Shrine's and the Oracle's stepped
+   pale stone: those two are the civilisation that was here before, and a
+   notice board is something the living put up this morning. So it is wood —
+   `#a06a34`, which is `ITEM_META.wood`'s own colour, exactly the v33 rule
+   that a built thing wears the colour its material already has, and NOT ONE
+   NEW PALETTE ENTRY enters the file for it.
+
+   Every solid is `drawBox` on the locked 0.72 / 0.55 facet split, it takes
+   the standard sun shadow and it sorts by `x + y` with everything else, so it
+   occludes and is occluded like any tree or wall. Flat fills, hard edges, no
+   gradient, no outline and no glow — the notices read because cream sits on
+   brown, not because anything is lit.
+
+   The one moving part is the topmost notice's corner lifting on a slow sine.
+   A board with nothing alive on it reads as scenery; a page that stirs reads
+   as somewhere a name gets changed. */
+function drawBountyEntity(t) {
+  const [sx, sy] = worldToScreen(BOUNTY.x, BOUNTY.y, groundZ(BOUNTY.x, BOUNTY.y));
+  drawShadow(sx, sy, 26, 18);
+  drawBox(BOUNTY.x - 0.34, BOUNTY.y, 0.16, 0.16, 16, "#7a5028");        // left post
+  drawBox(BOUNTY.x + 0.34, BOUNTY.y, 0.16, 0.16, 16, "#7a5028");        // right post
+  drawBox(BOUNTY.x, BOUNTY.y, 0.94, 0.2, 13, "#a06a34", 8);             // the plank face
+  drawBox(BOUNTY.x, BOUNTY.y, 1.02, 0.24, 2, "#7a5028", 21);            // the weather ledge on top
+  // three pinned notices — flat cream rectangles, the topmost one stirring
+  const lift = Math.sin(t / 900) * 1.1;
+  ctx.fillStyle = "#e6dcc4";
+  ctx.fillRect(sx - 7.6, sy - 19.4, 6.4, 5.2);
+  ctx.fillRect(sx + 1.4, sy - 18.2, 5.6, 4.4);
+  ctx.beginPath();                                                       // the stirring one
+  ctx.moveTo(sx - 7.2, sy - 12.6); ctx.lineTo(sx - 0.6, sy - 12.6);
+  ctx.lineTo(sx - 0.6 - lift, sy - 7.6); ctx.lineTo(sx - 7.2, sy - 7.6);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#b6a888";                                             // ruled lines, flat
+  ctx.fillRect(sx - 6.8, sy - 18.2, 4.8, 0.8);
+  ctx.fillRect(sx - 6.8, sy - 16.4, 3.4, 0.8);
+  ctx.fillRect(sx + 1.8, sy - 17, 4.2, 0.8);
+  ctx.fillStyle = "#e8b64c";                                             // one brass pin
+  ctx.fillRect(sx - 4.8, sy - 20.2, 1.4, 1.4);
+  ctx.font = "10px 'Barlow', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "rgba(232,182,76,0.85)";
+  ctx.fillText("BOUNTY BOARD", sx, sy - 28);
 }
 
 /* v35 PART B: the Tutorial Grounds' two props. Both exist ONLY while the
@@ -16525,6 +17148,17 @@ function drawSpecies(species, sx, sy, t, moving) {
       ctx.fillStyle = `rgba(255,246,200,${0.7 * (1 - ph)})`;
       ctx.fillRect(sx - 6 + i * 6, sy - 12 - ph * 10, 1.4, 1.4);
     }
+
+  } else if (species === "adult_dragon") {
+
+    /* World Encounters PART A: one line of art, exactly as v21, v22 and v39
+       each were — the shared `dragonV2` body and a sixth `DRAGON_PAL` entry.
+       Nothing about the geometry is new, which is the point: the bible files
+       the four species as things you tame "as hatchling", so the adult HAS to
+       be the same animal at size, and that is what the drawMob route's
+       MOB_K 4.10 does to it. What makes it the wild one is the green-and-bone
+       material and the travel dust, never a second body. */
+    dragonV2(sx, sy, DRAGON_PAL.wild, t, "wild", 1, beastStep);
 
   } else if (species === "fire_dragon") {
 
@@ -17914,6 +18548,7 @@ function render(t) {
   if (isAdmin()) ents.push({ s: DEV_CHEST.x + DEV_CHEST.y + 0.3, kind: "chest" });   // ⚠️ DEV-ONLY, admin-gated
   ents.push({ s: SHRINE.x + SHRINE.y + 0.3, kind: "shrine" });
   ents.push({ s: ORACLE.x + ORACLE.y + 0.3, kind: "oracle" });        // v35 PART E
+  ents.push({ s: BOUNTY.x + BOUNTY.y + 0.3, kind: "bounty" });        // World Encounters PART B
   /* v35 PART B: the two tutorial props, which exist only while it runs. */
   if (tutorialActive && !inInterior()) {
     ents.push({ s: TUTORIAL_MARK.x + TUTORIAL_MARK.y, kind: "tutmark" });
@@ -18052,6 +18687,7 @@ function render(t) {
     else if (e.kind === "chest") drawChestEntity(t);
     else if (e.kind === "shrine") drawShrineEntity(t);
     else if (e.kind === "oracle") drawOracleEntity(t);        // v35 PART E
+    else if (e.kind === "bounty") drawBountyEntity(t);      // World Encounters PART B
     else if (e.kind === "tutmark") drawTutorialMark(t);       // v35 PART B
     else if (e.kind === "tutdummy") drawTutorialDummy(t);     // v35 PART B
     else if (e.kind === "bazaar") drawBazaarEntity(t);
@@ -18839,6 +19475,20 @@ function updateHUD(dayT) {
   else if (nearShrine()) { hudPrompt.textContent = "[E] Beastmaster Shrine — 3 Runic Stone for a taming blessing"; hudPrompt.style.display = "block"; }
   /* v35 PART E: the Oracle says what it is, like every other landmark. */
   else if (nearOracle()) { hudPrompt.textContent = "[E] The Oracle — ask where a rare companion may be found"; hudPrompt.style.display = "block"; }
+  /* World Encounters PART B: the board says what it is AND what is on it, in
+     the same position in this chain as the branch it mirrors in doInteract(),
+     so the prompt can never advertise something a keypress would not do. It
+     names today's creature rather than "read the board", because the whole
+     point of a bounty board is that it is readable from where you stand. */
+  else if (nearBounty()) {
+    const bt = bountyTarget();
+    hudPrompt.textContent = !bt
+      ? "The Bounty Board — bare today"
+      : bountyClaimedToday()
+        ? `The Bounty Board — ${bt[1]} — claimed today`
+        : `[${(KEYBINDS.interact || "e").toUpperCase()}] The Bounty Board — today: ${bt[1]} (+${BOUNTY_REWARD_RUNIC} Runic Stone)`;
+    hudPrompt.style.display = "block";
+  }
   /* v37: the three new landmarks announce what they are. The Bazaar and
      Colosseum are informational (their mechanic is the zone you stand in,
      not a keypress); the Ancient Forge tells you what it unlocks. */
@@ -19268,7 +19918,12 @@ function isElderCombatant(kind) {
   const w = WILD_SPECIES[kind];
   if (w && w.elder === true) return true;      // the three Elder pets, flagged
   const m = MOBS[kind];
-  if (m && kind === "elder_drake") return true;   // the boss, named — MOBS has no flag
+  /* World Encounters PART A: the spec asks the roaming boss to reuse this
+     cue rather than build a second one, so the named half of this predicate
+     is now the two boss-tier creatures instead of one. Still named rather
+     than flagged, for the reason the block above gives: MOBS carries no
+     `elder` flag on anything at all. */
+  if (m && BOSS_KINDS.has(kind)) return true;   // the two bosses, named — MOBS has no flag
   return false;
 }
 /* Called from the three places a fight already knows WHICH creature is in it:
@@ -19302,10 +19957,24 @@ function noteElderCombat(kind) {
    in the world the bible calls boss-tier, and this is its bar.
    ========================================================================= */
 const BOSS_KIND = "elder_drake";
+/* ============ World Encounters PART A — THE BAR TAKES A SECOND BOSS =====
+   The spec asks the roaming boss to "reuse the existing boss-bar and
+   Elder-tier music cue from prior versions rather than building new combat
+   UI", so nothing here is new: this is v52+53's bar with its ONE scoped kind
+   turned into the set of kinds that are genuinely boss encounters.
+
+   The scoping argument v52+53 wrote is unchanged and is why this is a SET and
+   not isElderCombatant(): that predicate also matches the three Elder PETS,
+   which are companions and tame targets — a boss bar over a Unicorn Elder you
+   are trying to tame would be exactly as wrong today as it was then. What has
+   changed is only that the bible now has two creatures the game fights as
+   bosses instead of one. `BOSS_KIND` is kept beside it, unchanged, because it
+   is the drake's own name and two harness gates read it. */
+const BOSS_KINDS = new Set([BOSS_KIND, "adult_dragon"]);
 let bossFightUntil = 0, bossFightId = null;
 let bossPulseAt = 0;         // v55 PART D — see below
 function noteBossCombat(kind, m) {
-  if (kind !== BOSS_KIND) return;
+  if (!BOSS_KINDS.has(kind)) return;
   /* ============ v55 PART D — THE INSTANT THE FIGHT STARTS ============
      The bar appearing is a HUD element arriving; the spec asks for the
      MOMENT to land, on a bigger scale than a hit-flash, across the whole
@@ -19333,7 +20002,7 @@ function noteBossCombat(kind, m) {
    outlives the creature it describes. */
 function activeBossMob() {
   if (performance.now() >= bossFightUntil || bossFightId === null) return null;
-  const m = mobs.find(x => x.id === bossFightId && x.kind === BOSS_KIND);
+  const m = mobs.find(x => x.id === bossFightId && BOSS_KINDS.has(x.kind));
   return (m && !m.dead && m.hp > 0) ? m : null;
 }
 function updateBossHud() {
@@ -19345,7 +20014,12 @@ function updateBossHud() {
      be read. The fight is not interrupted — only its bar yields. */
   const m = worldResetAt ? null : activeBossMob();
   if (!m) { uiReveal(el, false); return; }
-  const def = MOBS[BOSS_KIND];
+  /* World Encounters PART A: the bar names the creature it is actually
+     about. It read `MOBS[BOSS_KIND]` when there was exactly one boss in the
+     world; with two, a bar over the roaming one would have said "Elder Drake"
+     — the one thing a boss bar must never do. The mob it already resolved is
+     the only honest source. */
+  const def = MOBS[m.kind];
   const max = m.maxHp || (def && def.hp) || m.hp;
   const pct = Math.max(0, Math.min(1, m.hp / max));
   const nameEl = document.getElementById("bossName");
@@ -19363,7 +20037,7 @@ function debugBossInfo() {
   const el = document.getElementById("hudBoss");
   const m = activeBossMob();
   return {
-    BOSS_KIND, bossFightUntil, bossFightId,
+    BOSS_KIND, bossKinds: [...BOSS_KINDS], bossFightUntil, bossFightId,
     lingerMs: COMBAT_MUSIC_LINGER,
     active: !!m,
     mobHp: m ? m.hp : null,

@@ -183,7 +183,18 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                   // v39: the Golem Elder's hostile form is tameable:true, so
                   // it renders through drawSpecies exactly as the v14 beasts
                   // do — sweep every mob state over that path too.
-                  "golem_elder"];
+                  "golem_elder",
+                  /* World Encounters PART A: the roaming boss, which step 7 of
+                     the standard process requires this list to gain.
+                     ⚠️ AND THREE PRE-EXISTING GAPS CLOSED WITH IT, found while
+                     adding the one: `elder_drake`, `demon_knight` and
+                     `basilisk` have never been in this list at all, so the two
+                     hardest creatures in the game and the Basilisk have never
+                     been drawn by the coverage harness in any state. The drake
+                     matters most of the three here: it shares its drawMob
+                     route with the new creature, so a change to that route
+                     could have broken the boss with nothing noticing. */
+                  "adult_dragon", "elder_drake", "demon_knight", "basilisk"];
     let n = 0;
     if (window.drawUnit) {
       for (const cls of CLS) {
@@ -612,7 +623,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                      'unicorn', 'crystal_golem', 'phoenix', 'fire_dragon',
                      'water_dragon', 'storm_dragon', 'shadow_dragon',
                      'shadowfox', 'lightfox', 'krakenling', 'salamander_king',
-                     'golem_elder', 'dragon_elder', 'unicorn_elder'];
+                     'golem_elder', 'dragon_elder', 'unicorn_elder',
+                     /* World Encounters PART A: the Adult Wild Dragon is the
+                        sixth body `dragonV2` paints and the first at MOB_K
+                        rather than SPECIES_K, so it belongs on the list a
+                        future size pass reads. */
+                     'adult_dragon', 'basilisk'];
     if (window.drawSpecies) {
       const c2 = window.document.createElement('canvas').getContext('2d');
       for (const sp of RESIZED) {
@@ -620,7 +636,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       // the ones with a hostile form, wearing their tell and their bar
       if (window.drawMob) {
-        for (const mk of ['boar', 'bear', 'griffin', 'phoenix', 'salamander_king', 'golem_elder']) {
+        for (const mk of ['boar', 'bear', 'griffin', 'phoenix', 'salamander_king', 'golem_elder', 'basilisk']) {
           for (const st of ['idle', 'aggro', 'attack', 'cower']) {
             for (const winding of [false, true]) {
               window.drawMob({ id: mk + ':resized', kind: mk, x: 41, y: 51, hx: 41, hy: 51,
@@ -983,6 +999,93 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       window.debugSetPlayer({ equipped: null, armor: null, inv: {} });
       window.refreshPanels();
       console.log('matched-tier gear swept — ' + armsC.length + ' tiers, matched and mismatched, inventory row and HUD line both ways');
+    }
+
+    /* ============ World Encounters sweep ==================================
+       Two things the boot above cannot be relied on to draw, and both are new
+       render branches this version added.
+
+       The BOUNTY BOARD stands 5.8 tiles from Spawn, so the boot frames very
+       probably do paint it — but "probably" is what a coverage sweep exists to
+       remove, and its one moving part (the stirring notice) is a slow sine
+       that a five-frame boot samples at one phase. It is walked to and drawn
+       across a whole cycle.
+
+       The ROAMING BOSS is the harder case: its position is a function of the
+       clock, so on any given run it is somewhere in the world that is almost
+       certainly not on screen. The MOBK sweep above already draws its body in
+       every state at synthetic coordinates; this walks the player to where the
+       creature genuinely is and pumps real frames, which is the only way the
+       depth sort, the shadow, the overlay offset and the palette are exercised
+       over real terrain rather than over a blank canvas. */
+    if (window.debugBountyInfo && window.debugSetPlayer) {
+      const bi = window.debugBountyInfo();
+      window.debugSetPlayer({ x: bi.BOUNTY.x - 1, y: bi.BOUNTY.y, hp: 100 });
+      for (let f = 0; f < 10; f++) {
+        try { window.render(720000 + f * 300); } catch (e) { if (!caught) caught = e; }
+        n += 1;
+      }
+      if (window.drawBountyEntity) {
+        for (let f = 0; f < 8; f++) {
+          try { window.drawBountyEntity(730000 + f * 225); } catch (e) { if (!caught) caught = e; }
+          n += 1;
+        }
+      }
+      if (window.updateHUD) {
+        /* Both sides of the prompt: a name to claim, and a name already
+           claimed — the second string is otherwise never drawn at all. */
+        window.debugSetBounty({ claimedDay: 0 });
+        window.updateHUD(0.3); n += 1;
+        const unclaimed = window.document.getElementById('hudPrompt').textContent;
+        window.debugSetBounty({ claimedDay: bi.day });
+        window.updateHUD(0.3); n += 1;
+        const claimed = window.document.getElementById('hudPrompt').textContent;
+        window.debugSetBounty({ claimedDay: 0 });
+        if (unclaimed.indexOf('Bounty Board') < 0 || claimed.indexOf('claimed') < 0) {
+          console.log('COVERAGE GAP: the bounty prompt did not draw both of its states');
+          process.exit(1);
+        }
+      }
+      console.log('bounty board swept — walked to, drawn across its own cycle, prompt drawn claimed and unclaimed');
+    }
+    if (window.debugRoamInfo && window.debugSetPlayer) {
+      if (!window.debugRoamInfo().placed && window.buildFeatureList) window.buildFeatureList();
+      const ri = window.debugRoamInfo();
+      if (!ri.placed) {
+        console.log('COVERAGE GAP: the roaming boss was never placed in the world');
+        process.exit(1);
+      }
+      let drew = 0;
+      window.debugSetPlayer({ x: ri.mob.x + 3, y: ri.mob.y + 3, hp: 200 });
+      for (let f = 0; f < 12; f++) {
+        try { window.render(740000 + f * 260); drew++; } catch (e) { if (!caught) caught = e; }
+        n += 1;
+      }
+      /* And with the boss bar genuinely up, which is a HUD branch the world
+         frames never raise on their own. */
+      if (window.noteBossCombat && window.debugBossInfo) {
+        const mobsL = window.debugCombatHandles().mobs;
+        const dr = mobsL.find(m => m.kind === 'adult_dragon');
+        if (dr) {
+          window.noteBossCombat('adult_dragon', dr);
+          if (window.updateHUD) { window.updateHUD(0.3); n += 1; }
+          for (let f = 0; f < 4; f++) {
+            try { window.render(742000 + f * 200); } catch (e) { if (!caught) caught = e; }
+            n += 1;
+          }
+          if (window.debugBossInfo().name !== 'Adult Wild Dragon') {
+            console.log('COVERAGE GAP: the boss bar did not name the roaming boss');
+            process.exit(1);
+          }
+          window.debugSetBoss({ until: 0, id: null, refresh: true });
+        }
+      }
+      if (drew !== 12) {
+        console.log('COVERAGE GAP: the roaming boss could not be drawn in the live world');
+        process.exit(1);
+      }
+      console.log('roaming boss swept — walked to its real circuit position, ' +
+                  Object.keys(ri.path).length + ' waypoints, drawn over real terrain with its bar up');
     }
 
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');

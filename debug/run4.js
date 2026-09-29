@@ -1329,9 +1329,30 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
          being loosened to "most of them". */
       /* v48: the Demon Knight is Very Hard tier, one rung above Sea
          Serpent's Hard — it is SUPPOSED to out-HP it, not an oversight. */
+      /* World Encounters: the Adult Wild Dragon joins the exclusion beside the
+         Elder Drake, and for exactly the reason the drake is on this line —
+         it is the world's SECOND boss-tier creature, one exists, it is
+         hand-placed with biomes:[] and count:1, and it is no more an
+         "ordinary mob" than the drake or the Golem Elder are. Updated, not
+         relaxed: the invariant is unchanged and the new singleton is NAMED,
+         with its singleton-ness asserted on the line below rather than taken
+         on trust. */
       results.push(['sea_serpent is the hardest ordinary (non-boss, non-Elder, non-Knight) mob',
         !!ss && Object.entries(info.MOBS).every(([k, d]) =>
-          k === 'sea_serpent' || k === 'elder_drake' || k === 'golem_elder' || k === 'demon_knight' || d.hp < ss.hp)]);
+          k === 'sea_serpent' || k === 'elder_drake' || k === 'golem_elder' ||
+          k === 'demon_knight' || k === 'adult_dragon' || d.hp < ss.hp)]);
+      results.push(['World Encounters: and the roaming boss really is a hand-placed singleton, not a population',
+        !!info.MOBS.adult_dragon && info.MOBS.adult_dragon.count === 1 &&
+        info.MOBS.adult_dragon.biomes.length === 0 &&
+        info.MOBS.adult_dragon.tameable === false && info.MOBS.adult_dragon.roams === true]);
+      results.push(['World Encounters: the Elder Drake is still the harder of the two bosses, in HP and in threat',
+        info.MOBS.elder_drake.hp > info.MOBS.adult_dragon.hp &&
+        info.MOBS.elder_drake.hp * info.MOBS.elder_drake.dmg >
+          info.MOBS.adult_dragon.hp * info.MOBS.adult_dragon.dmg]);
+      results.push(['World Encounters: and the roaming boss outclasses every non-boss mob in the world',
+        Object.entries(info.MOBS).every(([k, d]) =>
+          k === 'adult_dragon' || k === 'elder_drake' ||
+          d.hp * d.dmg < info.MOBS.adult_dragon.hp * info.MOBS.adult_dragon.dmg)]);
       results.push(['and the two singletons above it are exactly the two named',
         !!info.MOBS.elder_drake && !!info.MOBS.golem_elder &&
         info.MOBS.elder_drake.count === 1 && info.MOBS.golem_elder.count === 1 &&
@@ -6350,9 +6371,21 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push(['v46 B: the resume goes through the real submit, so the PIN gate still stands',
           gameScript.indexOf('await enterBtn.onclick();') > 0 &&
           gameScript.indexOf('const pinCheck = await requirePinForLogin(username);') > 0]);
+        /* World Encounters PART B adds the sixth localStorage write in the
+           file — the bounty claim day — so the count moves 5 -> 6. UPDATED,
+           NOT RELAXED, and deliberately strengthened while it was open: the
+           count on its own only ever said "no write appeared"; the two lines
+           under it now say WHAT the new one stores, which is a day number and
+           a username-scoped key, and that it is the only write this version
+           added. */
         results.push(['v46 B: it stores a NAME and never a PIN or a credential',
           gameScript.indexOf('localStorage.setItem(LS_LAST_USER, username)') > 0 &&
-          (gameScript.match(/localStorage\.setItem\(/g) || []).length === 5]);
+          (gameScript.match(/localStorage\.setItem\(/g) || []).length === 6]);
+        results.push(['World Encounters B: the sixth write is the bounty claim day, and it stores a NUMBER',
+          gameScript.indexOf('localStorage.setItem(bountyClaimKey(), String(d))') > 0 &&
+          /function setBountyClaimedDay\(d\) \{[\s\S]{0,240}?String\(d\)/.test(gameScript)]);
+        results.push(['World Encounters B: and the claim is keyed per username, never shared between accounts',
+          gameScript.indexOf('return LS_BOUNTY + ":" + ((me && me.username) || "");') > 0]);
         enterEl46.onclick = realClick;
         nameEl46.value = 'BootTest';
         try { window.localStorage.removeItem('rh_last_user'); } catch (e) {}
@@ -6440,9 +6473,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         /* Dungeons PART D: updated, not relaxed — one more creature is named
            explicitly, so a future version still cannot add a mob without this
            gate noticing. */
-        results.push(['Dungeons: the mob roster is v48\'s plus the Basilisk, and nothing else',
+        results.push(['World Encounters: the mob roster is Dungeons\' plus the Adult Wild Dragon, and nothing else',
           Object.keys(i47.MOBS).sort().join(',') ===
-          Object.keys(PRE47).concat('adult_golem', 'demon_knight', 'basilisk').sort().join(',')]);
+          Object.keys(PRE47).concat('adult_golem', 'demon_knight', 'basilisk',
+                                    'adult_dragon').sort().join(',')]);
       }
 
       /* ---- PART C: the Adult Golem, built for real ---------------------- */
@@ -7897,9 +7931,21 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         window.noteBossCombat('dragon_elder', { id: 'de' });
         window.noteBossCombat('unicorn_elder', { id: 'ue' });
         window.debugSetBoss({ refresh: true });
-        results.push(['v52 G: an Elder PET raises no boss bar — this is the drake\'s and nothing else\'s',
+        /* World Encounters PART A: the boss bar now serves the two boss-tier
+           creatures the bible has, so the one-kind test became a set test and
+           this gate's source half moves with it. UPDATED, NOT RELAXED — and
+           the claim it was protecting is the stronger half and is untouched:
+           the three Elder PETS still raise nothing, driven above, because a
+           bar over a creature you are trying to TAME would be exactly as
+           wrong with two bosses as it was with one. The line below is what
+           makes that structural rather than incidental. */
+        results.push(['v52 G: an Elder PET raises no boss bar — this is the bosses\' and nothing else\'s',
           B().visible === false && B().bossFightUntil === 0 &&
-          code52.indexOf('if (kind !== BOSS_KIND) return;') > 0]);
+          code52.indexOf('if (!BOSS_KINDS.has(kind)) return;') > 0]);
+        results.push(['World Encounters A: the bar is scoped to exactly the two bosses, and to no Elder pet',
+          B().bossKinds.slice().sort().join(',') === 'adult_dragon,elder_drake' &&
+          ['golem_elder', 'dragon_elder', 'unicorn_elder', 'duskfox_elder']
+            .every(k => B().bossKinds.indexOf(k) < 0)]);
         /* It comes down again on every route it should. */
         window.noteBossCombat('elder_drake', drake);
         window.debugSetBoss({ until: window.performance.now() - 1, refresh: true });
@@ -9263,15 +9309,33 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           {
             const wiC = window.debugWorldInfo();
             const BC = wiC.B;
-            let shore = null;
-            for (let r = 4; r < 1200 && !shore; r += 4) {
-              for (let q = 0; q < 16 && !shore; q++) {
+            /* ⚠️ PRE-EXISTING HARNESS FAULT, FIXED HERE RATHER THAN WORKED
+               AROUND — and it is v59's own lesson a second time ("the terrain
+               under a fixed coordinate is not stable between runs in this
+               harness"). This took the FIRST SHALLOW/WATER tile out from
+               spawn, which on some runs is an inland puddle: one observed run
+               measured over a shore with just 8 eligible tiles in the whole
+               viewport and produced no ripple above the inland floor, failing
+               a gate about RIPPLES for reasons that had nothing to do with
+               them. A ripple is a hash-gated per-tile event, so a gate that
+               measures it over 8 tiles is measuring a coin toss.
+               NOT RELAXED — the assertion below is byte-identical. What
+               changed is that the measurement now happens over a REAL
+               waterline: candidate shores are collected across the whole
+               sweep and the one with the most eligible water actually in
+               view is the one measured over, with the count printed so a
+               thin one can never go quiet again. Typical runs report 300-400
+               eligible tiles and ~1,700 rings. */
+            const shoreCands = [];
+            for (let r = 4; r < 1200 && shoreCands.length < 14; r += 4) {
+              for (let q = 0; q < 16 && shoreCands.length < 14; q++) {
                 const tx = Math.round(wiC.SPAWN.x + Math.cos(q * 0.3927) * r);
                 const ty = Math.round(wiC.SPAWN.y + Math.sin(q * 0.3927) * r);
                 const b = window.biomeAt(tx, ty);
-                if (b === BC.SHALLOW || b === BC.WATER) shore = [tx, ty];
+                if (b === BC.SHALLOW || b === BC.WATER) shoreCands.push([tx, ty]);
               }
             }
+            let shore = shoreCands[0] || null;
             if (!shore) {
               results.push(['ANIM C: a real SHALLOW/WATER tile was reachable to measure over', false]);
             } else {
@@ -9304,6 +9368,18 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                 return { rings: rings.length, all: trace.length, eligible, tiles,
                          widest: rings.reduce((m, e) => Math.max(m, e[0]), 0) };
               };
+              /* Pick the candidate with the most eligible water genuinely on
+                 screen, measured live through the same viewport the ring
+                 count is about — never guessed from the map. */
+              {
+                let best = -1;
+                for (const c of shoreCands) {
+                  window.debugSetPlayer({ x: c[0] + 0.5, y: c[1] - 2.5, hp: 200, diving: false });
+                  window.render(0);
+                  const e = eligibleNow();
+                  if (e > best) { best = e; shore = c; }
+                }
+              }
               const sea = ringsOver(shore[0] + 0.5, shore[1] - 2.5);
               const land = ringsOver(wiC.SPAWN.x, wiC.SPAWN.y);
               /* ⚠️ THE INLAND NUMBER IS NOT ZERO AND IT IS NOT A RIPPLE.
@@ -10338,6 +10414,405 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           window.refreshPanels();
         }
       }
+
+    /* ================= WORLD ENCOUNTERS — ROAMING BOSS & BOUNTY BOARD ====
+       The spec's own proof gates, in its own order: "confirm the roaming
+       boss's position is always real and queryable (no teleport-style
+       position snapping), confirm it never enters a Safe Zone, confirm the
+       bounty board's target rotates on the stated real timer and the bonus
+       reward only triggers for the currently-active bounty species
+       specifically."
+
+       Every one of them is MEASURED against the real functions the game
+       runs — the circuit is sampled through `roamingBossHome()` itself and
+       the zone test is the game's own `inSafeZone()`, never a copy of
+       either. Nothing below asserts that a line was typed where it could
+       assert what the line does. ==================================== */
+    if (typeof window.debugRoamInfo === 'function') {
+      const RI = window.debugRoamInfo;
+      /* ⚠️ THE WORLD HAS TO BE PUT BACK FIRST, and this is a harness fact
+         rather than a game one: the v52+53 boss-bar block above empties the
+         live `mobs` array twice (`HB.mobs.length = 0`) to prove the bar comes
+         down when there is nothing to fight, and never refills it. Every
+         block after it therefore runs in a world with no creatures in it at
+         all. `buildFeatureList()` is the game's own worldgen and is what the
+         Mob Rarity block already re-runs for the same reason — so this is
+         restoring the precondition, exactly as v56's `tutorialAlreadySeen()`
+         helper does, never a special case built for these gates. */
+      if (!RI().placed) window.buildFeatureList();
+      const r0 = RI();
+      const wiR = window.debugWorldInfo();
+      const v37R = (typeof window.debugV37Info === 'function') ? window.debugV37Info() : null;
+
+      /* ---- PART A: the circuit is real ground, and it is a circuit ------ */
+      results.push([`World Encounters A: the circuit has all ${r0.ROAM_WAYPOINTS} waypoints`,
+        Array.isArray(r0.path) && r0.path.length === r0.ROAM_WAYPOINTS]);
+      results.push(['World Encounters A: and every waypoint is ground a player can actually stand on',
+        r0.path.every(([x, y]) => {
+          const b = window.biomeAt(Math.floor(x), Math.floor(y));
+          return b !== wiR.B.DEEP && b !== wiR.B.PEAK && b !== wiR.B.LAVA;
+        })]);
+      /* The waypoints genuinely go round the world rather than orbiting one
+         spot — every quadrant is visited, which is what "across biome
+         boundaries" needs to be true of the path and not just of the words. */
+      {
+        const quads = new Set(r0.path.map(([x, y]) =>
+          (x >= wiR.N / 2 ? 1 : 0) + (y >= wiR.N / 2 ? 2 : 0)));
+        results.push([`World Encounters A: the circuit crosses the whole world — ${quads.size} of 4 quadrants visited`,
+          quads.size === 4]);
+      }
+
+      /* ---- PART A: the spec's first gate — the position is REAL and
+         QUERYABLE at any instant, and it never snaps. Sampled over a whole
+         lap through the game's own function. A teleport is a step that is a
+         large multiple of the typical one, so the shape of the assertion is
+         a bound on the WORST step against the MEAN step, not a bound on a
+         number somebody picked. */
+      {
+        const SAMPLES = 1440;                       // one sample per 15 real seconds of a 6h lap
+        const dt = r0.ROAM_LAP_MS / SAMPLES;
+        const t0 = r0.at;
+        const pts = [];
+        for (let i = 0; i <= SAMPLES; i++) pts.push(RI({ t: t0 + i * dt }).home);
+        let worst = 0, total = 0;
+        for (let i = 1; i < pts.length; i++) {
+          const d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+          if (d > worst) worst = d;
+          total += d;
+        }
+        const mean = total / SAMPLES;
+        /* ⚠️ THIS GATE CAUGHT A REAL DEFECT AND IS KEPT AT ITS ORIGINAL
+           STRICTNESS BECAUSE IT DID. The first implementation split the lap
+           evenly per SEGMENT, so on a world where one segment came out six
+           times the mean length it was walked six times as fast — worst step
+           34.4 tiles against a 5.7 mean, a 6.0 ratio. The circuit is walked by
+           ARC LENGTH now, so the creature moves at one constant speed and the
+           worst step is the mean to within a rounding of the sampling grid.
+           The bound was NOT relaxed to fit the old behaviour; it is tightened,
+           because a constant-speed path makes this a genuine snap detector
+           rather than a measure of how unevenly the waypoints happened to
+           land. */
+        results.push([`World Encounters A: the position never snaps, and the pace is constant — worst step ${worst.toFixed(3)} tiles against a mean of ${mean.toFixed(3)} over a full lap`,
+          worst > 0 && mean > 0 && worst < mean * 1.5]);
+        results.push([`World Encounters A: the circuit is walked by arc length, so lap fraction is distance travelled (${r0.lapLenTiles.toFixed(0)} tiles round)`,
+          r0.lapLenTiles > 0 && r0.cum.length === r0.path.length + 1 &&
+          Math.abs(r0.cum[r0.cum.length - 1] - r0.lapLenTiles) < 1e-6]);
+        /* And the structural reason the pace is constant: no leg of the
+           circuit needs the repel at all, so the repel is the hard guarantee
+           rather than something the creature's speed depends on. This is the
+           claim the worst-step bound above rests on, asserted directly. */
+        results.push(['World Encounters A: no leg of the circuit needs the safe-zone repel — it is a guarantee, not a speed input',
+          r0.segsClear === true]);
+        /* And it is CONTINUOUS in the strict sense as well: a millisecond
+           apart is a fraction of a tile apart, everywhere on the lap
+           including across the seam where a lap ends and the next begins. */
+        let msWorst = 0;
+        for (let i = 0; i < 64; i++) {
+          const tt = t0 + (i / 64) * r0.ROAM_LAP_MS;
+          const a1 = RI({ t: tt }).home, a2 = RI({ t: tt + 1 }).home;
+          msWorst = Math.max(msWorst, Math.hypot(a2[0] - a1[0], a2[1] - a1[1]));
+        }
+        const seamA = RI({ t: t0 + r0.ROAM_LAP_MS - 1 }).home;
+        const seamB = RI({ t: t0 + r0.ROAM_LAP_MS + 1 }).home;
+        results.push([`World Encounters A: continuous to the millisecond — worst 1ms step ${msWorst.toFixed(5)} tiles, and the lap seam closes to ${Math.hypot(seamB[0] - seamA[0], seamB[1] - seamA[1]).toFixed(5)}`,
+          msWorst < 0.01 && Math.hypot(seamB[0] - seamA[0], seamB[1] - seamA[1]) < 0.01]);
+        /* Slow enough that a player can catch it, which is the spec's own
+           reason for asking. PLAYER_SPEED is 9.2 tiles/s; this is the lap
+           length over the lap time, measured off the samples above. */
+        const tilesPerSec = (total / (r0.ROAM_LAP_MS / 1000));
+        results.push([`World Encounters A: and slow enough to be caught — ${tilesPerSec.toFixed(3)} tiles/s against a player's 9.2`,
+          tilesPerSec > 0 && tilesPerSec < 1]);
+
+        /* ---- PART A: the spec's second gate — it NEVER enters a Safe Zone.
+           Swept over the same full lap, through the game's OWN inSafeZone(),
+           and additionally measured against the margin the design rests on,
+           so a future pass that retunes ROAM_SAFE_MARGIN cannot quietly
+           shave the clearance away without this printing it. */
+        let inZone = 0, minClear = Infinity;
+        const zones = [[wiR.SPAWN.x, wiR.SPAWN.y, wiR.SAFE_RADIUS]];
+        if (v37R) zones.push([v37R.BAZAAR.x, v37R.BAZAAR.y, v37R.BAZAAR_R]);
+        for (const z of wiR.OTHER_SAFE_ZONES) zones.push([z.x, z.y, wiR.ZONE_R]);
+        for (const p of pts) {
+          if (window.inSafeZone(p[0], p[1])) inZone++;
+          for (const [zx, zy, zr] of zones)
+            minClear = Math.min(minClear, Math.hypot(p[0] - zx, p[1] - zy) - zr);
+        }
+        results.push([`World Encounters A: the circuit never enters a Safe Zone — 0 of ${pts.length} samples inside, closest approach ${minClear.toFixed(1)} tiles outside the nearest boundary`,
+          inZone === 0 && minClear >= r0.ROAM_SAFE_MARGIN - 1e-6]);
+        /* The clearance is not just larger than zero, it is larger than the
+           creature's own leash — which is what makes the BODY's safety a
+           consequence of the path's rather than a second hope. */
+        results.push([`World Encounters A: and the margin genuinely exceeds the creature's leash (${r0.ROAM_SAFE_MARGIN} vs ${wiR.MOBS.adult_dragon.leashRadius})`,
+          r0.ROAM_SAFE_MARGIN > wiR.MOBS.adult_dragon.leashRadius]);
+      }
+
+      /* ---- PART A: and the creature itself, in the world, on the path --- */
+      results.push(['World Encounters A: the roaming boss is really placed, with a fixed clientwide id and the boss flag',
+        r0.placed && r0.mob && r0.mob.id === 'adult_dragon:roaming' &&
+        r0.mob.boss === true && r0.mob.roams === true && r0.mob.dead === false]);
+      results.push(['World Encounters A: its id carries NO coordinates — two clients an hour apart must mint the same one',
+        !/[0-9]/.test(r0.mob.id.split(':')[1] || '')]);
+      results.push([`World Encounters A: and its home is the circuit's position right now, not an origin it spawned at`,
+        Math.hypot(r0.mob.hx - r0.home[0], r0.mob.hy - r0.home[1]) < 1.0]);
+      results.push(['World Encounters A: it is the ONLY roaming creature in the file — nothing else grew a moving home',
+        Object.entries(wiR.MOBS).filter(([, d]) => d.roams).length === 1]);
+
+      /* DRIVEN: the home really moves under the real clock, and the body
+         really goes with it — measured by advancing a frozen clock and
+         pumping real frames, never by reading the function twice. */
+      {
+        const realNowR = window.Date.now;
+        const T0 = realNowR.call(window.Date);
+        let fake = T0;
+        window.Date.now = () => fake;
+        const H = window.debugCombatHandles().mobs;
+        const dragon = H.find(m => m.kind === 'adult_dragon');
+        if (dragon) {
+          /* Far enough away that nothing aggros — this is about the roam,
+             not about a chase. `update()` is the tick that runs the mob AI;
+             `render()` only paints, so driving frames would have proved
+             nothing at all. */
+          window.debugSetPlayer({ x: dragon.x + 300, y: dragon.y + 300, hp: 200 });
+          const p0 = [dragon.x, dragon.y], h0 = [dragon.hx, dragon.hy];
+          let maxFrameStep = 0, prev = p0.slice();
+          for (let f = 0; f < 40; f++) {
+            fake = T0 + (f + 1) * 30000;             // 30 real seconds a tick, 20 minutes in all
+            window.update(0.05, 1000 + f * 50);
+            maxFrameStep = Math.max(maxFrameStep, Math.hypot(dragon.x - prev[0], dragon.y - prev[1]));
+            prev = [dragon.x, dragon.y];
+          }
+          const homeMoved = Math.hypot(dragon.hx - h0[0], dragon.hy - h0[1]);
+          const bodyMoved = Math.hypot(dragon.x - p0[0], dragon.y - p0[1]);
+          results.push([`World Encounters A: DRIVEN — 20 simulated minutes really move it: home ${homeMoved.toFixed(1)} tiles, body ${bodyMoved.toFixed(1)} tiles`,
+            homeMoved > 1 && bodyMoved > 1]);
+          results.push([`World Encounters A: DRIVEN — the body stays with its home the whole way (offset ${Math.hypot(dragon.x - dragon.hx, dragon.y - dragon.hy).toFixed(2)} tiles, inside its own leash)`,
+            Math.hypot(dragon.x - dragon.hx, dragon.y - dragon.hy) <= wiR.MOBS.adult_dragon.leashRadius]);
+          results.push([`World Encounters A: DRIVEN — and never inside a Safe Zone at any point of it`,
+            !window.inSafeZone(dragon.x, dragon.y)]);
+          /* ⚠️ THE v30 HOTFIX'S OWN CONCERN, MEASURED ON A MOVING HOME
+             RATHER THAN ARGUED AWAY. That hotfix scaled the idle/leash
+             threshold to the wander amplitude after a mob was caught
+             flipping between the two states 164 times in 10 seconds. A home
+             that MOVES is exactly the thing that could reopen it, so this
+             drives the creature at a real frame cadence — 50ms a tick, ten
+             real seconds — and counts the state changes. The carry keeps the
+             body's offset from its home constant, so the answer should be
+             the same handful a stationary mob gives, not a storm. */
+          let flips = 0, lastState = dragon.state;
+          for (let f = 0; f < 200; f++) {
+            fake += 50;
+            window.update(0.05, 40000 + f * 50);
+            if (dragon.state !== lastState) { flips++; lastState = dragon.state; }
+          }
+          results.push([`World Encounters A: DRIVEN — a moving home does not reopen the v30 state-flip bug (${flips} idle/leash changes in 10 real seconds, against the 164 that bug produced)`,
+            flips < 10]);
+          results.push([`World Encounters A: DRIVEN — and at a real cadence it still holds inside its own wander, ${Math.hypot(dragon.x - dragon.hx, dragon.y - dragon.hy).toFixed(2)} tiles from home`,
+            Math.hypot(dragon.x - dragon.hx, dragon.y - dragon.hy) <= wiR.MOBS.adult_dragon.leashRadius]);
+        } else {
+          results.push(['World Encounters A: a real roaming boss was reachable to drive', false]);
+        }
+        window.Date.now = realNowR;
+      }
+
+      /* The structural half of "never enters a Safe Zone": the movement code
+         itself refuses the step, so the margin above is the belt and this is
+         the braces. Driven through the game's own predicate on a tile deep
+         inside the Spawn zone, both ways round. */
+      if (typeof window.mobBlocked === 'function') {
+        const inTile = [Math.floor(wiR.SPAWN.x), Math.floor(wiR.SPAWN.y)];
+        results.push(['World Encounters A: a roaming mob is refused every step into a Safe Zone',
+          window.mobBlocked({ roams: true }, inTile[0], inTile[1]) === true]);
+        results.push(['World Encounters A: and no other creature\'s movement changed — a non-roaming mob is not refused',
+          window.mobBlocked({}, inTile[0], inTile[1]) === false]);
+      }
+
+      /* ---- PART A: the boss bar and the Elder cue are REUSED, not rebuilt */
+      if (typeof window.debugBossInfo === 'function' && typeof window.debugSetBoss === 'function') {
+        const BB = window.debugBossInfo;
+        const H2 = window.debugCombatHandles().mobs;
+        const dragon2 = H2.find(m => m.kind === 'adult_dragon');
+        window.debugSetBoss({ until: 0, id: null, refresh: true });
+        if (dragon2) {
+          dragon2.dead = false; dragon2.hp = dragon2.maxHp;
+          window.noteBossCombat('adult_dragon', dragon2);
+          window.debugSetBoss({ refresh: true });
+          results.push([`World Encounters A: the roaming boss raises the EXISTING bar, and it names the right creature ("${BB().name}")`,
+            BB().visible === true && BB().name === 'Adult Wild Dragon' &&
+            BB().active === true]);
+          results.push(['World Encounters A: and the bar reads its real live HP, not a cached number',
+            (() => { dragon2.hp = Math.round(dragon2.maxHp / 2); window.debugSetBoss({ refresh: true });
+                     return BB().hpText === Math.round(dragon2.maxHp / 2) + ' / ' + dragon2.maxHp; })()]);
+          dragon2.hp = dragon2.maxHp;
+          window.debugSetBoss({ until: 0, id: null, refresh: true });
+        } else {
+          results.push(['World Encounters A: a real roaming boss was reachable for the boss bar', false]);
+        }
+        results.push(['World Encounters A: no second boss HUD was built — still one #hudBoss and one bar',
+          window.document.querySelectorAll('#hudBoss').length === 1 &&
+          window.document.querySelectorAll('#bossBar').length === 1]);
+      }
+      if (typeof window.isElderCombatant === 'function') {
+        results.push(['World Encounters A: the Elder-tier music cue is reused for it, and still refuses an ordinary mob',
+          window.isElderCombatant('adult_dragon') === true &&
+          window.isElderCombatant('elder_drake') === true &&
+          window.isElderCombatant('goblin') === false &&
+          window.isElderCombatant('demon_knight') === false]);
+        results.push(['World Encounters A: and no second music track or linger window was added',
+          (gameScript.match(/const ELDER_MUSIC_URL/g) || []).length === 1 &&
+          (gameScript.match(/COMBAT_MUSIC_LINGER = /g) || []).length === 1]);
+      }
+
+      /* ---- PART A: it is drawn as ITSELF, which is the v48 lesson ------- */
+      results.push(['World Encounters A: it has its own draw route and cannot fall through to the Bandit',
+        gameScript.indexOf('if (m.kind === "elder_drake" || m.kind === "adult_dragon") {') > 0 &&
+        gameScript.indexOf('} else if (species === "adult_dragon") {') > 0]);
+      if (typeof window.debugScaleInfo === 'function') {
+        const SCR = window.debugScaleInfo();
+        results.push(['World Encounters A: it arrived WITH its overlay offset — the v13 fairness rule, not the drake\'s mistake',
+          typeof SCR.MOB_TALL.adult_dragon === 'number' && SCR.MOB_TALL.adult_dragon > 0 &&
+          20 + SCR.MOB_TALL.adult_dragon > 31.4 * SCR.MOB_K.adult_dragon]);
+        results.push(['World Encounters A: and the Elder Drake still carries the largest MOB_K in the file',
+          Object.keys(SCR.MOB_K).every(k => k === 'elder_drake' || SCR.MOB_K[k] <= SCR.MOB_K.elder_drake)]);
+      }
+    }
+
+    /* ================= PART B — THE BOUNTY BOARD ======================== */
+    if (typeof window.debugBountyInfo === 'function') {
+      const BI = window.debugBountyInfo, SB = window.debugSetBounty;
+      const b0 = BI();
+      const wiB = window.debugWorldInfo();
+
+      results.push([`World Encounters B: the board stands in the Spawn safe hub, ${Math.hypot(b0.BOUNTY.x - wiB.SPAWN.x, b0.BOUNTY.y - wiB.SPAWN.y).toFixed(1)} tiles from Spawn and inside its zone`,
+        window.inSafeZone(b0.BOUNTY.x, b0.BOUNTY.y) === true]);
+      /* It cannot steal a keypress from the two fixtures it stands beside,
+         and that is arithmetic rather than a hope: every pair is further
+         apart than the sum of their reaches. */
+      if (typeof window.debugV35Info === 'function') {
+        const v35B = window.debugV35Info();
+        const dOracle = Math.hypot(b0.BOUNTY.x - v35B.ORACLE.x, b0.BOUNTY.y - v35B.ORACLE.y);
+        results.push([`World Encounters B: and it can never take a keypress from the Oracle (${dOracle.toFixed(1)} tiles apart, reaches ${b0.BOUNTY_R} + ${v35B.ORACLE_R})`,
+          dOracle > b0.BOUNTY_R + v35B.ORACLE_R]);
+      }
+
+      /* The pool is a hand-written literal of creatures that exist, and it
+         holds no boss, no Elder and nothing the Oracle is forbidden to name. */
+      results.push(['World Encounters B: every name on the board is a real MOBS creature',
+        b0.pool.length > 0 && b0.pool.every(k => !!wiB.MOBS[k])]);
+      results.push(['World Encounters B: and the board can never name a boss, an Elder or an admin-only creature',
+        ['elder_drake', 'adult_dragon', 'demon_knight', 'golem_elder', 'dragon_elder',
+         'unicorn_elder', 'duskfox_elder'].every(k => b0.pool.indexOf(k) < 0)]);
+      results.push(['World Encounters B: the pool is a literal, deliberately NOT derived from a table a future version could grow',
+        gameScript.indexOf('const BOUNTY_POOL = [') > 0 &&
+        !/const BOUNTY_POOL = [\s\S]{0,400}Object\.keys\(MOBS\)/.test(gameScript)]);
+
+      /* ---- the spec's third gate: it rotates on the stated real timer,
+         which is the world day counter and specifically not a second one. */
+      results.push(['World Encounters B: the rotation reads the file\'s ONE day counter, not a new timer',
+        gameScript.indexOf('return BOUNTY_POOL[worldDayNum() % BOUNTY_POOL.length];') > 0 &&
+        (gameScript.match(/function worldDayNum\(\)/g) || []).length === 1]);
+      {
+        /* Driven across real day boundaries with a frozen clock, exactly as
+           the Mob Rarity block does it. The world day is DAY_LENGTH seconds
+           long, so the clock is moved a whole day at a time and the board is
+           asked what it says — the answer has to walk the pool in order and
+           come back round to where it started after a full cycle. */
+        const realNowB = window.Date.now;
+        const T0 = realNowB.call(window.Date);
+        let fake = T0;
+        window.Date.now = () => fake;
+        const d0 = BI().day;
+        const seen = [];
+        /* The day length is read out of the counter itself rather than
+           restated as a constant a gate could drift from. Stepping to the
+           FIRST boundary and then measuring to the SECOND is what makes it a
+           whole day: measuring from an arbitrary start point would only ever
+           measure the part of today that was left. */
+        let guard = 0;
+        while (BI().day === d0 && guard++ < 4000) fake += 1000;
+        const b1 = fake, d1 = BI().day;
+        while (BI().day === d1 && guard++ < 4000) fake += 1000;
+        const dayMs = fake - b1;
+        for (let i = 0; i < BI().pool.length + 1; i++) {
+          fake = b1 + i * dayMs + 10;
+          seen.push(BI().target);
+        }
+        fake = T0;
+        const cycle = seen.slice(0, BI().pool.length);
+        results.push([`World Encounters B: the target rotates once per world day and walks the whole pool (${cycle.join(' -> ')})`,
+          new Set(cycle).size === BI().pool.length && seen[seen.length - 1] === seen[0]]);
+        results.push(['World Encounters B: and it is a pure function of the day, so every client in the world sees the same name',
+          (() => { fake = b1 + dayMs * 3 + 77; const a = BI().target;
+                   fake = b1 + dayMs * 3 + dayMs / 2; const b = BI().target;
+                   fake = T0; return a === b; })()]);
+        window.Date.now = realNowB;
+      }
+
+      /* ---- the spec's fourth gate: the bonus fires for the ACTIVE species
+         specifically, and for nothing else. Driven through the real
+         noteBountyTake() both call sites use — never by reading the table. */
+      {
+        const invOf = () => (window.debugWorldInfo().player.inv || {}).runic_stone || 0;
+        const target = BI().target;
+        const other = BI().pool.find(k => k !== target);
+        SB({ claimedDay: 0 });
+        const before = invOf();
+        const paidWrong = window.noteBountyTake(other);
+        results.push([`World Encounters B: a NON-bounty creature pays nothing (${other} on a ${target} day)`,
+          paidWrong === false && invOf() === before && BI().claimedToday === false]);
+        const paidUnlisted = window.noteBountyTake('elder_drake');
+        results.push(['World Encounters B: and a creature that is not on the board at all pays nothing either',
+          paidUnlisted === false && invOf() === before]);
+        const paidRight = window.noteBountyTake(target);
+        results.push([`World Encounters B: today's bounty pays, and pays the stated ${b0.BOUNTY_REWARD_RUNIC} Runic Stone`,
+          paidRight === true && invOf() === before + b0.BOUNTY_REWARD_RUNIC &&
+          BI().claimedToday === true]);
+        const paidTwice = window.noteBountyTake(target);
+        results.push(['World Encounters B: a second one the same day pays nothing — it is a bounty, not a farm',
+          paidTwice === false && invOf() === before + b0.BOUNTY_REWARD_RUNIC]);
+        /* And the claim really is per-day rather than forever: put the
+           stored day back one and it pays again. */
+        SB({ claimedDay: BI().day - 1 });
+        const paidTomorrow = window.noteBountyTake(BI().target);
+        results.push(['World Encounters B: and it comes back when the day rolls over',
+          paidTomorrow === true && invOf() === before + b0.BOUNTY_REWARD_RUNIC * 2]);
+        /* Both verbs go through this one helper, so "killing OR taming"
+           cannot drift into two different rules. */
+        results.push(['World Encounters B: both the kill path and the tame path call the ONE helper',
+          (gameScript.match(/noteBountyTake\(/g) || []).length === 3]);
+        SB({ claimedDay: 0 });
+        window.debugSetPlayer({ inv: {} });
+      }
+
+      /* No new currency, no new item, no new table — the spec's own
+         instruction to reuse the existing reward patterns. */
+      results.push(['World Encounters B: the reward is an existing material through the existing invAdd, with no new currency',
+        gameScript.indexOf('invAdd("runic_stone", BOUNTY_REWARD_RUNIC);') > 0 &&
+        gameScript.indexOf('BOUNTY_CURRENCY') < 0 && gameScript.indexOf('bountyToken') < 0]);
+      results.push(['World Encounters B: and nothing here touches the database — savePlayer\'s fixed column list never learned the word',
+        (() => {
+          const at = gameScript.indexOf('async function savePlayer() {');
+          if (at < 0) return false;
+          const body = gameScript.slice(at, gameScript.indexOf('.eq("username", me.username);', at));
+          return body.indexOf('bounty') < 0 && body.indexOf('BOUNTY') < 0;
+        })()]);
+
+      /* The prompt tells the truth about what the key will do — the rule the
+         vault door's own branch is written to. */
+      {
+        const wiP = window.debugWorldInfo();
+        window.debugSetPlayer({ x: b0.BOUNTY.x, y: b0.BOUNTY.y, hp: 200 });
+        window.updateHUD(0.3);
+        const promptTxt = window.document.getElementById('hudPrompt').textContent;
+        results.push([`World Encounters B: standing at the board, the HUD names today's creature ("${promptTxt}")`,
+          BI().near === true && promptTxt.indexOf(BI().targetName) >= 0 &&
+          promptTxt.indexOf('Bounty Board') >= 0]);
+        results.push(['World Encounters B: and reading it really answers on the shared interact key',
+          (() => { const b = window.readBountyBoard(); return !!b && b[0] === BI().target; })()]);
+        window.debugSetPlayer({ x: wiP.SPAWN.x, y: wiP.SPAWN.y });
+      }
+      results.push(['World Encounters: and the world still runs frames cleanly after every part of this',
+        (() => { for (let f = 0; f < 8; f++) window.render(f * 16); return !caught; })()]);
+    }
 
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
