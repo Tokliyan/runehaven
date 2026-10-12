@@ -160,6 +160,19 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    usual branch as before, no error, a human will sync it. This is a
    nice-to-have, never a requirement — never fail a build or treat a
    blocked push to `main` as a RED condition.
+9. **Report to the Night Run — before ending ANY session, including a RED
+   stop or a "nothing to build" night.** This is how the owner sees the
+   result: BUILD_FAILED.md on a side branch is invisible to him (14 straight
+   RED nights on World Encounters, 28 Sep–11 Oct, never reached him). POST to
+   `https://jarvis-aio.onrender.com/api/nightrun/report` with header
+   `Authorization: Bearer $NIGHT_RUN_TOKEN` and JSON:
+   `{"section":"runehaven","status":"ok"|"warn"|"fail","summary":"1-2 plain sentences: version shipped, or exactly what blocked it","needs_you":["short owner actions, under 70 chars each"],"details":{"version":"","branch":"","pushed_to_main":true,"review":"the step 0b doubt-pass verdict (the fresh-context review)","judgment_calls":[],"blocker":""}}`.
+   Shipped clean → `ok`; shipped with YELLOW judgment calls or not on
+   `main` → `warn`; RED → `fail` with the blocker in `needs_you` (e.g. "Add a
+   2nd Boss-tier creature to the bible for World Encounters"). The server may
+   be asleep: if the first call times out, wait 30s and retry once. If
+   `NIGHT_RUN_TOKEN` is not set, skip this step and say so in the commit
+   message; never fail a build over it.
 
 ## Confirmed, locked spec for the next build (v52+53 combined — Session Resume, Colosseum Rework & Guild Tier 2)
 
