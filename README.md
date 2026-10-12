@@ -1373,7 +1373,8 @@ reward patterns rather than a new currency.
 **Proof gates:** standard gauntlet plus confirm the Elder Drake's
 position is always real and queryable via `worldBossPos()`. Sample 600
 frames across several legs: no frame-to-frame jump bigger than its
-speed × dt (including straight after combat ends and after a respawn).
+speed × dt, including straight after combat ends. A respawn is a fresh
+appearance and must land exactly on `drakeRoamHome(now)`.
 `drakeRoamHome` gives the same answer for the same time on two separate
 evaluations. Over 200 consecutive legs the Drake never enters a Safe
 Zone. The Volcano's Demon Knights and the Drake's loot are unchanged.
