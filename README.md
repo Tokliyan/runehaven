@@ -1322,16 +1322,45 @@ comments, numbered, plain English):**
 leash-bound to each creature's own `leashRadius`.** This spec extends
 that proven pattern rather than building new movement logic.
 
-**PART A — a roaming world boss, separate from the Elder Drake.** The
-Elder Drake stays exactly fixed at the Volcano, per the bible — this is
-a new, additional Boss-tier creature with no fixed home, given a
-dramatically larger wander range than any current creature (effectively
-unleashed, moving slowly across biome boundaries over real time rather
-than being pinned to one spot). Real, findable coordinates at any
-moment (no teleporting, no despawn/respawn trick) — a player who
-tracks it should be able to actually catch up. Reuses the existing
-boss-bar and Elder-tier music cue from prior versions rather than
-building new combat UI.
+**PART A — the Elder Drake roams (owner decision, 2026-10-12).** Three
+nightly builds (9, 10 and 11 Oct) stopped RED. The old PART A asked for a
+new Boss-tier creature, but the bible has exactly one Boss-tier creature,
+the Elder Drake (`RUNEHAVEN_BIBLE.md:132`, "Volcano, World Boss"). The
+owner has decided: **the Elder Drake itself becomes the roaming world
+boss.** This is an approved bible deviation (the owner's word beats the
+bible). Record it in the changelog as one, citing this line. No new
+creature is added.
+- **How it roams.** Mobs already idle-wander around their home (`m.hx`,
+  `m.hy`) up to their `leashRadius` (the Drake's is 24). Make the Drake's
+  *home* travel instead of adding new movement code. Add a deterministic
+  `drakeRoamHome(nowMs)` that returns where the home is at any moment:
+  - legs of `DRAKE_LEG_MS = 20 min` (tunable);
+  - each leg's target comes from `hash2(legIndex, worldSeed, <new salt>)`,
+    a point within `DRAKE_ROAM_R = 900` tiles of the VOLCANO (tunable);
+  - the home moves in a straight line from the previous target, reaching
+    it at the end of the leg.
+
+  Because it is computed from time and the seed, every client agrees on
+  where it is with no network messages. While the Drake is idle, its
+  `hx/hy` follow `drakeRoamHome(now)` every frame. When it is engaged,
+  the existing combat and `mob_sync` behaviour is unchanged; leashing
+  measures from the current home. After combat ends, the Drake walks back
+  toward the moving home at normal speed: no teleport, no snap.
+- **Safe Zones are never entered.** A leg target inside, or a straight
+  leg that crosses, Spawn's `SAFE_RADIUS`, `OTHER_SAFE_ZONES` (`ZONE_R`),
+  the Bazaar (`BAZAAR_R`) or the Colosseum is skipped: re-hash with
+  `legIndex` plus an offset. The Drake flies, so water and lava are fine.
+- **What stays the same:**
+  - the Volcano lair keeps its Demon Knight guards, the lava, the boss bar
+    (`#hudBoss`), the Elder music cue and the Drake's loot (dragonsteel);
+  - `ELDER_DRAKE_RESPAWN_MS` (6 h) and `count: 1`;
+  - after a respawn, the Drake reappears at `drakeRoamHome(now)`, not at
+    the lair.
+- **It can be tracked.** Add a harness hook `worldBossPos()` that returns
+  the live x/y. The bounty board (PART B) also says which way the Drake
+  is from the board and roughly how far ("The Elder Drake was last seen
+  far to the NE"), using the compass bearing maths already in
+  `minimapBearings()`.
 
 **PART B — a rotating bounty board.** A new interaction point at Spawn
 or the Bazaar (build's choice, either fits the "safe hub" role) naming
@@ -1341,9 +1370,14 @@ daily systems already use). Killing or taming that specific creature
 while the bounty is active grants a bonus reward — reuse existing loot/
 reward patterns rather than a new currency.
 
-**Proof gates:** standard gauntlet plus confirm the roaming boss's
-position is always real and queryable (no teleport-style position
-snapping), confirm it never enters a Safe Zone, confirm the bounty
+**Proof gates:** standard gauntlet plus confirm the Elder Drake's
+position is always real and queryable via `worldBossPos()`. Sample 600
+frames across several legs: no frame-to-frame jump bigger than its
+speed × dt (including straight after combat ends and after a respawn).
+`drakeRoamHome` gives the same answer for the same time on two separate
+evaluations. Over 200 consecutive legs the Drake never enters a Safe
+Zone. The Volcano's Demon Knights and the Drake's loot are unchanged.
+Also confirm the bounty
 board's target rotates on the stated real timer and the bonus reward
 only triggers for the currently-active bounty species specifically.
 
