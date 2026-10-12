@@ -1,0 +1,1343 @@
+diff --git a/debug/run4.js b/debug/run4.js
+index 5b38430..75fc2f5 100644
+--- a/debug/run4.js
++++ b/debug/run4.js
+@@ -30,11 +30,23 @@ const drawOpsBy = Object.create(null);
+    every canvas call the whole harness makes, and a rest parameter would
+    allocate an array on each of them whether anything is recording or not. */
+ let ellipseTrace = null;
++/* World Check Fixes PART F: gradients and their colour stops, counted on
++   their own two counters rather than through drawOps/drawOpsBy — gate F has
++   to say "the sky gradient's colour stops were not drawn this frame", and
++   every existing gate that measures draw cost must be unable to see this
++   addition. Nothing about the returned stub's behaviour changes. */
++let gradCalls = 0, colourStops = 0;
++/* The stop COLOURS as well as the count: gate F's claim is that the SKY
++   gradient's stops are not drawn inside a cave, and an interior frame draws
++   plenty of other gradients (the v55 cave lighting among them), so the count
++   alone cannot tell the two apart. `#22485c` and `#14303f` are the sky
++   block's own sea-band stops and nothing else in the file uses them. */
++let stopColours = [];
+ const ctx2d = new Proxy({}, {
+   get(t, prop) {
+     if (prop === 'canvas') return { width: 1280, height: 720 };
+     if (prop === 'createRadialGradient' || prop === 'createLinearGradient')
+-      return () => ({ addColorStop: () => {} });
++      return () => { gradCalls++; return { addColorStop: (o, c) => { colourStops++; stopColours.push(String(c)); } }; };
+     if (prop === 'measureText') return () => ({ width: 10 });
+     if (typeof prop === 'string')
+       return function () {
+@@ -570,8 +582,25 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
+      is ten more RUINB carves taking their tiles out of the same band, and
+      RUIN_SEP 664 -> 360 lets them land closer in, so the band loses more
+      again. Same invariant, same exercise v20 and v50 both did.
+-     242,044 -> 236,495. */
+-  results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 236495]);
++     242,044 -> 236,495.
++     World Check Fixes re-measured it again, did not relax it: 236,495 ->
++     235,008, and the cause was traced rather than assumed. TWO landmark
++     overrides move the number, both of them the kind this gate has always
++     allowed, and NEITHER of them is a rare-variant noise field:
++       - PART B's new arena clearing turns its own COLOSSEUM_R + 3 disc into
++         PLAINS, which takes 3 DARKFOREST tiles on this seed (measured by
++         removing that one line and re-counting: 235,011 with it gone).
++       - the other 1,484 come from PART A moving the Colosseum, which moved
++         one of the four Other Safe Zones and therefore moved that zone's
++         ZONE_R grass clearing. The zone loop has checked
++         `H(tx, ty, COLOSSEUM) <= ZONE_SEP` since the v41 hotfix, and the old
++         zone at 740,1521 is 531 tiles from the new arena against ZONE_SEP
++         664, so it is rejected and 1274,2008 is taken instead (667 away).
++         Still four zones, still the same twenty Ruins, same Dragon Altar —
++         all verified identical on this seed.
++     The invariant is unchanged and was checked both ways: the rare-variant
++     fields still never encroach on this band, only landmark overrides do. */
++  results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 235008]);
+       results.push(['regular Forest still exists', forest > 0]);
+       results.push(['regular Meadow still exists', meadow > 0]);
+       // Stag has no presence roll, so it must reliably find its biome. Unicorn
+@@ -10339,6 +10368,511 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
+         }
+       }
+ 
++    /* ================================================================
++       World Check Fixes (Landmarks, Compass, Caves, Lava & Dark Forest)
++
++       Every number quoted in these gates was MEASURED on the harness seed
++       before a line of the build was written — the Ancient Forge's 93 DEEP
++       tiles, the arena's 219 WATER and 346 features, FOREST 36.7% against
++       DARKFOREST 36.2%, the colliding compass labels. The gates below are
++       the same measurements taken again, from the other side.
++       ================================================================ */
++    if (window.debugV37Info && window.debugSeedLandSweep) {
++      /* run4 performs a real world reset to a RANDOM seed partway through,
++         well before this point, so every number quoted below has to say
++         which world it was measured in. The whole block stands on the
++         harness seed — the one the spec's own measurements were taken on —
++         and hands the world back at the end of PARTs D-J. */
++      const seedBeforeWcf = window.debugWorldSeedSet(123456789);
++      console.log('WCF: pinned to the harness seed 123456789 for these gates (was ' + seedBeforeWcf + ')');
++      const wcf = window.debugV37Info();
++      const wInfo = window.debugWorldInfo();
++      const Bw = wInfo.B, Nw = wInfo.N;
++      const bNames = Object.fromEntries(Object.entries(Bw).map(([k, v]) => [v, k]));
++      const discEach = (cx, cy, R, fn) => {
++        const o = [];
++        for (let ty = Math.floor(cy - R); ty <= Math.ceil(cy + R); ty++)
++          for (let tx = Math.floor(cx - R); tx <= Math.ceil(cx + R); tx++)
++            if (Math.hypot(tx - cx, ty - cy) < R) o.push(fn(tx, ty));
++        return o;
++      };
++      const tallyOf = a => { const c = {}; for (const v of a) c[v] = (c[v] || 0) + 1; return c; };
++
++      /* ---- PART A: landmarks stand on land, on five seeds ------------- */
++      {
++        const SEEDS = [123456789, 4242, 999331, 77, 20260101];
++        const sweep = window.debugSeedLandSweep(SEEDS);
++        for (const r of sweep)
++          console.log(`WCF A seed ${r.seed}: forge land ${(r.ancFrac * 100).toFixed(1)}% at ` +
++                      `${r.ANCIENT.x},${r.ANCIENT.y} (${r.dVolcano.toFixed(0)} from the volcano), ` +
++                      `arena land ${(r.colFrac * 100).toFixed(1)}% at ${r.COLOSSEUM.x},${r.COLOSSEUM.y} ` +
++                      `(${r.dTowerCol.toFixed(0)} from the Tower)` +
++                      (r.chosen.ANCIENT_fallback || r.chosen.COLOSSEUM_fallback
++                         ? ' — BEST-OF-ATTEMPTS FALLBACK FIRED' : ''));
++        results.push([`WCF A: the harness seed's Ancient Forge is no longer in the sea — ${SEEDS.length} seeds swept`,
++          sweep.length === SEEDS.length]);
++        /* The claim is "all land, OR the fallback fired and then the chosen
++           spot is the best of its attempts" — which is exactly what the hook
++           reports, since landmarkLandFrac records what placeLandmarks chose. */
++        results.push(['WCF A: on every seed the forge disc is all land, or the fallback took the best attempt there was',
++          sweep.every(r => r.ancFrac >= 1 || (r.chosen.ANCIENT_fallback && r.chosen.ANCIENT === r.ancFrac))]);
++        results.push(['WCF A: and the arena disc likewise, on every seed',
++          sweep.every(r => r.colFrac >= 1 || (r.chosen.COLOSSEUM_fallback && r.chosen.COLOSSEUM === r.colFrac))]);
++        /* The existing distance rules stay EXACTLY as they are: the forge is
++           still 364 from the volcano and the arena still 1000 from the Tower
++           on every seed, so the land test was added to them, not instead. */
++        results.push(['WCF A: the distance rules are untouched — forge 364 from the volcano, arena 1000 from the Tower, every seed',
++          sweep.every(r => Math.abs(r.dVolcano - 364) < 1.5 && Math.abs(r.dTowerCol - 1000) < 1.5)]);
++        results.push(['WCF A: 40 attempts, for these two loops only — VOLCANO/MOUNT keep 12 and BAZAAR keeps 20',
++          (gameScript.match(/for \(let attempt = 0; attempt < 40; attempt\+\+\) \{/g) || []).length === 2 &&
++          (gameScript.match(/for \(let attempt = 0; attempt < 12; attempt\+\+\) \{/g) || []).length === 2 &&
++          (gameScript.match(/for \(let attempt = 0; attempt < 20; attempt\+\+\) \{/g) || []).length === 1]);
++        /* The cache trap the existing comments at the top of isPlaceableLand
++           and inside placeLandmarks both warn about. elevRaw is pure noise;
++           biomeAt would bake a pre-Ruin, pre-Zone biome for every tile. */
++        /* The body with its comments STRIPPED, because placeLandmarks() is
++           full of comments that warn about this exact call — including the
++           new one — and a plain indexOf would be satisfied by the warning
++           rather than by the absence of the thing warned about. */
++        results.push(['WCF A: placeLandmarks() still contains no biomeAt call — the tile-cache trap its own comment warns about',
++          (() => {
++            const at = gameScript.indexOf('function placeLandmarks() {');
++            if (at < 0) return false;
++            const body = gameScript.slice(at, gameScript.indexOf('\n}', at));
++            if (body.indexOf('placeRuinsAndZones();') < 0) return false;   // slice really is the whole body
++            const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
++            return code.indexOf('biomeAt') < 0 && code.indexOf('landFraction(') > 0;
++          })()]);
++        results.push(['WCF A: and landFraction() itself reads elevRaw and nothing else',
++          (() => {
++            const at = gameScript.indexOf('function landFraction(cx, cy, R) {');
++            if (at < 0) return false;
++            const body = gameScript.slice(at, gameScript.indexOf('\n}', at));
++            return body.indexOf('elevRaw(tx, ty)') > 0 && body.indexOf('biomeAt') < 0 &&
++                   body.indexOf('heightAt') < 0;
++          })()]);
++        results.push(['WCF A: the sweep hook puts the world back exactly as it found it',
++          JSON.stringify(window.debugV37Info().ANCIENT) === JSON.stringify(wcf.ANCIENT) &&
++          JSON.stringify(window.debugV37Info().COLOSSEUM) === JSON.stringify(wcf.COLOSSEUM)]);
++      }
++
++      /* ---- PART B: the arena gets a real clearing, like the Bazaar ---- */
++      {
++        const colR = wcf.COLOSSEUM_R + 3;
++        const cb = tallyOf(discEach(wcf.COLOSSEUM.x, wcf.COLOSSEUM.y, colR, (x, y) => bNames[window.biomeAt(x, y)]));
++        const ch = tallyOf(discEach(wcf.COLOSSEUM.x, wcf.COLOSSEUM.y, colR, (x, y) => window.heightAt(x, y)));
++        const fellBack = !!wcf.landFrac.COLOSSEUM_fallback;
++        console.log('WCF B arena disc biomes:', JSON.stringify(cb), 'heights:', JSON.stringify(ch),
++                    fellBack ? '(PART A fallback fired on this seed)' : '');
++        /* Measured before: 297 FOREST, 293 DARKFOREST, 219 WATER, 157 ROCK,
++           152 SAND and heights -1..2 inside this very disc. */
++        const allowed = fellBack ? ['PLAINS', 'LAVA', 'DEEP', 'WATER'] : ['PLAINS'];
++        results.push([`WCF B: every tile of the arena disc is cleared ground now (${Object.keys(cb).join('/')})`,
++          Object.keys(cb).every(k => allowed.indexOf(k) >= 0) && (cb.PLAINS || 0) > 0]);
++        results.push([`WCF B: and the arena floor is level — one height, 0 (was -1..2)`,
++          Object.keys(ch).length === 1 && ch['0'] > 0]);
++        /* PRESERVATION: the Bazaar's own two lines still do their job. */
++        const bb = tallyOf(discEach(wcf.BAZAAR.x, wcf.BAZAAR.y, wcf.BAZAAR_R, (x, y) => bNames[window.biomeAt(x, y)]));
++        const bh = tallyOf(discEach(wcf.BAZAAR.x, wcf.BAZAAR.y, wcf.BAZAAR_R, (x, y) => window.heightAt(x, y)));
++        /* The Bazaar's clearing deliberately exempts water — its own comment
++           says "a coastal Bazaar keeps its shoreline" — so the invariant is
++           that everything which is not sea is cleared PLAINS at height 0,
++           not that the whole disc is PLAINS. */
++        const WET = ['DEEP', 'WATER', 'SHALLOW', 'LAVA'];
++        const bazWet = Object.keys(bb).filter(k => WET.indexOf(k) >= 0)
++                             .reduce((n, k) => n + bb[k], 0);
++        const bazDry = discEach(wcf.BAZAAR.x, wcf.BAZAAR.y, wcf.BAZAAR_R,
++                                (x, y) => [bNames[window.biomeAt(x, y)], window.heightAt(x, y)])
++                         .filter(([b]) => WET.indexOf(b) < 0);
++        results.push([`WCF B P: the Bazaar's own clearing is untouched — ${bazDry.length} dry tiles all PLAINS at height 0, ${bazWet} tiles of its own shoreline (${Object.keys(bb).join('/')})`,
++          bazDry.length > 0 && bazDry.every(([b, h]) => b === 'PLAINS' && h === 0) &&
++          Object.keys(bb).every(k => k === 'PLAINS' || WET.indexOf(k) >= 0)]);
++        results.push(['WCF B P: the arena lines are the Bazaar lines reused — same four guards, same shape, at COLOSSEUM_R + 3',
++          gameScript.indexOf('Math.hypot(tx - COLOSSEUM.x, ty - COLOSSEUM.y) < COLOSSEUM_R + 3) b = B.PLAINS;') > 0 &&
++          gameScript.indexOf('if (Math.hypot(tx - COLOSSEUM.x, ty - COLOSSEUM.y) < COLOSSEUM_R + 3) h = 0;') > 0 &&
++          gameScript.indexOf('Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) b = B.PLAINS;') > 0 &&
++          gameScript.indexOf('if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) h = 0;') > 0]);
++        results.push(['WCF B P: nothing else about the Colosseum moved — radius, podiums, wall ring and its keep-out all still there',
++          wcf.COLOSSEUM_R === 20 &&
++          gameScript.indexOf('[COLOSSEUM.x, COLOSSEUM.y, COLOSSEUM_R + 2]') > 0 &&
++          gameScript.indexOf('PODIUM_RING') > 0 &&
++          gameScript.indexOf('COLOSSEUM_WALL_RING') > 0 &&
++          window.debugV37Info().inColosseumAtCentre === true]);
++      }
++
++      /* ---- PART C: no trees in either clearing ----------------------- */
++      {
++        const colR = wcf.COLOSSEUM_R + 3;
++        const colF = discEach(wcf.COLOSSEUM.x, wcf.COLOSSEUM.y, colR, (x, y) => window.featureTypeAt(x, y)).filter(f => f);
++        const bazF = discEach(wcf.BAZAAR.x, wcf.BAZAAR.y, wcf.BAZAAR_R, (x, y) => window.featureTypeAt(x, y)).filter(f => f);
++        console.log(`WCF C: features inside the arena ${colF.length} (was 346), inside the Bazaar ${bazF.length} (was 13 trees)`);
++        results.push([`WCF C: featureTypeAt grows nothing anywhere inside the arena disc (${colF.length})`, colF.length === 0]);
++        results.push([`WCF C: nor anywhere inside the Bazaar's radius (${bazF.length})`, bazF.length === 0]);
++        /* PRESERVATION, and the spec's own exception: the Spawn safe zone
++           keeps its scattered trees, because that look is intended. */
++        let spawnTrees = 0;
++        const SR = wInfo.SAFE_RADIUS;
++        for (let ty = Math.floor(wInfo.SPAWN.y - SR); ty <= Math.ceil(wInfo.SPAWN.y + SR) && spawnTrees < 5; ty += 2)
++          for (let tx = Math.floor(wInfo.SPAWN.x - SR); tx <= Math.ceil(wInfo.SPAWN.x + SR) && spawnTrees < 5; tx += 2)
++            if (Math.hypot(tx - wInfo.SPAWN.x, ty - wInfo.SPAWN.y) < SR &&
++                window.featureTypeAt(tx, ty) === 'tree') spawnTrees++;
++        results.push([`WCF C P: the Spawn safe zone still grows its scattered trees (${spawnTrees} found in a partial scan)`,
++          spawnTrees > 0]);
++        results.push(['WCF C P: and Spawn was deliberately not added to the keepout',
++          (() => {
++            const at = gameScript.indexOf('function featureTypeAt(tx, ty) {');
++            const body = gameScript.slice(at, gameScript.indexOf('const b = biomeAt(tx, ty);', at));
++            return body.indexOf('BAZAAR_R) return null;') > 0 &&
++                   body.indexOf('COLOSSEUM_R + 3) return null;') > 0 &&
++                   body.indexOf('SPAWN') < 0;
++          })()]);
++      }
++
++      /* ---- PART H: the Dark Forest is the densest forest ------------- */
++      {
++        /* Sampled EXACTLY as the pre-build measurement was: every 3rd tile,
++           a 40-tile margin, over the whole map. */
++        const tally = {};
++        for (let ty = 40; ty < Nw - 40; ty += 3)
++          for (let tx = 40; tx < Nw - 40; tx += 3) {
++            const b = window.biomeAt(tx, ty);
++            if (b !== Bw.FOREST && b !== Bw.DARKFOREST && b !== Bw.ENCHFOREST) continue;
++            const k = bNames[b];
++            (tally[k] = tally[k] || { t: 0, tree: 0 }).t++;
++            if (window.featureTypeAt(tx, ty) === 'tree') tally[k].tree++;
++          }
++        const pc = k => tally[k] ? tally[k].tree / tally[k].t * 100 : 0;
++        const dfP = pc('DARKFOREST'), fP = pc('FOREST'), efP = pc('ENCHFOREST');
++        console.log(`WCF H: tree share — DARKFOREST ${dfP.toFixed(2)}% (was 36.2), ` +
++                    `FOREST ${fP.toFixed(2)}% (36.7), ENCHFOREST ${efP.toFixed(2)}% (29.1), ` +
++                    `on ${tally.DARKFOREST.t}/${tally.FOREST.t}/${tally.ENCHFOREST.t} sampled tiles`);
++        results.push([`WCF H: the Dark Forest really is dense now — ${dfP.toFixed(2)}% tree tiles, the spec's floor is 50`,
++          dfP >= 50]);
++        results.push([`WCF H: and it is clearly denser than regular Forest — +${(dfP - fP).toFixed(2)} points, the spec asks for 12`,
++          dfP >= fP + 12]);
++        /* FOREST and ENCHFOREST must not have moved AT ALL: the branch was
++           split, not widened, so regular Forest keeps its own 0.42 / 0.42. */
++        results.push([`WCF H P: regular Forest is untouched — ${fP.toFixed(2)}% against the measured 36.7`,
++          Math.abs(fP - 36.7) <= 1]);
++        results.push([`WCF H P: the Enchanted Forest is untouched too — ${efP.toFixed(2)}% against the measured 29.1`,
++          Math.abs(efP - 29.1) <= 1]);
++        results.push(['WCF H P: FOREST keeps its own inline 0.42 / 0.42 and only DARKFOREST reads the new thresholds',
++          gameScript.indexOf('if (b === B.FOREST) {') > 0 &&
++          gameScript.indexOf('if (b === B.DARKFOREST) {') > 0 &&
++          gameScript.indexOf('if (b === B.FOREST || b === B.DARKFOREST) {') < 0 &&
++          gameScript.indexOf('clusterNoise(tx, ty) > DARKFOREST_CLUSTER_T && h > DARKFOREST_H_T') > 0 &&
++          gameScript.indexOf('const DARKFOREST_CLUSTER_T = 0.30') > 0]);
++      }
++      window.debugWorldSeedSet(seedBeforeWcf);
++    } else {
++      results.push(['WCF: the World Check Fixes hooks exist', false]);
++    }
++
++    /* ---- PARTs D, E, F, G, I and J ---------------------------------- */
++    if (window.compassLabelLayout && window.debugLightInfo) {
++      const seedBeforeWcf2 = window.debugWorldSeedSet(123456789);
++      const wcf2 = window.debugV37Info();
++      const w2 = window.debugWorldInfo();
++      const doc2 = window.document;
++
++      /* ---- PART D: compass labels never overlap --------------------- */
++      {
++        /* The compass waits out the tutorial (v56 PART C), so a brand new
++           account has no dial at all until this is set. */
++        window.debugSetV35({ tutorialDone: true, tutorialActive: false });
++        const marks = (() => {
++          const at = gameScript.indexOf('const MINIMAP_MARKS = [');
++          return (gameScript.slice(at, gameScript.indexOf('];', at)).match(/\["/g) || []).length;
++        })();
++        /* Twenty real standing points, the Bazaar and Spawn among them as
++           the spec requires, plus the places the screenshots showed the
++           collisions: every landmark, then a spread across the map. */
++        const pts = [
++          [wcf2.BAZAAR.x, wcf2.BAZAAR.y], [w2.SPAWN.x, w2.SPAWN.y],
++          [wcf2.COLOSSEUM.x, wcf2.COLOSSEUM.y], [wcf2.ANCIENT.x, wcf2.ANCIENT.y],
++          [w2.TOWER.x, w2.TOWER.y], [w2.VOLCANO.x, w2.VOLCANO.y], [w2.MOUNT.x, w2.MOUNT.y],
++          [wcf2.BAZAAR.x + 40, wcf2.BAZAAR.y], [wcf2.BAZAAR.x, wcf2.BAZAAR.y + 40],
++          [w2.SPAWN.x + 120, w2.SPAWN.y - 90], [w2.TOWER.x - 300, w2.TOWER.y + 300],
++          [800, 800], [1200, 2600], [2600, 1200], [3100, 3100], [600, 3200],
++          [3200, 600], [2000, 1000], [1000, 2000], [1500, 1500],
++        ];
++        let worstPair = null, placedMin = 99, dotMiss = 0, frames = 0, nearestMiss = 0;
++        const placedCounts = [];
++        for (const [px, py] of pts) {
++          window.debugSetPlayer({ x: px + 0.5, y: py + 0.5 });
++          window.updateMinimap();
++          frames++;
++          const boxes = window.compassLabelLayout();
++          placedMin = Math.min(placedMin, boxes.length);
++          placedCounts.push(boxes.length);
++          /* The greedy order's own promise: the label for the place you are
++             CLOSEST to is laid out first and so can never be the one dropped.
++             That is the whole reason the sort is by world distance. */
++          const nearest = window.minimapBearings()
++            .slice().sort((a, b) => a.d - b.d)[0];
++          if (!nearest || !boxes.some(bx => bx.label === nearest.label)) nearestMiss++;
++          for (let i = 0; i < boxes.length && !worstPair; i++)
++            for (let j = i + 1; j < boxes.length; j++) {
++              const a = boxes[i], b = boxes[j];
++              if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) {
++                worstPair = [px, py, a.label, b.label]; break;
++              }
++            }
++          /* DOTS NEVER MOVE and none is ever dropped — a dropped label still
++             leaves its mark on the dial, which is the whole compromise. */
++          const dial = doc2.getElementById('mmDial');
++          const dots = dial ? dial.querySelectorAll('.mm-mark').length : -1;
++          if (dots !== marks) dotMiss++;
++        }
++        console.log(`WCF D: ${frames} standing points swept, ${marks} landmarks, ` +
++                    `labels placed per point [${placedCounts.join(',')}], ` +
++                    `overlapping pair ${worstPair ? worstPair.join('/') : 'none'}`);
++        results.push([`WCF D: no two compass labels ever intersect, across ${frames} standing points`,
++          frames === 20 && worstPair === null]);
++        results.push([`WCF D: and every one of the ${marks} landmarks still has its dot at every point — only labels drop`,
++          marks === 9 && dotMiss === 0]);
++        /* Dropping a label IS the spec's answer when all three spots collide
++           ("draw the dot only"), so the count is reported rather than
++           asserted — what is asserted is that labels are genuinely placed
++           and that the nearest landmark's is never the one sacrificed. */
++        results.push([`WCF D: labels really are being placed, not silently all dropped (fewest at any point ${placedMin})`,
++          placedMin >= 1 && placedCounts.some(n => n >= 5)]);
++        results.push(['WCF D: and the nearest landmark never loses its label — that is what sorting by distance buys',
++          nearestMiss === 0]);
++        results.push(['WCF D: the layout is greedy by world distance, nearest landmark first',
++          gameScript.indexOf('minimapBearings().slice().sort((a, b) => a.d - b.d)') > 0]);
++        results.push(['WCF D: three candidate radii, all on the mark\'s own bearing — R_MARK, then in, then out',
++          gameScript.indexOf('for (const rr of [R_MARK, R_MARK - 14, R_MARK + 10]) {') > 0]);
++        /* The bible's compass "shows general direction only": the distance
++           the layout sorts by must not reach the screen. */
++        /* The bible's compass "shows general direction only, does not reveal
++           exact base locations". Asked of the RENDERED dial rather than of
++           the source, because `r.d` is a prefix of `r.deg` and a source grep
++           for it proves nothing: a distance readout would have to put a
++           digit on the dial, and there is not one anywhere on it. */
++        results.push(['WCF D P: the distance orders the layout and is never shown — not one digit anywhere on the dial',
++          (() => {
++            const dial = doc2.getElementById('mmDial');
++            if (!dial) return false;
++            const txt = dial.textContent || '';
++            return txt.length > 0 && !/[0-9]/.test(txt) &&
++                   gameScript.indexOf('${r.label}</div>`') > 0;
++          })()]);
++      }
++
++      /* ---- PART E: the help panel must not cover other HUD ---------- */
++      {
++        const lift = () => window.document.documentElement.style.getPropertyValue('--help-lift');
++        const helpText = () => (doc2.getElementById('helpCore').textContent || '') + '|' +
++                               (doc2.getElementById('helpFull').textContent || '');
++        const text0 = helpText(), lift0 = lift();
++        const open = window.toggleHelpFull();
++        const liftOpen = lift(), textOpen = helpText();
++        const shut = window.toggleHelpFull();
++        const liftShut = lift(), textShut = helpText();
++        console.log(`WCF E: --help-lift "${lift0}" -> open "${liftOpen}" -> closed "${liftShut}"`);
++        results.push(['WCF E: opening the full control list lifts the two cards above it',
++          open === true && parseFloat(liftOpen) > 0]);
++        results.push(['WCF E: closing it puts them back exactly where they were',
++          shut === false && parseFloat(liftShut || '0') === 0 &&
++          (lift0 === '' || parseFloat(lift0) === 0)]);
++        results.push(['WCF E: and it is #hudMinimap and #hudZone that read the lift, off their own unchanged 52px and 64px',
++          gameScript.indexOf('bottom: calc(52px + var(--help-lift, 0px)); left: 12px;') > 0 ||
++          html.indexOf('bottom: calc(52px + var(--help-lift, 0px)); left: 12px;') > 0]);
++        results.push(['WCF E: both cards, not just the compass',
++          html.indexOf('bottom: calc(64px + var(--help-lift, 0px)); left: 50%;') > 0 &&
++          html.indexOf('bottom: calc(52px + var(--help-lift, 0px)); left: 12px;') > 0]);
++        results.push(['WCF E P: nothing about the help text itself changed — same list, open and shut',
++          text0 === textShut && textOpen.length >= text0.length]);
++        results.push(['WCF E: the lift is re-measured wherever the line is rebuilt, so a rebind while open moves them too',
++          (() => {
++            const at = gameScript.indexOf('function refreshHelpLine() {');
++            const body = gameScript.slice(at, gameScript.indexOf('\n}', at));
++            return body.indexOf('applyHelpLift();') > 0;
++          })()]);
++      }
++
++      /* ---- PART F: caves stop floating in the daytime sky ----------- */
++      {
++        const before = window.debugLightInfo();
++        /* The surface still draws the sky, with its real colour stops. */
++        const SKY_STOPS = ['#22485c', '#14303f'];   // the sky block's own sea-band stops
++        const skyStopsIn = a => a.filter(c => SKY_STOPS.indexOf(c) >= 0).length;
++        stopColours = [];
++        const stops0 = colourStops, grads0 = gradCalls;
++        window.render(16);
++        const surf = window.debugLightInfo();
++        const surfStops = colourStops - stops0, surfGrads = gradCalls - grads0;
++        const surfSky = skyStopsIn(stopColours);
++        const kinds = [];
++        for (const name of ['UWCAVE', 'ABYSSAL']) {
++          const id = w2.B[name];
++          let tile = null;
++          for (let y = 20; y < w2.N - 20 && !tile; y += 5)
++            for (let x = 20; x < w2.N - 20; x += 5) if (window.biomeAt(x, y) === id) { tile = [x, y]; break; }
++          if (!tile) { kinds.push({ name, entered: false }); continue; }
++          const entered = window.enterInterior(tile[0], tile[1], id);
++          const s1 = colourStops, g1 = gradCalls;
++          const f1 = window.debugLightInfo();
++          stopColours = [];
++          window.render(32);
++          const f2 = window.debugLightInfo();
++          kinds.push({ name, entered, stops: colourStops - s1, grads: gradCalls - g1,
++                       skyStops: skyStopsIn(stopColours),
++                       sky: f2.skyBackdropFrames - f1.skyBackdropFrames,
++                       interior: f2.interiorBackdropFrames - f1.interiorBackdropFrames });
++          if (window.inInterior()) window.exitInterior();
++        }
++        console.log('WCF F: surface frame drew', surfStops, 'colour stops /', surfGrads,
++                    'gradients, of which', surfSky, 'are the sky\'s own;',
++                    kinds.map(k => `${k.name} entered=${k.entered} stops=${k.stops} skyStops=${k.skyStops} sky=${k.sky} interior=${k.interior}`).join('; '));
++        results.push([`WCF F: the surface still draws its sky gradient — ${surfSky} of the sky's own colour stops on a surface frame`,
++          surf.skyBackdropFrames > before.skyBackdropFrames && surfSky >= 2]);
++        results.push(['WCF F: both interior kinds were really entered',
++          kinds.length === 2 && kinds.every(k => k.entered === true)]);
++        results.push(['WCF F: inside a cave the backdrop is the flat fill and the sky block does not run at all',
++          kinds.every(k => k.interior === 1 && k.sky === 0)]);
++        /* The count alone would be wrong to assert: an interior frame draws
++           plenty of gradients, the v55 cave lighting's among them, and always
++           did. What must be absent is the SKY gradient's own stops. */
++        results.push(['WCF F: and the sky gradient\'s own colour stops are not drawn in there — none, on either kind',
++          kinds.every(k => k.skyStops === 0)]);
++        results.push(['WCF F: the fill is FLAT, per the art-style skill — two plain hex tunables, no gradient',
++          before.INTERIOR_BG_CAVE === '#07080c' && before.INTERIOR_BG_ABYSSAL === '#0a0612' &&
++          (() => {
++            const at = gameScript.indexOf('if (inInterior()) {\n    interiorBackdropFrames++;');
++            const body = gameScript.slice(at, at + 400);
++            return at > 0 && body.indexOf('createLinearGradient') < 0 &&
++                   body.indexOf('createRadialGradient') < 0 && body.indexOf('ctx.fillRect(') > 0;
++          })()]);
++        results.push(['WCF F P: the v55 cave darkness pass is untouched — CAVE_DARK_A and the light map still 0.62 and in place',
++          before.CAVE_DARK_A === 0.62 && gameScript.indexOf('function interiorLightMap(') > 0 &&
++          gameScript.indexOf('CAVE_DARK_A * (1 - lit)') > 0]);
++      }
++
++      /* ---- PART G: lava looks molten, not like a flat orange field -- */
++      {
++        const L = window.debugLightInfo();
++        /* Counted over the lava disc itself — `dV < 124` is the core. */
++        let lavaTiles = 0, crust = 0, vent = 0;
++        for (let ty = Math.floor(w2.VOLCANO.y - 124); ty <= Math.ceil(w2.VOLCANO.y + 124); ty++)
++          for (let tx = Math.floor(w2.VOLCANO.x - 124); tx <= Math.ceil(w2.VOLCANO.x + 124); tx++) {
++            if (window.biomeAt(tx, ty) !== w2.B.LAVA) continue;
++            lavaTiles++;
++            if (window.hash2(tx, ty, L.LAVA_CRUST_SALT) < L.LAVA_CRUST_SHARE) {
++              crust++;
++              if (window.hash2(tx, ty, L.LAVA_VENT_SALT) < L.LAVA_VENT_SHARE) vent++;
++            }
++          }
++        const share = lavaTiles ? crust / lavaTiles * 100 : 0;
++        const ventShare = crust ? vent / crust * 100 : 0;
++        console.log(`WCF G: ${lavaTiles} lava tiles in the core, ${crust} crusted (${share.toFixed(1)}%, ` +
++                    `tunable ${(L.LAVA_CRUST_SHARE * 100).toFixed(0)}%), ${vent} of those still venting ` +
++                    `(${ventShare.toFixed(1)}%, tunable ${(L.LAVA_VENT_SHARE * 100).toFixed(0)}%)`);
++        results.push([`WCF G: the crust share lands on its tunable — ${share.toFixed(1)}% against 45%, the spec allows +/-8 points`,
++          lavaTiles > 2000 && Math.abs(share - L.LAVA_CRUST_SHARE * 100) <= 8]);
++        results.push([`WCF G: and the venting share lands on its own — ${ventShare.toFixed(1)}% against 20%`,
++          Math.abs(ventShare - L.LAVA_VENT_SHARE * 100) <= 8]);
++        /* The crust colour is the EXISTING VOLROCK/LAVA cliff face colour,
++           so this adds no palette entry — proven by computing it, not by
++           reading the literal back. */
++        results.push(['WCF G: the crust wears the existing VOLROCK face colour, so no palette entry was added',
++          L.LAVA_CRUST_COL === window.shade('#5c3c3c', 0.8) &&
++          (gameScript.match(/#5c3c3c/g) || []).length >= 3]);
++        /* The vent pulse has to actually brighten to something visible: the
++           spec asks for at least 0.35 alpha at its peak. */
++        results.push(['WCF G: the vent pulse peaks over the 0.35 alpha the spec asks for (0.20 + 0.22 = 0.42)',
++          gameScript.indexOf('const vg = 0.20 + Math.sin(t / 520 + tx * 1.7 + ty * 2.3) * 0.22;') > 0 &&
++          0.20 + 0.22 >= 0.35]);
++        /* Cheap per-tile only — no gradient anywhere in the LAVA branch. */
++        results.push(['WCF G: no gradient was added inside the LAVA branch, and no new canvas',
++          (() => {
++            const at = gameScript.indexOf('} else if (b === B.LAVA) {');
++            const end = gameScript.indexOf('} else if (b === B.CALDERA) {', at);
++            if (at < 0 || end < 0) return false;
++            const branch = gameScript.slice(at, end);
++            return branch.indexOf('createLinearGradient') < 0 &&
++                   branch.indexOf('createRadialGradient') < 0 &&
++                   branch.indexOf('createElement') < 0 &&
++                   branch.indexOf('LAVA_CRUST_COL') > 0;
++          })()]);
++        /* Comments stripped: this build's own comments quote the expression
++           they are explaining, so a raw count would be measuring prose. Two
++           real call sites — the pre-existing cliff face, and this const. */
++        results.push(['WCF G: and the colour is computed once at load, not per tile per frame',
++          gameScript.indexOf('const LAVA_CRUST_COL   = shade("#5c3c3c", 0.8);') > 0 &&
++          (gameScript.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
++                     .match(/shade\("#5c3c3c", 0\.8\)/g) || []).length === 2]);
++        /* And it really runs: a frame standing in the lava core draws them. */
++        window.debugSetPlayer({ x: w2.VOLCANO.x + 0.5, y: w2.VOLCANO.y + 0.5 });
++        window.render(48);
++        const L2 = window.debugLightInfo();
++        console.log(`WCF G: a frame in the volcano drew ${L2.lavaCrustTiles} crust plates, ${L2.lavaVentTiles} of them venting`);
++        results.push([`WCF G: and the branch really runs — ${L2.lavaCrustTiles} crust plates drawn on one frame in the core`,
++          L2.lavaCrustTiles > 0 && L2.lavaVentTiles > 0 && L2.lavaVentTiles < L2.lavaCrustTiles]);
++      }
++
++      /* ---- PART I: one cheap render fix ----------------------------- */
++      {
++        /* The claim is that reordering two independent `continue` guards
++           cannot change the set that gets through. Measured, both ways,
++           over the real `wilds` list against a real camera's bounds. */
++        /* Standing in the volcano core (where PART G left the player) there
++           is nothing alive on screen, and "both orderings yield zero" is not
++           a measurement. Hop to a real wild first. */
++        const spot = (window.debugWorldInfo().wildSpots || [])[0];
++        if (spot) window.debugSetPlayer({ x: spot.x, y: spot.y });
++        window.render(64);
++        const both = window.debugWildGatherOrder();
++        console.log(`WCF I: ${both.total} wilds alive — bounds-first yields ${both.boundsFirst}, ` +
++                    `visible-first yields ${both.visibleFirst}, ` +
++                    `isWildVisible calls ${both.callsBoundsFirst} against ${both.callsVisibleFirst}`);
++        results.push([`WCF I: the gather yields the identical wild set either way (${both.boundsFirst} = ${both.visibleFirst})`,
++          both.total > 1000 && both.boundsFirst === both.visibleFirst && both.boundsFirst > 0]);
++        results.push([`WCF I: and it is genuinely cheaper — ${both.callsBoundsFirst} isWildVisible calls instead of ${both.callsVisibleFirst}`,
++          both.callsBoundsFirst < both.callsVisibleFirst]);
++        results.push(['WCF I: the bounds test now runs first in the render gather',
++          (() => {
++            const at = gameScript.indexOf('if (!rec29) for (const w of wilds) {');
++            const body = gameScript.slice(at, gameScript.indexOf('ents.push({ s: w.x + w.y, kind: "wild", w });', at));
++            return at > 0 && body.indexOf('w.x < minX - 3') < body.indexOf('!isWildVisible(w)');
++          })()]);
++        results.push(['WCF I P: and the copy in nearestWild() is untouched — still visibility-first there',
++          (() => {
++            const at = gameScript.indexOf('function nearestWild(');
++            const body = gameScript.slice(at, gameScript.indexOf('\n}', at));
++            return at > 0 && body.indexOf('if (!isWildVisible(w)) continue;') > 0 &&
++                   body.indexOf('minX') < 0;
++          })()]);
++      }
++
++      /* ---- PART J: shot.js knows the views this build is judged on -- */
++      {
++        const shot = fs.readFileSync(require('path').join(__dirname, 'shot.js'), 'utf8');
++        results.push(['WCF J: shot.js takes the four new views this build is judged on',
++          ["'40-night-spawn'", "'41-night-volcano'", "'42-help-open'", "'43-compass.png'"]
++            .every(n => shot.indexOf(n) > 0)]);
++        results.push(['WCF J: night is set through worldEpoch exactly as the spec says, and put back afterwards',
++          shot.indexOf('worldEpoch = Date.now() / 1000 - DAY_LENGTH * 0.75;') > 0 &&
++          shot.indexOf('await p.evaluate(e => { worldEpoch = e; }, epoch0);') > 0]);
++        results.push(['WCF J: the help shot clicks #helpToggle and the compass shot is clipped to #hudMinimap',
++          shot.indexOf("await p.click('#helpToggle');") > 0 &&
++          shot.indexOf("await p.$('#hudMinimap')") > 0 && shot.indexOf('clip: {') > 0]);
++        results.push(['WCF J: and with no Playwright it prints "skipped" and exits 0 rather than throwing',
++          shot.indexOf("console.log('skipped: playwright is not available") > 0 &&
++          shot.indexOf('process.exit(0);') > 0]);
++        results.push(['WCF J P: still no new dependency and still never the network',
++          (shot.match(/require\('(playwright|fs|path|child_process)'\)/g) || []).length >= 2 &&
++          shot.indexOf("require('puppeteer')") < 0 &&
++          shot.indexOf('r.abort()') > 0]);
++      }
++      /* And hand the world back, so nothing after this block is looking at
++         a world the rest of the harness did not put it in. */
++      window.debugWorldSeedSet(seedBeforeWcf2);
++    } else {
++      results.push(['WCF: the PART D-J hooks exist', false]);
++    }
++
+     let allOk = true;
+     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
+     process.exit(allOk && !caught ? 0 : 1);
+diff --git a/debug/run5.js b/debug/run5.js
+index c086ab5..1c6438a 100644
+--- a/debug/run5.js
++++ b/debug/run5.js
+@@ -985,6 +985,69 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
+       console.log('matched-tier gear swept — ' + armsC.length + ' tiers, matched and mismatched, inventory row and HUD line both ways');
+     }
+ 
++    /* ================= World Check Fixes — THE NEW RENDER BRANCHES =====
++       Step 7 of the standard process asks for this file's coverage lists to
++       grow with anything a build added. This version added NO species, mob,
++       weapon kind or class, so no list here gained an entry — what it added
++       is three new branches inside render(), and the GROUND_BIOMES sweep
++       above cannot reach any of them: it draws through drawGroundTile, and
++       all three live in the frame around it.
++
++         PART G — the lava crust, in render()'s own `b === B.LAVA` branch
++         PART F — the interior backdrop, which replaces the sky block
++         PART D — the compass label layout, in updateMinimap()
++
++       So each one is reached here the only way it can be: by standing the
++       player where it runs and rendering a real frame, then asking the
++       harness counters whether the branch actually fired. Hard-fails if any
++       of the three never ran, exactly like the sweeps above. */
++    if (window.debugLightInfo && window.compassLabelLayout) {
++      const wiW = window.debugWorldInfo();
++      /* The lava core: `dV < 124` around the volcano centre. */
++      window.debugSetPlayer({ x: wiW.VOLCANO.x + 0.5, y: wiW.VOLCANO.y + 0.5, hp: 100 });
++      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
++      const lavaL = window.debugLightInfo();
++      if (!(lavaL.lavaCrustTiles > 0 && lavaL.lavaVentTiles > 0)) {
++        console.log('COVERAGE GAP: a frame in the lava core drew no crust plates (' +
++                    lavaL.lavaCrustTiles + ' crust, ' + lavaL.lavaVentTiles + ' venting)');
++        process.exit(1);
++      }
++      console.log('lava crust swept — ' + lavaL.lavaCrustTiles + ' plates, ' +
++                  lavaL.lavaVentTiles + ' of them venting, on one frame in the core');
++      /* Both interior backdrops, which are two different colours. */
++      let bdDrawn = 0;
++      for (const name of ['UWCAVE', 'ABYSSAL']) {
++        let tile = null;
++        for (let y = 0; y < wiW.N && !tile; y += 3) for (let x = 0; x < wiW.N; x += 3) {
++          if (window.biomeAt(x, y) === wiW.B[name]) { tile = [x, y]; break; }
++        }
++        if (!tile) continue;
++        window.debugSetPlayer({ x: tile[0] + 0.5, y: tile[1] + 0.5, diving: true, hp: 100, breath: 30 });
++        window.enterInterior(tile[0], tile[1], wiW.B[name]);
++        const b1 = window.debugLightInfo().interiorBackdropFrames;
++        try { window.render(32); } catch (e) { if (!caught) caught = e; }
++        n += 1;
++        if (window.debugLightInfo().interiorBackdropFrames > b1) bdDrawn++;
++        if (window.inInterior()) window.exitInterior();
++      }
++      window.debugSetPlayer({ x: wiW.SPAWN.x + 0.5, y: wiW.SPAWN.y + 0.5, diving: false, hp: 100 });
++      if (bdDrawn !== 2) {
++        console.log('COVERAGE GAP: the interior backdrop drew in ' + bdDrawn + ' of 2 interior kinds');
++        process.exit(1);
++      }
++      console.log('interior backdrop swept — both kinds, the flat fill in place of the sky');
++      /* And the label layout, which only runs once the tutorial is done. */
++      window.debugSetV35({ tutorialDone: true, tutorialActive: false });
++      window.updateMinimap();
++      n += 1;
++      const boxesW = window.compassLabelLayout();
++      if (!(boxesW.length > 0)) {
++        console.log('COVERAGE GAP: the compass label layout placed nothing');
++        process.exit(1);
++      }
++      console.log('compass label layout swept — ' + boxesW.length + ' labels placed at Spawn');
++    }
++
+     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
+     process.exit(caught ? 1 : 0);
+   } catch (e) {
+diff --git a/debug/shot.js b/debug/shot.js
+index 134670f..5d718e5 100644
+--- a/debug/shot.js
++++ b/debug/shot.js
+@@ -4,7 +4,17 @@
+    Needs the `playwright` package and a Chromium (PLAYWRIGHT_BROWSERS_PATH or
+    /opt/pw-browsers/chromium). Never touches the network or the live database. */
+ const fs = require('fs'), path = require('path');
+-let pw; try { pw = require('playwright'); } catch (e) { pw = require(path.join(require('child_process').execSync('npm root -g').toString().trim(), 'playwright')); }
++/* World Check Fixes PART J: this harness is a look, never a gate, so a
++   machine without Playwright or without a Chromium must print "skipped" and
++   exit 0 rather than throwing a module-not-found stack. The standard process
++   says the same thing in words ("write visual check skipped: <reason> and
++   continue; never try to install them"); this makes the script itself say it. */
++let pw;
++try { pw = require('playwright'); }
++catch (e) {
++  try { pw = require(path.join(require('child_process').execSync('npm root -g').toString().trim(), 'playwright')); }
++  catch (e2) { console.log('skipped: playwright is not available (' + e.message.split('\n')[0] + ')'); process.exit(0); }
++}
+ const OUT = path.resolve(process.argv[2] || 'shots');
+ const FILE = path.resolve(process.argv[3] || path.join(__dirname, '..', 'runehaven.html'));
+ fs.mkdirSync(OUT, { recursive: true });
+@@ -84,6 +94,38 @@ const STUB = `
+     await snap('30-interior-' + name.toLowerCase());
+     await p.evaluate(() => { try { if (inInterior()) exitInterior && exitInterior(); } catch (e) {} });
+   }
++  /* 4. World Check Fixes PART J — the views this build is judged on.
++     Night first, because worldEpoch is global state every later shot would
++     inherit; it is put back afterwards so nothing below sees night. */
++  const epoch0 = await p.evaluate(() => worldEpoch);
++  await p.evaluate(() => { worldEpoch = Date.now() / 1000 - DAY_LENGTH * 0.75; });
++  const spawnPt = await p.evaluate(() => [Math.floor(SPAWN.x), Math.floor(SPAWN.y)]);
++  await hop(spawnPt[0], spawnPt[1]);
++  await snap('40-night-spawn');
++  const volPt = await p.evaluate(() => [Math.floor(VOLCANO.x), Math.floor(VOLCANO.y)]);
++  await hop(volPt[0], volPt[1]);
++  await snap('41-night-volcano');
++  await p.evaluate(e => { worldEpoch = e; }, epoch0);
++
++  /* The full control list open, over the compass and the zone banner — the
++     two cards PART E lifts. Taken in the Bazaar so #hudZone is up too. */
++  const bazPt = await p.evaluate(() => [Math.floor(BAZAAR.x), Math.floor(BAZAAR.y)]);
++  await hop(bazPt[0], bazPt[1]);
++  await p.click('#helpToggle');
++  await snap('42-help-open');
++
++  /* And the compass card on its own, at the Grand Bazaar, where the labels
++     collided. Clipped to the card so the labels are big enough to read. */
++  const mm = await p.$('#hudMinimap');
++  const box = mm && await mm.boundingBox();
++  if (box) {
++    await p.waitForTimeout(500);
++    await p.screenshot({ path: path.join(OUT, '43-compass.png'),
++      clip: { x: Math.max(0, box.x - 6), y: Math.max(0, box.y - 6), width: box.width + 12, height: box.height + 12 } });
++    console.log('shot 43-compass');
++  } else console.log('no #hudMinimap box for 43-compass');
++  await p.click('#helpToggle');
++
+   console.log(errs.slice(0, 10).join('\n') || 'no page errors');
+   await b.close();
+ })();
+diff --git a/runehaven.html b/runehaven.html
+index 2250278..7fe858a 100644
+--- a/runehaven.html
++++ b/runehaven.html
+@@ -168,8 +168,14 @@
+   }
+   #hudPlayer { top: 12px; left: 12px; min-width: 190px; }
+   #hudWorld  { top: 12px; right: 12px; text-align: right; }
++  /* World Check Fixes PART E: the two cards that sit directly above the
++     help card now read their bottom offset through `--help-lift`, which is
++     0px until the full control list is open. Their base offsets (64px here,
++     52px on #hudMinimap below) are UNCHANGED — the variable adds to them
++     and nothing else, so with the help collapsed both cards are pixel-for-
++     pixel where they have always been. */
+   #hudZone {
+-    bottom: 64px; left: 50%; transform: translateX(-50%);
++    bottom: calc(64px + var(--help-lift, 0px)); left: 50%; transform: translateX(-50%);
+     color: var(--gold); font-size: 14px; letter-spacing: 2px; display: none;
+     border-color: rgba(232,182,76,0.4);
+   }
+@@ -479,7 +485,8 @@
+      8px 14px — these two cards frame a fixed-size square widget rather than
+      a line of text, and an asymmetric frame around a square reads as a
+      mistake. That is the rule now, written down, rather than an accident. */
+-  #hudMinimap { bottom: 52px; left: 12px; display: none; width: 150px; height: 150px; padding: 4px; }
++  /* World Check Fixes PART E: see #hudZone's note. 52px base, unchanged. */
++  #hudMinimap { bottom: calc(52px + var(--help-lift, 0px)); left: 12px; display: none; width: 150px; height: 150px; padding: 4px; }
+   #hudMinimap .mm-title, #hudMap .mm-title {
+     position: absolute; top: -18px; left: 0; color: var(--gold);
+     font-size: 11px; letter-spacing: 2px;
+@@ -2015,6 +2022,15 @@ const B = { DEEP:0, WATER:1, SHALLOW:2, SAND:3, PLAINS:4, MEADOW:5, FOREST:6, DA
+    offset. */
+ const ENCH_RARITY = 0.68;      // Forest -> Enchanted Forest
+ const SACRED_RARITY = 0.74;    // Meadow -> Sacred Meadow
++/* World Check Fixes PART H: the Dark Forest's own two tree thresholds. Both
++   TUNABLE. FOREST's own pair stays the 0.42 / 0.42 it has always been and is
++   deliberately left inline where it is, so nothing about regular Forest can
++   move by editing these. Lowering BOTH is what buys the density: the cluster
++   field decides where a clump happens and the per-tile hash decides how much
++   of that clump fills in, so moving only one would make the Dark Forest
++   either blotchier or more uniform rather than denser. */
++const DARKFOREST_CLUSTER_T = 0.30;   // was 0.42, shared with FOREST
++const DARKFOREST_H_T = 0.30;         // was 0.42, shared with FOREST
+ /* v18: same mechanism a third time — Underground Caves are a rare pocket
+    variant of ROCK/PEAK, on their OWN independent field and seed offset (not
+    a reuse of either threshold above). Tunable: picked so cave tiles land
+@@ -2401,6 +2417,99 @@ function debugSetV35(patch) {
+   if ("oracleIdx" in patch) oracleIdx = patch.oracleIdx | 0;
+   return debugV35Info();
+ }
++/* ============ World Check Fixes PART I — THE GATHER-ORDER HOOK =======
++   PART I swaps two independent `continue` guards in the render gather so the
++   cheap screen-bounds test runs before isWildVisible(). The claim is that
++   the SET which gets through is unchanged and only the cost moves, and that
++   is a claim about both orderings at once — which the shipped code, running
++   one of them, cannot show on its own.
++
++   So this runs both over the real `wilds` list against the real camera's
++   bounds, counting the isWildVisible() calls each ordering makes. It reads
++   nothing and writes nothing: no entity is drawn, no state is touched.
++   HARNESS ONLY, like every hook beside it. */
++function debugWildGatherOrder() {
++  const w = canvas.width, h = canvas.height;
++  const corners = [screenToWorld(0, 0), screenToWorld(w, 0), screenToWorld(0, h), screenToWorld(w, h)];
++  const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
++  const minX = Math.max(0, Math.floor(Math.min(...xs)) - 2);
++  const maxX = Math.min(N - 1, Math.ceil(Math.max(...xs)) + 2);
++  const minY = Math.max(0, Math.floor(Math.min(...ys)) - 3);
++  const maxY = Math.min(N - 1, Math.ceil(Math.max(...ys)) + 6);
++  const inBox = q => !(q.x < minX - 3 || q.x > maxX + 3 || q.y < minY - 3 || q.y > maxY + 3);
++  let bf = 0, vf = 0, cbf = 0, cvf = 0;
++  for (const q of wilds) {                       // the shipped order
++    if (!inBox(q)) continue;
++    cbf++; if (!isWildVisible(q)) continue;
++    bf++;
++  }
++  for (const q of wilds) {                       // the order it replaced
++    cvf++; if (!isWildVisible(q)) continue;
++    if (!inBox(q)) continue;
++    vf++;
++  }
++  return { total: wilds.length, boundsFirst: bf, visibleFirst: vf,
++           callsBoundsFirst: cbf, callsVisibleFirst: cvf,
++           bounds: { minX, maxX, minY, maxY } };
++}
++
++/* ============ World Check Fixes PART A — THE MULTI-SEED HOOK ==========
++   The spec's gate A asks for five seeds, and a landmark's placement is only
++   observable from inside placeLandmarks(). The world is a PURE function of
++   worldSeed — TOWER, SPAWN, SHRINE and ORACLE are fixed consts and every
++   other landmark, Ruin and Zone is derived — so a seed can be swapped in,
++   measured, and the original rebuilt exactly, with no residue. The rebuild
++   is the admin world-reset's own sequence (cache clears, placeLandmarks,
++   buildFeatureList) and nothing else, which is what makes it exact rather
++   than approximately right.
++
++   HARNESS ONLY. Nothing in the game calls this, and it must stay that way:
++   it is not a world reset, it has no server side, and it deliberately does
++   not touch wilds, mobs, base pieces or any player state — it restores the
++   world the caller was already in before it returns. */
++function debugWorldSeedSet(seed) {
++  /* The seed-PINNING twin of debugSeedLandSweep() below, sharing its exact
++     rebuild and therefore its exact guarantees. run4 performs a real world
++     reset to a RANDOM seed partway through its sweep, so any later gate that
++     quotes a measured number has to say which world it measured — this is
++     how such a gate stands on the harness seed and then hands the world
++     back. Returns the seed it replaced, so the caller can restore it.
++     HARNESS ONLY: no server side, no player state, not a world reset. */
++  const was = worldSeed;
++  worldSeed = Number(seed) % 2147483647;
++  tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear();
++  placeLandmarks();
++  buildFeatureList();
++  return was;
++}
++function debugSeedLandSweep(seeds) {
++  const was = worldSeed;
++  const rebuild = () => {
++    tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear();
++    placeLandmarks();
++  };
++  const out = [];
++  try {
++    for (const sd of seeds) {
++      worldSeed = Number(sd) % 2147483647;
++      rebuild();
++      out.push({
++        seed: worldSeed,
++        ANCIENT: { ...ANCIENT }, COLOSSEUM: { ...COLOSSEUM },
++        ancFrac: landFraction(ANCIENT.x, ANCIENT.y, ANCIENT_R + 2),
++        colFrac: landFraction(COLOSSEUM.x, COLOSSEUM.y, COLOSSEUM_R + 3),
++        chosen: Object.assign({}, landmarkLandFrac),
++        dVolcano: Math.hypot(ANCIENT.x - VOLCANO.x, ANCIENT.y - VOLCANO.y),
++        dTowerCol: Math.hypot(COLOSSEUM.x - TOWER.x, COLOSSEUM.y - TOWER.y),
++      });
++    }
++  } finally {
++    worldSeed = was;
++    rebuild();
++    buildFeatureList();
++  }
++  return out;
++}
+ function debugV37Info() {
+   return {
+     BAZAAR: { ...BAZAAR }, ANCIENT: { ...ANCIENT }, COLOSSEUM: { ...COLOSSEUM },
+@@ -2460,6 +2569,11 @@ function debugV37Info() {
+         biomes, heights: [...heights].sort((a, b) => a - b),
+       };
+     })(),
++    /* World Check Fixes PART A: the land fraction placeLandmarks() actually
++       chose, and whether the all-land test passed or the best-of-attempts
++       fallback fired. A copy, not the live object, like every hook here. */
++    landFrac: Object.assign({}, landmarkLandFrac),
++    LAND_E,
+     bazaarIsSafe: inSafeZone(BAZAAR.x, BAZAAR.y),
+     colosseumIsSafe: inSafeZone(COLOSSEUM.x, COLOSSEUM.y),
+     inColosseumAtCentre: inColosseum(COLOSSEUM.x, COLOSSEUM.y),
+@@ -4102,21 +4216,55 @@ function placeLandmarks() {
+         Math.hypot(BAZAAR.x - VOLCANO.x, BAZAAR.y - VOLCANO.y) > 500 &&
+         Math.hypot(BAZAAR.x - MOUNT.x, BAZAAR.y - MOUNT.y) > 500) break;
+   }
+-  for (let attempt = 0; attempt < 20; attempt++) {
++  /* World Check Fixes PART A: 20 -> 40 attempts and a real land test, for
++     these two loops only. The DISTANCE rules below are untouched — they are
++     still the same separations, still hard constraints — and the land test
++     is an ADDITIONAL requirement on top of them, which is why the best-of
++     fallback only ever considers candidates that already satisfy them. A
++     candidate passes outright when every tile within ANCIENT_R + 2 is land;
++     if none of the forty does, the one with the most land wins instead of
++     the fortieth, which is the whole point (the old loop kept whatever the
++     last attempt happened to be). */
++  let bestANCIENT = null;
++  for (let attempt = 0; attempt < 40; attempt++) {
+     const a5 = (hash2(5 + attempt, 5, worldSeed)) * Math.PI * 2;
+     /* The Ancient Forge belongs near the volcano — it is the only place
+        dragonsteel can be smelted, and dragonsteel comes from there. */
+     ANCIENT = { x: Math.round(VOLCANO.x + Math.cos(a5) * 364), y: Math.round(VOLCANO.y + Math.sin(a5) * 364) };
+-    if (Math.hypot(ANCIENT.x - SPAWN.x, ANCIENT.y - SPAWN.y) > SAFE_RADIUS + 30 &&
+-        Math.hypot(ANCIENT.x - BAZAAR.x, ANCIENT.y - BAZAAR.y) > 376) break;
+-  }
+-  for (let attempt = 0; attempt < 20; attempt++) {
++    const sepA = Math.hypot(ANCIENT.x - SPAWN.x, ANCIENT.y - SPAWN.y) > SAFE_RADIUS + 30 &&
++                 Math.hypot(ANCIENT.x - BAZAAR.x, ANCIENT.y - BAZAAR.y) > 376;
++    if (!sepA) continue;
++    const lfA = landFraction(ANCIENT.x, ANCIENT.y, ANCIENT_R + 2);
++    if (!bestANCIENT || lfA > bestANCIENT.f) bestANCIENT = { x: ANCIENT.x, y: ANCIENT.y, f: lfA };
++    if (lfA >= 1) break;
++  }
++  if (bestANCIENT) {
++    ANCIENT = { x: bestANCIENT.x, y: bestANCIENT.y };
++    landmarkLandFrac.ANCIENT = bestANCIENT.f;
++    landmarkLandFrac.ANCIENT_fallback = bestANCIENT.f < 1;
++  }
++  /* World Check Fixes PART A, the same shape at the arena's own radius.
++     Measured before: the COLOSSEUM_R + 3 disc held 219 WATER and 8 DEEP
++     tiles and some of its columns stood in the sea. COLOSSEUM_R + 3 is the
++     radius PART B clears and flattens, so it is the radius that has to be
++     land — a smaller test would leave the clearing's own rim in the water. */
++  let bestCOLOSSEUM = null;
++  for (let attempt = 0; attempt < 40; attempt++) {
+     const a6 = (hash2(6 + attempt, 6, worldSeed)) * Math.PI * 2;
+     COLOSSEUM = { x: Math.round(TOWER.x + Math.cos(a6) * 1000), y: Math.round(TOWER.y + Math.sin(a6) * 1000) };
+-    if (Math.hypot(COLOSSEUM.x - SPAWN.x, COLOSSEUM.y - SPAWN.y) > SAFE_RADIUS + 26 &&
+-        Math.hypot(COLOSSEUM.x - BAZAAR.x, COLOSSEUM.y - BAZAAR.y) > 424 &&
+-        Math.hypot(COLOSSEUM.x - ANCIENT.x, COLOSSEUM.y - ANCIENT.y) > 424 &&
+-        Math.hypot(COLOSSEUM.x - VOLCANO.x, COLOSSEUM.y - VOLCANO.y) > 424) break;
++    const sepC = Math.hypot(COLOSSEUM.x - SPAWN.x, COLOSSEUM.y - SPAWN.y) > SAFE_RADIUS + 26 &&
++                 Math.hypot(COLOSSEUM.x - BAZAAR.x, COLOSSEUM.y - BAZAAR.y) > 424 &&
++                 Math.hypot(COLOSSEUM.x - ANCIENT.x, COLOSSEUM.y - ANCIENT.y) > 424 &&
++                 Math.hypot(COLOSSEUM.x - VOLCANO.x, COLOSSEUM.y - VOLCANO.y) > 424;
++    if (!sepC) continue;
++    const lfC = landFraction(COLOSSEUM.x, COLOSSEUM.y, COLOSSEUM_R + 3);
++    if (!bestCOLOSSEUM || lfC > bestCOLOSSEUM.f) bestCOLOSSEUM = { x: COLOSSEUM.x, y: COLOSSEUM.y, f: lfC };
++    if (lfC >= 1) break;
++  }
++  if (bestCOLOSSEUM) {
++    COLOSSEUM = { x: bestCOLOSSEUM.x, y: bestCOLOSSEUM.y };
++    landmarkLandFrac.COLOSSEUM = bestCOLOSSEUM.f;
++    landmarkLandFrac.COLOSSEUM_fallback = bestCOLOSSEUM.f < 1;
+   }
+ 
+   /* v39 PART B: the Dragon Elder Altar, the same technique a seventh time.
+@@ -4300,6 +4448,42 @@ function isPlaceableLand(tx, ty) {
+   return e >= 0.44 && e < 0.84;
+ }
+ 
++/* ============ World Check Fixes PART A — LANDMARKS MUST STAND ON LAND ===
++   Measured on the harness seed before a line was written: the Ancient Forge
++   — the only place dragonsteel can be smelted — had its centre on B.DEEP,
++   with 93 DEEP / 8 WATER / 5 SHALLOW / 3 VOLROCK tiles inside ANCIENT_R + 2
++   and only four non-blocked tiles anywhere in ANCIENT_R, all of them water.
++   The forge was a box floating in open sea. placeLandmarks() picked ANCIENT
++   and COLOSSEUM by hashed angle alone and never looked at the terrain.
++
++   The fraction of a disc that is land, and `elevRaw` ONLY — never biomeAt().
++   placeLandmarks() runs before tileCache.clear(), so a biomeAt() call here
++   would permanently bake a pre-Ruin, pre-Zone biome for every tile it
++   touched; that is the same trap isPlaceableLand()'s own comment above
++   describes, and this helper is deliberately written to the same rule.
++   elevRaw depends only on TOWER and MOUNT, both placed before ANCIENT and
++   COLOSSEUM are, so it is already final when these loops run.
++
++   0.42 is biomeAt()'s own SAND/soil boundary (`e < 0.42` is the sand band),
++   so "above the sand band" is land in the one sense the world itself uses,
++   not a second opinion about where the coast is. */
++const LAND_E = 0.42;            // biomeAt()'s own top-of-sand elevation
++function landFraction(cx, cy, R) {
++  let total = 0, land = 0;
++  for (let ty = Math.floor(cy - R); ty <= Math.ceil(cy + R); ty++)
++    for (let tx = Math.floor(cx - R); tx <= Math.ceil(cx + R); tx++)
++      if (Math.hypot(tx - cx, ty - cy) < R) {
++        total++;
++        if (elevRaw(tx, ty) >= LAND_E) land++;
++      }
++  return total ? land / total : 0;
++}
++/* Harness hook companion — the chosen land fraction per landmark, and
++   whether the all-land test actually passed or the best-of-attempts
++   fallback fired. The same reason every other hook in this file exists:
++   placeLandmarks()'s working is invisible from outside it. */
++const landmarkLandFrac = {};
++
+ /* Ten Ruin clusters (v50 PART B; six before it) and four Other Safe
+    Zones, both scattered with the
+    wilds/mobs hashed-sampling pattern — hash2(a, offset, worldSeed + seed) * N
+@@ -5356,6 +5540,25 @@ function biomeAt(tx, ty) {
+      it leaves 4.5 tiles of open ground outside the stall ring. */
+   if (b !== B.PLAINS && b !== B.DEEP && b !== B.LAVA && b !== B.WATER &&
+       Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) b = B.PLAINS;
++  /* ============ World Check Fixes PART B — THE ARENA'S OWN CLEARING ====
++     Measured before a line was written: the COLOSSEUM_R + 3 disc held 297
++     FOREST, 293 DARKFOREST, 219 WATER, 157 ROCK and 152 SAND tiles, 346
++     features growing inside the arena and heights -1 to 2. The sand floor
++     was drawn as a see-through disc over trees and water and some columns
++     stood in the sea.
++
++     The Bazaar already solved exactly this, so this is the line directly
++     above reused VERBATIM with the arena's own radius and the same four
++     guards — nothing new was invented for it, the same way nothing new was
++     invented for the Bazaar. Radius is COLOSSEUM_R + 3 because that is what
++     LANDMARK_KEEPOUT, PART A's land test and PART C's tree keepout all use,
++     so the cleared ground, the land guarantee and the arena's footprint are
++     one radius rather than three that have to be kept in step.
++
++     Nothing else about the Colosseum changes: pieces, podiums, the duel
++     logic, PvP rules and its keep-out are all untouched. */
++  if (b !== B.PLAINS && b !== B.DEEP && b !== B.LAVA && b !== B.WATER &&
++      Math.hypot(tx - COLOSSEUM.x, ty - COLOSSEUM.y) < COLOSSEUM_R + 3) b = B.PLAINS;
+   if (dTower < 4.5 && (BLOCKED.has(b) || b === B.WATER || b === B.ROCK || b === B.VOLROCK)) b = B.PLAINS;
+ 
+   // Shallow-water halo where sea touches land (Islanders coastline glow)
+@@ -5436,6 +5639,12 @@ function rawHeight(tx, ty) {
+        whole disc below heightAt()'s h >= 1 erosion branch, so it needs no
+        exemption there either. */
+     if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) h = 0;
++    /* World Check Fixes PART B, the second half of the same pattern. The
++       measured disc ran -1 to 2, which is what drew the arena floor across
++       a stepped cliff face with columns at two different levels. h = 0 also
++       puts the whole disc below heightAt()'s h >= 1 erosion branch, so it
++       needs no exemption there either — exactly the Bazaar's own reason. */
++    if (Math.hypot(tx - COLOSSEUM.x, ty - COLOSSEUM.y) < COLOSSEUM_R + 3) h = 0;
+     if (Math.hypot(tx - TOWER.x, ty - TOWER.y) < 4.5) h = Math.min(h, 1);
+   }
+   rawHCache.set(key, h);
+@@ -5512,6 +5721,20 @@ const ROCK_RUNIC_T = nodeCut(0.996), ROCK_IRON_T = nodeCut(0.93), ROCK_ROCK_T =
+ const VOLROCK_RUNIC_T = nodeCut(0.992), VOLROCK_IRON_T = nodeCut(0.92);
+ 
+ function featureTypeAt(tx, ty) {
++  /* ============ World Check Fixes PART C — NO TREES IN EITHER CLEARING ==
++     A clearing turns the ground into PLAINS, but PLAINS still grows a tree
++     wherever its own hash clears 0.965 — measured: 13 of them still stood
++     inside BAZAAR_R, which is what the owner asked to have removed in the
++     Mount/Bazaar polish. The keepout in buildFeatureChunk() only ever
++     covered the Bazaar and only covered what that loop itself builds; at
++     the top of the generator it covers everything that asks what grows on
++     a tile, which is what makes the clearing true of the world rather than
++     true of one loop.
++
++     The Spawn safe zone is deliberately NOT here: its scattered trees are
++     the intended look. */
++  if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) return null;
++  if (Math.hypot(tx - COLOSSEUM.x, ty - COLOSSEUM.y) < COLOSSEUM_R + 3) return null;
+   const b = biomeAt(tx, ty);
+   const h = hash2(tx, ty, 91);
+   /* v17: the two new collect-only resources. The bible names rare_herb and
+@@ -5529,11 +5752,26 @@ function featureTypeAt(tx, ty) {
+     if (h > 0.45) return "herb";
+     return null;
+   }
+-  if (b === B.FOREST || b === B.DARKFOREST) {
++  if (b === B.FOREST) {
+     // organic clumps with clearings, not a grid orchard
+     if (clusterNoise(tx, ty) > 0.42 && h > 0.42) return "tree";
+     return null;
+   }
++  /* ============ World Check Fixes PART H — THE DENSEST FOREST ==========
++     Measured over the whole map: FOREST 36.7% tree tiles, DARKFOREST 36.2%
++     — because both biomes shared this one branch and therefore shared its
++     two thresholds exactly. The Dark-Forest screenshot was a large flat
++     dark clearing (22% trees in a 25x25 window), which reads as empty, and
++     "the densest forest in the world" is what the biome is for.
++
++     The branch is split rather than widened: FOREST keeps 0.42 / 0.42
++     untouched, to the letter, and DARKFOREST gets its own pair. Both are
++     TUNABLE and both are deliberately named rather than inline, since the
++     gate that measures the resulting share has to be able to follow them. */
++  if (b === B.DARKFOREST) {
++    if (clusterNoise(tx, ty) > DARKFOREST_CLUSTER_T && h > DARKFOREST_H_T) return "tree";
++    return null;
++  }
+   if ((b === B.PLAINS || b === B.MEADOW) && h > 0.965) return "tree";
+   if (b === B.ROCK) {
+     if (h > ROCK_RUNIC_T) return "runic";     // far rarer (2026-07-11 fix), v52+53: thinned 35% with its band
+@@ -17349,6 +17587,32 @@ function drawItemEntity(it, t) {
+ const CAVE_LIGHT_R     = 7;     // TUNABLE: tiles a vein/crystal/exit lights
+ const CAVE_LIGHT_STEPS = 5;     // TUNABLE: discrete falloff bands, never a ramp
+ const CAVE_DARK_A      = 0.62;  // TUNABLE: how dark a fully unlit floor tile goes
++/* World Check Fixes PART G — the lava crust. Every one of these is TUNABLE.
++   LAVA_CRUST_COL is NOT a new palette entry: shade("#5c3c3c", 0.8) is the
++   locked Volcanic rock colour at the exact multiplier the VOLROCK/LAVA cliff
++   faces already use, computed once here rather than per tile per frame. The
++   two salts are fresh streams, confirmed unused anywhere else in this file. */
++const LAVA_CRUST_SHARE = 0.45;   // share of lava tiles that have cooled over
++const LAVA_CRUST_INSET = 0.62;   // how far inside the tile the plate sits
++const LAVA_CRUST_SALT  = 331;
++const LAVA_VENT_SHARE  = 0.20;   // share of crusted tiles still breathing heat
++const LAVA_VENT_SALT   = 333;
++const LAVA_CRUST_COL   = shade("#5c3c3c", 0.8);
++/* Harness counters for PARTs F and G — see debugLightInfo(), and the same
++   reason caveDarkTiles has one: both of these are decisions taken inside a
++   render path, so grepping the source proves a line was typed and never
++   that it ran. Reset at the top of the frame they describe. */
++let lavaCrustTiles = 0, lavaVentTiles = 0;
++let skyBackdropFrames = 0, interiorBackdropFrames = 0;
++/* World Check Fixes PART F: what is BEHIND an interior's floor instead of a
++   sky. Both TUNABLE. The Abyssal Hollow's is the colder, more violet one, the
++   same distinction its wall and floor colours already make against an
++   ordinary cave's warm brown-black. Deliberately not pure black — a cave's
++   own dark stone has to read against it. Dungeons fall to the cave value:
++   near-black is "there is no sky above you", which is equally true of worked
++   stone, and the material difference is already carried by the floor. */
++const INTERIOR_BG_CAVE    = "#07080c";
++const INTERIOR_BG_ABYSSAL = "#0a0612";
+ const CAVE_PLAYER_R    = 6;     // TUNABLE: you carry your own light, as on the surface
+ let caveDarkTiles = 0, caveLitTiles = 0;   // harness — see debugLightInfo()
+ function interiorLightMap(rec) {
+@@ -17539,8 +17803,31 @@ function render(t) {
+   ctx.save();
+   ctx.translate(shX, shY);
+ 
++  /* ============ World Check Fixes PART F — CAVES HAVE NO SKY ==========
++     Inside both interiors the screenshots showed the cave floor as a diamond
++     island hanging over a bright blue sky, a sea band and two layers of
++     parallax hills: this backdrop ran unconditionally, and the interior was
++     simply drawn on top of it. A cave is underground. It has no horizon.
++
++     One flat fill replaces the whole backdrop — the gradient, the sea band
++     and both hill layers — and it is deliberately FLAT, with no gradient at
++     all, per the art-style skill's own rule. Near-black rather than black so
++     the interior's own dark stone still reads against it.
++
++     The v55 cave darkness pass (CAVE_DARK_A and the light map) is NOT
++     touched: that darkens the floor tiles themselves, this replaces what is
++     behind them, and the two are independent. */
++  /* Per-frame, so the counters describe THIS frame rather than the session —
++     the same reason renderInteriorGround() zeroes caveDarkTiles at its top. */
++  lavaCrustTiles = 0; lavaVentTiles = 0;
++  if (inInterior()) {
++    interiorBackdropFrames++;
++    ctx.fillStyle = spaceKindOf(me.space) === "abyssal" ? INTERIOR_BG_ABYSSAL : INTERIOR_BG_CAVE;
++    ctx.fillRect(-8, -8, w + 16, h + 16);
++  }
+   // Sky/horizon gradient reacting to time of day; deep water stays dark (2026-07-11)
+-  {
++  else {
++    skyBackdropFrames++;
+     const dayT0 = getDayT();
+     const na0 = nightAlpha(dayT0);
+     const gl0 = duskGlow(dayT0);
+@@ -17746,6 +18033,52 @@ function render(t) {
+         ctx.beginPath();
+         ctx.moveTo(sx, sy - IH2); ctx.lineTo(sx + IW2, sy); ctx.lineTo(sx, sy + IH2); ctx.lineTo(sx - IW2, sy);
+         ctx.closePath(); ctx.fill();
++        /* ============ World Check Fixes PART G — LAVA READS AS MOLTEN ====
++           By day the Volcano landing shot was an unbroken flat orange plane:
++           every LAVA tile got one fill, a faint 0.02-0.18 pulse and two
++           shimmer lines, and across a 124-tile core that is one colour from
++           edge to edge. Lava is not a flat field, it is crust with glowing
++           cracks between the plates.
++
++           A darker diamond INSET inside the tile on about LAVA_CRUST_SHARE
++           of tiles, which leaves the existing lava orange showing as a seam
++           all the way round it — so the seams are the tile grid itself,
++           already there, rather than a second thing to draw. The colour is
++           shade("#5c3c3c", 0.8): "#5c3c3c" is the locked Volcanic rock
++           palette entry and 0.8 of it is the EXISTING VOLROCK/LAVA cliff
++           face colour this file already computes two places above, so this
++           introduces no palette entry at all.
++
++           Then a slow glow pulse on about LAVA_VENT_SHARE of the crusted
++           tiles, in the existing rgba(255,200,120,...) the tile's own pulse
++           already wears, so some plates read as still breathing heat while
++           most have gone cold.
++
++           Cheap per-tile only, as the spec requires: two hash2 lookups, one
++           path and at most one more fill. No gradient, no second canvas, no
++           allocation — LAVA_CRUST_COL is computed once at load, not per
++           tile, and nothing here creates an object per frame. */
++        if (hash2(tx, ty, LAVA_CRUST_SALT) < LAVA_CRUST_SHARE) {
++          lavaCrustTiles++;
++          const ck = LAVA_CRUST_INSET;
++          ctx.fillStyle = LAVA_CRUST_COL;
++          ctx.beginPath();
++          ctx.moveTo(sx, sy - IH2 * ck); ctx.lineTo(sx + IW2 * ck, sy);
++          ctx.lineTo(sx, sy + IH2 * ck); ctx.lineTo(sx - IW2 * ck, sy);
++          ctx.closePath(); ctx.fill();
++          if (hash2(tx, ty, LAVA_VENT_SALT) < LAVA_VENT_SHARE) {
++            lavaVentTiles++;
++            /* Peaks at 0.42 alpha, comfortably over the 0.35 the spec asks
++               for, and its own period so it does not beat in step with the
++               tile pulse above it. */
++            const vg = 0.20 + Math.sin(t / 520 + tx * 1.7 + ty * 2.3) * 0.22;
++            ctx.fillStyle = `rgba(255,200,120,${Math.max(0, vg).toFixed(3)})`;
++            ctx.beginPath();
++            ctx.moveTo(sx, sy - IH2 * ck); ctx.lineTo(sx + IW2 * ck, sy);
++            ctx.lineTo(sx, sy + IH2 * ck); ctx.lineTo(sx - IW2 * ck, sy);
++            ctx.closePath(); ctx.fill();
++          }
++        }
+         // v8: heat shimmer — wavering translucent lines rising off the lava
+         ctx.strokeStyle = "rgba(255,228,180,0.11)";
+         ctx.lineWidth = 1.4;
+@@ -18005,8 +18338,15 @@ function render(t) {
+     }
+   }
+   if (!rec29) for (const w of wilds) {   // v29: surface wilds only on the surface
+-    if (!isWildVisible(w)) continue;
++    /* World Check Fixes PART I: the bounds test first. isWildVisible() was
++       being asked about all of `wilds` — 3090 alive on the harness seed —
++       every frame, before anything had checked whether the creature was
++       even on screen; four comparisons are cheaper than that call. Pure
++       reordering of two independent `continue` guards: both must pass for a
++       wild to be gathered either way, so the set that reaches ents.push is
++       identical. The copy of this test in nearestWild() is untouched. */
+     if (w.x < minX - 3 || w.x > maxX + 3 || w.y < minY - 3 || w.y > maxY + 3) continue;
++    if (!isWildVisible(w)) continue;
+     ents.push({ s: w.x + w.y, kind: "wild", w });
+   }
+   for (const pr of projectiles) ents.push({ s: pr.x + pr.y + 0.01, kind: "proj", pr });
+@@ -18505,7 +18845,13 @@ function minimapBearings() {
+   for (const [label, get] of MINIMAP_MARKS) {
+     const p = get();
+     const dx = p.x - me.x, dy = p.y - me.y;
+-    out.push({ label, deg: Math.atan2(isoY(dx, dy), isoX(dx, dy)) * 180 / Math.PI });
++    /* World Check Fixes PART D: the plain world distance, which is what the
++       label layout sorts by — nearest landmark keeps its label first. It is
++       deliberately NOT shown anywhere: the bible's compass "shows general
++       direction only", and v35's own comment forbids a distance readout. It
++       exists to order the layout and nothing reads it for display. */
++    out.push({ label, deg: Math.atan2(isoY(dx, dy), isoX(dx, dy)) * 180 / Math.PI,
++               d: Math.hypot(dx, dy) });
+   }
+   return out;
+ }
+@@ -18513,6 +18859,21 @@ const COMPASS_POINTS = [
+   ["N", 0], ["NE", 45], ["E", 90], ["SE", 135],
+   ["S", 180], ["SW", 225], ["W", 270], ["NW", 315],
+ ];
++/* World Check Fixes PART D. All three TUNABLE, and all three are an estimate
++   of what the browser will do with 8px `.mm-mark-label` text rather than a
++   measurement of it — see the layout's own comment for why that is the right
++   trade here. */
++const LABEL_W_PER_CH = 5, LABEL_W_PAD = 4, LABEL_H = 10;
++function boxesHit(a, b) {
++  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
++}
++/* Harness hook — the boxes updateMinimap() last placed, so a gate can prove
++   no two of them intersect. Same reason as every hook in this file: this is
++   computed inside a render path and never lands anywhere a grep can see. */
++let compassLabelBoxes = [];
++function compassLabelLayout() {
++  return compassLabelBoxes.map(b => ({ label: b.label, x: b.x, y: b.y, w: b.w, h: b.h }));
++}
+ function updateMinimap() {
+   const el = document.getElementById("hudMinimap");
+   if (!el) return;
+@@ -18548,11 +18909,45 @@ function updateMinimap() {
+       const x = CX + R_TICK * Math.cos(rad(deg)), y = CY + R_TICK * Math.sin(rad(deg));
+       inner += `<div class="mm-tick${deg % 90 === 0 ? " major" : ""}" style="left:${x}px;top:${y}px">${label}</div>`;
+     }
+-    for (const r of minimapBearings()) {
++    /* ============ World Check Fixes PART D — LABELS NEVER OVERLAP =======
++       In every landmark screenshot, labels that shared a bearing were drawn
++       on top of each other and were unreadable — "ARENA", "SHRINE" and
++       "SPAWN" printed as one blob, "TOWER" over "ORACLE". Nine marks all sit
++       at one radius, so two landmarks a few degrees apart put their labels
++       in the same place; the dots were never the problem.
++
++       Greedy, nearest landmark first, because when a label has to be dropped
++       the one worth keeping is the one for the place you are closest to.
++       Three candidate spots per label, all on the mark's OWN bearing so a
++       label never drifts away from the dot it belongs to: the normal spot,
++       then pulled in, then pushed out. If all three collide with a label
++       already placed, the dot is drawn alone.
++
++       DOTS NEVER MOVE. Only labels shift radius or drop — a dot that moved
++       would be a lie about a bearing, which is the one thing this dial is
++       for. The box estimate is deliberately arithmetic rather than measured:
++       this runs every frame the compass is up, the font is a fixed 8px, and
++       ctx.measureText() on nine labels per frame would be a real cost for a
++       collision test that only has to be approximately right. */
++    const placed = [];
++    for (const r of minimapBearings().slice().sort((a, b) => a.d - b.d)) {
+       const x = CX + R_MARK * Math.cos(rad(r.deg)), y = CY + R_MARK * Math.sin(rad(r.deg));
+-      inner += `<div class="mm-mark" style="left:${x}px;top:${y}px"></div>` +
+-               `<div class="mm-mark-label" style="left:${x}px;top:${y}px">${r.label}</div>`;
++      inner += `<div class="mm-mark" style="left:${x}px;top:${y}px"></div>`;
++      /* The box the CSS actually produces: .mm-mark-label is 8px text with
++         `translate(-50%, -140%)`, so the anchor point sits at the box's
++         horizontal centre and 140% of its height below its top. */
++      const bw = r.label.length * LABEL_W_PER_CH + LABEL_W_PAD, bh = LABEL_H;
++      let put = null;
++      for (const rr of [R_MARK, R_MARK - 14, R_MARK + 10]) {
++        const lx = CX + rr * Math.cos(rad(r.deg)), ly = CY + rr * Math.sin(rad(r.deg));
++        const box = { label: r.label, x: lx - bw / 2, y: ly - bh * 1.4, w: bw, h: bh, lx, ly };
++        if (!placed.some(p => boxesHit(p, box))) { put = box; break; }
++      }
++      if (!put) continue;                 // dot only — the label is dropped
++      placed.push(put);
++      inner += `<div class="mm-mark-label" style="left:${put.lx}px;top:${put.ly}px">${r.label}</div>`;
+     }
++    compassLabelBoxes = placed;
+     dial.innerHTML = inner;
+   }
+   el.style.display = "block";
+@@ -19450,6 +19845,11 @@ function debugLightInfo() {
+                  UNMAKING_WISP_COL, unmakingIntensity: unmakingIntensity(),
+                  elderHoldMs, ELDER_HOLD_MS, unmakingWispsSpawned,
+                  unmakingParticles: particles.filter(p => p.unmaking).length,
++    /* World Check Fixes PART F */ INTERIOR_BG_CAVE, INTERIOR_BG_ABYSSAL,
++                 skyBackdropFrames, interiorBackdropFrames,
++    /* World Check Fixes PART G */ LAVA_CRUST_SHARE, LAVA_CRUST_INSET, LAVA_CRUST_SALT,
++                 LAVA_VENT_SHARE, LAVA_VENT_SALT, LAVA_CRUST_COL,
++                 lavaCrustTiles, lavaVentTiles,
+     /* shared  */ particles: particles.length,
+   };
+ }
+@@ -19659,6 +20059,32 @@ const HELP_ENTRIES = [
+    does not earn a row in the settings store or a column in the database. */
+ let helpExpanded = false;
+ 
++/* ============ World Check Fixes PART E — HELP MUST NOT COVER THE HUD ===
++   With the full control list open, #hudHelp (bottom: 14px; left: 12px) grows
++   UPWARD straight over the compass card (#hudMinimap, bottom: 52px) and into
++   #hudZone ("SAFE ZONE — YOU ARE PROTECTED", bottom: 64px) — both visible in
++   the night-spawn and help screenshots.
++
++   The card's REAL rendered height, not a guess at it: the control list wraps
++   differently at different widths and after a rebind, so any constant here
++   would be wrong on some screen. offsetHeight is read once per toggle, never
++   per frame. Lifting by the full height rather than by the overlap is
++   deliberate — #hudHelp's top edge sits at 14 + height, so 52 + height and
++   64 + height clear it with the card's own 14px bottom margin to spare, and
++   there is no second number to keep in step with a CSS offset.
++
++   HELP_LIFT_MIN exists because offsetHeight is 0 before layout has run (and
++   in the jsdom harnesses, which have no layout at all): without it the lift
++   would silently be 0px in exactly the case the gate has to check. In a real
++   browser the measured height is always the larger of the two and wins.
++   Nothing about the help text itself changes. */
++const HELP_LIFT_MIN = 64;        // TUNABLE: floor for the un-laid-out case
++function applyHelpLift() {
++  const card = document.getElementById("hudHelp");
++  const lift = helpExpanded ? Math.max(card ? card.offsetHeight : 0, HELP_LIFT_MIN) : 0;
++  document.documentElement.style.setProperty("--help-lift", lift + "px");
++  return lift;
++}
+ function helpLineHtml(core) {
+   const dot = " &nbsp;&bull;&nbsp; ";
+   return HELP_ENTRIES.filter(e => !!e.core === core)
+@@ -19678,10 +20104,15 @@ function refreshHelpLine() {
+     tog.setAttribute("aria-expanded", helpExpanded ? "true" : "false");
+     tog.title = helpExpanded ? "Hide the full control list" : "Show all controls";
+   }
++  /* World Check Fixes PART E: here rather than only in toggleHelpFull(), so
++     a rebind that rewraps the control list while it is already open moves
++     the two cards with it. toggleHelpFull() calls this, so the toggle still
++     drives it — this is simply the one place the card's height can change. */
++  applyHelpLift();
+ }
+ function toggleHelpFull() {
+   helpExpanded = !helpExpanded;
+-  refreshHelpLine();
++  refreshHelpLine();          // and refreshHelpLine() applies the lift
+   return helpExpanded;
+ }
+ /* Harness hook — HELP_ENTRIES and helpExpanded are lexically scoped and the
