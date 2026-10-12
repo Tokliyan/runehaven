@@ -1,1 +1,1 @@
-Build exactly per "Confirmed, locked spec for a future version — World Encounters — Roaming Boss & Bounty Board" in README.md.
+Build exactly per "Confirmed, locked spec for the next build (World Check Fixes — Landmarks, Compass, Caves, Lava & Dark Forest)" in README.md.

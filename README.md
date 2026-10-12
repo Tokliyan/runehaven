@@ -772,7 +772,199 @@ behavior, confirm the bonus is real and measured against the base
 
 ---
 
-## QUEUED, AFTER THE GEAR BONUS PASS — do not build until all specs above ship.
+## Confirmed, locked spec for the next build (World Check Fixes — Landmarks, Compass, Caves, Lava & Dark Forest)
+
+**Where this came from.** On 2026-10-12 the whole game was checked from
+the outside for the first time. `debug/shot.js` entered the world offline
+with stubbed Supabase and took 36 screenshots: six landmarks, six biomes,
+both cave types, every panel key, night, combat, death and two phone sizes.
+Terrain was also measured with `biomeAt`, `heightAt` and `featureTypeAt`
+using the harness seed `123456789`. At that time run3, run5 and run4
+(1718 PASS, 0 FAIL) were all green. Every problem below was seen on screen
+or measured; none comes from reading code alone. Mobile/touch, rendering
+performance, security and new content are deliberately NOT in this build.
+They are separate runs, decided by the owner later.
+
+**PART A — Landmarks must stand on land.** Measured on the harness seed,
+the Ancient Forge (the only place dragonsteel can be smelted) has its
+centre on `DEEP`. Within 6 tiles there are 93 DEEP, 8 WATER, 5 SHALLOW
+and 3 VOLROCK tiles. The only non-blocked tiles inside `ANCIENT_R` are 4
+water tiles, so players have to stand in the sea to use it. The
+screenshot shows the forge as a box floating in open water.
+`placeLandmarks()` picks `ANCIENT` and `COLOSSEUM` by hashed angle alone
+and never looks at terrain.
+- In `placeLandmarks()`, add a land test to the ANCIENT and COLOSSEUM
+  attempt loops. A candidate passes only if every tile within
+  `ANCIENT_R + 2` (forge) or `COLOSSEUM_R + 3` (arena) has
+  `elevRaw(tx, ty) >= 0.42`, i.e. above the sand band, so it is land.
+- Use `elevRaw` only. NEVER call `biomeAt` inside `placeLandmarks()`: it
+  runs before `tileCache.clear()` (see the existing comments near lines
+  4137 and 4292), so a `biomeAt` call there would cache stale tiles.
+  `elevRaw` depends only on TOWER and MOUNT, which are both placed before
+  these two.
+- If no attempt passes, keep the attempt with the highest land fraction
+  instead of the last one, and log the fraction through the existing
+  harness-hook pattern.
+- Raise the attempt counts from 20 to 40 for these two loops only.
+- The existing distance rules stay exactly as they are.
+- **YELLOW note for the changelog:** on the live seed this may move the
+  Ancient Forge and/or the Colosseum to a new spot. That is the fix. Say
+  in the changelog that it can happen.
+
+**PART B — The Colosseum gets a real clearing, like the Bazaar.**
+Measured: the `COLOSSEUM_R + 3` disc contains 297 FOREST, 293 DARKFOREST,
+219 WATER, 157 ROCK and 152 SAND tiles, 346 features (trees growing
+inside the arena) and heights −1 to 2. The sand floor is drawn as a
+see-through disc over trees and water, and some columns stand in the sea.
+The Bazaar already solved exactly this:
+- `biomeAt`: its clearing line (`Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) b = B.PLAINS`,
+  with the same guards).
+- `rawHeight`: its flat-ground line (`< BAZAAR_R) h = 0`).
+
+Copy both lines for the Colosseum with radius `COLOSSEUM_R + 3`, placed
+directly after the Bazaar's own. Nothing else about the Colosseum
+changes: pieces, podiums, the duel logic, PvP rules and its keep-out stay
+as they are.
+
+**PART C — No trees inside the Bazaar or the Colosseum.** The Bazaar
+clearing turns ground into PLAINS, but PLAINS still grows a tree at
+`h > 0.965`. Measured: 13 trees inside `BAZAAR_R`, which is what the
+owner asked to have removed in the Mount/Bazaar polish. At the top of
+`featureTypeAt()`, return `null` for any tile inside `BAZAAR_R` or inside
+`COLOSSEUM_R + 3`. The Spawn safe zone keeps its scattered trees (that
+look is intended), so do not add Spawn here.
+
+**PART D — Compass labels never overlap.** In every landmark screenshot,
+labels that share a bearing are drawn on top of each other and are
+unreadable (for example "ARENA", "SHRINE" and "SPAWN" printed as one
+blob, or "TOWER" over "ORACLE"). All marks sit at one radius
+(`R_MARK`, declared as `const R_TICK = 64, R_MARK = 42` in `updateMinimap()`) and each label is drawn centred above its dot
+(`.mm-mark-label`, `translate(-50%, -140%)`, 8px text).
+- In `updateMinimap()`, lay the labels out greedily: nearest landmark
+  first, using its world distance from `me`.
+- Estimate each label's box as `label.length * 5 + 4` px wide by 10 px
+  high. Try the normal spot first, then the same bearing at
+  `R_MARK - 14`, then at `R_MARK + 10`.
+- If all three spots collide with a label already placed, draw the dot
+  only, with no label.
+- Dots never move. Only labels shift or drop.
+- Add a harness hook `compassLabelLayout()` that returns the placed label
+  boxes.
+
+**PART E — The [?] help panel must not cover other HUD.** With the full
+control list open, `#hudHelp` grows upward from `bottom: 14px; left: 12px`
+straight over the compass card (`#hudMinimap`, `bottom: 52px; left: 12px`).
+It also runs into `#hudZone` ("SAFE ZONE — YOU ARE PROTECTED",
+`bottom: 64px`, centred), which the night-spawn and help screenshots both
+show.
+- When `helpExpanded` is true, lift `#hudMinimap` and `#hudZone` above
+  the help card's real height. Reading `#hudHelp`'s `offsetHeight` into a
+  CSS variable from `toggleHelpFull()` is fine.
+- Closing the help puts them back exactly where they were.
+- Nothing about the help text itself changes.
+
+**PART F — Caves stop floating in the daytime sky.** Inside both
+interiors (underwater cave and Abyssal Hollow), the screenshots show the
+cave floor as a diamond island over a bright sky, sea and parallax hills.
+The surface backdrop in `render()` (the block under "Sky/horizon gradient
+reacting to time of day") runs even when `inInterior()` is true.
+- When `inInterior()` is true, replace that whole backdrop (sky gradient,
+  sea band, parallax hills) with one flat near-black fill: `#07080c` for
+  underwater caves, `#0a0612` for the Abyssal Hollow. Both are tunables.
+- Keep it flat, with no gradient, per the art-style skill.
+- The v55 cave darkness pass (`CAVE_DARK_A`, the light map) is not
+  touched.
+
+**PART G — Lava looks molten, not like a flat orange field.** The
+Volcano's lava core has radius 124 (`dV < 124`). By day the landing
+screenshot is an unbroken flat orange plane: each LAVA tile gets one
+fill plus a faint pulse at 0.02–0.18 alpha and two shimmer lines. In the
+`b === B.LAVA` branch of the ground pass, add cooled crust plates:
+- Using `hash2(tx, ty, <new salt>)`, about 45% of lava tiles (tunable)
+  get a darker crust diamond inset inside the tile, colour
+  `shade("#5c3c3c", 0.8)`. That is the existing VOLROCK face colour, so
+  no new palette entry.
+- That leaves bright seams of the existing lava orange between plates,
+  so the surface reads as crust with glowing cracks.
+- Inside the crust, a slow pulse of the existing `rgba(255,200,120,…)`
+  glow on about 20% of tiles (tunable) brightens to at least 0.35 alpha
+  at its peak.
+- Cheap per-tile only: no gradients, no new canvas, no per-frame
+  allocation.
+- Read `runehaven-art-style/SKILL.md` first. The volcano silhouette is on
+  its must-not-regress list and heights are not touched.
+
+**PART H — The Dark Forest is the densest forest.** Measured over the
+whole map: FOREST 36.7% tree tiles, DARKFOREST 36.2% (the same rule,
+`clusterNoise > 0.42 && h > 0.42`, is shared by both). The
+Dark-Forest screenshot is a large flat dark clearing (22% trees in a
+25×25 window), which reads as empty.
+- Split the shared branch in `featureTypeAt()` so DARKFOREST uses
+  `clusterNoise > 0.30 && h > 0.30` (tunables). FOREST stays exactly as
+  it is.
+- Aim for DARKFOREST at 50% tree tiles or more, and at least 12 points
+  above FOREST.
+- If the gate's sampled numbers miss, tune only those two thresholds.
+
+**PART I — One cheap render fix.** In the `render()` entity gather, the
+wild loop (`if (!rec29) for (const w of wilds)`, not the one in
+`nearestWild()`) calls `isWildVisible(w)` on all of `wilds` (3090 alive on the
+harness seed) before the screen-bounds test. Swap the order so the
+bounds test runs first. Behaviour must stay the same.
+
+**PART J — Teach `debug/shot.js` the views this build is judged on.**
+After the existing tour, add:
+- `40-night-spawn.png` and `41-night-volcano.png`: set
+  `worldEpoch = Date.now()/1000 - DAY_LENGTH*0.75` through `page.evaluate`.
+- `42-help-open.png`: click `#helpToggle`.
+- `43-compass.png`: a clipped shot of `#hudMinimap` taken at the Grand
+  Bazaar, where the labels collided.
+
+Add no new dependencies, and never touch the network.
+
+**Proof gates** (standard gauntlet, plus):
+- A: for at least 5 seeds (the harness seed plus 4 others), every tile
+  within `ANCIENT_R + 2` of ANCIENT and within `COLOSSEUM_R + 3` of
+  COLOSSEUM has `elevRaw >= 0.42`, or, if the fallback fired, the chosen
+  spot's land fraction is the best of its attempts. Print the fractions.
+  Also check that `placeLandmarks` contains no `biomeAt` call.
+- B: on the harness seed, every tile in the `COLOSSEUM_R + 3` disc has
+  biome PLAINS (or LAVA, DEEP or WATER only if the A fallback fired, and
+  then it is printed) and `heightAt == 0`. The Bazaar clearing gates still
+  pass.
+- C: `featureTypeAt` returns null for every tile inside `BAZAAR_R` and
+  inside `COLOSSEUM_R + 3`. The Spawn safe zone still has at least one
+  tree feature (preservation).
+- D: walk `me` to 20 points, including the Bazaar and Spawn, run
+  `updateMinimap()`, and check that no two boxes from
+  `compassLabelLayout()` intersect. Check too that every landmark still
+  has a dot.
+- E: source gate showing `toggleHelpFull()` (or the code it calls)
+  adjusts `#hudMinimap` and `#hudZone` and that closing restores them.
+  The help text content is unchanged.
+- F: inside each interior kind, the sky gradient's colour stops are not
+  drawn this frame (instrument through the existing ctx proxy or a hook),
+  and the surface still draws them.
+- G: count crust tiles over the lava disc. The share must land within ±8
+  points of the 45% tunable. No `createRadialGradient` or
+  `createLinearGradient` may be added inside the LAVA branch.
+- H: DARKFOREST treePct ≥ 50 and ≥ FOREST + 12, sampled exactly as in
+  the measurement above (every 3rd tile, a 40-tile margin). FOREST and
+  ENCHFOREST must stay within ±1 point of 36.7 and 29.1.
+- I: the render gather still yields the same wild set for a fixed camera
+  (count before and after).
+- J: `node debug/shot.js shots` produces the four new files when
+  Playwright is available, or prints "skipped" and exits 0 when it is not.
+- **Visual check (step 0d):** Read `10-landmark-the-ancient-forge.png`,
+  `10-landmark-the-ruined-colosseum.png`, `10-landmark-the-volcano.png`,
+  `30-interior-uwcave.png`, `20-biome-darkforest.png`,
+  `42-help-open.png` and `43-compass.png`. Describe each one in the
+  changelog. The acceptance for Parts A, B, D, E, F and G is literally
+  what those shots show: the forge on land, no trees or water in the
+  arena, readable compass labels, help not covering the compass, a dark
+  backdrop in caves, and lava with visible crust and glowing cracks.
+
+## QUEUED, AFTER THE WORLD CHECK FIXES — do not build until the spec above ships.
 ## Confirmed, locked spec for a future version (World Encounters — Roaming Boss & Bounty Board)
 
 **Confirmed live: deterministic idle-wander logic already exists,
