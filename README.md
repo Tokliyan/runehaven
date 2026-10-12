@@ -965,6 +965,357 @@ Add no new dependencies, and never touch the network.
   backdrop in caves, and lava with visible crust and glowing cracks.
 
 ## QUEUED, AFTER THE WORLD CHECK FIXES — do not build until the spec above ships.
+## Confirmed, locked spec for a future version (Mobile & Touch)
+
+**Why this is next.** The owner's goal is the App Store. On 2026-10-12
+the game was checked at iPhone sizes (844×390 landscape, 390×844
+portrait) with Playwright using `hasTouch`. The game cannot be played on
+a phone today:
+- `runehaven.html` has **zero** `touchstart`/`pointerdown` handlers and
+  **zero** `@media` rules.
+- Every action goes through the window `keydown` handler (`k ===
+  KEYBINDS.*`), and attack aiming goes through `canvas` `mousedown`.
+- At phone size the HUD cards overlap each other: compass, minimap,
+  `#hudZone`, `#hudPrompt` and `#hudHelp` all collide in portrait. The
+  Inventory panel covers the minimap and its title gets clipped to
+  "VENTORY".
+- On the login screen at 390 px wide, the RUNEHAVEN title runs off both
+  edges.
+
+The keyboard game must behave exactly as it does today on a computer.
+
+**PART A — Touch controls that reuse the key path, with no second input
+system.**
+- A `#touchUI` layer shows when
+  `matchMedia('(pointer: coarse)').matches` is true. A new Settings row,
+  "Touch controls: Auto / On / Off", overrides that. Persist it in the
+  existing `rh_settings` storage, with try/catch around storage the way
+  the current settings already do.
+- **Buttons fire synthetic key events.** Every on-screen button
+  dispatches `new KeyboardEvent('keydown', { key: KEYBINDS[action] })`
+  on `window` on `pointerdown`. It dispatches the matching `keyup` on
+  `pointerup`, `pointercancel` and `pointerleave`. That way, taming by
+  holding E, blocking by holding Shift, `e.repeat` guards, remapped keys
+  and every panel toggle work unchanged. Never call `tryAttack`/
+  `startTaming` etc. directly from a button.
+- **Right-thumb cluster:**
+  - Attack: 72 px, `KEYBINDS.attack`.
+  - Interact: E, hold works.
+  - Ability: Q.
+  - Block: Shift, hold.
+  - Mount: R.
+  - Dive: F. Shown dimmed unless the player is on or next to water.
+- **Menu button.** A small ☰ button sits in the top-right under the day
+  card. It opens a row of buttons that each send one key press (down then
+  up):
+  - Inventory (I)
+  - Craft (C)
+  - Companions (P)
+  - Build (B)
+  - Character (K)
+  - Travel (M)
+  - Give (G)
+  - Help
+- **Left-thumb joystick.** It appears where the thumb lands inside a
+  `#touchStick` zone covering the left 45% of the bottom 65% of the
+  screen.
+  - Radius 56 px, deadzone 0.2 (both tunables).
+  - It writes a module-level `touchVec = {x, y}` in screen directions.
+  - In `update()`, directly after the four existing
+    `if (keys[KEYBINDS.*] || keys["arrow*"]) raw* ±= 1;` lines, add
+    `rawX += touchVec.x; rawY += touchVec.y;`. Nothing else in the
+    movement code changes; it already normalises and does the isometric
+    turn.
+  - On release, `touchVec` is reset to 0,0.
+- **Tap to attack.** A tap on the open game canvas (outside every
+  control) attacks toward the tap. Convert the `canvas` `mousedown`
+  handler to `pointerdown`, keeping the same body
+  (`screenToWorld(e.clientX, e.clientY)` → `tryAttack(wx, wy)`).
+  Controls call `stopPropagation()`, so touching a control never
+  attacks.
+- **Stop the phone acting like a web page.**
+  - Viewport meta becomes `width=device-width, initial-scale=1,
+    maximum-scale=1, user-scalable=no, viewport-fit=cover`.
+  - `touch-action: none` on the canvas and every control.
+  - `-webkit-user-select: none` and `-webkit-touch-callout: none` on the
+    game layer.
+  - Block double-tap zoom.
+  - Use `env(safe-area-inset-*)` padding, so nothing sits under the notch
+    or the home bar.
+
+**PART B — The HUD fits a phone.** Add one media query block for
+`(max-width: 900px), (max-height: 500px)`. The bottom corners belong to
+the thumbs, so on a touch layout:
+- `#hudMinimap` (the compass card) and `#hudMap` (the minimap) shrink to
+  about 70% and move to the top corners, under the player card and the
+  day card.
+- `#hudZone` and `#hudPrompt` move to top-centre, under the tutorial line.
+- `#hudHelp` is hidden; Help is in the ☰ menu.
+- Every `.panel` gets `max-height: calc(100dvh - 24px); overflow-y: auto;
+  width: min(92vw, <current width>)`.
+- On the login screen, the RUNEHAVEN title uses a `clamp()` font size so
+  it fits 360 px.
+
+The desktop layout is untouched outside the media query.
+
+**PART C — Portrait.** In-world on touch with
+`innerHeight > innerWidth`, show a dismissible card: "Turn your phone
+sideways for the best view". The game stays playable in portrait.
+
+**PART D — Help text matches the device.** On touch, the help list
+(now in the ☰ menu) describes the buttons, for example "Left thumb: move
+· Tap: attack · ✋ hold: tame / gather". The keyboard text stays for
+keyboards.
+
+**PART E — `debug/shot.js` gets a phone mode.** With `MOBILE=1`, run the
+same tour in a `hasTouch: true, isMobile: true` context at 844×390, plus
+one portrait shot at 390×844. Save the files as `50-m-*.png`. Measure
+the `getBoundingClientRect()` of the player card, day card, compass,
+minimap, `#hudZone`, `#hudPrompt`, `#touchStick` and the button cluster,
+and print any pair that intersects.
+
+**Proof gates** (standard gauntlet, plus):
+- In jsdom, with `matchMedia` stubbed to coarse, `#touchUI` is shown.
+  With it stubbed to fine, it is hidden. The Settings override beats
+  both ways.
+- A synthetic `pointerdown`/`pointerup` on each button reaches the same
+  handler as the real key. Count calls to `tryAttack`, `tryAbility`,
+  `toggleMount`, `toggleDive` and `startTaming`/`cancelTaming` (hold,
+  then release). Each panel button toggles its panel exactly as its key
+  does.
+- Setting `touchVec = {x:0, y:-1}` for 1 s of pumped frames moves `me`
+  the same distance and direction as holding W for the same frames
+  (±2%).
+- **Preservation:** with touch hidden, the keyboard and mouse gates that
+  already exist in run4 all still pass unchanged. The `mousedown` →
+  `pointerdown` change still attacks on a mouse click.
+- The viewport meta contains `user-scalable=no` and `viewport-fit=cover`.
+- Playwright (via shot.js `MOBILE=1`, skip with a note if it is not
+  available): no intersecting HUD pairs at 844×390. At 390×844 only the
+  portrait card may overlap other elements.
+- Visual check: read `50-m-*.png` and describe them.
+
+---
+
+## QUEUED, AFTER MOBILE & TOUCH — do not build until the spec above ships.
+## Confirmed, locked spec for a future version (Performance — Ground Cache & Quiet HUD)
+
+**Measured 2026-10-12** in headless Chromium at 1280×720, which uses
+software rendering, so these are relative numbers:
+- **Frame rate:** 28.3 fps at Spawn, 17.0 at the Ruined Colosseum's
+  forest edge, 16.7 at the Grand Bazaar.
+- **CPU profile at the Colosseum:** 51.5% native canvas rasterising,
+  plus JS spread across `render`, `lineTo`, `drawBox`, `drawGroundTile`
+  (3.2%) and `drawTree` (2.6%).
+- **Why:** the ground pass redraws every visible tile's diamond and cliff
+  faces from scratch every frame (`drawGroundTile(ctx, tx, ty)` in the
+  diagonal sweep in `render()`).
+- **What makes caching possible:** `drawGroundTile(c, tx, ty)` takes no
+  time argument; its output depends only on `biomeAt`/`heightAt`/
+  `variedZ`, which are cached and static.
+- **HUD churn:** `updateHUD()` runs every frame from `render()` and calls
+  `updateMinimap()` (rebuilds the compass `innerHTML`) and
+  `updateWorldMap()` (redraws the minimap canvas), even when nothing has
+  changed.
+
+Phones are slower than this, so this run comes before any public launch.
+
+**PART A — Bake the ground into chunk canvases.**
+- **Chunks and cache:** behind `GROUND_CACHE = true` (a constant gates
+  can flip), split the world into chunks of `GC_TILES = 16` tiles. Keep
+  baked chunks in an LRU of `GC_MAX = 48` (both tunables). Each baked
+  chunk is an offscreen canvas.
+- **Baking:** a chunk is baked by calling the existing
+  `drawGroundTile(chunkCtx, tx, ty)` for its tiles, in the same diagonal
+  `tx + ty` order the live pass uses. The context is translated so the
+  chunk's top tile sits at a fixed origin. Pad the canvas by
+  `GROUND_UP`/`GROUND_DOWN` so cliff faces are not clipped.
+- **Compositing:** blit visible chunks back to front by `cx + cy`.
+  Cliff faces overhang their southern and eastern neighbours (see the
+  comment above the ground pass), so the chunk order has to keep that
+  overlap correct across chunk edges. The gate below is the judge.
+- **No frame hitches:** bake at most `GC_BAKE_PER_FRAME = 2` chunks a
+  frame (tunable). Any visible chunk that is not baked yet is drawn with
+  the existing direct path that frame, so nothing pops in.
+- **Invalidation:** clear the whole cache wherever `tileCache.clear()`
+  runs (login world build and world reset).
+- **Not cached:** interiors are untouched; they have their own pass. The
+  water ripple and lava flicker pass after the ground stays live per
+  frame. Anything animated stays out of the cache.
+
+**PART B — The HUD only writes when something changed.**
+- `updateMinimap()` rebuilds the dial's `innerHTML` only when the set of
+  rounded bearings (1°) or labels changed since the last build.
+- `updateWorldMap()` redraws only when the player's tile changes, the
+  set of visible players changes, or 250 ms have passed (tunable).
+- Every other `innerHTML`/`textContent` write inside `updateHUD()` is
+  skipped when the new string equals the last one written.
+
+**PART C — Record, don't change, the pixel-ratio decision.** The canvas
+stays at CSS-pixel size (`canvas.width = innerWidth`), not
+`devicePixelRatio`. That is deliberately cheaper on phones. Add a
+comment saying so and add a `RENDER_SCALE = 1` tunable that `resize()`
+reads, so it can be raised later.
+
+**Proof gates** (standard gauntlet, plus):
+- **Pixel match (Playwright, required when available).** At four camera
+  positions (Spawn, a coastline, the volcano rim, a forest edge), render
+  one frame with `GROUND_CACHE` false and one with it true. Freeze time
+  with a fixed `t`, hide entities and HUD, and count pixels whose channel
+  difference is greater than 8. It must be 0.5% of the frame or less.
+  Print each number.
+- **Frame rate (Playwright, required when available).** In one session,
+  at the Colosseum and Bazaar spots, fps with the cache on must be at
+  least 1.4× fps with it off. Print both. If Playwright is missing, say
+  "skipped" and still run every jsdom gate.
+- **jsdom:**
+  - The LRU never holds more than `GC_MAX` chunks.
+  - At most `GC_BAKE_PER_FRAME` bakes happen per frame.
+  - A world reset empties the cache.
+  - Interiors never touch it.
+- **HUD:** over 120 frames standing still, the compass is rebuilt at most
+  once and the minimap at most once per 250 ms window. Moving one tile
+  triggers a minimap redraw.
+- **Preservation:** every existing ground-pass gate in run4
+  (`groundStats`, the cull proof) still passes. Where a gate measures
+  the direct path, run it with `GROUND_CACHE` false.
+
+---
+
+## QUEUED, AFTER PERFORMANCE — do not build until the spec above ships.
+## Confirmed, locked spec for a future version (Account Security — Own Your Row)
+
+**Measured 2026-10-12 from the source.** The game talks to Supabase with
+the public anon key and has no Supabase Auth at all (`sb.auth` is never
+used). The holes, all exploitable with nothing more than the key that is
+already in the page:
+1. **PINs can be read in plain text.** `account_pins` stores `pin` as
+   text, and the login gate reads it with
+   `sb.from("account_pins").select("pin").eq("username", …)`, then
+   compares in the browser. Anyone can read any player's PIN, and the
+   check can be skipped.
+2. **Players can edit any player's row,** including
+   `role` (`isAdmin()` is `me.role === "admin"`), `guild`, `guild_tier`
+   and inventory. The update policy is `using (true)`.
+3. **Redeem codes are counted by the client:**
+   `redeem_codes.update({ uses_left: usesLeft - 1 })`.
+4. **The admin world reset is a set of plain client writes:**
+   `world.update({ seed })`, `base_pieces.delete().neq("id", 0)` and the
+   Elder `pets` delete.
+5. **`supabase-js` is loaded unpinned** (`@supabase/supabase-js@2`).
+
+Read `.claude/skills/supabase/SKILL.md` and
+`.claude/skills/supabase-postgres-best-practices/references/security-*.md`
+before writing anything. Per README step 0c, the build writes SQL to
+`supabase_<version>.sql` and **never runs it**.
+
+**The design (keeps the username + PIN the players know):**
+- **Every browser gets an anonymous Supabase user**
+  (`sb.auth.signInAnonymously()`) before login. supabase-js keeps the
+  session in local storage. A new column, `players.owner_id uuid`, ties a
+  row to the auth user that owns it.
+- **PINs are hashed and never readable.** Store them in
+  `account_pins.pin_hash` (pgcrypto `crypt`/`gen_salt('bf')`). The SQL
+  migrates existing plain PINs to hashes, then drops the `pin` column.
+  Clients get no select/insert/update on `account_pins` at all.
+- **Logging in is one RPC.** `claim_account(p_username, p_pin)` is
+  `security definer` with `set search_path = ''` and grants execute to
+  `authenticated` only:
+  - A new name: creates the PIN hash.
+  - An existing name: checks the hash.
+  - On success, sets `players.owner_id = auth.uid()` (a new device simply
+    takes ownership).
+  - Rate limit: 5 failed attempts per username per 15 minutes, in a
+    `pin_attempts` table that clients cannot touch.
+  - Returns ok or a reason; never the hash.
+- **`players` row-level security:**
+  - Select is open to `authenticated`.
+  - Insert requires `owner_id = auth.uid()`.
+  - Update has `using` and `with check` both `owner_id = auth.uid()`.
+  - A `before insert or update` trigger, applied when `current_user` is
+    `anon` or `authenticated`:
+    - On insert, it forces `role = 'player'` and `guild_tier = 1`.
+    - On update, it rejects changes to `role`, `guild`, `guild_tier` and
+    `owner_id`.
+  - The owner editing in the SQL editor (as `postgres`) is not blocked,
+    so admin setup keeps working.
+- **`pets`:** insert, update and delete only where
+  `owner = (select username from players where owner_id = auth.uid())`.
+  Select stays open.
+- **Redeeming is one RPC.** `redeem_code(p_code)` (security definer, same
+  guards) checks `redeem_claims`, decrements `uses_left` atomically and
+  returns the items. Any guild-tier grant also goes through it. Clients
+  lose direct update on `redeem_codes` and insert on `redeem_claims`.
+  Find every client path that currently sets `guild_tier` and route it
+  through this RPC.
+- **World reset is one RPC.** `admin_world_reset(p_seed)` (security
+  definer) checks the caller's row has `role = 'admin'` and then does the
+  three writes. Clients lose update on `world`.
+- **Left deliberately open, and written into the changelog as known
+  risk:** `base_pieces` (raids damage other players' pieces). Limit it:
+  - insert only with `owner` = my username;
+  - update of any piece allowed, but when the caller is not the owner a
+    trigger rejects changes to any column except `hp`. The owner may also
+    change `sign` and `last_collected`, the only other columns the client
+    updates today;
+  - delete allowed for the owner or when `hp <= 0`.
+
+  `ground_items`, `mined_nodes` and `rare_takes` stay open: the world
+  needs anyone to drop and pick up. The realtime broadcast channel stays
+  unauthenticated. Fully server-side combat is a much bigger project and
+  is not this run.
+- **Pin supabase-js** to an exact current 2.x version on the
+  `<script src>` (look it up; do not guess).
+
+**Deploy order, which this HTML must survive.** The HTML ships first.
+Until the owner runs the SQL, `claim_account` does not exist. When an RPC
+returns "function does not exist", the game falls back to today's legacy
+path and logs one console warning, so nothing breaks in between. Once
+the SQL is run, the legacy path is refused by row-level security and the
+RPC path is the only one.
+
+**Owner steps (write them at the top of `supabase_<version>.sql` as
+comments, numbered, plain English):**
+1. Supabase → Authentication → Sign In / Providers → turn on
+   **anonymous sign-ins**.
+2. Authentication → Rate Limits → raise **anonymous sign-ins per hour**
+   from the default 30 per IP. A whole school can share one IP, so use
+   something like 300.
+3. Optionally turn on CAPTCHA/Turnstile for anonymous sign-ins, which
+   Supabase recommends.
+4. Run the SQL file.
+5. Make the admin's row: `update players set role='admin',
+   guild='nameless_tide' where username='…';`. It then has to be claimed
+   once by logging in with the PIN.
+
+**Proof gates** (standard gauntlet, plus):
+- **Harness stubs.** Extend the run3, run4 and run5 Supabase stubs with
+  `auth.signInAnonymously` and `rpc`. Gate both modes: RPC present, and
+  RPC "does not exist" (legacy fallback). Login succeeds in both.
+- **Source gates:**
+  - No `.from("account_pins")` call remains outside the legacy fallback.
+  - No client-side PIN comparison remains outside it.
+  - No direct `redeem_codes` update and no direct `world` update remain
+    outside it.
+  - The `<script src>` names an exact version.
+- **SQL file gates** (text checks on `supabase_<version>.sql`):
+  - Row-level security is enabled on every table named above.
+  - Every `security definer` function has `set search_path = ''`, checks
+    `auth.uid()`, and is granted to `authenticated` only (revoked from
+    `public`/`anon`).
+  - The `pin` text column is dropped after migration.
+  - The update policy on `players` has both `using` and `with check`.
+  - No policy uses `auth.role()`.
+  - No view is created without `security_invoker = true`.
+- **Preservation:** admin features still work from the stub when the
+  stubbed row has `role: 'admin'`. Guild display, redeem rewards, raids,
+  pickups and pets all pass their existing gates.
+
+---
+
+---
+
+## QUEUED, AFTER ACCOUNT SECURITY — do not build until every spec above ships.
 ## Confirmed, locked spec for a future version (World Encounters — Roaming Boss & Bounty Board)
 
 **Confirmed live: deterministic idle-wander logic already exists,
@@ -996,3 +1347,98 @@ snapping), confirm it never enters a Safe Zone, confirm the bounty
 board's target rotates on the stated real timer and the bonus reward
 only triggers for the currently-active bounty species specifically.
 
+---
+
+## QUEUED, AFTER WORLD ENCOUNTERS — do not build until every spec above ships.
+## Confirmed, locked spec for a future version (Real Stakes — Weather, Death Weight & Raid Alerts)
+
+**What exists now (checked 2026-10-12):**
+- There is **no weather system** (the only "storm" in the code is the
+  Storm Dragon).
+- Death already drops your whole pack (`dropAllItems()`, tagged with the
+  space you died in), and the death overlay only says "Slain by X".
+- A raid already broadcasts `base_hit` and `base_destroy`, but the owner
+  gets no alert: the receiver just updates hp and flashes the piece.
+  Pieces carry `owner`.
+
+**Rules for this run:**
+- All respawn timers stay exactly as they are, including the Hollow
+  Choir's 0 s, which was the owner's explicit design.
+- No new tables. Everything new is a client feature or derived from data
+  that already exists.
+
+**PART A — Shared weather, with no network.**
+- **Shared by computation:** weather is computed from
+  `hash(worldSeed, weatherSlot, regionX, regionY)`, so every player sees
+  the same weather without a network message.
+  - `weatherSlot = floor(seconds since worldEpoch / WEATHER_SLOT_S)`,
+    with `WEATHER_SLOT_S = 300`, half a game day.
+  - Regions are `WEATHER_REGION = 256` tiles square.
+  - Both are tunables.
+- **Weather types,** chosen by the biome under the player:
+  - **Clear:** most slots, at least 55% overall.
+  - **Rain:** FOREST, PLAINS, MEADOW, ENCHFOREST, SACMEADOW. Mobs'
+    `aggroRadius` is −25% because rain hides your steps. Apply it the same
+    way `BLOOD_MOON_AGGRO_MULT` is applied.
+  - **Fog:** DARKFOREST, plus RUINB at night. A flat dark overlay at
+    alpha 0.28. Mob `aggroRadius` −40%. Other players' name plates are
+    hidden beyond 8 tiles.
+  - **Ashfall:** VOLROCK, CALDERA, LAVA surroundings. 1 damage every 4 s
+    unless the v58 fire-resist draught is active. Respect the safe-zone
+    rule in `applyDamage`.
+  - **Snow:** ROCK and PEAK. Movement −15% unless mounted.
+- **Visuals:** a screen-space particle layer drawn after the world and
+  before the HUD, capped at 160 particles (tunable): rain streaks, ash
+  flecks, snow dots. Fog is one flat fill. No gradients.
+  Read `runehaven-art-style/SKILL.md` first.
+- **HUD:** the day card shows the weather after the time of day, for
+  example "Day 433 — Morning · Rain". There is no weather inside
+  interiors.
+
+**PART B — Death has weight, with timers untouched.**
+- **Death recap:** the overlay lists exactly what was dropped, for
+  example "You dropped: 12 Wood, 3 Iron Ore, Iron Sword", using
+  `ITEM_META` names. It reads the same list `dropAllItems()` built.
+- **Your pack:** for 10 minutes (tunable), or until the pile is picked
+  up, the compass and minimap show a "PACK" mark pointing to where you
+  fell. It goes through the existing mark lists and is only visible to
+  you.
+- **A beacon everyone can see:** for 2 minutes (tunable), a faint light
+  column rises over a fresh death pile, using the existing light/aura
+  primitives. It is visible to everyone, so a death becomes a race.
+
+**PART C — Raid alerts.**
+- **When you're online:** when a `base_hit` or `base_destroy` arrives for
+  a piece whose `owner === me.username`:
+  - toast "Your base is under attack!" (at most once every 20 s,
+    tunable);
+  - add a "RAID" compass mark toward the piece for 60 s;
+  - set the existing combat-music signal.
+- **When you log back in:** after login, if you own pieces whose `hp` is
+  below their full value, toast "While you were away: N base pieces were
+  damaged". Full value comes from a new `basePieceMaxHp(p)` helper, using
+  `BASE_TIER_HP` with the Architect bonus applied the same way the
+  insert does.
+- **Destroyed pieces** are counted against the number of pieces you
+  owned at your last logout. Store that number in local storage under
+  the username, with try/catch. It is per device; say so in a code
+  comment.
+
+**Proof gates** (standard gauntlet, plus):
+- Weather is deterministic: two separate evaluations for the same seed,
+  slot and region agree. The share of Clear across 2,000 sampled
+  slot/region pairs is at least 55%. Each type only appears on its
+  biomes.
+- Ashfall damage stops while fire resist is active and never applies
+  inside a safe zone.
+- Snow slows by 15% unmounted and 0% mounted.
+- Fog and rain aggro multipliers apply to mob aggro checks only.
+- The particle count never goes over the cap.
+- Death recap text matches the dropped list exactly. The PACK mark
+  appears only for the dier and is removed on pickup or timeout.
+- Raid toasts are throttled to the stated interval. A RAID mark appears
+  only for the owner. The login summary counts damaged pieces correctly
+  from stubbed rows.
+- **Preservation:** every respawn timer gate (`RESPAWN_SECONDS`, the
+  Hollow Choir 0 s) is unchanged. The existing `dropAllItems` and raid
+  gates still pass.
