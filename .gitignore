@@ -4,3 +4,6 @@
 # runehaven.html.
 node_modules/
 shots/
+
+# scroll-craft workspace (website builder, unrelated to the game)
+scrollcraft/
