@@ -54,6 +54,20 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    These skills are advice for the build; they never override the spec, the
    bible, or Step 3-5.
 
+0c. **Supabase work.** For any build touching Supabase (tables, RLS,
+   policies, redeem codes, PINs, saves, presence), read
+   `.claude/skills/supabase/SKILL.md` and, for SQL, the relevant files in
+   `.claude/skills/supabase-postgres-best-practices/references/` (security-*
+   first). The automated environment has no Supabase MCP, CLI or login and
+   must not try to get one: skip those parts and do not ask for tokens. NEVER
+   run SQL against the live project. Instead write the SQL to a file named
+   `supabase_<version>.sql` at the repo root for the owner to run. Note that
+   RuneHaven uses its own username/PIN login with the public anon key, not
+   Supabase Auth, so `auth.uid()` policies do not apply as-is. Do not
+   rewrite auth in a normal build: record security findings in the changelog
+   under "Security notes" and leave the fix to a dedicated spec. The service_role
+   key must never appear in any file.
+
 1. **Read `runehaven-art-style/SKILL.md` in full** before touching any
    rendering code, even a small tweak.
 2. Apply changes as **surgical, targeted patches** — never a full rewrite of
