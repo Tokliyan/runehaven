@@ -68,6 +68,18 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    under "Security notes" and leave the fix to a dedicated spec. The service_role
    key must never appear in any file.
 
+0d. **Look at it (visual check, not a gate).** After the gates in step 4 pass,
+   run `node debug/shot.js shots` (Playwright + Chromium, stubbed Supabase,
+   fully offline; it tours the six landmarks, six biomes and both cave
+   interiors). Use `Read` on the screenshots for whatever area this build
+   touched, plus `10-landmark-the-volcano.png`, and describe what you actually
+   see in the changelog under "Visual check" (one line per shot: what is
+   there, anything that looks wrong). If Playwright or Chromium is not
+   available in this environment, write "visual check skipped: <reason>" and
+   continue; never try to install them. Do not commit the `shots/` folder. A
+   shot that looks wrong is a YELLOW note, not a reason to skip shipping,
+   unless the spec's own acceptance line is about that look.
+
 1. **Read `runehaven-art-style/SKILL.md` in full** before touching any
    rendering code, even a small tweak.
 2. Apply changes as **surgical, targeted patches** — never a full rewrite of
