@@ -35,6 +35,25 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    only usable from a manually-started Claude Code cloud session, never
    from this automated pipeline.
 
+0b. **Doubt pass + gate integrity (required, every build).** Skills live in
+   `.claude/skills/` as plain Markdown (vendored from
+   addyosmani/agent-skills, MIT; no plugin install is involved, so Step 0's
+   restriction does not apply). Before committing:
+   - Read `.claude/skills/doubt-driven-development/SKILL.md` and apply it to
+     the build's riskiest non-trivial change (new branching logic, anything
+     touching saves, combat, or Supabase). Spawn a fresh-context reviewer if
+     the environment allows; give it only the diff and the spec text, not
+     your reasoning. This run is non-interactive, so cross-model review is
+     skipped. Write "Cross-model skipped: non-interactive context." and never
+     invoke an external CLI. If a fresh reviewer can't be spawned, do the
+     degraded self-review the skill describes and label it DEGRADED.
+   - Read `.claude/skills/gate-integrity/SKILL.md` and run its checks.
+   - Put both results in the changelog entry (findings classified as
+     actionable / trade-off / noise, plus the gate-integrity line). An
+     actionable finding that is not fixed is RED.
+   These skills are advice for the build; they never override the spec, the
+   bible, or Step 3-5.
+
 1. **Read `runehaven-art-style/SKILL.md` in full** before touching any
    rendering code, even a small tweak.
 2. Apply changes as **surgical, targeted patches** — never a full rewrite of
