@@ -10951,7 +10951,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         console.log(`WCF G: ${lavaTiles} lava tiles in the core, ${crust} crusted (${share.toFixed(1)}%, ` +
                     `tunable ${(L.LAVA_CRUST_SHARE * 100).toFixed(0)}%), ${vent} venting ` +
                     `(${ventShare.toFixed(1)}% of all lava, tunable ${(L.LAVA_VENT_SHARE * 100).toFixed(0)}%)`);
-        results.push([`WCF G: the crust share lands on its tunable — ${share.toFixed(1)}% against 45%, the spec allows +/-8 points`,
+        /* Gauntlet S2 R2: the tunable moved 45% -> 66% (the Volcano scored
+           Landmark 2: "an orange carpet with dark diamond chains"); the gate
+           already measured against the tunable, only its label quoted 45. */
+        results.push([`WCF G: the crust share lands on its tunable — ${share.toFixed(1)}% against ${(L.LAVA_CRUST_SHARE * 100).toFixed(0)}%, the spec allows +/-8 points`,
           lavaTiles > 2000 && Math.abs(share - L.LAVA_CRUST_SHARE * 100) <= 8]);
         results.push([`WCF G: and vents are about 20% of the LAVA tiles, as the spec words it — ${ventShare.toFixed(1)}%`,
           Math.abs(ventShare - L.LAVA_VENT_SHARE * 100) <= 4]);
@@ -10968,8 +10971,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             }
           const pNeighbour = pairs ? both / pairs : 0;
           console.log(`WCF G: P(crusted neighbour | crusted) = ${(pNeighbour * 100).toFixed(1)}% over ${pairs} pairs`);
-          results.push([`WCF G: crust forms plates — a crusted tile's neighbour is crusted ${(pNeighbour * 100).toFixed(1)}% of the time (independent tiles would give ~45%)`,
-            pairs > 500 && pNeighbour >= 0.6]);
+          /* Gauntlet S2 R2: STRENGTHENED with the share. At 66% crust a flat
+             0.6 would pass with no clustering at all, so the bar is now
+             independence plus 15 points. */
+          results.push([`WCF G: crust forms plates — a crusted tile's neighbour is crusted ${(pNeighbour * 100).toFixed(1)}% of the time (independent tiles would give ~${(L.LAVA_CRUST_SHARE * 100).toFixed(0)}%)`,
+            pairs > 500 && pNeighbour >= L.LAVA_CRUST_SHARE + 0.15]);
         }
         /* Doubt pass cycle 2: measured with real heights, not a source grep.
            Every tile the renderer would overlay (all three front neighbours
@@ -11105,7 +11111,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
        gates, so the polish can't silently regress later." Each claim below
        is measured on the harness seed, in the real game functions.
        ================================================================ */
-    if (window.debugS2Info && window.debugOccProbe && window.debugLifeAt && window.arenaFloorAt) {
+    if (window.debugS2Info && window.debugOccProbe && window.debugLifeAt && window.arenaFloorAt && window.debugRenderAtTime) {
       const seedBeforeS2 = window.debugWorldSeedSet(123456789);
       const V2 = window.debugV37Info(), WI2 = window.debugWorldInfo();
       const B2 = WI2.B, C2 = V2.COLOSSEUM, A2 = V2.ANCIENT;
@@ -11274,20 +11280,126 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             return (near.byKind.smoke || 0) > 0 && (far.byKind.smoke || 0) === 0;
           })()]);
         const night = window.debugLifeAt(views.forest[0], views.forest[1], 10, true);
-        results.push([`S2 C: at night the forest keeps its fireflies and lets no leaves fall (${night.byKind.firefly || 0} / ${night.byKind.leaf || 0})`,
-          (night.byKind.firefly || 0) > 0 && !night.byKind.leaf && night.birds === 0]);
+        /* S2 R2: the night flock is bats now, never birds. */
+        results.push([`S2 C: at night the forest keeps its fireflies, lets no leaves fall, and bats fly instead of birds (${night.byKind.firefly || 0} / ${night.byKind.leaf || 0} / ${night.bats} bats)`,
+          (night.byKind.firefly || 0) > 0 && !night.byKind.leaf && night.birds === 0 && night.bats > 0]);
         window.setSetting('reduceMotion', true);
         const still = window.debugLifeAt(views.plains[0], views.plains[1], 10);
         const stillC = window.debugLifeAt(views.colosseum[0], views.colosseum[1], 10);
         window.setSetting('reduceMotion', false);
-        results.push([`S2 C: reduce motion stops all of it — leaves, butterflies, smoke, flocks and crows (${still.parts}+${still.birds}+${stillC.crows})`,
-          still.parts === 0 && still.birds === 0 && stillC.parts === 0 && stillC.crows === 0]);
+        window.setSetting('reduceMotion', true);
+        const stillN = window.debugLifeAt(views.forest[0], views.forest[1], 10, true);
+        window.setSetting('reduceMotion', false);
+        results.push([`S2 C: reduce motion stops all of it — leaves, butterflies, smoke, flocks, bats and crows (${still.parts}+${still.birds}+${stillC.crows}+${stillN.bats})`,
+          still.parts === 0 && still.birds === 0 && stillC.parts === 0 && stillC.crows === 0 && stillN.parts === 0 && stillN.bats === 0]);
         results.push(['S2 C: fireflies are still gold, forest-only and night-only; leaves are day-only',
           gameScript.indexOf('} else if ((b === B.FOREST || b === B.DARKFOREST) && isNight && Math.random() < 0.25) {') > 0 &&
           gameScript.indexOf('} else if ((b === B.FOREST || b === B.DARKFOREST) && !isNight && Math.random() < LEAF_CHANCE) {') > 0 &&
           gameScript.indexOf('col: "#ffe89a", size: 1.8, kind: "firefly"') > 0]);
         results.push(['S2 C: the Tower\'s own three birds are untouched',
           gameScript.indexOf('// Ambient life: birds circling the Eternal Tower (2026-07-11)\n  for (let i = 0; i < 3; i++) {') > 0]);
+      }
+      /* ---- D: round 2 — the Volcano, labels, life you can see -------- */
+      {
+        const R2 = window.debugS2Info();
+        const VC = R2.cone, VO = WI2.VOLCANO;
+        results.push([`S2 R2: the Volcano has its cone — ${VC ? Math.hypot(VC.x - VO.x, VC.y - VO.y).toFixed(1) : '-'} tiles from the centre`,
+          !!VC && Math.hypot(VC.x - VO.x, VC.y - VO.y) <= 60]);
+        results.push(['S2 R2: and it stands only on lava — every tile under its base is LAVA (BLOCKED ground nobody stands on)',
+          !!VC && (() => {
+            for (let dy = -5; dy <= 5; dy++) for (let dx = -5; dx <= 5; dx++)
+              if (window.biomeAt(Math.floor(VC.x - 0.5 + dx), Math.floor(VC.y - 0.5 + dy)) !== B2.LAVA) return false;
+            return true;
+          })()]);
+        results.push(['S2 R2: the cone changes no terrain — it is drawn, never written into biomeAt/heightAt',
+          (() => {
+            const f = gameScript.indexOf('function volcanoConeSite()');
+            const body = gameScript.slice(f, gameScript.indexOf('\n}', f));
+            const g = gameScript.indexOf('function drawVolcanoCone(t)');
+            const gb = gameScript.slice(g, gameScript.indexOf('\n}', g));
+            return f > 0 && g > 0 && body.indexOf('tileCache') < 0 && gb.indexOf('tileCache') < 0 &&
+                   gameScript.indexOf('b = dV < 124 ? B.LAVA : B.VOLROCK;') > 0;
+          })()]);
+        // A frame at the Volcano by day, then by night.
+        dsp2({ x: VO.x + 0.5, y: VO.y + 0.5, diving: false, hp: 100 });
+        const day = window.debugRenderAtTime(700000, false);
+        results.push([`S2 R2: the crust is one surface with a crack network — ${day.lavaCrackCount} crack segments this frame, plates inset ${day.LAVA_CRUST_INSET}`,
+          day.coneDrawn === true && day.lavaCrackCount > 100 && day.LAVA_CRUST_INSET >= 1]);
+        results.push(['S2 R2: a crack belongs to the EDGE — both tiles beside it hash the same tile pair, so neighbours always agree',
+          ['hash2(tx, ty, LAVA_CRACK_SALT) > LAVA_CRACK_T && lavaCrustAt(tx, ty - 1)',
+           'hash2(tx, ty, LAVA_CRACK_SALT + 2) > LAVA_CRACK_T && lavaCrustAt(tx - 1, ty)',
+           'hash2(tx, ty + 1, LAVA_CRACK_SALT) > LAVA_CRACK_T && lavaCrustAt(tx, ty + 1)',
+           'hash2(tx + 1, ty, LAVA_CRACK_SALT + 2) > LAVA_CRACK_T && lavaCrustAt(tx + 1, ty)'].every(l => gameScript.indexOf(l) > 0)]);
+        results.push(['S2 R2: the cracks are two strokes per frame, not two per tile',
+          (() => {
+            const at = gameScript.indexOf('/* S2 R2: the lava crack network, batched');
+            const body = gameScript.slice(at, at + 900);
+            return at > 0 && (body.match(/ctx\.stroke\(\)/g) || []).length === 1 && body.indexOf('for (let pass = 0; pass < 2; pass++)') > 0;
+          })()]);
+        const nightOn = window.debugRenderAtTime(700016, true);
+        results.push([`S2 R2: at night the lava is its own light — ${nightOn.lavaNightLit} open tiles cut through the dark, ${nightOn.lavaNightShaded} behind the cone left dark`,
+          nightOn.lavaNightLit > 50 && nightOn.lavaNightShaded > 0 && nightOn.LAVA_NIGHT_GLOW > 0.4]);
+        results.push(['S2 R2: and that light is hard-edged — one flat batched fill and one stroke, no gradient added',
+          (() => {
+            const at = gameScript.indexOf('/* S2 R2: lava is its own light.');
+            const body = gameScript.slice(at, gameScript.indexOf('lctx.globalCompositeOperation = "source-over";', at));
+            return at > 0 && body.indexOf('createRadialGradient') < 0 && body.indexOf('createLinearGradient') < 0 &&
+                   (body.match(/lctx\.fill\(\)/g) || []).length === 1;
+          })()]);
+        const lf = window.debugLifeAt(VO.x + 0.5, VO.y + 0.5, 8);
+        results.push([`S2 R2: the Volcano's smoke rises out of the crater (${lf.byKind.smoke || 0} puffs)`,
+          (lf.byKind.smoke || 0) > 0 && gameScript.indexOf('const VC = volcanoConeSite() || VOLCANO;') > 0]);
+        // Labels step clear of the local plate.
+        const mine = { sx: 600, sy: 400 };
+        results.push(['S2 R2: a label that would land on the local player\'s plate steps up above it; one clear of it stays put',
+          window.labelClearOfPlate(600, 377, 40, mine) === 324 && window.labelClearOfPlate(600, 300, 40, mine) === 300 &&
+          window.labelClearOfPlate(900, 377, 40, mine) === 377 && window.labelClearOfPlate(600, 377, 40, null) === 377]);
+        results.push(['S2 R2: mob name tags are drawn in the overlay pass, on the plate',
+          (() => {
+            const f = gameScript.indexOf('function drawMobOverlays(');
+            const body = gameScript.slice(f, gameScript.indexOf('\n}', f));
+            return body.indexOf('queueWorldLabel(canWearDownTame(m)') > 0 && body.indexOf('ctx.fillText(canWearDownTame(m)') < 0;
+          })()]);
+        results.push(['S2 R2: the COMPASS / MINIMAP captions wear the nameplate\'s dark plate',
+          /#hudMinimap \.mm-title, #hudMap \.mm-title \{[^}]*background: rgba\(6,9,14,0\.62\)/.test(html)]);
+      }
+      /* ---- E: round 3 — seams, shorelines, set pieces ---------------- */
+      {
+        const gt = gameScript.indexOf('function drawGroundTile(c, tx, ty)');
+        const gtBody = gameScript.slice(gt, gameScript.indexOf('\n}', gt));
+        results.push(['S2 R3: ground tiles overlap their neighbours, so no 1px lattice shows through between them',
+          gtBody.indexOf('c.lineTo(cx + IW2 + TILE_SEAM_PAD, cy);') > 0 && gtBody.indexOf('c.lineTo(cx - IW2 - TILE_SEAM_PAD, cy);') > 0 &&
+          /const TILE_SEAM_PAD = 0\.[5-9]/.test(gameScript)]);
+        const foamAt = gameScript.indexOf('// Foam where shallow water laps against land (2026-07-11)');
+        const foam = gameScript.slice(foamAt, gameScript.indexOf('} else if (b === B.LAVA) {', foamAt));
+        results.push(['S2 R3: no foam is drawn on the land in front of the water — only on the north and west shores the viewer sees',
+          foamAt > 0 && foam.indexOf('heightAt(tx, ty + 1) >= 0') < 0 && foam.indexOf('heightAt(tx + 1, ty) >= 0') < 0 &&
+          (foam.match(/heightAt\(tx, ty - 1\) >= 0/g) || []).length === 2 && (foam.match(/heightAt\(tx - 1, ty\) >= 0/g) || []).length === 2]);
+        const R3 = window.debugS2Info();
+        const VC3 = R3.cone;
+        results.push(['S2 R3: the cone is five tiers and 96px to the crater, its whole base still on lava',
+          /const VCONE_TIERS = \[\[9\.6, 0, 22\], \[7\.6, 22, 22\], \[5\.8, 44, 20\], \[4\.2, 64, 18\], \[2\.8, 82, 14\]\];/.test(gameScript) &&
+          /const VCONE_TOP = 96;/.test(gameScript) && !!VC3 && (() => {
+            for (let dy = -5; dy <= 5; dy++) for (let dx = -5; dx <= 5; dx++)
+              if (window.biomeAt(Math.floor(VC3.x - 0.5 + dx), Math.floor(VC3.y - 0.5 + dy)) !== B2.LAVA) return false;
+            return true;
+          })()]);
+        results.push(['S2 R3: the cone stands in a moat of open lava — no crust is drawn within VCONE_MOAT of it, and the moat never spans the rim',
+          !!VC3 && window.inConeMoat(Math.floor(VC3.x), Math.floor(VC3.y)) === true &&
+          window.inConeMoat(Math.floor(VC3.x) + 9, Math.floor(VC3.y)) === false &&
+          gameScript.indexOf('const crusted = interiorLava && lavaCrustAt(tx, ty) && !inConeMoat(tx, ty);') > 0]);
+        results.push(['S2 R3: the crater breathes dark ash, the forges keep their pale smoke',
+          gameScript.indexOf('lmSmoke: "volcano", dark: VC !== VOLCANO });') > 0 &&
+          gameScript.indexOf('ctx.fillStyle = p.dark ? `rgba(70,58,58,${0.5 * a})` : `rgba(184,188,196,${0.35 * a})`;') > 0]);
+        results.push(['S2 R3: the Shrine gate\'s two braziers are lights at night (surface only)',
+          gameScript.indexOf('if (!inInterior()) for (const bz of shrineBraziers()) lights.push(') > 0 &&
+          window.shrineBraziers().length === 2]);
+        results.push(['S2 R3: the Ancient Forge roof is the locked Volcanic rock fired lighter — no new palette entry',
+          gameScript.indexOf('const ANCIENT_ROOF = shade("#5c3c3c", 1.45);') > 0 &&
+          gameScript.indexOf('drawPyramid(F.x, F.y, 3.4, 3.1, 5, 16, ANCIENT_ROOF, 49);') > 0]);
+        const nl = window.debugRenderAtTime(710000, true);
+        results.push([`S2 R3: and the night volcano frame still renders cleanly with the moat and the taller cone (${nl.lavaNightLit} lit / ${nl.lavaNightShaded} shaded)`,
+          nl.lavaNightLit > 50 && !caught]);
       }
       window.debugWorldSeedSet(seedBeforeS2);
     } else {
