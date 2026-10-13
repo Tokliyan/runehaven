@@ -53,6 +53,286 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-13 (Mobile & Touch — the game becomes playable on a phone)
+
+Built from `NEXT_BUILD.md`'s target, the locked "Mobile & Touch" spec in
+README.md, PARTS A-E in full. Rendering-scope changes:
+
+- **A touch control layer that is not a second input system.** `#touchUI`
+  ships hidden in the static markup (the `#hudBoss` / `#pinInput` rule this
+  file has followed since v46) and `applyTouchUI()` shows it when
+  `matchMedia('(pointer: coarse)')` says so, or when the new Settings row
+  **Touch controls: AUTO / ON / OFF** overrides that — one more key in the
+  existing `rh_settings` store, read through the same guarded localStorage.
+  **Every control dispatches the REAL `KeyboardEvent` its action is bound
+  to** on `window`: `pointerdown` sends `keydown`, and `pointerup`,
+  `pointercancel` and `pointerleave` send `keyup`. Nothing in the section
+  calls `tryAttack`, `tryAbility`, `toggleMount`, `toggleDive`,
+  `startTaming` or `cancelTaming` — proven by a gate that reads the
+  comment-stripped source. So holding E tames, holding Shift blocks, the
+  `e.repeat` guards hold, a rebound key moves the button with it, and every
+  panel toggle works with no new code. The cluster is attack (72px), E,
+  BLK, Q, R and F; the ☰ row is Inventory, Craft, Companions, Build,
+  Character, Travel, Give and Help.
+- **The joystick is the one control that is not a key**, because no key
+  means "two thirds of the way north-east". It appears where the thumb
+  lands inside `#touchStick` (the left 45% of the bottom 65%), radius 56,
+  deadzone 0.2, and writes `touchVec` — which `update()` adds to `rawX`/
+  `rawY` immediately after the four existing key lines and before the
+  isometric turn. Measured: a full deflection for a second of pumped frames
+  moves the player **9.200 tiles, against 9.200 for holding the move key**,
+  same sign on both axes.
+- **Tap to attack**: the canvas `mousedown` handler became `pointerdown`,
+  body unchanged. A mouse click still attacks at the identical converted
+  point (gated against `screenToWorld()`); controls stop propagation.
+- **The page stops behaving like a web page**: the viewport meta gains
+  `maximum-scale=1, user-scalable=no, viewport-fit=cover`; `touch-action:
+  none`, `-webkit-user-select: none` and `-webkit-touch-callout: none` on
+  the canvas and every control; the double-tap and pinch gestures refused
+  in JS on the game surface as well; `env(safe-area-inset-*)` throughout.
+- **PART B — the HUD fits a phone.** ONE media query, deliberately the LAST
+  thing in the sheet, and **every selector inside it is qualified with
+  `body.touch-on`** — so the desktop layout is untouched and a small desktop
+  *window* is untouched too. The compass and the minimap move to the top
+  corners at 70% via `transform: scale()`, never a new width or padding, so
+  the v56 consistency audit's own measurements are unmoved and the dial's
+  JS-positioned labels stay in step. `#hudZone` and `#hudPrompt` move to
+  top-centre, `#hudHelp` and the HP bar leave the thumbs' corners, panels
+  become scrollable and no wider than the screen, and the login title is
+  `clamp(26px, 9vw, 58px)`.
+- **No `top` in this build is a constant.** The player card grows a line
+  for a pet, a potion or a matched-tier bonus; the day card grows with the
+  player count; the tutorial line is up for the first minutes only; the
+  text-size setting zooms all of them. So `applyTouchLayout()` measures the
+  real rectangles and stacks each card under whatever actually sits above
+  it — `applyHelpLift()`'s technique turned the other way up, as seven CSS
+  variables, re-measured on resize and at the help lift's own 500ms cadence
+  (plus immediately whenever a card appears or disappears).
+- **PART C**: a dismissible "Turn your phone sideways for the best view"
+  card, in-world on touch when `innerHeight > innerWidth`. **PART D**: on a
+  touch layout the help list describes the BUTTONS — "Left thumb: move ·
+  Tap: attack · ✋ hold: tame / gather · ☰ menu: inventory & the rest" —
+  built by the same `helpLineHtml()`, from the same two halves, and the
+  keyboard text comes straight back when the layout does. **PART E**:
+  `debug/shot.js` takes `MOBILE=1` — the same tour at 844×390 with
+  `hasTouch`/`isMobile`, saved as `50-m-*`, plus one portrait shot, plus
+  the rectangles the spec names with every intersecting pair printed.
+
+**What the real browser says.** No intersecting HUD card pair at **844×390**
+or at **390×844**, and none at **360×640 or 1024×768 either, at all three
+text sizes — twelve combinations, twelve clean**. With a panel open and with
+the help overlay open, `elementFromPoint` at the menu button's centre
+returns the menu button. Every panel is fully on screen. The ☰ row shows 6
+of its 8 entries without scrolling and the last really is reachable by
+scrolling. The login title sits at 58→332 of 390px (and 53→307 of 360px)
+where before this build it ran from −33 to 423 — off both edges — and at 844
+and 1280 wide it is byte-for-byte the 58px/10px it always was.
+
+**Visual check** (`debug/shot.js MOBILE=1`, real Chromium, 844×390 and
+390×844): spawn — the player card, the tutorial line and the day card across
+the top with nothing touching, the HP bar directly under the player card, the
+☰ under the day card, the six round buttons bottom-right with F correctly
+dimmed on dry land, and the bottom-left corner empty for the thumb. Help open
+— the touch list reads "Left thumb: move · Tap: attack · ✋ hold: tame /
+gather · ☰ menu: inventory & the rest" over a centred card with the button
+list under it; it sits over the compass, which is what a centred overlay does
+and is not the desktop bug World Check Fixes PART E fixed (the desktop tour
+still reports "help-open overlap: none"). Portrait — the same stack, the zone
+banner and the Bazaar prompt centred under it, the turn-your-phone card over
+the prompt, which is the one overlap PART C allows. The six landmarks, six
+biomes and both cave interiors render as they do on the desktop tour, at
+phone aspect. No page errors in either orientation, at any text size.
+
+## JUDGMENT CALLS THIS VERSION
+
+- **"No intersecting HUD pairs at 844×390" is judged on the CARDS, not on
+  the invisible thumb zone.** PART E's measured list has eight entries and
+  the proof gate names "HUD pairs". The two that are not HUD cards are
+  `#touchStick` and the button cluster, and the spec's own numbers make a
+  stick-vs-card overlap unavoidable: the zone is the bottom 65% of the
+  screen, whose top edge is y=136 at 390px high, and the top column cannot
+  end above 136 on any content. The stick is NOT pass-through — it is
+  `pointer-events: auto`, which is the point of it — but every HUD card is
+  `pointer-events: none` and takes no input whether the stick is over it or
+  not, so nothing is actually blocked. `shot.js` prints the two lists
+  separately. What the exemption must never hide is a card the stick can
+  genuinely spoil, which is why `#hpBarWrap` and `#touchMenuBtn` are named in
+  the measured set — that is how the HP-bar-inside-the-stick defect was
+  caught. If the owner wants the literal eight-way answer, the stick zone's
+  65% is the number to lower.
+- **The media query carries a third condition the spec did not name:
+  `(pointer: coarse)`.** Still ONE block, still the spec's own two
+  conditions. Without it a coarse-pointer device over 900px wide and 500px
+  tall got the controls and the desktop HUD, which measured as a hard
+  lockout. If the owner would rather a tablet kept the desktop HUD, this is
+  the one token to delete — the ☰'s own layer, below, keeps it merely ugly
+  rather than unusable.
+- **`calc(100dvh - 24px)` became `calc(100dvh - 82px)`.** The spec names the
+  first number; on a panel that starts 70px down it put the bottom 46px of
+  every panel below the viewport. The subtrahend is the panel's own top plus
+  the spec's 24 less its 12.
+- **Help in the ☰ shows the card the media query hides.** PART B says
+  `#hudHelp` is hidden and PART D says the list "is now in the ☰ menu", and
+  the list has to appear somewhere. Rather than a second help list, the HELP
+  row calls the same `toggleHelpFull()` the `[?]` calls and adds
+  `.touch-shown`, which turns the card into a centred overlay. There is still
+  exactly one help list in the game.
+- **The ☰ sits under the day card and the minimap sits under the ☰.** PART A
+  puts the menu button "in the top-right under the day card" and PART B puts
+  the minimap in that same corner under that same card. Both cannot be
+  directly under it. The ☰ wins, because it is the one of the two that has a
+  list to unroll underneath itself.
+- **The ☰ row scrolls at 844×390** — eight rows do not quite fit the 256px
+  under it on a landscape phone. Six are visible, `touch-action: pan-y` and
+  `overscroll-behavior: contain` are set for the rest, and the cluster steps
+  aside while the row is open so the list visibly runs toward the edge.
+- **A held attack button attacks once; a held SPACE repeats.** The spec's
+  dispatch rule is one `keydown` on `pointerdown`, and the attack branch has
+  no `e.repeat` guard, so an OS key-repeat fires repeatedly where the button
+  does not. Tapping, or tapping the open canvas, is the touch equivalent.
+- **The menu rows are wired on `click`; the cluster stays on
+  `pointerdown`/`pointerup`.** A hold has to begin the moment the thumb
+  lands, so the cluster keeps the spec's own events. A menu row has to be
+  distinguishable from a drag that scrolls the row, and `click` is the one
+  event that already knows the difference. It is not a second input path:
+  what it does is still dispatch the real key.
+- **Tunables this build chose.** `TOUCH_WATER_R = 1` (how close to water
+  lights the Dive button), `TOUCH_LAYOUT_GAP = 8` (air between stacked cards,
+  the help lift's own number), `TOUCH_LAYOUT_RECHECK_MS = 500` (the help
+  lift's own cadence). `TOUCH_STICK_R = 56` and `TOUCH_STICK_DEAD = 0.2` are
+  the spec's. `TOUCH_MM_TITLE_H = 18` is NOT a tunable — it is the
+  `.mm-title` rule's own value and must track it.
+- **Button faces.** ⚔, E, BLK, Q, R, F. A minor naming choice; each carries a
+  `title` spelling the action out, and the ☰ list names them too.
+- **The login card still overflows a 360px screen by 10px** — but not because
+  of the title, which this build fixed (428px of card content before, 370px
+  after, against a 360px viewport). Whatever the remaining 10px is, it
+  predates this spec, and PART B names only the title.
+- **The version number.** `NEXT_BUILD.md` names the spec by title and no
+  version, so this entry is dated rather than numbered.
+
+## WHAT THE FRESH-CONTEXT REVIEW FOUND (and it changed the build substantially)
+
+⚠️ **ECC never ran, for the third version running.** Step 0 of the standard
+process says not to re-attempt it and this build did not. **Cross-model
+skipped: non-interactive context** — no external CLI was invoked.
+
+The fresh-context reviewer was spawned with the diff and the spec text only,
+and it did something the jsdom gates structurally cannot: it drove the real
+build in headless Chromium at three viewport sizes and dispatched real CDP
+touch gestures. Thirteen findings. **Every one classified as actionable was
+fixed before this shipped**, and each fix carries its own gate so it cannot
+come undone.
+
+**Actionable — fixed:**
+- **The ☰ row could not be scrolled, and showed 3 of its 8 entries at
+  844×390.** Two causes stacked: `preventDefault()` on `pointerdown` cancels
+  the pan (pointerdown's default action includes the touchstart's), and the
+  row was `pointer-events: none` so a drag starting in a gap reached nothing.
+  A drag *fired the first entry* instead. The rows are wired on `click` now —
+  still sending the real key, just through the one event that already knows a
+  tap from a drag — the row takes its own events, and the ☰ moved to directly
+  under the day card (which is where PART A puts it; the minimap goes under
+  IT), nearly doubling the room. Measured: 6 of 8 visible, the rest reachable.
+- **A hard lockout on any coarse-pointer device over 900px wide and 500px
+  tall.** PART A turns the layer on from `(pointer: coarse)` with no size
+  test; PART B's layout is behind a 900/500 media query. A tablet got the
+  thumb controls bolted onto the desktop HUD — and a tall Inventory panel
+  buried the ☰, which was the only way to send the key that closes it. Two
+  fixes: `(pointer: coarse)` joins the media query's conditions, and the ☰ and
+  its row moved into **their own top-level layer** at z-index 13. `#touchUI`
+  carries a z-index and is therefore a stacking *context*, so no z-index
+  inside it could ever have lifted the button above a panel at 10 — the
+  original "pin the panels left" fix only worked because the panels happened
+  to be narrow.
+- **`#buildPanel` opened 292px off the right edge of a 390px screen.** Its own
+  `left: 352px` is an ID rule and outranked `body.touch-on .panel`. Every
+  touch position is per-ID now, and `transform: none` finally reaches
+  `#charPanel`'s `translateX(-50%)`.
+- **Every panel hung 46px below the viewport at 844×390**, unreachable under
+  `body { overflow: hidden }`: `top: 70px` plus the spec's own
+  `calc(100dvh - 24px)` is 436 on a 390px screen. The height is measured from
+  the panel's own top now.
+- **Tapping the `[?]` inside the touch help overlay welded an empty
+  full-width band to the middle of the screen**, eating tap-to-attack, because
+  that button called `toggleHelpFull()` directly and only `touchToggleHelp()`
+  clears `.touch-shown`. It routes through the latter now, which on a keyboard
+  is byte-for-byte the old behaviour.
+- **The open help overlay covered the ☰** — fixed by the same hoist above it.
+- **The stacking was wrong at SMALL and LARGE text.** `getBoundingClientRect()`
+  answers in post-zoom pixels and every card it writes a `top` onto carries
+  `zoom: var(--ui-scale)`, which scales `top` too — so the numbers were
+  re-multiplied. At SMALL in portrait that produced a genuinely intersecting
+  pair, the exact bug PART B exists to fix. The division is in, and it applies
+  to *only* the cards that carry the zoom: the ☰ lives in its own
+  un-zoomed layer, and dividing its top put it through the day card at LARGE.
+- **This build's own first fix put the HP bar inside the joystick.** Moving it
+  out from under the attack button sent it to the bottom-left, where 100% of
+  it sat inside `#touchStick` and the 112px stick circle drew over it every
+  time the player moved. BOTH bottom corners belong to the thumbs — PART B's
+  own sentence. It is in the measured stack at the top now, under the player
+  card whose HP number it duplicates.
+- **At LARGE text on a 390px screen the two top corner cards do not fit one
+  row** (224px + 183px against 390px) and no vertical stacking below them
+  helps. The day card is measured too now, so it drops below the player card
+  on exactly the screens where it has to.
+- **Minor, all fixed:** the `dblclick`/gesture blockers were on `window`,
+  killing double-click-to-select-a-word in the login field and every panel for
+  anyone who turns the layer on at a desk — they are on the game canvas and
+  the two control layers now; `applySettings()` rebuilt the help card twice on
+  every tick of a volume slider; the portrait card's `pointer-events: auto`
+  made a full-width band swallow tap-to-attack until dismissed; a tap outside
+  the ☰ did not close it; and the Dive lamp lit within one tile of the world
+  edge, where `biomeAt()` answers `B.DEEP` for off-map.
+
+**Valid trade-off — not fixed, flagged:**
+- **The stick has no analog speed.** `touchStickVecFrom()` clamps the
+  magnitude to 0..1 and `update()` then normalises unconditionally, so any
+  deflection past the deadzone walks at full speed. That is the spec's own
+  instruction ("Nothing else in the movement code changes") and what its ±2%
+  gate asks for; proportional speed means touching the normalise, which is
+  out of scope. The misleading comment that claimed the clamp was what made
+  the two paths identical has been corrected in place.
+- **An open panel covers most of the stick zone on a phone**, where a desktop
+  player can still walk with WASD while the Inventory is open. Inherent to a
+  300px panel on a 390px screen; the ☰ is always reachable to close it.
+- **A player who sets Touch controls to OFF on a phone has no in-world route
+  back to Settings** — `#settingsBtn` has always lived on the login card. A
+  reload reaches it. Pre-existing placement, surfaced by the new setting.
+
+**Noise — one, and it was the reviewer being right about the wrong thing:**
+the review called `shot.js`'s overlap exemption "built on a false premise"
+because `#touchStick` is `pointer-events: auto`, not pass-through. It is
+right about the fact and the wording is corrected; the exemption itself still
+stands, because every HUD card is `pointer-events: none` and takes no input
+whether the stick is over it or not. What the correction earned is the
+measurement that matters: `#hpBarWrap` and `#touchMenuBtn` are named in the
+measured set now, which is exactly how the HP-bar-inside-the-stick defect
+above was caught.
+
+**Gate integrity:** run4 **1800 → 1868 PASS, 0 FAIL**; run5 coverage draws
+1366 → 1372, CAUGHT none; run3 clean. `debug/run4.js` and `debug/run5.js` are
+purely additive (+526 / +50 lines, zero deletions). Eleven gates were
+UPDATED, every one to a *stricter* statement of the same claim after the
+doubt pass changed the mechanism under it: the media-query prelude gate now
+asserts the three-condition form (still exactly one `@media`); the panel
+gates assert the per-ID position that actually wins and `calc(100dvh - 82px)`;
+the stacking gates assert the two-column order; the gesture gate now also
+asserts there is no `window`-level `dblclick` at all; and the zoom gate
+asserts that the ☰ is the one value that must *not* divide. No gate was
+removed, commented out or loosened. No tunable outside this spec moved
+(`PLAYER_SPEED`, `N`, `SAFE_RADIUS`, `GATHER_RANGE`, `HELP_LIFT_GAP`, the lava
+and Dark Forest constants all untouched — checked by diff). Parse floor
+(1000 chars) intact. Five new `catch` blocks, every one a browser-capability
+probe (`matchMedia`, the `KeyboardEvent` constructor, `setPointerCapture`,
+`defineProperty`) and none around game logic. No `service_role` key; this
+build touches no SQL, no table and no policy, so step 0c is a no-op for it.
+
+**README step 7:** no new species, mob, weapon kind or class entered the game,
+so no coverage list needed an entry. What is new is a whole set of per-frame
+branches that only run with the layer on, and `run5` now sweeps all three
+modes with every control pressed and released in each.
+
 ### 2026-10-13 (World Check Fixes — landmarks, compass, caves, lava, Dark Forest)
 
 Built in the owner-started gauntlet session from last night's saved patch plus

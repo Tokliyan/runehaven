@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Mobile & Touch PART A: a phone must stop treating the game like a web
+     page. No pinch, no double-tap zoom, and the layout runs edge to edge so
+     env(safe-area-inset-*) can keep the HUD and the thumb controls out from
+     under the notch and the home bar. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>RuneHaven</title>
 <!-- v23: approved hashbrown mark, icon only, pre-built + verified at 32px -->
 <style>
@@ -29,7 +33,14 @@
     overflow: hidden;
     color: var(--text);
   }
-  #game { display: block; width: 100vw; height: 100vh; }
+  /* Mobile & Touch PART A: `touch-action: none` is what turns a thumb drag
+     into a joystick instead of a page scroll, and it is also what stops the
+     double-tap zoom and the pull-to-refresh. The two -webkit- lines kill the
+     text selection and the long-press callout a tap-and-hold would otherwise
+     raise over the canvas. Inert on a mouse. */
+  #game { display: block; width: 100vw; height: 100vh;
+    touch-action: none; -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none; }
 
   /* ---------- LOGIN (unchanged) ---------- */
   #login {
@@ -41,10 +52,15 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 22px; z-index: 30; padding: 20px; overflow-y: auto;
   }
+  /* Mobile & Touch PART B: at 390px the 58px title with its 10px tracking ran
+     off BOTH edges of the login card. clamp() keeps 58px on every screen that
+     can hold it and only gives ground on the ones that cannot — the tracking
+     rides the same clamp, because at a 10px letter-spacing the gaps, not the
+     glyphs, are what overflow a 360px card. */
   #login h1 {
     font-family: 'Almendra Display', serif;
-    font-size: 58px; font-weight: 700; color: var(--gold);
-    letter-spacing: 10px;
+    font-size: clamp(26px, 9vw, 58px); font-weight: 700; color: var(--gold);
+    letter-spacing: clamp(4px, 1.5vw, 10px);
     text-shadow: 0 0 34px rgba(232,182,76,0.45), 0 2px 0 #6b5320;
   }
   #login .tagline { color: var(--text-dim); margin-top: -16px; font-size: 14px; letter-spacing: 3px; }
@@ -589,6 +605,264 @@
   /* The two overrides the shared bar rule needs to stop being a fixed corner
      element and start being a row inside a card. Nothing else about it moves. */
   #bossBarWrap { position: relative; bottom: auto; right: auto; width: 100%; height: 14px; }
+
+  /* ---------- MOBILE & TOUCH PART A: the on-screen control layer ----------
+     Not a second input system. Every control here dispatches the REAL
+     KeyboardEvent its action is bound to; nothing in this block, and nothing
+     in the JS section that drives it, knows what any action does. See the
+     MOBILE & TOUCH section for why that matters.
+
+     The LAYER never eats a tap — `pointer-events: none` — so a tap on open
+     canvas still reaches the canvas's own pointerdown and attacks. Only the
+     controls take the clicks back, and each one stops propagation, so
+     touching a control is never also an attack.
+
+     z-index 6 is one step above the HUD cards (5) and below the panels (10),
+     because a card is `pointer-events: none` and must not be able to swallow
+     a thumb.
+
+     DOUBT PASS, measured in Chromium: a positioned element with a z-index is
+     a stacking CONTEXT, so a z-index INSIDE this layer orders its children
+     against each other and can never lift one above a panel at 10. With the
+     menu button inside it, an Inventory panel tall enough to reach it buried
+     the ☰ — and a panel has no close button, so the only way to shut it was
+     the key only the buried ☰ could send. That is verbatim the thing a
+     control layer must never do, so #touchMenuLayer is a SECOND top-level
+     layer at z-index 13, above the panels and above the help overlay. It is
+     shown and hidden with #touchUI and is part of the same control layer in
+     every way except which stacking context it lives in. */
+  #touchUI { position: fixed; inset: 0; z-index: 6; display: none; pointer-events: none; }
+  #touchMenuLayer { position: fixed; inset: 0; z-index: 13; display: none; pointer-events: none; }
+  #touchUI *, #touchMenuLayer * {
+    touch-action: none; -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+  }
+  /* The left thumb's zone — the left 45% of the bottom 65% of the screen.
+     Deliberately invisible and deliberately large: the stick APPEARS where
+     the thumb lands rather than asking the thumb to find it. */
+  #touchStick {
+    position: absolute; left: 0; bottom: 0; width: 45%; height: 65%;
+    pointer-events: auto;
+  }
+  #touchStickBase {
+    position: absolute; width: 112px; height: 112px; margin: -56px 0 0 -56px;
+    border: 1px solid var(--panel-edge); border-radius: 50%;
+    background: var(--panel); display: none; backdrop-filter: blur(2px);
+  }
+  #touchStickNub {
+    position: absolute; left: 50%; top: 50%; width: 46px; height: 46px;
+    margin: -23px 0 0 -23px; border-radius: 50%;
+    background: rgba(232,182,76,0.35); border: 1px solid rgba(232,182,76,0.4);
+  }
+  /* The right thumb's cluster. The BOX is pass-through; only the round
+     buttons take taps, so the gaps between them are still open canvas. */
+  #touchCluster {
+    position: absolute; width: 192px; height: 138px; pointer-events: none;
+    right: calc(14px + env(safe-area-inset-right, 0px));
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  }
+  /* The card's own fill, hairline, blur and radius language — the .hud
+     treatment the v56 audit settled, on a circle. No new component style:
+     the only values that are new here are a size and a position. */
+  .tbtn {
+    position: absolute; pointer-events: auto;
+    background: var(--panel); border: 1px solid var(--panel-edge); color: var(--text);
+    font-family: inherit; font-size: 12px; font-weight: 600; letter-spacing: 1px;
+    width: 50px; height: 50px; border-radius: 50%; cursor: pointer;
+    backdrop-filter: blur(2px);
+  }
+  .tbtn.pressed { background: rgba(232,182,76,0.22); border-color: rgba(232,182,76,0.4); }
+  /* PART A: "Shown dimmed unless the player is on or next to water." */
+  .tbtn.tb-dim { opacity: .3; }
+  #tbAttack {
+    width: 72px; height: 72px; right: 6px; bottom: 6px; font-size: 14px;
+    color: var(--gold); border-color: rgba(232,182,76,0.4);
+  }
+  #tbInteract { right: 82px;  bottom: 6px; }
+  #tbBlock    { right: 136px; bottom: 6px; }
+  #tbAbility  { right: 82px;  bottom: 60px; }
+  #tbMount    { right: 136px; bottom: 60px; }
+  #tbDive     { right: 6px;   bottom: 82px; }
+  /* The menu button, and the row it opens. Both read --touch-menu-top, which
+     applyTouchLayout() measures — see PART B's note on why no `top` in this
+     build is a constant. */
+  /* 12 below is WITHIN #touchUI's own stacking context — the portrait card
+     over the stick zone and the cluster. The menu's own layer is above the
+     panels outright, see #touchMenuLayer. */
+  #touchMenuBtn {
+    position: absolute; pointer-events: auto;
+    right: calc(12px + env(safe-area-inset-right, 0px));
+    top: var(--touch-menu-top, 70px);
+    background: var(--panel); border: 1px solid var(--panel-edge); color: var(--text);
+    font-family: inherit; font-size: 16px; line-height: 1; padding: 7px 10px;
+    border-radius: 4px; cursor: pointer; backdrop-filter: blur(2px);
+  }
+  /* DOUBT PASS: this was `pointer-events: none` with the buttons taking the
+     clicks, which meant a drag that began in a 6px gap reached nothing and
+     the box could not be scrolled at all. It takes the events itself now —
+     the cluster steps aside while it is open, so there is nothing underneath
+     it left to swallow a tap for. */
+  #touchMenu {
+    position: absolute; pointer-events: auto; display: none;
+    right: calc(12px + env(safe-area-inset-right, 0px));
+    top: calc(var(--touch-menu-top, 70px) + 42px);
+    max-height: calc(100% - var(--touch-menu-top, 70px) - 54px);
+    flex-direction: column; gap: 6px; align-items: stretch; overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  #touchMenu.open { display: flex; }
+  /* The menu row and the thumb cluster share the right-hand side of a 390px-
+     high screen, and the first phone screenshot of this build had INVENTORY
+     and CRAFT printed across the attack button. While the menu is open the
+     cluster steps out of its way — you are in a menu, not in a fight — and
+     comes straight back when a row is tapped, which also closes the menu. */
+  #touchUI.menu-open #touchCluster { display: none; }
+  .tmbtn {
+    pointer-events: auto; flex: none;
+    background: var(--panel); border: 1px solid var(--panel-edge); color: var(--text);
+    font-family: inherit; font-size: 12px; letter-spacing: 1px; padding: 8px 12px;
+    text-align: right; border-radius: 4px; cursor: pointer; backdrop-filter: blur(2px);
+  }
+  /* The one place inside the layer that has to be scrollable, so it is the
+     one place that unlearns `touch-action: none`. Declared AFTER the
+     wildcard above, which it ties with on specificity. The rows are wired on
+     `click`, not on `pointerdown`, for the same reason: pointerdown's default
+     action includes the touchstart's, so a preventDefault() there cancels the
+     pan that is supposed to reach the rows below the fold. */
+  #touchMenu, #touchMenu .tmbtn { touch-action: pan-y; }
+  /* PART C: the portrait hint. The card gold accent, dismissible, and the
+     game stays fully playable behind it. */
+  /* DOUBT PASS: `pointer-events: auto` on the card made a full-width band
+     across the middle of a portrait screen swallow tap-to-attack until it was
+     dismissed. Only the dismiss button needs the clicks. */
+  #touchPortrait {
+    position: absolute; z-index: 12; display: none; pointer-events: none;
+    left: 12px; right: 12px; bottom: calc(50% + env(safe-area-inset-bottom, 0px));
+    background: var(--panel); border: 1px solid rgba(232,182,76,0.4); color: var(--gold);
+    font-size: 13px; letter-spacing: 1px; line-height: 1.5; text-align: center;
+    padding: 10px 34px; border-radius: 4px; backdrop-filter: blur(2px);
+  }
+  #touchPortrait.shown { display: block; }
+  #touchPortraitX {
+    position: absolute; pointer-events: auto;
+    right: 6px; top: 4px; background: none; border: none;
+    color: var(--text-dim); font-family: inherit; font-size: 13px; cursor: pointer;
+  }
+
+  /* ---------- MOBILE & TOUCH PART B: the HUD fits a phone ----------
+     ONE media query, deliberately the LAST thing in the sheet, and every
+     selector inside it is qualified with `body.touch-on` — so the desktop
+     layout is untouched outside it, and a small desktop WINDOW is untouched
+     too. Two deliberate decisions inside it:
+
+     - the 70% shrink is `transform: scale()`, never a new width/height or
+       padding. The two widget cards' own measurements (150px, the 124px
+       canvas, the 4px inset) are the v56 consistency audit's and stay
+       exactly as the audit left them; scale() is also the only thing that
+       keeps the compass dial's JS-positioned labels in step with the card
+       around them.
+     - every `top` here is a CSS variable, never a constant. The player card
+       grows a line for a pet, a potion, a matched-tier bonus; the day card
+       grows with the player count; the tutorial line is up for the first
+       minutes only. applyTouchLayout() measures the real rectangles and
+       stacks each card under whatever actually sits above it — the
+       applyHelpLift() technique turned the other way up. A constant here
+       would be wrong on some screen, which is the bug PART B exists to
+       fix. */
+  /* DOUBT PASS — the third condition. `(pointer: coarse)` turns the LAYER on
+     with no size test (PART A), while PART B's two size tests decide the
+     LAYOUT, and a tablet at 1024x768 satisfies the first and neither of the
+     others: measured, it got the thumb controls bolted onto the desktop HUD,
+     with the compass inside the live stick zone and the HP bar under the
+     attack button. The two conditions the spec names are untouched; this one
+     is added so the layout can never be left behind by the controls. */
+  @media (max-width: 900px), (max-height: 500px), (pointer: coarse) {
+    body.touch-on #hudPlayer {
+      top: calc(12px + env(safe-area-inset-top, 0px));
+      left: calc(12px + env(safe-area-inset-left, 0px));
+    }
+    /* The day card is measured too, because at LARGE text on a 390px screen
+       the two top cards do not fit on one row — 224px of player card and
+       183px of day card against 390px of screen, measured — and they are
+       pinned to opposite corners, so no amount of vertical stacking below
+       them helps. touchTopBelow() already knows what to do: they only move
+       apart on the screens where they actually overlap. */
+    body.touch-on #hudWorld {
+      top: var(--touch-day-top, 12px);
+      right: calc(12px + env(safe-area-inset-right, 0px));
+    }
+    body.touch-on #hudMinimap {
+      top: var(--touch-mm-top, 70px); bottom: auto;
+      left: calc(12px + env(safe-area-inset-left, 0px));
+      transform: scale(0.7); transform-origin: top left;
+    }
+    body.touch-on #hudMap {
+      top: var(--touch-map-top, 70px); bottom: auto;
+      right: calc(16px + env(safe-area-inset-right, 0px));
+      transform: scale(0.7); transform-origin: top right;
+    }
+    body.touch-on #hudZone   { top: var(--touch-zone-top, 12px); bottom: auto; }
+    body.touch-on #hudPrompt { top: var(--touch-prompt-top, 12px); bottom: auto; }
+    /* The bottom-left corner belongs to the left thumb, so the help card
+       leaves it. Help is in the menu now (PART D), and `.touch-shown` is
+       what lets the hidden card back on screen while that list is open. */
+    body.touch-on #hudHelp { display: none; }
+    /* And the HP bar leaves the bottom-right with it. It has sat at
+       `bottom: 16px; right: 16px` since the hotfix that moved it off the
+       hint bar, which on a phone is underneath the 72px attack button —
+       the first phone screenshot of this build had the bar's right end
+       behind it.
+
+       DOUBT PASS: the first fix sent it to the bottom-LEFT, and measured,
+       100% of the bar then sat inside #touchStick — so the 112px stick
+       circle drew over it every time the player moved. BOTH bottom corners
+       belong to the thumbs, which is PART B's own sentence. It goes to the
+       TOP instead, under the player card whose HP number it duplicates, in
+       the same measured stack as every other card. */
+    body.touch-on #hpBarWrap {
+      top: var(--touch-hp-top, 70px); bottom: auto;
+      left: calc(12px + env(safe-area-inset-left, 0px)); right: auto;
+      width: min(42vw, 270px);
+    }
+    body.touch-on #hudHelp.touch-shown {
+      display: block; left: 12px; right: 12px; top: 50%; bottom: auto;
+      transform: translateY(-50%); max-height: 70dvh; overflow-y: auto;
+      z-index: 12; pointer-events: auto; touch-action: pan-y;
+    }
+    /* A phone has one column, and the top-right of it belongs to the menu
+       button. So every panel pins to the LEFT edge here: without this a
+       panel at `right: 12px` covers the very ☰ that opened it, and because
+       #touchUI is a stacking context at z-index 6 no z-index inside the
+       layer could lift the button back out from under it.
+
+       DOUBT PASS, two corrections measured in Chromium. ONE: `.panel` loses
+       to every per-panel ID rule — #buildPanel's own `left: 352px` has a
+       higher specificity than `body.touch-on .panel`, so the left-pin never
+       reached it and BUILD opened 292px off the right edge of a 390px
+       screen. Every position below is per ID now, which beats the ID rule it
+       overrides by the one class, and `transform: none` finally reaches
+       #charPanel's own `translateX(-50%)`. TWO: `top: 70px` was never
+       overridden and `calc(100dvh - 24px)` is the spec's own subtrahend —
+       70 + 366 is 436 on an 844x390 screen, so the bottom 46px of every
+       panel sat below the viewport with `body { overflow: hidden }` and no
+       way to reach it. The height is measured from the panel's own top now,
+       which is what the spec's sentence means on a card that does not start
+       at the top of the screen. */
+    body.touch-on .panel {
+      top: 70px; max-height: calc(100dvh - 82px); overflow-y: auto;
+    }
+    body.touch-on #invPanel, body.touch-on #petPanel,
+    body.touch-on #travelPanel, body.touch-on #chestPanel,
+    body.touch-on #givePanel {
+      width: min(92vw, 300px);
+      left: calc(12px + env(safe-area-inset-left, 0px)); right: auto; transform: none;
+    }
+    body.touch-on #craftPanel, body.touch-on #buildPanel,
+    body.touch-on #charPanel {
+      width: min(92vw, 330px);
+      left: calc(12px + env(safe-area-inset-left, 0px)); right: auto; transform: none;
+    }
+  }
 </style>
 </head>
 <body>
@@ -674,6 +948,43 @@
      all see the same complete reference whatever the toggle is doing. -->
 <div class="hud" id="hudHelp"><span id="helpCore">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; I inventory</span><button id="helpToggle" aria-expanded="false" aria-controls="helpFull" title="Show all controls">[?]</button><span id="helpFull">SHIFT block &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character &nbsp;•&nbsp; M fast travel &nbsp;•&nbsp; G give item</span></div>
 <div id="hpBarWrap"><div id="hpBar"></div></div>
+
+<!-- Mobile & Touch PART A/C: the on-screen control layer. It ships in the
+     STATIC markup, hidden, exactly as #hudBoss, #pinInput and #resumeNotice
+     do — the "the DOM and the JS agree from frame one" rule this file has
+     followed since v46 — so a grep, a screen reader and the JS all see the
+     same complete set of controls whatever the device turns out to be.
+     applyTouchUI() is the only thing that shows it, and every button's
+     action lives in its own data attribute rather than in a handler, so the
+     table in the JS and the markup here cannot drift apart. -->
+<div id="touchUI">
+  <div id="touchStick"><div id="touchStickBase"><div id="touchStickNub"></div></div></div>
+  <div id="touchCluster">
+    <button class="tbtn" id="tbAttack"   data-tb="attack"   title="Attack">&#9876;</button>
+    <button class="tbtn" id="tbInteract" data-tb="interact" title="Gather / pick up / tame (hold)">E</button>
+    <button class="tbtn" id="tbBlock"    data-tb="block"    title="Block (hold)">BLK</button>
+    <button class="tbtn" id="tbAbility"  data-tb="ability"  title="Class ability">Q</button>
+    <button class="tbtn" id="tbMount"    data-tb="mount"    title="Mount / dismount">R</button>
+    <button class="tbtn tb-dim" id="tbDive" data-tb="dive"  title="Dive (deep water)">F</button>
+  </div>
+  <div id="touchPortrait"><span>Turn your phone sideways for the best view</span><button id="touchPortraitX" title="Dismiss">&#10005;</button></div>
+</div>
+<!-- The ☰ and its row live OUTSIDE #touchUI, in their own top-level layer, so
+     they are above the panels rather than inside a stacking context that is
+     below them. See #touchMenuLayer in the stylesheet for what that fixed. -->
+<div id="touchMenuLayer">
+  <button id="touchMenuBtn" aria-expanded="false" aria-controls="touchMenu" title="Menu">&#9776;</button>
+  <div id="touchMenu">
+    <button class="tmbtn" data-tm="inventory">INVENTORY</button>
+    <button class="tmbtn" data-tm="craft">CRAFT</button>
+    <button class="tmbtn" data-tm="pets">COMPANIONS</button>
+    <button class="tmbtn" data-tm="build">BUILD</button>
+    <button class="tmbtn" data-tm="character">CHARACTER</button>
+    <button class="tmbtn" data-tm="travel">TRAVEL</button>
+    <button class="tmbtn" data-tm="give">GIVE</button>
+    <button class="tmbtn" data-tm="help">HELP</button>
+  </div>
+</div>
 
 <div class="panel" id="invPanel">
   <h3>INVENTORY</h3>
@@ -838,6 +1149,22 @@
     </div>
 
     <div class="set-sec" id="secControls">
+      <!-- Mobile & Touch PART A: the override for the automatic detection.
+           AUTO follows the device, ON and OFF are the two answers a player
+           can give that beat it. The three buttons are the TEXT SIZE row's
+           own idiom — one .set-btn per value, the current one carrying
+           `.on` — so not one new component style enters this card. -->
+      <div class="set-row">
+        <span class="lab">Touch controls
+          <br><span class="note">The on-screen stick and buttons. AUTO turns them on for a touch
+          screen and leaves them off for a mouse and keyboard. Every button presses the
+          same key you would, so a rebound key moves with it.</span></span>
+        <span class="ctl">
+          <button class="set-btn" id="setTouchAuto">AUTO</button>
+          <button class="set-btn" id="setTouchOn">ON</button>
+          <button class="set-btn" id="setTouchOff">OFF</button>
+        </span>
+      </div>
       <div id="keybindList"></div>
       <div id="keybindMsg"></div>
     </div>
@@ -12521,8 +12848,24 @@ addEventListener("keyup", e => {
   if (k === KEYBINDS.block && me && channel) sendMove(true); // v10: block pose off
 });
 
+/* Mobile & Touch PART A: the left thumb's output, in SCREEN directions, so
+   update() can add it to rawX/rawY and the isometric turn immediately below
+   those lines handles it exactly as it handles W/A/S/D. Written by
+   #touchStick (see the MOBILE & TOUCH section at the foot of this file),
+   reset to 0,0 on release, and 0,0 for the whole life of the page on a
+   keyboard-only machine — which is why the movement code needs no branch
+   for it and no gate that already passes can see it. Declared here, beside
+   the input code it belongs to. */
+let touchVec = { x: 0, y: 0 };
+
 const canvas = document.getElementById("game");
-canvas.addEventListener("mousedown", e => {
+/* Mobile & Touch PART A: `mousedown` -> `pointerdown`, with the body byte for
+   byte what it was. A real mouse click still fires pointerdown first, so
+   aiming with a mouse is unchanged; a tap on open canvas now aims the same
+   way, through the same screenToWorld() inverse and the same tryAttack().
+   Every touch control calls stopPropagation() and sits on its own element,
+   so touching one is never also an attack. */
+canvas.addEventListener("pointerdown", e => {
   if (!me || dead) return;
   const [wx, wy] = screenToWorld(e.clientX, e.clientY);
   tryAttack(wx, wy);
@@ -12580,6 +12923,13 @@ function update(dt, t) {
     if (keys[KEYBINDS.down] || keys["arrowdown"]) rawY += 1;
     if (keys[KEYBINDS.left] || keys["arrowleft"]) rawX -= 1;
     if (keys[KEYBINDS.right] || keys["arrowright"]) rawX += 1;
+    /* Mobile & Touch PART A: the joystick is a FIFTH source of the same raw
+       vector, added directly after the four key lines and before the
+       isometric turn below — the one place a screen-space direction has to
+       enter. Nothing else in the movement code changes: it already
+       normalises, already turns, already applies every speed multiplier and
+       every blocked-tile gate. touchVec is 0,0 unless a thumb is down. */
+    rawX += touchVec.x; rawY += touchVec.y;
     /* rotated so "up" reads as up on SCREEN, not along the world's own
        diagonal axes — the world grid is isometric, the keys shouldn't be. */
     let dx = rawX + rawY, dy = rawY - rawX;
@@ -19575,6 +19925,12 @@ function updateHUD(dayT) {
     const ss = String(Math.floor((left % 60000) / 1000)).padStart(2, "0");
     document.getElementById("deathTimer").textContent = `${mm}:${ss}`;
   }
+  /* Mobile & Touch PART A/B/C: the dive lamp, the card stacking and the
+     portrait hint, all three of which depend on things only a frame knows —
+     where the player is standing, which HUD cards are up, which way the
+     phone is held. A no-op on every keyboard machine, and it touches the DOM
+     only when something actually changed; see updateTouchHud(). */
+  updateTouchHud();
 }
 
 /* v16: active-pet combat readout — HP and damage, or the downed countdown.
@@ -19707,6 +20063,12 @@ const SETTINGS_DEFAULTS = {
   textSize: "medium", colorblind: false,                     // Accessibility
   volMaster: 80, volMusic: 70, volSfx: 80,                   // Audio, 0-100
   muteMaster: false, muteMusic: false, muteSfx: false,
+  /* Mobile & Touch PART A: "Auto / On / Off", persisted in this same
+     rh_settings store with the same guarded localStorage the rest of the
+     row uses. A string, so loadSettings()'s typeof check accepts it; an
+     unrecognised stored value reads as "auto" rather than as nothing, see
+     touchControlsMode(). */
+  touchControls: "auto",                                     // Controls
 };
 let SETTINGS = Object.assign({}, SETTINGS_DEFAULTS);
 
@@ -20195,7 +20557,12 @@ function applySettings() {
   AudioEngine.muteMaster(SETTINGS.muteMaster);
   AudioEngine.muteMusic(SETTINGS.muteMusic);
   AudioEngine.muteSFX(SETTINGS.muteSfx);
-  refreshHelpLine();
+  /* Mobile & Touch PART A: applyTouchUI() ends with refreshHelpLine(),
+     because PART D's help text is chosen by whether the layer is on and
+     every entry point into the layer has to refresh it. So this is the one
+     call, not two — the doubt pass caught the second one rebuilding the help
+     card on every tick of a volume slider. */
+  applyTouchUI();
   refreshSettingsUI();
 }
 function setSetting(k, v) {
@@ -20363,7 +20730,14 @@ function applyHelpLift() {
   const mmEl = document.getElementById("hudMinimap"), zEl = document.getElementById("hudZone");
   if (mmEl) mmEl.classList.remove("help-hidden");
   if (zEl) zEl.classList.remove("help-hidden");
-  if (!helpExpanded) return { mm: 0, zone: 0 };
+  /* Mobile & Touch PART B: on a touch layout the lift has nothing to do.
+     Both cards it moves are at the TOP of the screen there and the help card
+     is a centred overlay, so every number it would compute is already
+     overridden by the media query — and without this return the ceiling
+     would hide the compass for no reason while the list is open. The two
+     variables and `.help-hidden` are cleared above, before this line, so a
+     device that switches layout mid-session lands back on the base offsets. */
+  if (!helpExpanded || touchControlsOn()) return { mm: 0, zone: 0 };
   const rect = el => el ? el.getBoundingClientRect() : null;
   const help = rect(document.getElementById("hudHelp"));
   const player = rect(document.getElementById("hudPlayer"));
@@ -20379,6 +20753,12 @@ function applyHelpLift() {
 addEventListener("resize", () => { if (helpExpanded) applyHelpLift(); });
 function helpLineHtml(core) {
   const dot = " &nbsp;&bull;&nbsp; ";
+  /* Mobile & Touch PART D: on a touch layout the list describes the BUTTONS,
+     because there are no keys on screen to name. Same two halves, same
+     builder, same separator, same card — and the keyboard text is untouched
+     and comes straight back the moment the layout does. */
+  if (touchControlsOn())
+    return TOUCH_HELP_ENTRIES.filter(e => !!e.core === core).map(e => e.text).join(dot);
   return HELP_ENTRIES.filter(e => !!e.core === core)
     .map(e => e.keys.map(a => keyLabel(KEYBINDS[a])).join("") + " " + e.text)
     .join(dot);
@@ -20490,6 +20870,13 @@ function refreshSettingsUI() {
     if (v) v.textContent = String(SETTINGS[r[2]]);
     if (m) { m.textContent = SETTINGS[r[4]] ? "MUTED" : "MUTE"; m.classList.toggle("on", !!SETTINGS[r[4]]); }
   }
+  /* Mobile & Touch PART A: the TEXT SIZE row's own three-button idiom, read
+     through touchControlsMode() so a stored value the panel cannot show
+     still lights AUTO rather than nothing. */
+  for (const pair of TOUCH_MODES) {
+    const el = $(pair[0]);
+    if (el) el.classList.toggle("on", touchControlsMode() === pair[1]);
+  }
   refreshKeybindList();
 }
 function renderCredits() {
@@ -20570,7 +20957,14 @@ function wireSettingsUI() {
      from its own block, and through the same `.onclick` the settings button
      uses. It is the only clickable thing on a HUD card, which is why the CSS
      has to hand it back the pointer events .hud takes away. */
-  const hlp = $("helpToggle"); if (hlp) hlp.onclick = () => toggleHelpFull();
+  /* DOUBT PASS: this called toggleHelpFull() directly, which is the one
+     thing that does NOT clear `.touch-shown` — so tapping the [?] inside the
+     touch overlay collapsed the list and left an empty full-width band
+     welded across the middle of the screen, eating tap-to-attack, with no
+     way out through the [?]. touchToggleHelp() is that same toggle plus the
+     class, and on a keyboard it is byte-for-byte the old behaviour because
+     the class is only ever added while the layer is on. */
+  const hlp = $("helpToggle"); if (hlp) hlp.onclick = () => touchToggleHelp();
   const cls = $("settingsClose"); if (cls) cls.onclick = closeSettings;
   for (const t of SETTINGS_TABS) {
     const tab = $(t[2]);
@@ -20582,6 +20976,13 @@ function wireSettingsUI() {
   for (const pair of TEXT_SIZES) {
     const el = $(pair[0]);
     if (el) el.onclick = () => setSetting("textSize", pair[1]);
+  }
+  /* Mobile & Touch PART A: three buttons, one setting, and setSetting() does
+     the saving and the re-apply — so the override reaches the layer through
+     exactly the path every other settings row already uses. */
+  for (const pair of TOUCH_MODES) {
+    const el = $(pair[0]);
+    if (el) el.onclick = () => setSetting("touchControls", pair[1]);
   }
   for (const r of VOL_ROWS) {
     const s = $(r[0]);
@@ -20705,9 +21106,565 @@ function debugIntroInfo() {
   };
 }
 
+/* =========================================================
+   MOBILE & TOUCH — PARTS A, C and D
+   The keyboard game behaves exactly as it does today on a computer, and that
+   is a structural property of this section rather than a promise: there is
+   no second input system here. Every control dispatches the REAL
+   KeyboardEvent its action is bound to, on `window`, and then stops caring.
+   Nothing below calls tryAttack(), tryAbility(), toggleMount(), toggleDive(),
+   startTaming() or cancelTaming() — which is what makes holding E tame,
+   holding Shift block, the `e.repeat` guards hold, a remapped key move with
+   the button, and every panel toggle work with no new code at all.
+
+   The joystick is the one control that is not a key, because there is no key
+   that means "two thirds of the way north-east". It writes `touchVec`, which
+   update() adds to rawX/rawY in the one place a screen-space direction
+   enters the movement code.
+   ========================================================= */
+/* TUNABLES (PART A names the first two; the rest are this build's) */
+const TOUCH_STICK_R = 56;             // px from the stick's centre to full deflection
+const TOUCH_STICK_DEAD = 0.2;         // fraction of that radius that still reads as no input
+const TOUCH_WATER_R = 1;              // tiles: how close to water lights the Dive button
+const TOUCH_LAYOUT_GAP = 8;           // px of air between two stacked cards
+/* The compass and the minimap wear their titles OUTSIDE themselves —
+   `.mm-title { position: absolute; top: -18px }`, which costs nothing when
+   those cards are bottom-pinned and is invisible to getBoundingClientRect(),
+   which measures the border box and not an overflowing child. Moved to the
+   TOP of the screen they need that 18px counted or the title sits on the card
+   above: the first phone screenshot of this build had MINIMAP written across
+   the bottom of the day card. The CSS value, not a guess at it. */
+const TOUCH_MM_TITLE_H = 18;          // px of title hanging above those two cards
+const TOUCH_LAYOUT_RECHECK_MS = 500;  // the help lift's own cadence, for the same reason
+
+/* The right-thumb cluster: element id, and the ACTION — never a letter. The
+   v23 rule, so a rebind moves the button with it and the table cannot drift
+   out of step with KEYBINDS. HOLD is not a flag on these rows because it is
+   not an option: pointerdown sends keydown and pointerup/pointercancel/
+   pointerleave send keyup for every one of them, which is exactly what makes
+   hold-to-tame and hold-to-block work. */
+const TOUCH_CLUSTER = [
+  ["tbAttack",   "attack"],
+  ["tbInteract", "interact"],
+  ["tbBlock",    "block"],
+  ["tbAbility",  "ability"],
+  ["tbMount",    "mount"],
+  ["tbDive",     "dive"],
+];
+/* The menu row. Each is ONE tap — keydown then keyup on the key that panel is
+   bound to — so a remapped panel key moves with it exactly as the cluster's
+   do. "help" is the single entry with no binding to send: the [?] list has
+   never been a KEYBINDS action (v23 left it off the table deliberately), so
+   it goes through the same toggleHelpFull() the [?] button itself calls. */
+const TOUCH_MENU = [
+  ["inventory", "INVENTORY"],
+  ["craft",     "CRAFT"],
+  ["pets",      "COMPANIONS"],
+  ["build",     "BUILD"],
+  ["character", "CHARACTER"],
+  ["travel",    "TRAVEL"],
+  ["give",      "GIVE"],
+  ["help",      "HELP"],
+];
+/* PART D: the same list, for a device with no keys. Same two halves as
+   HELP_ENTRIES so helpLineHtml() builds it with the builder it already has,
+   and every line names a control that is actually on screen. */
+const TOUCH_HELP_ENTRIES = [
+  { core: true,  text: "Left thumb: move" },
+  { core: true,  text: "Tap: attack" },
+  { core: true,  text: "✋ hold: tame / gather" },
+  { core: true,  text: "☰ menu: inventory &amp; the rest" },
+  { core: false, text: "&#9876; attack" },
+  { core: false, text: "E gather / pick up, hold to tame" },
+  { core: false, text: "BLK hold to block" },
+  { core: false, text: "Q class ability" },
+  { core: false, text: "R mount / dismount" },
+  { core: false, text: "F dive (deep water)" },
+  { core: false, text: "☰ craft, companions, build, character, fast travel, give item" },
+];
+/* The three settings buttons, in the TEXT SIZES table's own shape. */
+const TOUCH_MODES = [["setTouchAuto", "auto"], ["setTouchOn", "on"], ["setTouchOff", "off"]];
+
+/* ---- is the layer on? ---------------------------------------------------- */
+/* The ONE place that asks the device. Wrapped, because matchMedia does not
+   exist under every engine this file is tested in and a missing one has to
+   read as "not a touch device", never as a throw. */
+function touchCoarsePointer() {
+  try { return !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches); }
+  catch (e) { return false; }
+}
+function touchControlsMode() {
+  const m = SETTINGS.touchControls;
+  return (m === "on" || m === "off") ? m : "auto";
+}
+function touchControlsOn() {
+  const m = touchControlsMode();
+  return m === "on" ? true : m === "off" ? false : touchCoarsePointer();
+}
+
+/* ---- PART A: a button that presses a key -------------------------------- */
+function touchKeyEvent(type, key) {
+  try { return new KeyboardEvent(type, { key: key, bubbles: true }); }
+  catch (e) {
+    /* The legacy initialiser, for an engine with no KeyboardEvent
+       constructor. Same type, same `key`, same dispatch target. */
+    const ev = document.createEvent("Event");
+    ev.initEvent(type, true, true);
+    try { Object.defineProperty(ev, "key", { value: key }); } catch (e2) { ev.key = key; }
+    return ev;
+  }
+}
+function touchSendKey(type, action) {
+  const key = KEYBINDS[action];
+  if (typeof key !== "string" || !key) return false;
+  window.dispatchEvent(touchKeyEvent(type, key));
+  return true;
+}
+function touchTapKey(action) {
+  if (!touchSendKey("keydown", action)) return false;
+  touchSendKey("keyup", action);
+  return true;
+}
+/* Which actions this layer is currently holding down. The guard is the point:
+   pointerup and pointerleave can both fire for one release, and a doubled
+   keyup would cancel a tame the player is still holding for. */
+let touchHeld = Object.create(null);
+function touchPress(el, action) {
+  if (touchHeld[action]) return false;
+  touchHeld[action] = true;
+  if (el) el.classList.add("pressed");
+  return touchSendKey("keydown", action);
+}
+function touchRelease(el, action) {
+  if (!touchHeld[action]) return false;
+  touchHeld[action] = false;
+  if (el) el.classList.remove("pressed");
+  return touchSendKey("keyup", action);
+}
+function touchWireHold(el, action) {
+  if (!el) return false;
+  el.addEventListener("pointerdown", e => {
+    if (e.preventDefault) e.preventDefault();
+    e.stopPropagation();
+    touchPress(el, action);
+  });
+  for (const t of ["pointerup", "pointercancel", "pointerleave"])
+    el.addEventListener(t, e => { e.stopPropagation(); touchRelease(el, action); });
+  return true;
+}
+/* DOUBT PASS: these rows were wired on `pointerdown` with a
+   preventDefault(), and pointerdown's default action includes the
+   touchstart's — so the preventDefault cancelled the pan that is supposed to
+   scroll this row, and the drag fired the first row instead. Measured on a
+   844x390 screen: five of the eight entries were unreachable. `click` is the
+   one event that already knows the difference between a tap and a drag, and
+   it is NOT a second input path: what it does is still send the real key.
+   The cluster keeps pointerdown/pointerup, because a hold has to begin the
+   moment the thumb lands. */
+function touchWireTap(el, action) {
+  if (!el) return false;
+  el.addEventListener("click", e => {
+    if (e.preventDefault) e.preventDefault();
+    e.stopPropagation();
+    /* The menu closing is the feedback, so these rows never wear `.pressed`
+       — a class added here would have to be removed by a pointerup on an
+       element this very handler is about to hide. */
+    touchSetMenu(false);
+    if (action === "help") touchToggleHelp();
+    else touchTapKey(action);
+  });
+  return true;
+}
+
+/* ---- PART A: the left-thumb joystick ------------------------------------ */
+let touchStickId = null, touchStickOx = 0, touchStickOy = 0;
+/* Pure: a pixel offset from where the thumb landed, in, a screen-space
+   direction of magnitude 0..1 out. Inside the deadzone it is exactly 0,0, and
+   past the radius it is clamped to 1 with the direction kept.
+
+   What that clamp buys is the DIRECTION and the deadzone, not the speed:
+   update() normalises (dx, dy) unconditionally, so any deflection past the
+   deadzone walks at full speed, exactly as a key does. That is the spec's
+   own instruction — "Nothing else in the movement code changes" — and it is
+   what its own ±2% gate asks for. Proportional speed would mean touching the
+   normalise, which is out of this spec's scope; the stick is a d-pad with an
+   analog direction today. */
+function touchStickVecFrom(dx, dy) {
+  const len = Math.hypot(dx, dy);
+  if (!(len > TOUCH_STICK_R * TOUCH_STICK_DEAD)) return { x: 0, y: 0 };
+  const k = Math.min(1, len / TOUCH_STICK_R) / len;
+  return { x: dx * k, y: dy * k };
+}
+function touchStickNubTo(px, py) {
+  const nub = document.getElementById("touchStickNub");
+  if (nub) nub.style.transform = "translate(" + Math.round(px) + "px," + Math.round(py) + "px)";
+}
+function touchPointerId(e) { return (e && e.pointerId !== undefined) ? e.pointerId : 1; }
+function touchStickDown(e) {
+  const zone = document.getElementById("touchStick");
+  if (!zone || touchStickId !== null) return false;
+  if (e.preventDefault) e.preventDefault();
+  e.stopPropagation();
+  touchStickId = touchPointerId(e);
+  touchStickOx = e.clientX; touchStickOy = e.clientY;
+  const r = zone.getBoundingClientRect();
+  const base = document.getElementById("touchStickBase");
+  if (base) {
+    base.style.display = "block";
+    base.style.left = (e.clientX - r.left) + "px";
+    base.style.top = (e.clientY - r.top) + "px";
+  }
+  touchStickNubTo(0, 0);
+  /* So a thumb that slides out of the zone mid-drag keeps steering, rather
+     than stopping dead at an invisible edge. */
+  try { if (zone.setPointerCapture && e.pointerId !== undefined) zone.setPointerCapture(e.pointerId); } catch (e2) {}
+  return true;
+}
+function touchStickMove(e) {
+  if (touchStickId === null || touchPointerId(e) !== touchStickId) return false;
+  if (e.preventDefault) e.preventDefault();
+  e.stopPropagation();
+  const v = touchStickVecFrom(e.clientX - touchStickOx, e.clientY - touchStickOy);
+  touchVec.x = v.x; touchVec.y = v.y;
+  touchStickNubTo(v.x * TOUCH_STICK_R, v.y * TOUCH_STICK_R);
+  return true;
+}
+/* Called with the release event, and with no argument at all when the layer
+   itself goes away underneath a thumb that is still down. */
+function touchStickUp(e) {
+  if (e && touchStickId !== null && touchPointerId(e) !== touchStickId) return false;
+  if (e) e.stopPropagation();
+  touchStickId = null;
+  touchVec.x = 0; touchVec.y = 0;
+  const base = document.getElementById("touchStickBase");
+  if (base) base.style.display = "none";
+  touchStickNubTo(0, 0);
+  return true;
+}
+
+/* ---- PART A: the menu, and PART D's help list --------------------------- */
+let touchMenuOpen = false;
+function touchSetMenu(open) {
+  touchMenuOpen = !!open;
+  const row = document.getElementById("touchMenu"), btn = document.getElementById("touchMenuBtn");
+  const layer = document.getElementById("touchUI");
+  if (row) { row.classList.toggle("open", touchMenuOpen); if (!touchMenuOpen) row.scrollTop = 0; }
+  /* On the layer rather than on the row, because what it hides is the row's
+     SIBLING — see #touchUI.menu-open in the stylesheet. */
+  if (layer) layer.classList.toggle("menu-open", touchMenuOpen);
+  if (btn) btn.setAttribute("aria-expanded", touchMenuOpen ? "true" : "false");
+  return touchMenuOpen;
+}
+function touchToggleMenu() { return touchSetMenu(!touchMenuOpen); }
+/* The SAME list and the SAME toggle the [?] button drives. `.touch-shown` is
+   only what lets the card the media query hides back on screen while the
+   list is open — there is still exactly one help list in this game. */
+function touchToggleHelp() {
+  const on = toggleHelpFull();
+  const el = document.getElementById("hudHelp");
+  if (el) el.classList.toggle("touch-shown", !!on && touchControlsOn());
+  return on;
+}
+
+/* ---- PART C: the portrait hint ------------------------------------------ */
+let touchPortraitDismissed = false;
+function touchPortraitWanted() {
+  return touchControlsOn() && !touchPortraitDismissed &&
+         (window.innerHeight || 0) > (window.innerWidth || 0) &&
+         !!me && loginEl.style.display === "none";
+}
+function applyPortraitCard() {
+  const el = document.getElementById("touchPortrait");
+  const want = touchPortraitWanted();
+  if (el) el.classList.toggle("shown", want);
+  return want;
+}
+
+/* ---- PART A: the Dive button says whether F would do anything ----------- */
+let touchDiveLit = null;
+function touchNearWater() {
+  if (!me || inInterior()) return false;
+  const cx = Math.floor(me.x), cy = Math.floor(me.y);
+  for (let dy = -TOUCH_WATER_R; dy <= TOUCH_WATER_R; dy++)
+    for (let dx = -TOUCH_WATER_R; dx <= TOUCH_WATER_R; dx++) {
+      const tx = cx + dx, ty = cy + dy;
+      /* DOUBT PASS: biomeAt() answers B.DEEP for anything off the map, so
+         without this the lamp lit for every tile within one of the world
+         edge — dry land the dive key does nothing on. */
+      if (tx < 0 || ty < 0 || tx >= N || ty >= N) continue;
+      const b = biomeAt(tx, ty);
+      if (b === B.DEEP || b === B.WATER || b === B.SHALLOW) return true;
+    }
+  return false;
+}
+function refreshTouchDive(force) {
+  const el = document.getElementById("tbDive");
+  if (!el) return false;
+  const lit = touchControlsOn() ? touchNearWater() : false;
+  if (force || lit !== touchDiveLit) {
+    touchDiveLit = lit;
+    el.classList.toggle("tb-dim", !lit);
+  }
+  return lit;
+}
+
+/* ---- PART B: the stacking the media query reads ------------------------- */
+/* The smallest `top` at which `target` clears every card above it that it
+   actually shares horizontal space with — helpLiftFor()'s arithmetic turned
+   the other way up, and a pure function of rectangles for the same reason:
+   jsdom has no layout, so the gates test the arithmetic directly and a real
+   browser measures the real cards (debug/shot.js MOBILE=1). */
+function touchTopBelow(target, aboves, floorTop, extraGap) {
+  let top = floorTop;
+  if (!target) return top;
+  const gap = TOUCH_LAYOUT_GAP + (extraGap || 0);
+  for (const a of aboves) {
+    if (!a || !(a.bottom > 0)) continue;
+    if (!(target.left < a.right && a.left < target.right)) continue;
+    const want = Math.ceil(a.bottom + gap);
+    if (want > top) top = want;
+  }
+  return top;
+}
+/* DOUBT PASS — the one number that was wrong on two of the three text sizes.
+   getBoundingClientRect() answers in real screen pixels, AFTER zoom. Every
+   card this stacking writes a `top` onto carries `zoom: var(--ui-scale)` from
+   the accessibility rule, and `zoom` scales an element's own `top` too — so a
+   measured 210px written straight back rendered at 185px on SMALL and 248px
+   on LARGE. Measured at SMALL in portrait, that produced a genuinely
+   intersecting pair (#hudMinimap bottom 188 against #hudZone top 185), which
+   is the exact bug PART B exists to fix. Divide by the scale on the way in
+   and the rendered position is the measured one at every text size. */
+function touchUiScale() {
+  const raw = parseFloat(document.documentElement.style.getPropertyValue("--ui-scale"));
+  return (raw > 0.05 && raw < 20) ? raw : 1;
+}
+let touchLayoutCheckedAt = 0;
+function touchNow() {
+  return (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+}
+function touchRect(el) {
+  if (!el || !el.getBoundingClientRect) return null;
+  const r = el.getBoundingClientRect();
+  return (r.width > 0 && r.height > 0) ? r : null;
+}
+function applyTouchLayout() {
+  touchLayoutCheckedAt = touchNow();
+  const root = document.documentElement.style;
+  const $ = id => document.getElementById(id);
+  const z = touchUiScale();
+  /* Screen px in, CSS px out — see touchUiScale(). The division applies to
+     exactly the cards that CARRY the zoom, which is the `.hud, .panel,
+     #toast, #hpBarWrap, …` rule's own list. The ☰ lives in its own layer,
+     which is not on that list and is therefore not zoomed, so dividing its
+     top would push it up by 15% of the screen at LARGE text — measured, that
+     put it straight through the day card. At the default text size z is 1
+     and every one of these is the measured number unchanged. */
+  const ZOOMED = { day: 1, hp: 1, mm: 1, map: 1, zone: 1, prompt: 1 };
+  const set = o => {
+    for (const k in o)
+      root.setProperty("--touch-" + k + "-top",
+                       Math.round(ZOOMED[k] ? o[k] / z : o[k]) + "px");
+    return o;
+  };
+  /* Off, and the variables go back to the defaults the media query names, so
+     a device that switches layout mid-session leaves nothing behind. */
+  if (!touchControlsOn()) return set({ day: 12, mm: 12, map: 12, menu: 70, hp: 70, zone: 12, prompt: 12 });
+  /* A card with no layout yet (hidden, or jsdom) is treated as full width —
+     the conservative answer, so a card that appears between two passes
+     appears BELOW everything rather than on top of something. */
+  const full = { left: 0, right: window.innerWidth || 0 };
+  const box = (r, top) => r ? { left: r.left, right: r.right, bottom: top + r.height } : null;
+  const playerR = touchRect($("hudPlayer")), dayR = touchRect($("hudWorld"));
+  const tutR = touchRect($("hudTutorial"));
+  const mmR = touchRect($("hudMinimap")), mapR = touchRect($("hudMap"));
+  /* LEFT column: the player card, the HP bar it duplicates, then the compass.
+     RIGHT column: the day card, the ☰, then the minimap. The ☰ goes directly
+     under the day card, which is where PART A puts it, and the doubt pass is
+     why it is above the minimap rather than below it: under BOTH of them it
+     started at 200px on an 844x390 screen and left 136px for 298px of menu,
+     so five of the eight entries had nowhere to be. */
+  /* The day card first: on a narrow screen at LARGE text it cannot share a
+     row with the player card, and everything in the right-hand column hangs
+     off where it ends up. */
+  const day = touchTopBelow(dayR || full, [playerR], 12);
+  const dayBox = box(dayR, day);
+  const hpR = touchRect($("hpBarWrap"));
+  /* The day card is in the aboves too: at LARGE text on a 390px screen the
+     bar and the day card both end up under the player card and are wide
+     enough to meet in the middle. */
+  const hp = touchTopBelow(hpR || full, [playerR, dayBox], 12);
+  const hpBox = box(hpR, hp);
+  const mm = touchTopBelow(mmR || full, [playerR, hpBox], 12 + TOUCH_MM_TITLE_H, TOUCH_MM_TITLE_H);
+  const menuR = touchRect($("touchMenuBtn"));
+  const menu = touchTopBelow(menuR || full, [playerR, dayBox], 12);
+  const menuBox = box(menuR, menu);
+  const map = touchTopBelow(mapR || full, [dayBox, menuBox], 12 + TOUCH_MM_TITLE_H, TOUCH_MM_TITLE_H);
+  const mmBox = box(mmR, mm), mapBox = box(mapR, map);
+  /* Both centred cards clear everything in both top columns, which is what
+     makes them fit a 390px-wide screen where a centred card and two corner
+     cards cannot sit on one row. */
+  const aboves = [playerR, dayBox, tutR, hpBox, menuBox, mmBox, mapBox];
+  const zoneR = touchRect($("hudZone")), promptR = touchRect($("hudPrompt"));
+  const zone = touchTopBelow(zoneR || full, aboves, 12);
+  const prompt = touchTopBelow(promptR || full, aboves.concat([box(zoneR, zone)]), 12);
+  return set({ day: day, mm: mm, map: map, menu: menu, hp: hp, zone: zone, prompt: prompt });
+}
+
+/* ---- the layer, on and off --------------------------------------------- */
+function applyTouchUI() {
+  const on = touchControlsOn();
+  const el = document.getElementById("touchUI");
+  const menuLayer = document.getElementById("touchMenuLayer");
+  if (el) el.style.display = on ? "block" : "none";
+  /* The menu's own top-level layer is part of the same control layer and is
+     shown and hidden with it — see #touchMenuLayer for why it is not simply
+     a child of #touchUI. */
+  if (menuLayer) menuLayer.style.display = on ? "block" : "none";
+  document.body.classList.toggle("touch-on", on);
+  if (!on) {
+    /* Everything the layer was holding is let go through the same release
+       path a lifted thumb uses. A key this layer pressed must never stay
+       stuck down because the layer went away underneath it. */
+    touchStickUp(null);
+    for (const row of TOUCH_CLUSTER) touchRelease(document.getElementById(row[0]), row[1]);
+    touchSetMenu(false);
+    const h = document.getElementById("hudHelp");
+    if (h) h.classList.remove("touch-shown");
+  }
+  applyTouchLayout();
+  applyPortraitCard();
+  refreshTouchDive(true);
+  /* PART D: the help text follows the device, and this is the one call that
+     every entry point into the layer shares — the settings row, a rotation,
+     a resize, and a pointer type that changes under a hybrid laptop. */
+  refreshHelpLine();
+  return on;
+}
+/* Called once at the foot of updateHUD(). Each of the three halves depends on
+   something only a frame knows, and each is a no-op when the layer is off:
+   the dive lamp touches the DOM only when it actually changes, and the
+   stacking is re-measured at the help lift's own twice-a-second cadence —
+   plus immediately whenever a card appears or disappears, which is the case
+   a timer on its own would always show late. */
+let touchLayoutSeen = "";
+function updateTouchHud() {
+  if (!touchControlsOn()) return false;
+  refreshTouchDive(false);
+  applyPortraitCard();
+  const z = document.getElementById("hudZone"), p = document.getElementById("hudPrompt");
+  const seen = (z ? z.style.display : "") + "|" + (p ? p.style.display : "");
+  if (seen !== touchLayoutSeen || touchNow() - touchLayoutCheckedAt > TOUCH_LAYOUT_RECHECK_MS) {
+    touchLayoutSeen = seen;
+    applyTouchLayout();
+  }
+  return true;
+}
+function wireTouchUI() {
+  for (const row of TOUCH_CLUSTER) touchWireHold(document.getElementById(row[0]), row[1]);
+  const menu = document.getElementById("touchMenu");
+  if (menu) for (const row of TOUCH_MENU)
+    touchWireTap(menu.querySelector('[data-tm="' + row[0] + '"]'), row[0]);
+  const mb = document.getElementById("touchMenuBtn");
+  if (mb) mb.addEventListener("pointerdown", e => {
+    if (e.preventDefault) e.preventDefault();
+    e.stopPropagation();
+    touchToggleMenu();
+  });
+  /* A tap anywhere that is not the menu closes it — the thing every menu on
+     every phone does, and without it the row stayed open behind an attack. */
+  const closeMenuOnOutside = e => { if (touchMenuOpen) touchSetMenu(false); };
+  const cv = document.getElementById("game");
+  if (cv) cv.addEventListener("pointerdown", closeMenuOnOutside);
+  const zone = document.getElementById("touchStick");
+  if (zone) {
+    zone.addEventListener("pointerdown", closeMenuOnOutside);
+    zone.addEventListener("pointerdown", touchStickDown);
+    zone.addEventListener("pointermove", touchStickMove);
+    for (const t of ["pointerup", "pointercancel", "pointerleave"])
+      zone.addEventListener(t, touchStickUp);
+  }
+  const px = document.getElementById("touchPortraitX");
+  if (px) px.addEventListener("pointerdown", e => {
+    if (e.preventDefault) e.preventDefault();
+    e.stopPropagation();
+    touchPortraitDismissed = true;
+    applyPortraitCard();
+  });
+  /* The layer follows the device rather than only the boot: a rotation, a
+     resize, and a pointer type that changes under a hybrid laptop all
+     re-ask. The resize listener is also what re-stacks PART B's cards. */
+  addEventListener("resize", () => { applyTouchUI(); });
+  addEventListener("orientationchange", () => { applyTouchUI(); });
+  try {
+    const mq = window.matchMedia && window.matchMedia("(pointer: coarse)");
+    if (mq && mq.addEventListener) mq.addEventListener("change", () => applyTouchUI());
+    else if (mq && mq.addListener) mq.addListener(() => applyTouchUI());
+  } catch (e) {}
+  /* PART A: "Block double-tap zoom." The viewport meta and `touch-action`
+     already refuse it, but iOS Safari has honoured neither on every version
+     it has shipped, so the two gestures that drive the zoom are refused
+     outright as well. Only while the layer is on, so a mouse keeps its
+     double-click and a trackpad keeps its pinch. */
+  /* DOUBT PASS: both of these were on `window`, which killed
+     double-click-to-select-a-word in the login name field and in every panel
+     for anyone who turns the layer on at a desk. They belong on the game
+     canvas and the control layers, which is the only place the zoom gesture
+     is a problem. */
+  for (const id of ["game", "touchUI", "touchMenuLayer"]) {
+    const t = document.getElementById(id);
+    if (!t) continue;
+    t.addEventListener("dblclick", e => { if (e.preventDefault) e.preventDefault(); }, { passive: false });
+    for (const g of ["gesturestart", "gesturechange", "gestureend"])
+      t.addEventListener(g, e => { if (e.preventDefault) e.preventDefault(); }, { passive: false });
+  }
+  return true;
+}
+
+/* Mobile & Touch harness hook — the layer's state is top-level `let`s and
+   `const`s, which never land on window. Copies, except debugSetTouchVec()
+   below, which is a deliberate live handle: the movement gate's whole claim
+   is that a stick deflection and a held key move the player identically, and
+   it cannot be made without writing the one the game reads. */
+function debugTouchInfo() {
+  const el = id => document.getElementById(id);
+  const cls = (id, c) => !!(el(id) && el(id).classList.contains(c));
+  return {
+    mode: touchControlsMode(), on: touchControlsOn(), coarse: touchCoarsePointer(),
+    stored: SETTINGS.touchControls,
+    layerDisplay: el("touchUI") ? el("touchUI").style.display : null,
+    menuLayerDisplay: el("touchMenuLayer") ? el("touchMenuLayer").style.display : null,
+    menuLayerTopLevel: !!(el("touchMenuLayer") && el("touchMenuLayer").parentNode === document.body),
+    uiScale: touchUiScale(),
+    bodyTouchOn: document.body.classList.contains("touch-on"),
+    menuOpen: touchMenuOpen,
+    stickActive: touchStickId !== null,
+    touchVec: { x: touchVec.x, y: touchVec.y },
+    diveDim: cls("tbDive", "tb-dim"),
+    held: Object.keys(touchHeld).filter(a => !!touchHeld[a]),
+    cluster: TOUCH_CLUSTER.map(r => [r[0], r[1], KEYBINDS[r[1]]]),
+    menu: TOUCH_MENU.map(r => r[0]),
+    portraitShown: cls("touchPortrait", "shown"),
+    portraitDismissed: touchPortraitDismissed,
+    helpTouchShown: cls("hudHelp", "touch-shown"),
+    helpCoreText: el("helpCore") ? el("helpCore").textContent : "",
+    helpFullText: el("helpFull") ? el("helpFull").textContent : "",
+    vars: ["--touch-day-top", "--touch-hp-top", "--touch-mm-top", "--touch-map-top",
+           "--touch-menu-top", "--touch-zone-top", "--touch-prompt-top"]
+            .map(v => document.documentElement.style.getPropertyValue(v) || ""),
+  };
+}
+function debugSetTouchVec(v) {
+  touchVec.x = +((v && v.x) || 0) || 0;
+  touchVec.y = +((v && v.y) || 0) || 0;
+  return { x: touchVec.x, y: touchVec.y };
+}
+function debugSetTouchPortraitDismissed(v) { touchPortraitDismissed = !!v; return touchPortraitDismissed; }
+
 loadSettings();
 applySettings();
 wireSettingsUI();
+wireTouchUI();
 playIntro();
 /* v46 PART B: last of all, and deliberately not awaited — the intro card is
    already on screen and plays its full 2.6s over the top of whatever this

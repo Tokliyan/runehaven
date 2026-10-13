@@ -1048,6 +1048,56 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('compass label layout swept — ' + boxesW.length + ' labels placed at Spawn');
     }
 
+    /* ---- Mobile & Touch: the touch layout is a second HUD path, so it gets
+       swept the way every other branch in this file does. No new species,
+       mob, weapon kind or class entered the game this build (README step 7),
+       so nothing above this needed a new entry — what IS new is a whole set
+       of per-frame branches (the dive lamp, the card stacking, the portrait
+       hint, the touch help list) that only run with the layer on, and which
+       no earlier sweep could reach. Both modes, with real frames pumped
+       through each, and the mode handed back at the end. */
+    if (window.debugTouchInfo && window.applyTouchUI && window.setSetting) {
+      const modeBeforeT = window.debugTouchInfo().mode;
+      const sweptT = [];
+      for (const mode of ['on', 'off', 'auto']) {
+        window.setSetting('touchControls', mode);
+        window.applyTouchUI();
+        /* Every control pressed and released once in this mode — on a touch
+           layout these reach the real key handlers, and on a keyboard one
+           the layer is hidden and they must still not throw. */
+        for (const row of window.debugTouchInfo().cluster) {
+          const el = window.document.getElementById(row[0]);
+          if (!el) continue;
+          for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'pointerleave']) {
+            const ev = new window.MouseEvent(type, { bubbles: true, cancelable: true });
+            try { Object.defineProperty(ev, 'pointerId', { value: 1 }); } catch (e) {}
+            el.dispatchEvent(ev);
+          }
+        }
+        window.touchToggleMenu();
+        window.touchToggleMenu();
+        window.applyTouchLayout();
+        window.applyPortraitCard();
+        window.refreshTouchDive(true);
+        /* And two real frames, which is what actually runs updateTouchHud()
+           and the stacking inside the live HUD rather than beside it. */
+        window.render(70);
+        window.updateHUD(0.3);
+        window.updateHUD(0.7);
+        n += 2;
+        sweptT.push(mode + ':' + (window.debugTouchInfo().on ? 'on' : 'off'));
+      }
+      window.setSetting('touchControls', modeBeforeT);
+      window.applyTouchUI();
+      const tvOK = window.debugTouchInfo().touchVec;
+      if (sweptT.length !== 3 || tvOK.x !== 0 || tvOK.y !== 0) {
+        console.log('COVERAGE GAP: the touch layer swept ' + sweptT.length + ' of 3 modes, stick left at ' +
+                    tvOK.x + ',' + tvOK.y);
+        process.exit(1);
+      }
+      console.log('touch layer swept — ' + sweptT.join(', ') + ', every control pressed and released in each');
+    }
+
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {

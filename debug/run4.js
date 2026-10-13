@@ -11078,6 +11078,683 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['WCF: the PART D-J hooks exist', false]);
     }
 
+    /* =====================================================================
+         MOBILE & TOUCH — PARTS A-E
+       Deliberately the LAST block in this file, because the first thing it
+       proves is a preservation claim about every gate above it: the touch
+       layer was OFF for all 1800 of them, under jsdom's own matchMedia and
+       the shipped default, so the whole run above this point IS the "the
+       keyboard and mouse game behaves exactly as it does today" gate. Every
+       stub this block installs is put back before it ends.
+       ================================================================== */
+    if (window.debugTouchInfo && window.applyTouchUI && window.debugSetTouchVec) {
+      const T = window.debugTouchInfo;
+      const docT = window.document;
+      const cssT = html.slice(html.indexOf('<style>'), html.indexOf('</style>'))
+                       .replace(/\/\*[\s\S]*?\*\//g, '');
+      const declT = (sel, prop) => {
+        let val = null;
+        const re = /([^{}]+)\{([^{}]*)\}/g;
+        let m;
+        while ((m = re.exec(cssT))) {
+          if (!m[1].split(',').map(s => s.trim()).includes(sel)) continue;
+          for (const d of m[2].split(';')) {
+            const i = d.indexOf(':');
+            if (i > 0 && d.slice(0, i).trim() === prop) val = d.slice(i + 1).trim();
+          }
+        }
+        return val;
+      };
+
+      /* ---- the preservation claim, stated before anything is stubbed ---- */
+      const t0 = T();
+      results.push([`MT P: the layer was OFF for every gate above this one (mode ${t0.mode}, coarse ${t0.coarse}, display ${JSON.stringify(t0.layerDisplay)})`,
+        t0.mode === 'auto' && t0.coarse === false && t0.on === false &&
+        t0.layerDisplay === 'none' && t0.bodyTouchOn === false]);
+      results.push(['MT P: and the keyboard help line is still the generated keyboard one, not the touch one',
+        t0.helpCoreText.indexOf('move') > 0 && t0.helpCoreText.indexOf('Left thumb') < 0 &&
+        t0.helpFullText.indexOf('mount') > 0]);
+
+      /* ---- PART A: detection, and the Settings override beating it ------ */
+      const mmBefore = window.matchMedia;
+      const stubMM = coarse => {
+        const fn = q => ({
+          matches: /coarse/.test(String(q)) ? !!coarse : false, media: String(q),
+          addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
+        });
+        try { Object.defineProperty(window, 'matchMedia', { value: fn, writable: true, configurable: true }); }
+        catch (e) { window.matchMedia = fn; }
+      };
+      const look = () => { window.applyTouchUI(); return T(); };
+      stubMM(true);  const coarseAuto = look();
+      stubMM(false); const fineAuto = look();
+      results.push([`MT A: coarse pointer -> #touchUI is shown (${JSON.stringify(coarseAuto.layerDisplay)}, body.touch-on ${coarseAuto.bodyTouchOn})`,
+        coarseAuto.on === true && coarseAuto.layerDisplay === 'block' && coarseAuto.bodyTouchOn === true]);
+      results.push([`MT A: fine pointer -> it is hidden again (${JSON.stringify(fineAuto.layerDisplay)}, body.touch-on ${fineAuto.bodyTouchOn})`,
+        fineAuto.on === false && fineAuto.layerDisplay === 'none' && fineAuto.bodyTouchOn === false]);
+      window.setSetting('touchControls', 'on');
+      const onOverFine = look();                 // still the fine stub
+      stubMM(true);
+      window.setSetting('touchControls', 'off');
+      const offOverCoarse = look();
+      results.push(['MT A: the Settings override beats detection BOTH ways — ON on a mouse, OFF on a touch screen',
+        onOverFine.on === true && onOverFine.layerDisplay === 'block' &&
+        offOverCoarse.on === false && offOverCoarse.layerDisplay === 'none']);
+      window.setSetting('touchControls', 'auto');
+      results.push(['MT A: and AUTO really hands the decision back to the device',
+        look().on === true]);
+      /* It is one row in the EXISTING store, not a new one, and a value the
+         panel cannot show reads as auto rather than as nothing. */
+      results.push(['MT A: the row lives in rh_settings with the rest, and defaults to auto',
+        window.debugSettingsInfo().SETTINGS_DEFAULTS.touchControls === 'auto' &&
+        gameScript.indexOf('const LS_SETTINGS = "rh_settings";') > 0]);
+      window.setSetting('touchControls', 'nonsense-from-a-future-version');
+      const bogus = T();
+      results.push([`MT A: an unrecognised stored value reads as auto (stored ${JSON.stringify(bogus.stored)} -> mode ${bogus.mode})`,
+        bogus.stored === 'nonsense-from-a-future-version' && bogus.mode === 'auto']);
+      window.setSetting('touchControls', 'on');
+      window.applyTouchUI();
+      results.push(['MT A: the three settings buttons exist and the live one lights, in the TEXT SIZE row\'s own idiom',
+        ['setTouchAuto', 'setTouchOn', 'setTouchOff'].every(id => !!docT.getElementById(id)) &&
+        docT.getElementById('setTouchOn').classList.contains('on') &&
+        !docT.getElementById('setTouchAuto').classList.contains('on')]);
+
+      /* ---- PART A: every button presses the REAL key ------------------- */
+      /* The counters go on the GLOBAL functions, which is where the game's
+         own unqualified calls resolve — so a button that reached the key
+         handler is indistinguishable here from a key that did, which is the
+         whole claim. Each is a counting no-op rather than a call-through, so
+         counting an attack cannot also swing a weapon. */
+      const realFns = {};
+      const calls = {};
+      /* `sendMove` is on the list because the BLOCK key's handler is the one
+         whose whole body is a sendMove() — without it, the one button bound
+         to a modifier would be the one button this gate could not see. */
+      const COUNTED = ['tryAttack', 'tryAbility', 'toggleMount', 'toggleDive',
+                       'startTaming', 'cancelTaming', 'doInteract', 'toast',
+                       'sendMove', 'nearestWeakMob', 'nearestWild', 'nearestGiveTarget'];
+      for (const f of COUNTED) { realFns[f] = window[f]; calls[f] = 0; }
+      const lastAttack = [];
+      for (const f of COUNTED) window[f] = function () { calls[f]++; return undefined; };
+      window.tryAttack = function (wx, wy) { calls.tryAttack++; lastAttack.push([wx, wy]); };
+      window.nearestWeakMob = function () { calls.nearestWeakMob++; return null; };
+      window.nearestWild = function () { calls.nearestWild++; return { id: 'mt-gate', species: 'wolf', x: 0, y: 0 }; };
+      window.nearestGiveTarget = function () { calls.nearestGiveTarget++; return null; };
+      window.cancelTaming = function () { calls.cancelTaming++; return realFns.cancelTaming.apply(this, arguments); };
+      window.respawn();                       // alive, surfaced, overlay down
+      const ptr = (el, type, extra) => {
+        const ev = new window.MouseEvent(type, Object.assign({ bubbles: true, cancelable: true }, extra || {}));
+        try { Object.defineProperty(ev, 'pointerId', { value: 1 }); } catch (e) {}
+        el.dispatchEvent(ev);
+        return ev;
+      };
+      /* The cluster is pointerdown/pointerup, because a HOLD has to begin the
+         moment the thumb lands. The menu rows are `click`, because
+         pointerdown's default action includes the touchstart's and
+         preventDefault()ing it cancelled the pan that scrolls the row — see
+         the doubt-pass note on touchWireTap(). A gate presses each the way a
+         thumb does. */
+      const tapRow = el => ptr(el, 'click');
+      const perButton = {};
+      for (const row of T().cluster) {
+        const el = docT.getElementById(row[0]);
+        const before = JSON.stringify(calls);
+        ptr(el, 'pointerdown');
+        const mid = JSON.stringify(calls);
+        const pressedWhileDown = el.classList.contains('pressed');
+        ptr(el, 'pointerup');
+        perButton[row[1]] = { moved: before !== mid, pressedWhileDown,
+                              released: !el.classList.contains('pressed') };
+      }
+      results.push([`MT A: attack / ability / mount / dive all reached their own real handler (${calls.tryAttack}/${calls.tryAbility}/${calls.toggleMount}/${calls.toggleDive} calls)`,
+        calls.tryAttack === 1 && calls.tryAbility === 1 &&
+        calls.toggleMount === 1 && calls.toggleDive === 1]);
+      results.push([`MT A: HOLD works — the E button started a tame on press and cancelled it on release (${calls.startTaming} / ${calls.cancelTaming})`,
+        calls.startTaming === 1 && calls.cancelTaming === 1 && calls.doInteract === 0]);
+      results.push(['MT A: and every one of the six showed held state while down and dropped it on release',
+        Object.keys(perButton).length === 6 &&
+        Object.keys(perButton).every(a => perButton[a].moved && perButton[a].pressedWhileDown && perButton[a].released)]);
+      /* A doubled release must not send a second keyup — pointerup and
+         pointerleave both fire for one real lift, and a doubled keyup on
+         `interact` would cancel a tame the thumb is still holding. */
+      const blkEl = docT.getElementById('tbBlock');
+      const eEl = docT.getElementById('tbInteract');
+      const tameBefore = calls.cancelTaming;
+      ptr(eEl, 'pointerdown'); ptr(eEl, 'pointerup'); ptr(eEl, 'pointerleave');
+      results.push([`MT A: one release is one keyup, however many pointer events it arrives as (${calls.cancelTaming - tameBefore})`,
+        calls.cancelTaming - tameBefore === 1]);
+      /* Shift is the one bound to a modifier, and blocking is the one thing
+         that is REAL state rather than a counted call — so it is checked
+         through the game's own isBlocking() rather than through a counter. */
+      for (const f of COUNTED) window[f] = realFns[f];
+      ptr(blkEl, 'pointerdown');
+      const blockingDown = window.isBlocking();
+      ptr(blkEl, 'pointerup');
+      const blockingUp = window.isBlocking();
+      results.push([`MT A: the BLK button really holds the block pose and really lets it go (${blockingDown} -> ${blockingUp})`,
+        blockingDown === true && blockingUp === false]);
+
+      /* ---- PART A: the menu row toggles the same panels the keys do ---- */
+      const PANELS = { inventory: 'invPanel', craft: 'craftPanel', pets: 'petPanel',
+                       build: 'buildPanel', character: 'charPanel', travel: 'travelPanel' };
+      const menuEl = docT.getElementById('touchMenu');
+      const pressKeyT = (key, type) => window.dispatchEvent(
+        new window.KeyboardEvent(type, { key, bubbles: true }));
+      const panelAgree = [], panelDisagree = [];
+      for (const action in PANELS) {
+        const panel = docT.getElementById(PANELS[action]);
+        const btn = menuEl.querySelector('[data-tm="' + action + '"]');
+        const key = window.debugSettingsInfo().KEYBINDS[action];
+        panel.style.display = 'none';
+        tapRow(btn);
+        const openedByButton = panel.style.display === 'block';
+        panel.style.display = 'none';
+        pressKeyT(key, 'keydown'); pressKeyT(key, 'keyup');
+        const openedByKey = panel.style.display === 'block';
+        panel.style.display = 'none';
+        (openedByButton && openedByKey ? panelAgree : panelDisagree).push(action);
+      }
+      results.push([`MT A: all six panel buttons open exactly what their key opens (${panelAgree.join(', ')})`,
+        panelAgree.length === 6 && panelDisagree.length === 0]);
+      /* GIVE has no panel of its own to show with nobody near — it is the one
+         menu row whose key path ends in a line of text, so that is what is
+         checked. */
+      let toastCount = 0;
+      const realToast = window.toast;
+      window.toast = function () { toastCount++; };
+      tapRow(menuEl.querySelector('[data-tm="give"]'));
+      window.toast = realToast;
+      results.push([`MT A: the GIVE button runs the real give path and says why when nobody is near (${toastCount} toast)`,
+        toastCount === 1]);
+      /* A menu tap closes the menu, which is how a row the size of a phone
+         screen stays out of the way of the thumb underneath it. */
+      window.touchSetMenu(true);
+      const menuWasOpen = T().menuOpen;
+      tapRow(menuEl.querySelector('[data-tm="inventory"]'));
+      docT.getElementById('invPanel').style.display = 'none';
+      results.push([`MT A: the ☰ opens and a tap closes it again (${menuWasOpen} -> ${T().menuOpen})`,
+        menuWasOpen === true && T().menuOpen === false &&
+        window.touchToggleMenu() === true && window.touchToggleMenu() === false]);
+      results.push(['MT A: and the thumb cluster steps out of the open row\'s way, then comes straight back',
+        (() => {
+          const layer = docT.getElementById('touchUI');
+          window.touchSetMenu(true);
+          const aside = layer.classList.contains('menu-open');
+          window.touchSetMenu(false);
+          return aside === true && layer.classList.contains('menu-open') === false &&
+                 cssT.indexOf('#touchUI.menu-open #touchCluster { display: none; }') > 0;
+        })()]);
+
+      /* ---- PART A: a mouse click still attacks ------------------------- */
+      const realAttack = window.tryAttack;
+      const aimed = [];
+      window.tryAttack = function (wx, wy) { aimed.push([wx, wy]); };
+      ptr(docT.getElementById('game'), 'pointerdown', { clientX: 640, clientY: 360 });
+      window.tryAttack = realAttack;
+      const want = window.screenToWorld(640, 360);
+      results.push([`MT A P: mousedown -> pointerdown and a click still attacks, at the same converted point (${aimed.length} hit)`,
+        aimed.length === 1 && Math.abs(aimed[0][0] - want[0]) < 1e-9 &&
+        Math.abs(aimed[0][1] - want[1]) < 1e-9]);
+      results.push(['MT A P: and the handler body is the one that was there, with no mousedown listener left behind',
+        gameScript.indexOf('canvas.addEventListener("pointerdown", e => {\n  if (!me || dead) return;\n  const [wx, wy] = screenToWorld(e.clientX, e.clientY);\n  tryAttack(wx, wy);\n});') > 0 &&
+        gameScript.indexOf('canvas.addEventListener("mousedown"') < 0]);
+      results.push(['MT A: no button ever calls a game function directly — every one of them sends a key',
+        (() => {
+          const at = gameScript.indexOf('   MOBILE & TOUCH — PARTS A, C and D');
+          /* From the END of that header comment, and comment-stripped from
+             there: the header itself names all six of these in the sentence
+             that promises it never calls them, and a slice that starts
+             inside a comment cannot be stripped of the one it is inside.
+             declOf()'s v50/v51 lesson, arriving a second time. */
+          const from = gameScript.indexOf('*/', at);
+          const body = gameScript.slice(from).replace(/\/\*[\s\S]*?\*\//g, '');
+          return at > 0 && from > at &&
+                 body.indexOf('tryAttack(') < 0 && body.indexOf('tryAbility(') < 0 &&
+                 body.indexOf('toggleMount(') < 0 && body.indexOf('toggleDive(') < 0 &&
+                 body.indexOf('startTaming(') < 0 && body.indexOf('cancelTaming(') < 0 &&
+                 body.indexOf('new KeyboardEvent(type, { key: key, bubbles: true })') > 0;
+        })()]);
+
+      /* ---- PART A: the joystick moves the player like the key does ----- */
+      const WB = window.debugWorldInfo().B;
+      const WALK_OK = [WB.SAND, WB.PLAINS, WB.MEADOW, WB.FOREST, WB.ENCHFOREST, WB.SACMEADOW, WB.RUINB];
+      const WI = window.debugWorldInfo();
+      /* Inside the Spawn Safe Zone on purpose: applyDamage() returns early
+         there, so a second of real simulated frames cannot have a mob push
+         the measurement around. The path NW has to be clear AND not SLOW,
+         because 9.2 tiles/s covers about 6.5 tiles on each axis in a second. */
+      const clearNW = (() => {
+        const ok = (x, y) => WALK_OK.indexOf(window.biomeAt(Math.floor(x), Math.floor(y))) >= 0 &&
+                             !window.basePieceBlocks(x, y);
+        for (let r = 0; r < 300; r += 11) for (let a = 0; a < 24; a++) {
+          const cx = Math.round(WI.SPAWN.x + Math.cos(a / 24 * Math.PI * 2) * r);
+          const cy = Math.round(WI.SPAWN.y + Math.sin(a / 24 * Math.PI * 2) * r);
+          if (!window.inSafeZone(cx, cy)) continue;
+          let good = true;
+          for (let t = 0; t <= 9 && good; t += 0.5) {
+            const px = cx + 0.5 - t / Math.SQRT2, py = cy + 0.5 - t / Math.SQRT2;
+            if (!ok(px, py) || !window.inSafeZone(px, py)) good = false;
+          }
+          if (good) return [cx + 0.5, cy + 0.5];
+        }
+        return null;
+      })();
+      if (clearNW) {
+        const KBup = window.debugSettingsInfo().KEYBINDS.up;
+        const runFrames = (arm, disarm) => {
+          window.respawn();
+          window.debugSetPlayer({ x: clearNW[0], y: clearNW[1], hp: 100, diving: false });
+          const p0 = window.debugWorldInfo().player;
+          const x0 = p0.x, y0 = p0.y;
+          arm();
+          for (let i = 0; i < 60; i++) window.update(1 / 60, 900000 + i * 16.6);
+          disarm();
+          const p1 = window.debugWorldInfo().player;
+          return { dx: p1.x - x0, dy: p1.y - y0 };
+        };
+        const byKey = runFrames(() => pressKeyT(KBup, 'keydown'),
+                                () => pressKeyT(KBup, 'keyup'));
+        const byStick = runFrames(() => window.debugSetTouchVec({ x: 0, y: -1 }),
+                                  () => window.debugSetTouchVec({ x: 0, y: 0 }));
+        const dK = Math.hypot(byKey.dx, byKey.dy), dS = Math.hypot(byStick.dx, byStick.dy);
+        const within = (a, b) => a > 0 && b > 0 && Math.abs(a - b) / a <= 0.02;
+        console.log('MT: one second of frames — key ' + byKey.dx.toFixed(4) + ',' + byKey.dy.toFixed(4) +
+                    ' (' + dK.toFixed(4) + ' tiles); stick ' + byStick.dx.toFixed(4) + ',' +
+                    byStick.dy.toFixed(4) + ' (' + dS.toFixed(4) + ' tiles)');
+        results.push([`MT A: a full stick deflection really moves the player (${dS.toFixed(3)} tiles in a second, key ${dK.toFixed(3)})`,
+          dS > 1 && dK > 1]);
+        results.push([`MT A: the same DISTANCE as holding the move key, inside 2% (${(Math.abs(dK - dS) / dK * 100).toFixed(3)}%)`,
+          within(dK, dS)]);
+        results.push([`MT A: and the same DIRECTION, inside 2% on each axis (${byKey.dx.toFixed(3)},${byKey.dy.toFixed(3)} vs ${byStick.dx.toFixed(3)},${byStick.dy.toFixed(3)})`,
+          within(Math.abs(byKey.dx), Math.abs(byStick.dx)) &&
+          within(Math.abs(byKey.dy), Math.abs(byStick.dy)) &&
+          byStick.dx < 0 && byStick.dy < 0 &&
+          Math.sign(byStick.dx) === Math.sign(byKey.dx) &&
+          Math.sign(byStick.dy) === Math.sign(byKey.dy)]);
+        results.push(['MT A: and it enters the movement code in the ONE place a screen direction can, right after the four key lines',
+          gameScript.indexOf('if (keys[KEYBINDS.right] || keys["arrowright"]) rawX += 1;') <
+          gameScript.indexOf('rawX += touchVec.x; rawY += touchVec.y;') &&
+          gameScript.indexOf('rawX += touchVec.x; rawY += touchVec.y;') <
+          gameScript.indexOf('let dx = rawX + rawY, dy = rawY - rawX;')]);
+      } else {
+        results.push(['MT A: a clear run of land was found inside the Spawn zone for the movement gate', false]);
+      }
+      /* The stick's own arithmetic, as a pure function — jsdom has no layout,
+         so the pixel-to-vector step is tested directly. */
+      const sv = window.touchStickVecFrom;
+      const svDead = sv(6, 0), svFull = sv(200, 0), svHalf = sv(28, 0), svDiag = sv(100, 100);
+      results.push(['MT A: the 20% deadzone is really dead, full deflection is really 1.0, and past the radius is clamped',
+        svDead.x === 0 && svDead.y === 0 &&
+        Math.abs(Math.hypot(svFull.x, svFull.y) - 1) < 1e-9 &&
+        Math.abs(Math.hypot(svDiag.x, svDiag.y) - 1) < 1e-9 &&
+        svHalf.x > 0.4 && svHalf.x < 0.6 &&
+        gameScript.indexOf('const TOUCH_STICK_R = 56;') > 0 &&
+        gameScript.indexOf('const TOUCH_STICK_DEAD = 0.2;') > 0]);
+      results.push(['MT A: and the release really zeroes it',
+        (() => { window.debugSetTouchVec({ x: 0.5, y: 0.5 }); window.touchStickUp(null);
+                 const v = T().touchVec; return v.x === 0 && v.y === 0; })()]);
+
+      /* ---- PART B: the HUD fits a phone ------------------------------- */
+      /* UPDATED, not relaxed: still exactly ONE media query and still the
+         spec's own two conditions, with the doubt pass's third added so the
+         layout can never be left behind by the controls (see MT R2). */
+      results.push(['MT B: there is ONE media query, and it is the spec\'s own two conditions plus the doubt pass\'s third',
+        (cssT.match(/@media/g) || []).length === 1 &&
+        cssT.indexOf('@media (max-width: 900px), (max-height: 500px), (pointer: coarse) {') > 0]);
+      results.push(['MT B: the compass and the minimap move to the TOP corners, at 70%, through measured variables',
+        declT('body.touch-on #hudMinimap', 'transform') === 'scale(0.7)' &&
+        declT('body.touch-on #hudMap', 'transform') === 'scale(0.7)' &&
+        (declT('body.touch-on #hudMinimap', 'top') || '').indexOf('--touch-mm-top') > 0 &&
+        (declT('body.touch-on #hudMap', 'top') || '').indexOf('--touch-map-top') > 0 &&
+        declT('body.touch-on #hudMinimap', 'bottom') === 'auto' &&
+        declT('body.touch-on #hudMap', 'bottom') === 'auto']);
+      results.push(['MT B: the zone banner and the prompt move to the top, the help card leaves the thumb\'s corner',
+        (declT('body.touch-on #hudZone', 'top') || '').indexOf('--touch-zone-top') > 0 &&
+        (declT('body.touch-on #hudPrompt', 'top') || '').indexOf('--touch-prompt-top') > 0 &&
+        declT('body.touch-on #hudZone', 'bottom') === 'auto' &&
+        declT('body.touch-on #hudPrompt', 'bottom') === 'auto' &&
+        declT('body.touch-on #hudHelp', 'display') === 'none']);
+      /* UPDATED, not relaxed: the panel position moved from `.panel`, which
+         every per-panel ID rule outranks, to the per-ID rules that actually
+         win — see MT R3, which is the stricter statement of this. */
+      results.push(['MT B: the HP bar and the panels both leave the thumbs and the menu button\'s column',
+        declT('body.touch-on #hpBarWrap', 'right') === 'auto' &&
+        declT('body.touch-on #hpBarWrap', 'width') === 'min(42vw, 270px)' &&
+        (declT('body.touch-on #hpBarWrap', 'left') || '').indexOf('12px') > 0 &&
+        declT('body.touch-on #invPanel', 'right') === 'auto' &&
+        declT('body.touch-on #charPanel', 'transform') === 'none' &&
+        declT('#hpBarWrap', 'border-radius') === '4px' &&
+        declT('#hpBarWrap', 'background') === 'var(--panel)']);
+      results.push(['MT B: every panel becomes scrollable and no wider than the screen',
+        /* UPDATED: 24 -> 82, because the panel starts 70px down and the
+           spec's own 24 put its bottom 46px below the viewport — MT R8. */
+        declT('body.touch-on .panel', 'max-height') === 'calc(100dvh - 82px)' &&
+        declT('body.touch-on .panel', 'overflow-y') === 'auto' &&
+        declT('body.touch-on #invPanel', 'width') === 'min(92vw, 300px)' &&
+        declT('body.touch-on #craftPanel', 'width') === 'min(92vw, 330px)' &&
+        ['invPanel', 'craftPanel', 'petPanel', 'buildPanel', 'charPanel',
+         'travelPanel', 'chestPanel', 'givePanel']
+          .every(id => !!declT('body.touch-on #' + id, 'width'))]);
+      results.push(['MT B: the login title is a clamp() that fits 360px',
+        (declT('#login h1', 'font-size') || '').indexOf('clamp(') === 0 &&
+        declT('#login h1', 'font-size') === 'clamp(26px, 9vw, 58px)']);
+      /* The DESKTOP layout is untouched: every selector inside the query is
+         qualified, so a small desktop window cannot pick it up either, and
+         the v56 audit's own declarations still read exactly as they did. */
+      results.push(['MT B P: every rule inside the query is touch-qualified — a small desktop window is untouched',
+        (() => {
+          const at = cssT.indexOf('@media (max-width: 900px), (max-height: 500px), (pointer: coarse) {');
+          const body = cssT.slice(at, cssT.indexOf('\n  }', at));
+          const sels = body.match(/\n    ([^{\n]+)\{/g) || [];
+          return sels.length >= 8 && sels.every(s => s.indexOf('body.touch-on') > 0);
+        })()]);
+      results.push(['MT B P: and the v56 audit\'s own thirteen-element values still read unchanged through the query',
+        declT('#hudMinimap', 'width') === '150px' && declT('#hudMinimap', 'height') === '150px' &&
+        declT('#hudMinimap', 'padding') === '4px' && declT('#hudMap', 'padding') === '4px' &&
+        declT('#hudHelp', 'font-size') === '12px' && declT('#hudHelp', 'color') === 'var(--text-dim)' &&
+        declT('.hud', 'pointer-events') === 'none' && declT('.hud', 'z-index') === '5' &&
+        declT('.panel', 'max-height') === '70vh']);
+      results.push(['MT B P: and the help lift\'s own base offsets are byte-for-byte where World Check Fixes left them',
+        html.indexOf('bottom: calc(52px + var(--help-lift-mm, 0px)); left: 12px;') > 0 &&
+        html.indexOf('bottom: calc(64px + var(--help-lift-zone, 0px)); left: 50%;') > 0 &&
+        html.indexOf('bottom: calc(112px + var(--help-lift-zone, 0px)); left: 50%;') > 0]);
+      /* The stacking arithmetic, as a pure function of rectangles. */
+      const R2 = (l, t, w, h) => ({ left: l, right: l + w, top: t, bottom: t + h });
+      const tb = window.touchTopBelow;
+      results.push([`MT B: the stacking clears a card it overlaps, ignores one beside it, and never goes above the floor`,
+        tb(R2(12, 0, 150, 150), [R2(12, 12, 190, 90)], 12) === 110 &&
+        tb(R2(12, 0, 150, 150), [R2(700, 12, 120, 90)], 12) === 12 &&
+        tb(R2(12, 0, 150, 150), [R2(12, -100, 190, 50)], 12) === 12 &&
+        tb(null, [R2(12, 12, 190, 90)], 12) === 12 &&
+        tb(R2(12, 0, 150, 150), [R2(12, 12, 190, 90), R2(0, 12, 900, 140)], 12) === 160 &&
+        tb(R2(12, 0, 150, 150), [R2(12, 12, 190, 90)], 30, 18) === 128]);
+      results.push(['MT B: and the compass/minimap title that hangs 18px ABOVE its own card is counted, not guessed at',
+        gameScript.indexOf('const TOUCH_MM_TITLE_H = 18;') > 0 &&
+        html.indexOf('position: absolute; top: -18px; left: 0; color: var(--gold);') > 0 &&
+        gameScript.indexOf('touchTopBelow(mmR || full, [playerR, hpBox], 12 + TOUCH_MM_TITLE_H, TOUCH_MM_TITLE_H)') > 0 &&
+        gameScript.indexOf('touchTopBelow(mapR || full, [dayBox, menuBox], 12 + TOUCH_MM_TITLE_H, TOUCH_MM_TITLE_H)') > 0]);
+      results.push(['MT B: and the five variables it writes are the five the query reads',
+        (() => {
+          window.setSetting('touchControls', 'on');
+          const on5 = window.applyTouchLayout();
+          const vars = T().vars;
+          window.setSetting('touchControls', 'off');
+          window.applyTouchUI();
+          const off5 = T().vars;
+          return !!on5 && vars.length === 7 && vars.every(v => /px$/.test(v)) &&
+                 off5.join(',') === '12px,70px,12px,12px,70px,12px,12px';
+        })()]);
+      results.push(['MT B: it is re-measured on a resize and at the help lift\'s own cadence, never per frame',
+        gameScript.indexOf('addEventListener("resize", () => { applyTouchUI(); });') > 0 &&
+        gameScript.indexOf('const TOUCH_LAYOUT_RECHECK_MS = 500;') > 0 &&
+        gameScript.indexOf('touchNow() - touchLayoutCheckedAt > TOUCH_LAYOUT_RECHECK_MS') > 0 &&
+        gameScript.indexOf('  updateTouchHud();\n}') > 0]);
+
+      /* ---- PART A: the page stops behaving like a web page ------------ */
+      results.push(['MT A: the viewport meta refuses the zoom and opts into the safe areas',
+        html.indexOf('content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"') > 0 &&
+        html.indexOf('user-scalable=no') > 0 && html.indexOf('viewport-fit=cover') > 0 &&
+        html.indexOf('content="width=device-width, initial-scale=1.0"') < 0]);
+      results.push(['MT A: the canvas and every control refuse the pan, the selection and the long-press callout',
+        declT('#game', 'touch-action') === 'none' &&
+        declT('#game', '-webkit-user-select') === 'none' &&
+        declT('#game', '-webkit-touch-callout') === 'none' &&
+        declT('#touchUI *', 'touch-action') === 'none' &&
+        declT('#touchUI *', '-webkit-touch-callout') === 'none']);
+      /* UPDATED, and stricter: these were on `window`, where they also ate
+         double-click-to-select-a-word in the login field and every panel.
+         They are on the canvas and the two control layers now — MT R12 P. */
+      results.push(['MT A: the double-tap and pinch gestures are refused outright, on the game surface and nowhere else',
+        gameScript.indexOf('t.addEventListener("dblclick", e => { if (e.preventDefault) e.preventDefault(); }, { passive: false });') > 0 &&
+        gameScript.indexOf('for (const g of ["gesturestart", "gesturechange", "gestureend"])') > 0 &&
+        (gameScript.match(/addEventListener\("dblclick"/g) || []).length === 1]);
+      results.push(['MT A: nothing sits under the notch or the home bar',
+        (cssT.match(/env\(safe-area-inset-/g) || []).length >= 8 &&
+        (declT('#touchCluster', 'bottom') || '').indexOf('safe-area-inset-bottom') > 0 &&
+        (declT('body.touch-on #hudPlayer', 'top') || '').indexOf('safe-area-inset-top') > 0]);
+
+      /* ---- PART C: portrait -------------------------------------------- */
+      window.setSetting('touchControls', 'on');
+      window.debugSetTouchPortraitDismissed(false);
+      const innerBefore = { w: window.innerWidth, h: window.innerHeight };
+      const setSize = (w, h) => {
+        try {
+          Object.defineProperty(window, 'innerWidth', { value: w, writable: true, configurable: true });
+          Object.defineProperty(window, 'innerHeight', { value: h, writable: true, configurable: true });
+        } catch (e) { window.innerWidth = w; window.innerHeight = h; }
+      };
+      setSize(390, 844);
+      const portraitUp = window.applyPortraitCard();
+      setSize(844, 390);
+      const landscapeDown = window.applyPortraitCard();
+      setSize(390, 844);
+      window.applyPortraitCard();
+      const beforeX = T().portraitShown;
+      ptr(docT.getElementById('touchPortraitX'), 'pointerdown');
+      const afterX = T().portraitShown;
+      results.push([`MT C: the turn-your-phone card appears in portrait, not in landscape, and is dismissible (${portraitUp} / ${landscapeDown} / ${beforeX} -> ${afterX})`,
+        portraitUp === true && landscapeDown === false &&
+        beforeX === true && afterX === false && T().portraitDismissed === true]);
+      results.push(['MT C: and it says what the spec says, over a game that is still playable',
+        (docT.getElementById('touchPortrait').textContent || '')
+          .indexOf('Turn your phone sideways for the best view') === 0 &&
+        declT('#touchPortrait', 'z-index') === '12']);
+      window.debugSetTouchPortraitDismissed(false);
+      setSize(innerBefore.w, innerBefore.h);
+
+      /* ---- PART D: the help text matches the device -------------------- */
+      window.setSetting('touchControls', 'on');
+      window.applyTouchUI();
+      const touchHelp = T();
+      window.setSetting('touchControls', 'off');
+      window.applyTouchUI();
+      const keyHelp = T();
+      results.push([`MT D: on touch the list describes the BUTTONS (${JSON.stringify(touchHelp.helpCoreText.slice(0, 48))})`,
+        touchHelp.helpCoreText.indexOf('Left thumb: move') === 0 &&
+        touchHelp.helpCoreText.indexOf('Tap: attack') > 0 &&
+        touchHelp.helpCoreText.indexOf('hold: tame / gather') > 0 &&
+        touchHelp.helpFullText.indexOf('dive (deep water)') > 0]);
+      results.push([`MT D P: and the keyboard text comes straight back when the layout does (${JSON.stringify(keyHelp.helpCoreText.slice(0, 48))})`,
+        keyHelp.helpCoreText === t0.helpCoreText && keyHelp.helpFullText === t0.helpFullText &&
+        keyHelp.helpCoreText.indexOf('Left thumb') < 0]);
+      results.push(['MT D: the HELP row opens the ONE help list the [?] button opens, and un-hides the card to do it',
+        (() => {
+          window.setSetting('touchControls', 'on');
+          window.applyTouchUI();
+          const was = window.debugHelpInfo().expanded;
+          tapRow(menuEl.querySelector('[data-tm="help"]'));
+          const open = window.debugHelpInfo().expanded, shown = T().helpTouchShown;
+          tapRow(menuEl.querySelector('[data-tm="help"]'));
+          const shut = window.debugHelpInfo().expanded, gone = T().helpTouchShown;
+          return was === false && open === true && shown === true && shut === false && gone === false &&
+                 gameScript.indexOf('const on = toggleHelpFull();') > 0;
+        })()]);
+      results.push(['MT D P: and the lift that clears the bottom-left card is inert on a touch layout',
+        (() => {
+          window.setSetting('touchControls', 'on');
+          window.applyTouchUI();
+          const l = window.applyHelpLift();
+          window.setSetting('touchControls', 'off');
+          window.applyTouchUI();
+          return !!l && l.mm === 0 && l.zone === 0 &&
+                 gameScript.indexOf('if (!helpExpanded || touchControlsOn()) return { mm: 0, zone: 0 };') > 0;
+        })()]);
+
+      /* ---- PART E: shot.js grows a phone mode ------------------------- */
+      {
+        const shotM = fs.readFileSync(require('path').join(__dirname, 'shot.js'), 'utf8');
+        results.push(['MT E: MOBILE=1 runs the same tour in a touch context at 844x390',
+          shotM.indexOf("const MOBILE = !!process.env.MOBILE") > 0 &&
+          shotM.indexOf('const PHONE = { width: 844, height: 390 };') > 0 &&
+          shotM.indexOf('{ viewport: PHONE, hasTouch: true, isMobile: true') > 0]);
+        results.push(['MT E: it saves under the 50-m- prefix and adds the one portrait shot at 390x844',
+          shotM.indexOf("const PRE = MOBILE ? '50-m-' : '';") > 0 &&
+          shotM.indexOf('path.join(OUT, PRE + name') > 0 &&
+          shotM.indexOf('const PHONE_PORTRAIT = { width: 390, height: 844 };') > 0 &&
+          shotM.indexOf("PRE + '90-portrait.png'") > 0]);
+        results.push(['MT E: it measures all eight rectangles the spec names and prints every pair that intersects',
+          ["'player card': 'hudPlayer'", "'day card': 'hudWorld'", "'compass': 'hudMinimap'",
+           "'minimap': 'hudMap'", "'#hudZone': 'hudZone'", "'#hudPrompt': 'hudPrompt'",
+           "'#touchStick': 'touchStick'", "'button cluster': 'touchCluster'"]
+            .every(s => shotM.indexOf(s) > 0) &&
+          shotM.indexOf('getBoundingClientRect()') > 0 &&
+          shotM.indexOf('HUD CARD pairs that intersect') > 0 &&
+          /* and the four the doubt pass showed were worth measuring */
+          shotM.indexOf("'HP bar': 'hpBarWrap'") > 0 &&
+          shotM.indexOf("'the menu button': 'touchMenuBtn'") > 0 &&
+          shotM.indexOf("the ☰ is reachable: ") > 0 &&
+          shotM.indexOf("for (const size of ['small', 'large', 'medium'])") > 0]);
+        results.push(['MT E P: and the desktop tour it already took is untouched — same four judged views, still no network',
+          ["'40-night-spawn'", "'41-night-volcano'", "'42-help-open'", "'43-compass.png'"]
+            .every(n => shotM.indexOf(n) > 0) &&
+          shotM.indexOf("console.log('skipped: playwright is not available") > 0 &&
+          shotM.indexOf('r.abort()') > 0 &&
+          shotM.indexOf("require('puppeteer')") < 0]);
+      }
+
+      /* ---- WHAT THE FRESH-CONTEXT REVIEW FOUND, pinned -----------------
+         Every one of these is a defect a real browser measured and jsdom
+         cannot: they are gated here on the MECHANISM that was wrong, so the
+         fix cannot quietly come undone, and debug/shot.js MOBILE=1 measures
+         the rendered result. */
+      results.push(['MT R1: the ☰ row is wired on `click`, so a drag scrolls it instead of firing its first entry',
+        gameScript.indexOf('el.addEventListener("click", e => {') > 0 &&
+        (() => {
+          const at = gameScript.indexOf('function touchWireTap(');
+          const body = gameScript.slice(at, gameScript.indexOf('\n}', at));
+          return at > 0 && body.indexOf('pointerdown') < 0;
+        })() &&
+        cssT.indexOf('#touchMenu, #touchMenu .tmbtn { touch-action: pan-y; }') > 0 &&
+        declT('#touchMenu', 'pointer-events') === 'auto' &&
+        declT('#touchMenu', 'overscroll-behavior') === 'contain']);
+      results.push(['MT R1: and the ☰ sits directly under the day card, where PART A puts it — the minimap goes under IT',
+        gameScript.indexOf('const menu = touchTopBelow(menuR || full, [playerR, dayBox], 12);') > 0 &&
+        gameScript.indexOf('const map = touchTopBelow(mapR || full, [dayBox, menuBox], 12 + TOUCH_MM_TITLE_H, TOUCH_MM_TITLE_H);') > 0]);
+      results.push(['MT R2: the ☰ lives in its OWN top-level layer, so no panel can ever bury the only way to close itself',
+        (() => {
+          const lay = docT.getElementById('touchMenuLayer');
+          const btn = docT.getElementById('touchMenuBtn');
+          return !!lay && lay.parentNode === docT.body &&
+                 !!btn && btn.parentNode === lay &&
+                 docT.getElementById('touchMenu').parentNode === lay &&
+                 declT('#touchMenuLayer', 'z-index') === '13' &&
+                 declT('#touchUI', 'z-index') === '6' &&
+                 declT('.panel', 'z-index') === '10' &&
+                 declT('body.touch-on #hudHelp.touch-shown', 'z-index') === '12';
+        })()]);
+      results.push(['MT R2: both layers show and hide as one',
+        (() => {
+          window.setSetting('touchControls', 'on'); window.applyTouchUI();
+          const on = T();
+          window.setSetting('touchControls', 'off'); window.applyTouchUI();
+          const off = T();
+          return on.layerDisplay === 'block' && on.menuLayerDisplay === 'block' &&
+                 on.menuLayerTopLevel === true &&
+                 off.layerDisplay === 'none' && off.menuLayerDisplay === 'none';
+        })()]);
+      results.push(['MT R2: and the LAYOUT can never be left behind by the controls — a coarse pointer matches the query at any size',
+        cssT.indexOf('@media (max-width: 900px), (max-height: 500px), (pointer: coarse) {') > 0 &&
+        (cssT.match(/@media/g) || []).length === 1]);
+      results.push(['MT R3: the touch position beats each panel\'s OWN id rule — #buildPanel\'s `left: 352px` no longer wins',
+        declT('body.touch-on #buildPanel', 'left') !== null &&
+        declT('body.touch-on #buildPanel', 'right') === 'auto' &&
+        declT('body.touch-on #charPanel', 'transform') === 'none' &&
+        declT('body.touch-on #charPanel', 'right') === 'auto' &&
+        ['invPanel', 'craftPanel', 'petPanel', 'buildPanel', 'charPanel',
+         'travelPanel', 'chestPanel', 'givePanel']
+          .every(id => declT('body.touch-on #' + id, 'right') === 'auto' &&
+                       declT('body.touch-on #' + id, 'transform') === 'none') &&
+        declT('#buildPanel', 'left') === '352px']);
+      results.push(['MT R8: and a panel fits the screen it is on — 70 + the height must not pass 100dvh',
+        declT('body.touch-on .panel', 'top') === '70px' &&
+        declT('body.touch-on .panel', 'max-height') === 'calc(100dvh - 82px)']);
+      results.push(['MT R4: the [?] inside the touch overlay clears the overlay, instead of welding an empty band to the screen',
+        gameScript.indexOf('const hlp = $("helpToggle"); if (hlp) hlp.onclick = () => touchToggleHelp();') > 0 &&
+        (() => {
+          window.setSetting('touchControls', 'on'); window.applyTouchUI();
+          const h = docT.getElementById('helpToggle');
+          h.onclick();                                   // open from the [?]
+          const opened = T().helpTouchShown && window.debugHelpInfo().expanded;
+          h.onclick();                                   // and close from it
+          const cleared = !T().helpTouchShown && !window.debugHelpInfo().expanded;
+          window.setSetting('touchControls', 'off'); window.applyTouchUI();
+          return opened === true && cleared === true;
+        })()]);
+      results.push(['MT R6: the stacking divides out `zoom: var(--ui-scale)`, so SMALL and LARGE text land where MEDIUM does',
+        (() => {
+          window.setSetting('touchControls', 'on');
+          const read = () => T().vars.map(v => parseFloat(v));
+          window.setSetting('textSize', 'medium'); window.applyTouchLayout();
+          const med = read();
+          window.setSetting('textSize', 'small');  window.applyTouchLayout();
+          const sml = read();
+          window.setSetting('textSize', 'medium');
+          window.setSetting('touchControls', 'off'); window.applyTouchUI();
+          /* jsdom has no layout, so every measured rect is 0 and the floors
+             are what move — which is exactly the arithmetic under test:
+             at 0.88 the SAME screen position must come out as a LARGER css
+             number, and it must be the measured one divided by the scale. */
+          /* vars order: day, hp, mm, map, menu, zone, prompt. Index 4 is the
+             ☰, which lives in its own layer and carries NO zoom, so it must
+             be the one value that does NOT divide — dividing it is what put
+             it through the day card at LARGE text. */
+          const MENU_I = 4;
+          return gameScript.indexOf('function touchUiScale() {') > 0 &&
+                 gameScript.indexOf('const ZOOMED = { day: 1, hp: 1, mm: 1, map: 1, zone: 1, prompt: 1 };') > 0 &&
+                 gameScript.indexOf('Math.round(ZOOMED[k] ? o[k] / z : o[k]) + "px"') > 0 &&
+                 med.length === 7 && sml.length === 7 &&
+                 sml.every((v, i) => i === MENU_I || Math.abs(v - med[i] / 0.88) <= 1) &&
+                 sml[MENU_I] === med[MENU_I] &&
+                 sml.some((v, i) => v !== med[i]);
+        })()]);
+      results.push(['MT R7: the HP bar is in the measured stack at the TOP — both bottom corners belong to the thumbs',
+        gameScript.indexOf('const hp = touchTopBelow(hpR || full, [playerR, dayBox], 12);') > 0 &&
+        declT('body.touch-on #hpBarWrap', 'top') === 'var(--touch-hp-top, 70px)' &&
+        declT('body.touch-on #hpBarWrap', 'bottom') === 'auto' &&
+        declT('#hpBarWrap', 'bottom') === '16px' &&
+        T().vars.length === 7]);
+      results.push(['MT R6: and the DAY card is measured too, because at LARGE text two corner cards do not fit one row',
+        declT('body.touch-on #hudWorld', 'top') === 'var(--touch-day-top, 12px)' &&
+        gameScript.indexOf('const day = touchTopBelow(dayR || full, [playerR], 12);') > 0 &&
+        gameScript.indexOf('const aboves = [playerR, dayBox, tutR, hpBox, menuBox, mmBox, mapBox];') > 0]);
+      results.push(['MT R13: a tap outside closes the ☰, the portrait card stops eating taps, and the Dive lamp respects the world edge',
+        gameScript.indexOf('const closeMenuOnOutside = e => { if (touchMenuOpen) touchSetMenu(false); };') > 0 &&
+        declT('#touchPortrait', 'pointer-events') === 'none' &&
+        declT('#touchPortraitX', 'pointer-events') === 'auto' &&
+        gameScript.indexOf('if (tx < 0 || ty < 0 || tx >= N || ty >= N) continue;') > 0]);
+      results.push(['MT R12 P: and the keyboard player keeps the double-click and pays for no extra work',
+        /* The two listeners are on the game canvas and the control layers,
+           never on window, so a name field and a panel row still select a
+           word; and applySettings() rebuilds the help line ONCE. */
+        gameScript.indexOf('for (const id of ["game", "touchUI", "touchMenuLayer"]) {') > 0 &&
+        gameScript.indexOf('\naddEventListener("dblclick"') < 0 &&
+        gameScript.indexOf('  addEventListener("dblclick"') < 0 &&
+        (() => {
+          const at = gameScript.indexOf('function applySettings() {');
+          /* Comment-stripped — declOf()'s v50/v51 lesson a third time: the
+             comment explaining WHY the second call is gone names the call. */
+          const body = gameScript.slice(at, gameScript.indexOf('\nfunction setSetting', at))
+                                 .replace(/\/\*[\s\S]*?\*\//g, '');
+          return (body.match(/refreshHelpLine\(\)/g) || []).length === 0 &&
+                 body.indexOf('applyTouchUI();') > 0;
+        })()]);
+
+      /* ---- and everything this block stubbed, put back ----------------- */
+      for (const f of COUNTED) window[f] = realFns[f];
+      window.setSetting('touchControls', 'auto');
+      try { Object.defineProperty(window, 'matchMedia', { value: mmBefore, writable: true, configurable: true }); }
+      catch (e) { window.matchMedia = mmBefore; }
+      window.applyTouchUI();
+      const tEnd = T();
+      results.push([`MT P: and the harness is handed back exactly the state it had (mode ${tEnd.mode}, on ${tEnd.on}, display ${JSON.stringify(tEnd.layerDisplay)})`,
+        tEnd.mode === 'auto' && tEnd.on === false && tEnd.layerDisplay === 'none' &&
+        tEnd.bodyTouchOn === false && tEnd.held.length === 0 &&
+        tEnd.touchVec.x === 0 && tEnd.touchVec.y === 0 &&
+        tEnd.helpCoreText === t0.helpCoreText]);
+    } else {
+      results.push(['MT: the Mobile & Touch hooks exist', false]);
+    }
+
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
     process.exit(allOk && !caught ? 0 : 1);
