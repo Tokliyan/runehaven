@@ -787,6 +787,49 @@ behavior, confirm the bonus is real and measured against the base
 
 ## Confirmed, locked spec for the next build (World Check Fixes — Landmarks, Compass, Caves, Lava & Dark Forest)
 
+### OWNER DECISIONS (2026-10-13) — these OVERRIDE the parts below wherever they conflict
+
+Harsh read the 2026-10-12 BUILD_FAILED.md and delegated every open game
+decision to the builder ("use your discretion to make the game as good as
+possible"). The four blockers are therefore decided as follows. This is
+authorisation to make exactly these changes; it is not blanket permission
+to touch anything else on the art-style skill's MUST-NOT-REGRESS list.
+
+1. **Land test gets an upper bound.** Use the band already in the file,
+   `isPlaceableLand()`'s `e >= 0.44 && e < 0.84`, instead of a bare
+   `elevRaw >= 0.42`. A candidate passes only if every tile in the disc is
+   inside that band. Reuse, don't invent a new constant.
+2. **COLOSSEUM gets a MOUNT separation** in its attempt loop, the same
+   distance the volcano separation already uses (copy that constant).
+3. **Clearing guard set grows**: `B.RUINB`, `VOLROCK` and `CALDERA` join the
+   guards in the arena clearing, and the Bazaar's identical line gets the
+   same additions. Also add the Colosseum to the ruin-candidate checks in
+   `placeRuinsAndZones()` so a Ruin is never placed over it. The hand-
+   composed Ruin is never altered.
+4. **Dark Forest (PART H) is intended, but gentler**: lower only
+   `clusterNoise`, keep `h` at 0.42 so the clump structure and clearings
+   stay. Aim for a visibly denser forest *with* clearings, not a uniform
+   scatter. Re-measure; if the density gain is under ~+10 points over Forest,
+   lower `clusterNoise` a little more rather than touching `h`.
+5. **Decor keepout (blocker 3):** add the Bazaar's existing keepout to the
+   Colosseum in both decor branches of `buildFeatureChunk()` (and the
+   PLAINS-decor loop). Target: 0 bushes/pebbles/flowers inside the arena.
+6. **Two small fixes:** reset `landmarkLandFrac` at the top of
+   `placeLandmarks()`, and correct the three wrong radius comments
+   (`LANDMARK_KEEPOUT` = `COLOSSEUM_R + 2`, `inColosseum()` = bare
+   `COLOSSEUM_R`, sand floor at `COLOSSEUM_R * COLOSSEUM_WALL_RING`).
+7. **Gate:** after these changes, measure over >=40 seeds that the arena is
+   never on a >50% ROCK/PEAK mass and never within the Mount's footprint,
+   and add that as a permanent run4 gate.
+
+**How to resume:** the finished-but-unshipped work is on the remote branch
+`claude/stoic-tesla-22bq3v` as `WORLD_CHECK_FIXES_blocked.patch` (1,343
+lines). `git fetch origin claude/stoic-tesla-22bq3v`, then
+`git show origin/claude/stoic-tesla-22bq3v:WORLD_CHECK_FIXES_blocked.patch | git apply`,
+make the changes above, re-run the full gauntlet (run3, run4, run5), and ship
+if green. Delete `BUILD_FAILED.md` handling is not needed on main. Report
+to the Night Run as usual (step 9).
+
 **Where this came from.** On 2026-10-12 the whole game was checked from
 the outside for the first time. `debug/shot.js` entered the world offline
 with stubbed Supabase and took 36 screenshots: six landmarks, six biomes,
