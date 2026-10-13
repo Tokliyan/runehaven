@@ -4,3 +4,4 @@
 # runehaven.html.
 node_modules/
 shots/
+.temp/

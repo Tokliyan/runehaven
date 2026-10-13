@@ -72,6 +72,7 @@ All of these are already in the repo or this environment:
 - **Test gauntlet:** `npm ci`, then `node debug/run3.js runehaven.html`, `node debug/run4.js runehaven.html` and `node debug/run5.js runehaven.html`, run from `debug/`. run4 is long (about 20 minutes or more), so run it in the background and keep working.
 - **Eyes:** `node debug/shot.js shots` uses Playwright and Chromium offline, with a stubbed Supabase. Use `Read` on the PNGs. Contact sheets help: stitch shots with PIL. Night is `worldEpoch = Date.now()/1000 - DAY_LENGTH*0.75`. Phone sizes are 844×390 and 390×844 with `hasTouch`.
 - **Frame-rate probe:** count `requestAnimationFrame` calls over 3 s at the Colosseum and the Bazaar, as in the 2026-10-12 check (baseline 17.0 / 16.7 fps headless at 1280×720).
+- **Delegation:** `.claude/skills/delegate/SKILL.md`. Send bulk reading and test-log trawls to `haiku` workers, single well-specified spec parts and screenshot scoring to `sonnet`, and adversarial diff reviews to `opus`. Workers never commit or push, and the main agent re-runs every gate itself.
 - **Prior work:** `WORLD_CHECK_FIXES_blocked.patch` on branch `claude/stoic-tesla-22bq3v`.
 
 ## Hard rules (on top of the README)
