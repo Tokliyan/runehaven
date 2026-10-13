@@ -136,6 +136,61 @@ const STUB = `
   } else console.log('no #hudMinimap box for 43-compass');
   await p.click('#helpToggle');
 
+  /* 5. Gauntlet S2 — the two views the S2 scorecard asks for that the tour
+     did not have: a fight, and the phone layouts. The fight is the nearest
+     surface mob outside the spawn safe zone, the player two tiles off it,
+     swinging at it (tryAttack, the game's own attack path). */
+  const fightPt = await p.evaluate(() => {
+    let best = null;
+    for (const m of mobs) {
+      if (m.dead || (m.space && m.space !== 'main')) continue;
+      const d = Math.hypot(m.x - SPAWN.x, m.y - SPAWN.y);
+      if (d < SAFE_RADIUS + 6) continue;
+      if (!best || d < best.d) best = { x: m.x, y: m.y, d };
+    }
+    return best;
+  });
+  if (fightPt) {
+    await hop(Math.floor(fightPt.x) - 2, Math.floor(fightPt.y) - 1);
+    await p.waitForTimeout(600);
+    for (let i = 0; i < 4; i++) {
+      await p.evaluate(() => { const m = mobs.filter(q => !q.dead && (!q.space || q.space === 'main'))
+        .sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y))[0]; if (m) tryAttack(m.x, m.y); });
+      await p.waitForTimeout(i < 3 ? 520 : 90);
+    }
+    await p.screenshot({ path: path.join(OUT, '44-fight.png') });
+    console.log('shot 44-fight');
+  } else console.log('no mob for 44-fight');
+
+  /* The phone layouts: a fresh touch context at both orientations, through
+     the real login, at Spawn. */
+  for (const [name, vw, vh] of [['50-phone-landscape', 844, 390], ['51-phone-portrait', 390, 844]]) {
+    const ctxP = await b.newContext({ viewport: { width: vw, height: vh }, hasTouch: true, isMobile: true, deviceScaleFactor: 1 });
+    const q = await ctxP.newPage();
+    q.on('pageerror', e => errs.push('PAGEERR(' + name + ') ' + e.message));
+    await q.route('**/*', r => {
+      const u = r.request().url();
+      if (u.startsWith('file:')) return r.continue();
+      if (/supabase-js/.test(u)) return r.fulfill({ contentType: 'application/javascript', body: STUB });
+      return r.abort();
+    });
+    await q.goto('file://' + FILE);
+    await q.waitForTimeout(1500);
+    await q.evaluate(() => {
+      document.querySelectorAll('.class-card')[3].click();
+      document.getElementById('username').value = 'ShotBot';
+      document.getElementById('pinInput').value = '2468';
+      const u = document.getElementById('sbUrl'), k = document.getElementById('sbKey');
+      if (u) u.value = 'https://stub.supabase.co'; if (k) k.value = 'stub-key';
+      document.getElementById('enterBtn').onclick();
+    });
+    await q.waitForFunction(() => document.getElementById('login').style.display === 'none', null, { timeout: 90000 });
+    await q.waitForTimeout(2500);
+    await q.screenshot({ path: path.join(OUT, name + '.png') });
+    console.log('shot', name);
+    await ctxP.close();
+  }
+
   console.log(errs.slice(0, 10).join('\n') || 'no page errors');
   await b.close();
 })();

@@ -6464,6 +6464,7 @@ function buildFeatureList() {
   for (const tp of TORCHES) decorFixed.push({ kind: "torch", x: tp.x, y: tp.y });
   // v8: grazing rabbits in open plains/meadow
   critters = [];
+  _rabbitCells.clear();          // Gauntlet S2 R1: the per-cell rabbits belong to this world
   for (let a = 0; a < 400 && critters.length < 3; a++) {
     const tx = Math.floor(hash2(a, 5, worldSeed) * N);
     const ty = Math.floor(hash2(a, 9, worldSeed) * N);
@@ -6892,6 +6893,10 @@ function drawGroundTile(c, tx, ty) {
   const zTop = variedZ(tx, ty);
   const alt = ((tx + ty) % 2 === 0) ? 0 : 1;
   let top = PAL[b][alt];
+  /* Gauntlet S2 R1: the Colosseum's floor is painted here, as ground (see
+     THE COLOSSEUM AS A SET PIECE). 0 everywhere else, after one compare. */
+  const arenaK = arenaFloorAt(tx, ty, b);
+  if (arenaK) top = arenaK === 1 ? ARENA_TONES.sand[alt] : arenaK === 2 ? ARENA_TONES.slab[alt] : ARENA_TONES.pave[alt];
 
   // World edge treatment: deep water darkens toward the map border (stays dark)
   if (b === B.DEEP) {
@@ -6911,8 +6916,8 @@ function drawGroundTile(c, tx, ty) {
   const hS = heightAt(tx, ty + 1);
   const hE = heightAt(tx + 1, ty);
 
-  const grassy = (b === B.PLAINS || b === B.MEADOW || b === B.FOREST ||
-                  b === B.ENCHFOREST || b === B.SACMEADOW);   // v17
+  const grassy = !arenaK && (b === B.PLAINS || b === B.MEADOW || b === B.FOREST ||
+                  b === B.ENCHFOREST || b === B.SACMEADOW);   // v17; S2 R1: not the arena floor
 
   // Cream cliff faces (unchanged approach) + wear detail (2026-07-11)
   if (h > Math.max(-1, hS)) {
@@ -7049,6 +7054,7 @@ function drawGroundTile(c, tx, ty) {
   c.lineTo(cx - IW2, cy);
   c.closePath();
   c.fill();
+  if (arenaK) drawArenaFloorDetail(c, arenaK, tx, ty, cx, cy);   // Gauntlet S2 R1
 
   // v8: sand gets texture and purpose — dunes, wet band, beach detail
   if (b === B.SAND) {
@@ -12914,6 +12920,28 @@ function hitEmbers(wx, wy, kx, ky) {
    life. TUNABLE, and it is the single lever for all four windows at once. */
 const WISP_CHANCE = 0.55;              // v51 PART A: was 0.32
 
+/* Gauntlet S2 round 1 — LIFE. Scored 2026-10-13: Life 2.44/5, "almost
+   nothing moves: 1-4 animated cues per frame, zero in the Colosseum". Every
+   addition reuses something already here and sits behind the same
+   SETTINGS.reduceMotion gate as the rest of the ambient spawner: leaves are
+   one more branch of this spawner; butterflies reach two more biomes; the
+   Ancient Forge's chimney and the Volcano's crater breathe the forge's own
+   `smoke` particle; flocks and the arena's crows are the Tower birds' own
+   stroke glyph (the Tower's three birds themselves are untouched — "birds"
+   is on the must-not-regress list); and the meadow rabbits, three in the
+   whole world since v8 ("ambient decor did not scale and now reads thin"),
+   are placed per cell at the world's scale with v8's own exclusions. */
+const LEAF_CHANCE = 0.16;                       // TUNABLE: per spawner sample on a forest tile, by day
+const LEAF_COLS = ["#63984a", "#578a40", "#b8a24c"];        // the canopy's own lit tones, and a dry one
+const LEAF_COLS_DARK = ["#4a6e38", "#5a7a3c", "#8a7a3c"];   // the Dark Forest's, lifted enough to read
+const BUTTERFLY_PLAINS = 0.35;                  // TUNABLE: share of plains tiles that are flowery enough
+const SMOKE_NEAR = 46;                          // TUNABLE: tiles — landmark smoke only spawns this close to the camera
+const FLOCK_GAP_MS = [9000, 16000];             // TUNABLE: day gap between flocks crossing the view
+const FLOCK_SPEED = 2.4;                        // tiles/s
+const RABBIT_CELL = 10, RABBIT_P = 0.35;        // TUNABLE: one cell in RABBIT_P holds a rabbit
+let flocks = [], flockNextAt = 0, flockBirdsDrawn = 0;
+const COLO_CROWS = 4;                           // TUNABLE: crows wheeling over the Colosseum
+
 /* ============ v54 PART A — THE SPAWN SAFE ZONE'S OWN AMBIENCE ========
    A new player's first real minutes are spent inside the Spawn Safe
    Zone, and until now that ground carried nothing beyond the PLAINS
@@ -12960,6 +12988,74 @@ const SPAWN_GLOW_A     = 0.030;          // TUNABLE: per ring; the centre reache
 const SPAWN_GLOW_RGB   = "255,238,196";  // the Caldera's own cream, NOT the Elder gold
 let spawnGlowRingsDrawn = 0;             // harness counter — see debugLightInfo()
 
+/* Gauntlet S2 R1: a flock crossing the view by day. Spawned just off one
+   side of the camera, heading across it, and dropped once it is well past.
+   reduceMotion stops new flocks; one already in the air finishes crossing
+   (the toggle drains, it does not snap, exactly as the particles do). */
+/* Gauntlet S2 R1: one rabbit in RABBIT_P of the RABBIT_CELL-tile cells, at
+   a hashed spot in the cell, wherever that spot is open PLAINS or MEADOW —
+   v8's own biome rule and its own exclusions (clear of the spawn safe zone
+   by 9 and the Tower by 7), and never on the arena floor. Deterministic per
+   cell, so a rabbit is always where it was; cached, so a cell costs its
+   biome lookup once. Drawn by v8's own drawCritter. */
+const _rabbitCells = new Map();
+function rabbitInCell(cx, cy) {
+  const key = cx * 100003 + cy;
+  if (_rabbitCells.has(key)) return _rabbitCells.get(key);
+  let cr = null;
+  if (hash2(cx, cy, 977) < RABBIT_P) {
+    const tx = cx * RABBIT_CELL + Math.floor(hash2(cx, cy, 979) * RABBIT_CELL);
+    const ty = cy * RABBIT_CELL + Math.floor(hash2(cx, cy, 983) * RABBIT_CELL);
+    const b = (tx >= 2 && ty >= 2 && tx < N - 2 && ty < N - 2) ? biomeAt(tx, ty) : -1;
+    if ((b === B.PLAINS || b === B.MEADOW) && !arenaFloorAt(tx, ty, b) &&
+        Math.hypot(tx - SPAWN.x, ty - SPAWN.y) > SAFE_RADIUS + 9 &&
+        Math.hypot(tx - TOWER.x, ty - TOWER.y) > 7) {
+      cr = { hx: tx + 0.5, hy: ty + 0.5, ph: hash2(cx, cy, 987) * 40 };
+    }
+  }
+  if (_rabbitCells.size > 6000) _rabbitCells.clear();
+  _rabbitCells.set(key, cr);
+  return cr;
+}
+function localRabbits(minX, maxX, minY, maxY) {
+  const out = [];
+  for (let cy = Math.floor((minY - 2) / RABBIT_CELL); cy <= Math.floor((maxY + 2) / RABBIT_CELL); cy++) {
+    for (let cx = Math.floor((minX - 2) / RABBIT_CELL); cx <= Math.floor((maxX + 2) / RABBIT_CELL); cx++) {
+      const cr = rabbitInCell(cx, cy);
+      if (cr && cr.hx > minX - 3 && cr.hx < maxX + 3 && cr.hy > minY - 3 && cr.hy < maxY + 3) out.push(cr);
+    }
+  }
+  return out;
+}
+function updateFlocks(dt, t) {
+  const now = t;                       // the frame clock, so a harness can step it
+  for (let i = flocks.length - 1; i >= 0; i--) {
+    const f = flocks[i];
+    f.x += f.vx * dt; f.y += f.vy * dt;
+    if (Math.hypot(f.x - cam.x, f.y - cam.y) > 60 || now - f.born > 40000) flocks.splice(i, 1);
+  }
+  if (SETTINGS.reduceMotion || inInterior() || nightAlpha(getDayT()) > 0.4) return;
+  if (!flockNextAt) flockNextAt = now + 2500;
+  if (now < flockNextAt || flocks.length >= 2) return;
+  flockNextAt = now + FLOCK_GAP_MS[0] + Math.random() * (FLOCK_GAP_MS[1] - FLOCK_GAP_MS[0]);
+  const ang = Math.random() * Math.PI * 2;
+  const n = 3 + Math.floor(Math.random() * 4);
+  const birds = [];
+  for (let k = 0; k < n; k++) birds.push({ dx: (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.9 + (Math.random() - 0.5) * 0.4,
+    dy: Math.ceil(k / 2) * 0.9 + (Math.random() - 0.5) * 0.4, ph: Math.random() * 6 });
+  flocks.push({ x: cam.x - Math.cos(ang) * 26, y: cam.y - Math.sin(ang) * 26,
+    vx: Math.cos(ang) * FLOCK_SPEED, vy: Math.sin(ang) * FLOCK_SPEED, ang,
+    z: 130 + Math.random() * 60, born: now, birds });
+}
+/* The Tower birds' own glyph — one stroke, two arcs — so every bird in the
+   world is drawn the same way. */
+function drawBirdGlyph(bpx, bpy, flap, s) {
+  ctx.beginPath();
+  ctx.moveTo(bpx - 5 * s, bpy);
+  ctx.quadraticCurveTo(bpx - 2.5 * s, bpy - (2 + flap) * s, bpx, bpy);
+  ctx.quadraticCurveTo(bpx + 2.5 * s, bpy - (2 + flap) * s, bpx + 5 * s, bpy);
+  ctx.stroke();
+}
 function updateParticles(dt, t) {
   const dayT = getDayT();
   const isNight = nightAlpha(dayT) > 0.4;
@@ -13066,8 +13162,22 @@ function updateParticles(dt, t) {
       } else if (b === B.PEAK && Math.random() < 0.25) {
         particles.push({ x: tx + Math.random(), y: ty + Math.random(), z: 70,
           vx: 0.25, vy: 0.15, vz: -22, life: 2.6, maxLife: 2.6, col: "#f2f5f8", size: 1.8, kind: "snow" });
-      } else if (b === B.MEADOW && !isNight && Math.random() < 0.2) {
-        // v8: daytime butterflies drifting over the flower meadows
+      } else if ((b === B.FOREST || b === B.DARKFOREST) && !isNight && Math.random() < LEAF_CHANCE) {
+        /* Gauntlet S2 R1: a leaf let go from the canopy, by day — the forest's
+           daytime twin of its night fireflies. Same array, same spawner, same
+           reduce-motion gate as everything above; it falls through the
+           default integrator with its own sway (see the update loop). */
+        const lc = b === B.DARKFOREST ? LEAF_COLS_DARK : LEAF_COLS;
+        particles.push({ x: tx + Math.random(), y: ty + Math.random(), z: 24 + Math.random() * 16,
+          vx: 0.12 + Math.random() * 0.12, vy: (Math.random() - 0.5) * 0.12, vz: -(5 + Math.random() * 4),
+          life: 5 + Math.random() * 2, maxLife: 7, col: lc[Math.floor(Math.random() * lc.length)],
+          size: 2.6, kind: "leaf", ph: Math.random() * 9 });
+      } else if ((b === B.MEADOW || b === B.SACMEADOW || (b === B.PLAINS && hash2(tx, ty, 503) < BUTTERFLY_PLAINS))
+                 && !isNight && Math.random() < 0.2 && !arenaFloorAt(tx, ty, b)) {
+        /* v8: daytime butterflies drifting over the flower meadows. Gauntlet
+           S2 R1: and over the Sacred Meadow and patches of open plains too —
+           scored "Life 2" on 20-plains/20-meadow ("1-4 animated cues per
+           frame"). Same particle, same colours, same chance. */
         const cols = ["#f2f0e6", "#eec8de", "#f0e2a0"];
         particles.push({ x: tx + Math.random(), y: ty + Math.random(), z: 8 + Math.random() * 8,
           vx: 0, vy: 0, vz: 0, life: 6 + Math.random() * 3, maxLife: 9,
@@ -13122,6 +13232,23 @@ function updateParticles(dt, t) {
     particles.push({ x: SPAWN_FORGE.x + 0.38, y: SPAWN_FORGE.y - 0.28, z: 44,
       vx: 0.12, vy: -0.05, vz: 14, life: 2.6, maxLife: 2.6, col: "#b8bcc4", size: 3.4, kind: "smoke" });
   }
+  /* Gauntlet S2 R1: the Ancient Forge's chimney and the Volcano's crater,
+     the same `smoke` particle, spawned only while the camera is near enough
+     to see them so they never spend the ambient budget across the world. */
+  if (!SETTINGS.reduceMotion && !inInterior()) {
+    const AH = ancientHouse();
+    if (Math.random() < 0.14 && Math.hypot(AH.x - cam.x, AH.y - cam.y) < SMOKE_NEAR) {
+      const FL = ancientFlue();
+      particles.push({ x: FL.x, y: FL.y, z: groundZ(FL.x, FL.y) + FL.z + 2,
+        vx: 0.1, vy: -0.06, vz: 16, life: 3, maxLife: 3, col: "#b8bcc4", size: 4, kind: "smoke", lmSmoke: "ancient" });
+    }
+    if (Math.random() < 0.2 && Math.hypot(VOLCANO.x - cam.x, VOLCANO.y - cam.y) < SMOKE_NEAR) {
+      const vx0 = VOLCANO.x + (Math.random() - 0.5) * 3, vy0 = VOLCANO.y + (Math.random() - 0.5) * 3;
+      particles.push({ x: vx0, y: vy0, z: groundZ(vx0, vy0) + 12,
+        vx: 0.16, vy: -0.08, vz: 22, life: 4, maxLife: 4, col: "#b8bcc4", size: 6, kind: "smoke", lmSmoke: "volcano" });
+    }
+  }
+  updateFlocks(dt, t);
 
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
@@ -13137,6 +13264,11 @@ function updateParticles(dt, t) {
     } else if (p.kind === "bug") {
       p.z = Math.abs(Math.sin(t / 220 + p.ph)) * 2.2;
       p.x += Math.sin(t / 1400 + p.ph) * dt * 0.5;
+    } else if (p.kind === "leaf") {            // Gauntlet S2 R1: falls, swaying
+      p.x += (p.vx + Math.sin(t / 520 + p.ph) * 0.5) * dt;
+      p.y += (p.vy + Math.cos(t / 610 + p.ph) * 0.25) * dt;
+      p.z += p.vz * dt;
+      if (p.z < 0) { particles.splice(i, 1); continue; }
     } else {
       p.x += p.vx * dt;
       p.y += p.vy * dt;
@@ -13216,6 +13348,10 @@ let SUN = { dx: 1, dy: 0.5, len: 1, alpha: 0.2 };
 /* =========================================================
    FLAT-SHADED HELPERS (skill formula: SW 0.72 / SE 0.55)
    ========================================================= */
+/* Gauntlet S2 R1: the occlusion probe (see THE OVERLAY PASS). Declared here,
+   above the first primitive that reads it, so no draw can ever reach it in
+   its temporal dead zone. */
+let occProbe = null;
 function drawBox(wx, wy, fw, fd, hp, col, zoff = 0) {
   const z = groundZ(wx, wy) + zoff;
   const c = [
@@ -13248,6 +13384,8 @@ function drawBox(wx, wy, fw, fd, hp, col, zoff = 0) {
   ctx.lineTo(c[3][0], c[3][1] - hp);
   ctx.closePath();
   ctx.fill();
+  // c[3] is the left corner, c[1] the right, c[0] the back (top), c[2] the front
+  if (occProbe !== null && occProbe.armed && !occProbe.hit) occTest(c[3][0], c[0][1] - hp, c[1][0], c[2][1]);
   return c;
 }
 /* Pyramid roof on top of a box footprint */
@@ -13269,6 +13407,7 @@ function drawPyramid(wx, wy, fw, fd, hp, apexH, col, zoff) {
   ctx.beginPath();
   ctx.moveTo(c[2][0], c[2][1]); ctx.lineTo(c[1][0], c[1][1]); ctx.lineTo(ax, ay);
   ctx.closePath(); ctx.fill();
+  if (occProbe !== null && occProbe.armed && !occProbe.hit) occTest(c[3][0], ay, c[1][0], c[2][1]);   // S2 R1
 }
 function drawBlob(sx, sy, r, col) {
   ctx.fillStyle = col;
@@ -13329,6 +13468,9 @@ function drawTree(f, t) {
      Purely visual, and provably so: nothing downstream of a tree's
      hitbox or gather range reads a drawn coordinate. `f.x` / `f.y` are
      what the world uses and neither is touched here. */
+  /* Gauntlet S2 R1: the crown is the one tree part drawBox() does not see. */
+  if (occProbe !== null && occProbe.armed && !occProbe.hit)
+    occTest(sx - cw - Math.abs(lean) - 2, base - ch - 2, sx + cw + Math.abs(lean) + 2, base + 2);
   const swayPh = hash2(f.tx, f.ty, 429) * 6.283;
   const sway = Math.sin(t / TREE_SWAY_MS + swayPh) * TREE_SWAY * scale;
   const swayAt = (fy) => sway * fy;        // fy: 0 at canopy base, 1 at the apex
@@ -14174,10 +14316,7 @@ function drawForgeEntity(t) {
   drawBox(fx + 1.0, fy + 0.75, 0.5, 0.16, 3, "#4a4f58", 6);
   drawBox(fx - 0.4, fy + 0.95, 0.55, 0.24, 5, "#7c5834");
   drawBox(fx - 0.4, fy + 0.95, 0.4, 0.2, 4, "#8a6540", 5);
-  ctx.font = "11px 'Barlow', sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillStyle = "rgba(232,182,76,0.9)";
-  ctx.fillText("SPAWN FORGE", sx, sy - 56);
+  queueWorldLabel("SPAWN FORGE", sx, sy - 56, "11px 'Barlow', sans-serif", "rgba(232,182,76,0.9)");   // S2 R1: overlay pass
 }
 
 /* Tiny unit (unchanged silhouettes) */
@@ -15821,28 +15960,110 @@ function drawBazaarEntity(t) {
   ctx.beginPath(); ctx.ellipse(sx, sy - 2, 38, 21, 0, 0, Math.PI * 2); ctx.fill();
 }
 
+/* ============ Gauntlet S2 round 1 — THE ANCIENT FORGE, MONUMENTAL ======
+   Scored 2026-10-13 (10-forge): Landmark presence 2 — "a ~60x27 px dark dais
+   under the player; no furnace, anvil, chimney or glow, so it cannot be
+   recognised as a forge, while the spawn forge reads fine at a third of the
+   size". The only forge that can work dragonsteel is now a basalt furnace
+   house: stepped plinth, a coursed body with a molten arched mouth, a cornice
+   and pyramid roof, a tall chimney breathing embers (and, through the
+   ambient spawner, smoke), a glowing channel running out of the mouth to a
+   quench pool, and an anvil on the forecourt.
+
+   ⚠️ THE BUILDING STANDS BEHIND THE LANDMARK POINT, deliberately. ANCIENT is
+   where fast travel sets you down (travelLandingSpot rings out from it) and
+   the centre of the crafting radius (nearAncient, ANCIENT_R 4) — so the point
+   itself becomes the forecourt you arrive on, facing the mouth, and the house
+   is ANCIENT_HOUSE_OFF tiles behind it on both axes (2.3 tiles, well inside
+   the radius). Nothing about where you can craft, land or stand changed.
+   The Spawn Forge's silhouette (on the must-not-regress list) is untouched:
+   this is a different building, in the volcano's near-black basalt. Flat
+   fills and the locked facet split only; no new gradient. */
+const ANCIENT_HOUSE_OFF = 2.4;        // tiles behind the point, on x and on y
+function ancientHouse() { return { x: ANCIENT.x - ANCIENT_HOUSE_OFF, y: ANCIENT.y - ANCIENT_HOUSE_OFF }; }
+function ancientFlue() { const F = ancientHouse(); return { x: F.x + 0.75, y: F.y - 0.6, z: 103 }; }
 function drawAncientEntity(t) {
-  const [sx, sy] = worldToScreen(ANCIENT.x, ANCIENT.y, groundZ(ANCIENT.x, ANCIENT.y));
-  drawShadow(sx, sy, 40, 30);
-  /* Black volcanic stone, molten core — the only forge that can work
-     dragonsteel should look like it could. */
-  drawBox(ANCIENT.x, ANCIENT.y, 1.5, 1.25, 6, "#241a16");         // basalt base
-  drawBox(ANCIENT.x, ANCIENT.y, 1.15, 0.95, 12, "#1a1210", 6);    // body
-  drawBox(ANCIENT.x, ANCIENT.y, 1.35, 1.1, 3, "#2e2220", 18);     // cap
+  const F = ancientHouse();
+  const gz = groundZ(F.x, F.y);
+  const [sx, sy] = worldToScreen(F.x, F.y, gz);
+  drawShadow(sx, sy, 110, 96);
+  drawBox(F.x, F.y, 4.4, 4.0, 5, "#2e2220");                      // plinth
+  drawBox(F.x, F.y, 3.8, 3.4, 4, "#3a2a26", 5);                   // step
+  drawBox(F.x, F.y, 3.0, 2.7, 40, "#241a16", 9);                  // the furnace body
+  drawBox(F.x, F.y, 3.12, 2.82, 4, "#3a2a26", 27);                // a course band
+  drawBox(F.x, F.y, 3.4, 3.1, 5, "#3a2a26", 49);                  // cornice
+  drawPyramid(F.x, F.y, 3.4, 3.1, 5, 16, "#2a1e1a", 49);           // roof
+  const FL = ancientFlue();                                        // the chimney
+  drawBox(FL.x, FL.y, 0.8, 0.8, 44, "#1f1612", 54);
+  drawBox(FL.x, FL.y, 1.0, 1.0, 5, "#3a2a26", 98);
   const heat = 0.55 + 0.45 * Math.sin(t / 240);
-  ctx.fillStyle = `rgba(255,120,40,${heat})`;                      // molten mouth
-  ctx.fillRect(sx - 6, sy - 12, 12, 5);
-  ctx.fillStyle = `rgba(255,200,120,${heat * 0.8})`;
-  ctx.fillRect(sx - 3.5, sy - 11, 7, 3);
-  ctx.fillStyle = `rgba(255,140,60,${heat * 0.25})`;               // heat bloom
-  ctx.beginPath(); ctx.ellipse(sx, sy - 8, 20, 11, 0, 0, Math.PI * 2); ctx.fill();
-  for (let i = 0; i < 4; i++) {                                    // rising embers
-    const ph = (t / 700 + i * 0.27) % 1;
-    ctx.fillStyle = `rgba(255,170,80,${(1 - ph) * 0.7})`;
+  const [cx2, cy2] = worldToScreen(FL.x, FL.y, groundZ(FL.x, FL.y) + FL.z);
+  ctx.fillStyle = `rgba(255,150,60,${(0.55 + heat * 0.4).toFixed(3)})`;   // the flue's glow
+  ctx.beginPath();
+  ctx.moveTo(cx2, cy2 - 4.5); ctx.lineTo(cx2 + 9, cy2); ctx.lineTo(cx2, cy2 + 4.5); ctx.lineTo(cx2 - 9, cy2);
+  ctx.closePath(); ctx.fill();
+  /* The mouth: an arch on the SW (+y) face, built from that face's own world
+     points so it lies ON the face rather than being pasted over it. */
+  const fy = F.y + 1.35, mz = gz + 9;
+  const m = [
+    worldToScreen(F.x - 0.85, fy, mz), worldToScreen(F.x + 0.5, fy, mz),
+    worldToScreen(F.x + 0.5, fy, mz + 16), worldToScreen(F.x - 0.17, fy, mz + 25),
+    worldToScreen(F.x - 0.85, fy, mz + 16),
+  ];
+  const mcx = (m[0][0] + m[1][0] + m[2][0] + m[3][0] + m[4][0]) / 5;
+  const mcy = (m[0][1] + m[1][1] + m[2][1] + m[3][1] + m[4][1]) / 5 + 2;
+  const poly = (pts, cxp, cyp, k, col) => {                        // a shape shrunk toward its own centre
+    ctx.fillStyle = col;
     ctx.beginPath();
-    ctx.arc(sx - 5 + i * 3.4, sy - 16 - ph * 16, 1.1, 0, Math.PI * 2);
-    ctx.fill();
+    for (let i = 0; i < pts.length; i++) {
+      const X = cxp + (pts[i][0] - cxp) * k, Y = cyp + (pts[i][1] - cyp) * k;
+      if (i) ctx.lineTo(X, Y); else ctx.moveTo(X, Y);
+    }
+    ctx.closePath(); ctx.fill();
+  };
+  poly(m, mcx, mcy, 1, "#0e0806");
+  poly(m, mcx, mcy, 0.8, `rgba(255,110,40,${(0.65 + heat * 0.35).toFixed(3)})`);
+  poly(m, mcx, mcy, 0.5, `rgba(255,214,140,${(0.55 + heat * 0.4).toFixed(3)})`);
+  /* A molten sill on the step in front of the mouth, and the quench pool on
+     the ground before the plinth: flat shapes with a basalt lip, pulsing with
+     the same heat. */
+  const sz = gz + 9, pz = gz + 0.5;
+  const sill = [worldToScreen(F.x - 0.75, fy, sz), worldToScreen(F.x + 0.4, fy, sz),
+                worldToScreen(F.x + 0.4, fy + 0.32, sz), worldToScreen(F.x - 0.75, fy + 0.32, sz)];
+  const pool = [worldToScreen(F.x - 0.8, F.y + 2.15, pz), worldToScreen(F.x + 0.45, F.y + 2.15, pz),
+                worldToScreen(F.x + 0.45, F.y + 3.0, pz), worldToScreen(F.x - 0.8, F.y + 3.0, pz)];
+  const ctr = q => [(q[0][0] + q[2][0]) / 2, (q[0][1] + q[2][1]) / 2];
+  const [sx0, sy0] = ctr(sill), [px0, py0] = ctr(pool);
+  const hot = `rgba(255,122,60,${(0.7 + heat * 0.3).toFixed(3)})`;
+  poly(sill, sx0, sy0, 1.0, "#3a2a26"); poly(sill, sx0, sy0, 0.7, hot);
+  poly(pool, px0, py0, 1.0, "#3a2a26"); poly(pool, px0, py0, 0.78, hot);
+  poly(pool, px0, py0, 0.4, `rgba(255,214,140,${(0.35 + heat * 0.35).toFixed(3)})`);
+  ctx.fillStyle = `rgba(255,140,60,${(heat * 0.22).toFixed(3)})`;   // heat on the forecourt
+  ctx.beginPath(); ctx.ellipse(px0, py0 - 4, 40, 20, 0, 0, Math.PI * 2); ctx.fill();
+  for (let i = 0; i < 9; i++) {                                    // embers out of the flue
+    const ph = (t / 900 + i / 9) % 1;
+    ctx.fillStyle = `rgba(255,170,80,${((1 - ph) * 0.8).toFixed(3)})`;
+    ctx.fillRect(cx2 - 3 + Math.sin(t / 300 + i * 2.1) * (3 + ph * 7), cy2 - 5 - ph * 40, 2, 2);
   }
+  for (let i = 0; i < 4; i++) {                                    // and a few out of the mouth
+    const ph = (t / 700 + i * 0.25) % 1;
+    ctx.fillStyle = `rgba(255,190,110,${((1 - ph) * 0.7).toFixed(3)})`;
+    ctx.fillRect(m[3][0] - 6 + i * 4, m[3][1] + 8 - ph * 16, 1.8, 1.8);
+  }
+}
+/* The anvil on the forecourt, a hand's reach from the point you arrive on.
+   Its own entity so it sorts against the people standing round it. */
+function ancientAnvilPos() { return { x: ANCIENT.x + 0.7, y: ANCIENT.y - 0.3 }; }
+function drawAncientAnvil() {
+  const A = ancientAnvilPos();
+  const [ax, ay] = worldToScreen(A.x, A.y, groundZ(A.x, A.y));
+  drawShadow(ax, ay, 16, 10);
+  drawBox(A.x, A.y, 0.5, 0.36, 4, "#3a2a26");                     // the block
+  drawBox(A.x, A.y, 0.3, 0.22, 4, "#2b2b30", 4);                  // the waist
+  drawBox(A.x, A.y, 0.74, 0.34, 3, "#4a4f58", 8);                 // the face
+  ctx.fillStyle = "#4a4f58";                                       // the horn
+  const [hx, hy] = worldToScreen(A.x + 0.37, A.y, groundZ(A.x, A.y) + 10);
+  ctx.beginPath(); ctx.moveTo(hx, hy - 1.5); ctx.lineTo(hx + 7, hy + 2); ctx.lineTo(hx, hy + 2.5); ctx.closePath(); ctx.fill();
 }
 
 /* ============ v52+53 PART B — THE COLOSSEUM, BUILT AS PIECES ============
@@ -15917,16 +16138,167 @@ function colosseumPieces() {
   _coloKey = key; _coloPieces = out;
   return out;
 }
-/* The sand. Drawn as its own entity, at the centre's own sort key, because it
-   is flat ground and must go UNDER everything standing on it. */
-function drawColosseumFloor(t) {
-  const [sx, sy] = worldToScreen(COLOSSEUM.x, COLOSSEUM.y, groundZ(COLOSSEUM.x, COLOSSEUM.y));
-  const rx = COLOSSEUM_R * COLOSSEUM_WALL_RING * IW2 * 2;
-  const ry = COLOSSEUM_R * COLOSSEUM_WALL_RING * IH2 * 2;
-  ctx.fillStyle = "rgba(198,178,138,0.55)";            // packed sand inside the wall
-  ctx.beginPath(); ctx.ellipse(sx, sy, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "rgba(160,60,40,0.16)";              // and the stain it has never lost
-  ctx.beginPath(); ctx.ellipse(sx, sy, rx * 0.72, ry * 0.72, 0, 0, Math.PI * 2); ctx.fill();
+/* ============ Gauntlet S2 round 1 — THE COLOSSEUM AS A SET PIECE ========
+   Scored 2026-10-13 (10-colosseum): Landmark presence 2, Depth 2, Fill 2 —
+   "~30 bare near-identical blocks, no shadows, alpha-ellipse arena". Three
+   changes, all inside the locked flat-shaded language:
+   1. THE FLOOR IS GROUND. The two alpha ellipses that were the floor (they
+      sliced tile edges and muddied the grass under them) are gone, and so is
+      the "colofloor" entity that drew them. drawGroundTile() now paints the
+      floor tile by tile through arenaFloorAt(): the locked Sand checker inside
+      the low wall with the old stain worked into its middle, a darker slab
+      ring where sand meets wall, and a paved concourse in the locked Ruins
+      checker out under the seating bowl, breaking up into grass toward the
+      outer stands. Painted by the ground pass, it is under everything
+      standing on it by construction (v52's own rule for the sand, kept by a
+      stronger mechanism), for one bounds compare per tile. The biome is still
+      PLAINS everywhere: nothing in gameplay reads a painted colour.
+   2. COLUMNS ARE COLUMNS. A standing outer column is a plinth, a slender
+      shaft and a lighter capital; about a third are broken stumps. Pieces are
+      visual only (nothing reads w/d/h for collision), so the proportions are
+      the drawer's. Runs of standing neighbours carry LINTELS (drawBeam: the
+      drawBox facet split on a rotated footprint) — that is what makes the ring
+      read as an arcade from across the screen.
+   3. EVERY PIECE CASTS the SUN-direction shadow the trees already cast; the
+      seating blocks are two steps; the low wall has a coping course. */
+const ARENA_SAND_R  = COLOSSEUM_R * COLOSSEUM_WALL_RING;          // 8.4: the sand, inside the low wall
+const ARENA_PAVE_R  = COLOSSEUM_R * COLOSSEUM_TIER_RING + 1.6;    // 14.0: paved under the seating bowl
+const ARENA_EDGE_R  = COLOSSEUM_R * COLOSSEUM_STAND_RING + 1.4;   // 17.8: the paving gives out at the stands
+const ARENA_STAIN_R = ARENA_SAND_R * 0.6;                         // 5.04: the old stain
+const ARENA_TONES = {
+  sand: PAL[B.SAND],                                              // the locked Sand checker
+  slab: [shade(PAL[B.SAND][0], 0.86), shade(PAL[B.SAND][1], 0.86)],
+  pave: PAL[B.RUINB],                                             // the locked Ruins checker
+  crack: "rgba(80,70,56,0.45)", stain: "160,60,40",
+  grainLo: "rgba(196,172,122,0.4)", grainHi: "rgba(244,232,196,0.45)", moss: "rgba(120,150,80,0.55)",
+};
+/* 0 = not floor, 1 = sand, 2 = slab ring, 3 = paving. Only PLAINS, the
+   clearing's own ground, is ever painted, so a guarded biome inside the ring
+   (ruin, volcanic rock, a cave mouth) keeps its own face. */
+function arenaFloorAt(tx, ty, b) {
+  if (b !== B.PLAINS) return 0;
+  const dx = tx + 0.5 - COLOSSEUM.x;
+  if (dx > ARENA_EDGE_R || dx < -ARENA_EDGE_R) return 0;
+  const dy = ty + 0.5 - COLOSSEUM.y;
+  if (dy > ARENA_EDGE_R || dy < -ARENA_EDGE_R) return 0;
+  const d = Math.sqrt(dx * dx + dy * dy);
+  if (d < ARENA_SAND_R - 1.1) return 1;
+  if (d < ARENA_SAND_R - 0.2) return 2;
+  const h = hash2(tx, ty, 931);
+  if (d < ARENA_PAVE_R) return h < 0.04 + 0.16 * (d - ARENA_SAND_R) / (ARENA_PAVE_R - ARENA_SAND_R) ? 0 : 3;
+  if (d < ARENA_EDGE_R) return h < 0.3 + 0.7 * (d - ARENA_PAVE_R) / (ARENA_EDGE_R - ARENA_PAVE_R) ? 0 : 3;
+  return 0;
+}
+/* The floor's detail, on the tile's own top face: hard-edged flat fills and
+   1px strokes only, the same hash-placed wear language as the cliff faces. */
+function drawArenaFloorDetail(c, k, tx, ty, cx, cy) {
+  if (k === 1) {
+    const d = Math.hypot(tx + 0.5 - COLOSSEUM.x, ty + 0.5 - COLOSSEUM.y);
+    const q = d / ARENA_STAIN_R;
+    if (q < 1 && hash2(tx, ty, 933) < 1.7 * (1 - q * q)) {           // solid middle, ragged edge
+      const a = 0.09 + 0.07 * (1 - q);
+      c.fillStyle = `rgba(${ARENA_TONES.stain},${a.toFixed(3)})`;
+      c.beginPath();
+      c.moveTo(cx, cy - IH2); c.lineTo(cx + IW2, cy); c.lineTo(cx, cy + IH2); c.lineTo(cx - IW2, cy);
+      c.closePath(); c.fill();
+    }
+    for (let g = 0; g < 2; g++) {                                   // raked grain
+      const gh = hash2(tx, ty, 937 + g * 3);
+      if (gh < 0.4) continue;
+      const gu = (hash2(tx, ty, 938 + g * 3) - 0.5) * 1.2, gv = (hash2(tx, ty, 939 + g * 3) - 0.5) * 1.2;
+      c.fillStyle = gh > 0.75 ? ARENA_TONES.grainHi : ARENA_TONES.grainLo;
+      c.fillRect(cx + (gu - gv) * IW2, cy + (gu + gv) * IH2, 1.6, 1.4);
+    }
+  } else if (k === 3) {
+    /* No joint lines: a 1px seam on every slab is exactly the "graph paper"
+       lattice the 2026-10-13 scoring asked to be rid of. The locked Ruins
+       checker carries the slabs; cracks and grass carry the age. */
+    const h = hash2(tx, ty, 941);
+    if (h > 0.8) {                                                  // a crack across the slab
+      c.strokeStyle = ARENA_TONES.crack;
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(cx - IW2 * 0.45, cy - IH2 * 0.1);
+      c.lineTo(cx - IW2 * 0.1, cy + IH2 * 0.15);
+      c.lineTo(cx + IW2 * 0.3, cy - IH2 * 0.05);
+      c.stroke();
+    } else if (h < 0.14) {                                          // grass pushing through a joint
+      c.fillStyle = ARENA_TONES.moss;
+      c.fillRect(cx - 3 + hash2(tx, ty, 943) * 6, cy + IH2 * 0.45, 3, 1.6);
+    }
+  }
+}
+const COLO_COL_H  = 54;          // TUNABLE: a standing outer column, px (plinth + shaft + capital)
+const COLO_BROKEN = 0.34;        // TUNABLE: share of outer columns that are broken stumps
+/* A column's look, from its own position, once. */
+function coloLook(cp) {
+  if (cp._look) return cp._look;
+  const hb = hash2(Math.round(cp.x * 7), Math.round(cp.y * 7), 717);
+  const broken = hb < COLO_BROKEN;
+  cp._look = { broken, H: broken ? Math.round(16 + (hb / COLO_BROKEN) * 18) : COLO_COL_H };
+  return cp._look;
+}
+/* The lintels: one beam over every pair of NEIGHBOURING outer columns that
+   are both standing. Derived from the pieces (cached with them), so the
+   arcade can never disagree with the columns it rests on. */
+let _coloBeams = null, _coloBeamsFor = null;
+function colosseumBeams() {
+  const pieces = colosseumPieces();
+  if (_coloBeamsFor === pieces) return _coloBeams;
+  const byIdx = new Map();
+  for (const cp of pieces) {
+    if (cp.k !== "col") continue;
+    const a = Math.atan2(cp.y - COLOSSEUM.y, cp.x - COLOSSEUM.x);
+    byIdx.set(((Math.round(a / (Math.PI * 2) * COLOSSEUM_COLS) % COLOSSEUM_COLS) + COLOSSEUM_COLS) % COLOSSEUM_COLS, cp);
+  }
+  const out = [];
+  for (let i = 0; i < COLOSSEUM_COLS; i++) {
+    const a = byIdx.get(i), b = byIdx.get((i + 1) % COLOSSEUM_COLS);
+    if (!a || !b || coloLook(a).broken || coloLook(b).broken) continue;
+    out.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, c: a.c, s: Math.max(a.x + a.y, b.x + b.y) + 0.05 });
+  }
+  _coloBeams = out; _coloBeamsFor = pieces;
+  return out;
+}
+/* A flat-shaded beam on a ROTATED footprint: drawBox's own facet split, with
+   the viewer-facing long side shaded between the SW 0.72 and SE 0.55 faces by
+   how much it faces each, and the viewer-facing end capped. z0 is the beam's
+   underside in px above the ground at each end, hb its depth in px. */
+function drawBeam(x1, y1, x2, y2, z0, wb, hb, col) {
+  const dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy) || 1;
+  let nx = -dy / L, ny = dx / L;
+  if (nx + ny < 0) { nx = -nx; ny = -ny; }                    // the long side that faces the viewer
+  const hw = wb / 2, za = groundZ(x1, y1) + z0 + hb, zb = groundZ(x2, y2) + z0 + hb;
+  const F1 = worldToScreen(x1 + nx * hw, y1 + ny * hw, za), F2 = worldToScreen(x2 + nx * hw, y2 + ny * hw, zb);
+  const K1 = worldToScreen(x1 - nx * hw, y1 - ny * hw, za), K2 = worldToScreen(x2 - nx * hw, y2 - ny * hw, zb);
+  const kOf = (ux, uy) => {
+    const wx = Math.max(0, ux), wy = Math.max(0, uy);
+    return (wx + wy) > 1e-6 ? (0.72 * wy + 0.55 * wx) / (wx + wy) : 0.72;
+  };
+  // the viewer-facing end cap
+  const endB = dx + dy > 0;
+  const E1 = endB ? F2 : F1, E2 = endB ? K2 : K1;
+  ctx.fillStyle = shade(col, kOf(endB ? dx / L : -dx / L, endB ? dy / L : -dy / L));
+  ctx.beginPath();
+  ctx.moveTo(E1[0], E1[1]); ctx.lineTo(E2[0], E2[1]); ctx.lineTo(E2[0], E2[1] + hb); ctx.lineTo(E1[0], E1[1] + hb);
+  ctx.closePath(); ctx.fill();
+  // the viewer-facing long side
+  ctx.fillStyle = shade(col, kOf(nx, ny));
+  ctx.beginPath();
+  ctx.moveTo(F1[0], F1[1]); ctx.lineTo(F2[0], F2[1]); ctx.lineTo(F2[0], F2[1] + hb); ctx.lineTo(F1[0], F1[1] + hb);
+  ctx.closePath(); ctx.fill();
+  // the top
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.moveTo(F1[0], F1[1]); ctx.lineTo(F2[0], F2[1]); ctx.lineTo(K2[0], K2[1]); ctx.lineTo(K1[0], K1[1]);
+  ctx.closePath(); ctx.fill();
+  if (occProbe !== null && occProbe.armed && !occProbe.hit) {
+    occTest(Math.min(F1[0], F2[0], K1[0], K2[0]), Math.min(F1[1], F2[1], K1[1], K2[1]),
+            Math.max(F1[0], F2[0], K1[0], K2[0]), Math.max(F1[1], F2[1], K1[1], K2[1]) + hb);
+  }
+}
+function drawColosseumBeam(bm) {
+  drawBeam(bm.x1, bm.y1, bm.x2, bm.y2, COLO_COL_H, 0.5, 6, shade(bm.c, 1.06));
 }
 /* One piece. `drawBox` carries the locked facet split, so nothing here picks
    its own shading. A podium is three shrinking courses — the Shrine's and the
@@ -15934,7 +16306,40 @@ function drawColosseumFloor(t) {
    is a third thing in the world you walk up to and stand on — and it lights
    gold only while a duel can actually be struck on it. */
 function drawColosseumPiece(cp, t) {
-  if (cp.k !== "podium") { drawBox(cp.x, cp.y, cp.w, cp.d, cp.h, cp.c); return; }
+  if (cp.k !== "podium") {
+    const [px, py] = worldToScreen(cp.x, cp.y, groundZ(cp.x, cp.y));
+    if (cp.k === "col") {                              // Gauntlet S2 R1: plinth, shaft, capital
+      const L = coloLook(cp);
+      drawShadow(px, py, 24, L.H);
+      drawBox(cp.x, cp.y, 0.96, 0.9, 5, shade(cp.c, 0.92));                    // plinth
+      if (!L.broken) {
+        drawBox(cp.x, cp.y, 0.6, 0.56, L.H - 10, cp.c, 5);                    // shaft
+        drawBox(cp.x, cp.y, 0.86, 0.8, 5, shade(cp.c, 1.12), L.H - 5);        // capital
+      } else {
+        drawBox(cp.x, cp.y, 0.6, 0.56, L.H - 5, cp.c, 5);                     // the stump
+        const jh = 3 + Math.round(hash2(Math.round(cp.x * 5), Math.round(cp.y * 5), 719) * 5);
+        drawBox(cp.x - 0.1, cp.y + 0.06, 0.32, 0.3, jh, shade(cp.c, 0.94), L.H);   // its broken edge
+        drawBox(cp.x + 0.75, cp.y + 0.55, 0.62, 0.42, 4, shade(cp.c, 0.9));    // a fallen drum
+      }
+      return;
+    }
+    if (cp.k === "tier") {                             // two steps of seating
+      drawShadow(px, py, 30, cp.h * 1.6);
+      drawBox(cp.x, cp.y, cp.w, cp.d, cp.h, cp.c);
+      const r = Math.hypot(cp.x - COLOSSEUM.x, cp.y - COLOSSEUM.y) || 1;
+      const ox = (cp.x - COLOSSEUM.x) / r * 0.3, oy = (cp.y - COLOSSEUM.y) / r * 0.3;   // the upper step sits back
+      drawBox(cp.x + ox, cp.y + oy, cp.w * 0.6, cp.d * 0.6, Math.round(cp.h * 0.55), shade(cp.c, 1.08), cp.h);
+      return;
+    }
+    if (cp.k === "wall") {                             // the low wall and its coping
+      drawBox(cp.x, cp.y, cp.w, cp.d, cp.h, cp.c);
+      drawBox(cp.x, cp.y, cp.w * 1.06, cp.d * 1.06, 2, shade(cp.c, 1.14), cp.h);
+      return;
+    }
+    drawBox(cp.x, cp.y, cp.w, cp.d, cp.h, cp.c);       // rubble, and a tumbled block beside it
+    drawBox(cp.x + 0.35, cp.y + 0.25, cp.w * 0.5, cp.d * 0.45, 2, shade(cp.c, 1.05));
+    return;
+  }
   const [sx, sy] = worldToScreen(cp.x, cp.y, groundZ(cp.x, cp.y));
   drawShadow(sx, sy, 22, 14);
   drawBox(cp.x, cp.y, 1.5, 1.3, 3, "#9a9084");        // base course
@@ -16092,10 +16497,7 @@ function drawOracleEntity(t) {
   const oa = t / 1400;
   ctx.fillStyle = `rgba(232,182,76,${(0.55 + Math.sin(t / 300) * 0.25).toFixed(3)})`;
   ctx.fillRect(sx + Math.cos(oa) * 9 - 1.2, sy - 22 + Math.sin(oa) * 3 - 1.2, 2.4, 2.4);
-  ctx.font = "10px 'Barlow', sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillStyle = "rgba(232,182,76,0.85)";
-  ctx.fillText("THE ORACLE", sx, sy - 30);
+  queueWorldLabel("THE ORACLE", sx, sy - 30, "10px 'Barlow', sans-serif", "rgba(232,182,76,0.85)");   // S2 R1: overlay pass
 }
 
 /* v35 PART B: the Tutorial Grounds' two props. Both exist ONLY while the
@@ -16130,6 +16532,49 @@ function drawTutorialDummy(t) {
   ctx.fillRect(sx - 1.6, sy - 11.8, 3.2, 3.2);
 }
 
+/* ============ Gauntlet S2 round 1 — THE SHRINE GETS A GATE =============
+   Scored 2026-10-13 (10-shrine): Landmark presence 1 — "a ~45x25 px grey
+   slab ... nothing says 'beast'". The altar itself is unchanged (its carved
+   antler and paw motif sits on its own faces at fixed offsets, and nearShrine
+   still measures from SHRINE). Behind it now stands a gate in the same pale
+   stone: two pillars, a lintel and a short upper course, a gold rune plaque on
+   the lintel's face and a horned beast head on top — the bible's beast
+   shrine, readable from across the safe zone. Its own entity, sorted at its
+   own centre, one tile behind the altar, so the altar and anyone at it draw
+   in front of it. Flat fills and the locked facet split; no gradient. */
+function shrineGatePos() { return { x: SHRINE.x, y: SHRINE.y - 1.05 }; }
+function drawShrineGate(t) {
+  const G = shrineGatePos();
+  const gz = groundZ(G.x, G.y);
+  const [gx, gy] = worldToScreen(G.x, G.y, gz);
+  drawShadow(gx, gy, 46, 44);
+  for (const ox of [-0.8, 0.8]) {
+    drawBox(G.x + ox, G.y, 0.44, 0.44, 4, "#9a9084");              // footing
+    drawBox(G.x + ox, G.y, 0.32, 0.32, 32, "#a8a094", 4);          // pillar
+  }
+  drawBox(G.x, G.y, 2.1, 0.44, 5, "#b4ac9e", 36);                  // the lintel
+  drawBox(G.x, G.y, 1.5, 0.34, 3, "#a8a094", 41);                  // the upper course
+  // the rune plaque, ON the lintel's SW face
+  const pf = G.y + 0.22, pz = gz + 37;
+  const P = [worldToScreen(G.x - 0.32, pf, pz), worldToScreen(G.x + 0.32, pf, pz),
+             worldToScreen(G.x + 0.32, pf, pz + 3.2), worldToScreen(G.x - 0.32, pf, pz + 3.2)];
+  const glow = 0.62 + 0.28 * Math.sin(t / 520);
+  ctx.fillStyle = `rgba(232,176,74,${glow.toFixed(3)})`;
+  ctx.beginPath();
+  ctx.moveTo(P[0][0], P[0][1]); ctx.lineTo(P[1][0], P[1][1]); ctx.lineTo(P[2][0], P[2][1]); ctx.lineTo(P[3][0], P[3][1]);
+  ctx.closePath(); ctx.fill();
+  // the beast head: a block, two swept horns, in the lintel's stone
+  drawBox(G.x, G.y, 0.36, 0.3, 6, "#b4ac9e", 44);
+  const [hx, hy] = worldToScreen(G.x, G.y, gz + 50);
+  ctx.fillStyle = "#c4bcaa";                                       // lit horn
+  ctx.beginPath(); ctx.moveTo(hx - 2, hy + 1); ctx.lineTo(hx - 10, hy - 8); ctx.lineTo(hx - 7, hy - 11);
+  ctx.lineTo(hx - 6, hy - 6); ctx.lineTo(hx + 0.5, hy + 0.5); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = shade("#c4bcaa", 0.62);                          // shaded horn
+  ctx.beginPath(); ctx.moveTo(hx + 2, hy + 1); ctx.lineTo(hx + 10, hy - 8); ctx.lineTo(hx + 7, hy - 11);
+  ctx.lineTo(hx + 6, hy - 6); ctx.lineTo(hx - 0.5, hy + 0.5); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "rgba(232,176,74,0.85)";                         // two gold eyes
+  ctx.fillRect(hx - 3, hy + 3, 1.6, 1.4); ctx.fillRect(hx + 1.4, hy + 3, 1.6, 1.4);
+}
 function drawShrineEntity(t) {
   const [sx, sy] = worldToScreen(SHRINE.x, SHRINE.y, groundZ(SHRINE.x, SHRINE.y));
   drawShadow(sx, sy, 26, 20);
@@ -16161,10 +16606,10 @@ function drawShrineEntity(t) {
       ctx.fillRect(sx - 6 + i * 6 + Math.sin(t / 300 + i * 2) * 2, sy - 16 - ph * 16, 2, 2);
     }
   }
-  ctx.font = "10px 'Barlow', sans-serif";
-  ctx.textAlign = "center";
-  ctx.fillStyle = "rgba(232,182,76,0.85)";
-  ctx.fillText("BEASTMASTER SHRINE", sx, sy - 26);
+  /* S2 R1: overlay pass, and lifted above the new gate's horns (the gate's
+     top is ~62px over the altar's ground point), so the name crowns the set
+     piece instead of sitting across its pillars. */
+  queueWorldLabel("BEASTMASTER SHRINE", sx, sy - 76, "10px 'Barlow', sans-serif", "rgba(232,182,76,0.85)");
 }
 
 /* ⚠️ DEV-ONLY (v9): unlimited materials chest. Distinct wooden-chest
@@ -17653,6 +18098,24 @@ function drawPlayerEntity(p, name, t, isMe) {
     ctx.fill();
   }
 
+  /* Gauntlet S2 round 1 — READABILITY. The plate (name, guild row, HP bar)
+     is no longer painted here, mid-sort, where any tree, tower or wall
+     sorted in front of the player covered it: it is queued and painted in
+     flushOverlayPass() after every world entity, at EXACTLY the same pixels
+     (same sx/sy anchor, same offsets — the art skill's "username row and
+     HP bar must not move a pixel" holds). */
+  plateQueue.push({ p, name, isMe, sx, sy });
+  if (isMe) {
+    const gx = sx + rx, gy = sy - bob + ry + seatLift;
+    meGhost = { x: gx, y: gy, cls: p.cls, S, tier, face, wkind, atier, blocking, cos: cosNow, step };
+    occProbe = { x0: gx + OCC_CORE.l, x1: gx + OCC_CORE.r, y0: gy + OCC_CORE.t, y1: gy + OCC_CORE.b,
+                 armed: false, hit: false };
+  }
+}
+
+/* The plate itself, moved verbatim out of drawPlayerEntity(). */
+function drawPlayerPlate(q) {
+  const { p, name, isMe, sx, sy } = q;
   ctx.font = "11px 'Barlow', sans-serif";
   ctx.textAlign = "center";
   const label = `${name}  Lv ${p.level || 1}`;
@@ -17710,6 +18173,153 @@ function drawPlayerEntity(p, name, t, isMe) {
   ctx.fillRect(sx - 14, sy - 24, 28, 4);
   ctx.fillStyle = frac > 0.35 ? "#7fce5a" : "#d0604c";
   ctx.fillRect(sx - 13, sy - 23, 26 * frac, 2);
+}
+
+/* ============ Gauntlet S2 round 1 — THE OVERLAY PASS ==================
+   Scored 2026-10-13: Readability 2.61/5 — the player and its plate were
+   buried behind trees and the Eternal Tower (10-tower: player and plate
+   completely hidden), and world labels sat under nameplates. After the
+   y-sorted world, three things are painted on top, in this order:
+     1. the LOCAL player's ghost — the same sprite at PLAYER_GHOST_A alpha,
+        no shadow, no effects — ONLY when something sorted in front of the
+        player actually overlaps its body (`occProbe`, below). Unoccluded,
+        nothing is drawn at all, so the swing arc, cast pulse, auras and hit
+        flash keep their exact pixels. No outline (the art skill's "no black
+        outlines" rule), no palette change (class palettes locked).
+        drawUnit() resets globalAlpha itself (armour overlay), so the ghost
+        is drawn into one reusable offscreen canvas and blitted at alpha, at
+        the sprite's own sub-pixel offset.
+     2. world labels (SPAWN FORGE, THE ORACLE, BEASTMASTER SHRINE), on the
+        nameplates' own dark plate so they read on any ground;
+     3. every queued player plate, unchanged.
+   Particles still paint after this, exactly as they did after the plates
+   before.
+
+   THE OCCLUSION PROBE. When the local player is drawn, `occProbe` is set to
+   the screen rect of its body core (OCC_CORE: measured in real Chromium over
+   25,920 class/weapon/tier/hat/cloak/facing/step combinations, whose full
+   extent is x -17..16, y -37..3 from the feet; the core is the torso and
+   head, so a weapon tip poking past a trunk does not count). Every entity
+   drawn AFTER that arms the probe only if its kind is world structure
+   (OCCLUDER_KINDS — never a mob, pet, item or another player), and the two
+   primitives such structure is built from, drawBox()/drawPyramid() and the
+   tree crown in drawTree(), test their own screen bounds against it. One
+   rect compare per primitive, only after the player, only while armed. */
+const PLAYER_GHOST_A = 0.55;            // TUNABLE: how strongly the player shows through cover
+const GHOST_W = 112, GHOST_H = 112, GHOST_AX = 56, GHOST_AY = 84;   // offscreen box, anchor = feet
+const OCC_CORE = { l: -7, r: 7, t: -30, b: -3 };                    // body core, px from the feet
+const OCCLUDER_KINDS = new Set(["tree", "rock", "iron", "runic", "meteor", "ruinpiece", "decor",
+  "dock", "tower", "forge", "chest", "shrine", "shrinegate", "oracle", "bazaar", "ancient", "ancientanvil",
+  "colopiece", "colobeam", "altar", "basepiece", "kelp", "inode", "iore"]);
+let plateQueue = [], labelQueue = [], meGhost = null, ghostCanvas = null, ghostCtx = null;
+let overlayStats = { ghosts: 0, plates: 0, labels: 0, occluded: false };
+function queueWorldLabel(text, x, y, font, color) {
+  labelQueue.push({ text, x, y, font, color });
+}
+function occTest(x0, y0, x1, y1) {
+  const o = occProbe;
+  if (x0 < o.x1 && x1 > o.x0 && y0 < o.y1 && y1 > o.y0) o.hit = true;
+}
+function flushOverlayPass(t) {
+  overlayStats = { ghosts: 0, plates: 0, labels: 0, occluded: !!(occProbe && occProbe.hit) };
+  if (meGhost && occProbe && occProbe.hit) {
+    if (!ghostCanvas) {
+      ghostCanvas = document.createElement("canvas");
+      ghostCanvas.width = GHOST_W; ghostCanvas.height = GHOST_H;
+      ghostCtx = ghostCanvas.getContext("2d");
+    }
+    if (ghostCtx) {
+      const g = meGhost;
+      const ix = Math.floor(g.x), iy = Math.floor(g.y);
+      ghostCtx.clearRect(0, 0, GHOST_W, GHOST_H);
+      drawUnit(ghostCtx, GHOST_AX + (g.x - ix), GHOST_AY + (g.y - iy), g.cls, g.S, g.tier, g.face, t,
+               false, g.wkind, g.atier, g.blocking, g.cos, g.step);
+      ctx.save();
+      ctx.globalAlpha = PLAYER_GHOST_A;
+      ctx.drawImage(ghostCanvas, ix - GHOST_AX, iy - GHOST_AY);
+      ctx.restore();
+      overlayStats.ghosts++;
+    }
+  }
+  meGhost = null;
+  occProbe = null;
+  for (const L of labelQueue) {
+    ctx.font = L.font;
+    ctx.textAlign = "center";
+    const w = ctx.measureText(L.text).width;
+    ctx.fillStyle = "rgba(6,9,14,0.62)";           // the nameplate's own plate
+    ctx.fillRect(L.x - w / 2 - 4, L.y - 10, w + 8, 13);
+    ctx.fillStyle = L.color;
+    ctx.fillText(L.text, L.x, L.y);
+    overlayStats.labels++;
+  }
+  labelQueue.length = 0;
+  for (const q of plateQueue) { drawPlayerPlate(q); overlayStats.plates++; }
+  plateQueue.length = 0;
+}
+
+/* ⚠️ HARNESS ONLY (Gauntlet S2): read-only views of the polish pass, so
+   run4 can measure it instead of trusting a screenshot. Nothing in the game
+   calls any of these. */
+function debugS2Info() {
+  const kinds = {};
+  for (const p of particles) kinds[p.kind + (p.lmSmoke ? ":" + p.lmSmoke : "")] = (kinds[p.kind + (p.lmSmoke ? ":" + p.lmSmoke : "")] || 0) + 1;
+  const cols = colosseumPieces().filter(p => p.k === "col");
+  return {
+    overlay: Object.assign({}, overlayStats), PLAYER_GHOST_A, OCC_CORE: Object.assign({}, OCC_CORE),
+    occluderKinds: [...OCCLUDER_KINDS], plateQueue: plateQueue.length, labelQueue: labelQueue.length,
+    probeLive: occProbe !== null,
+    arena: { SAND_R: ARENA_SAND_R, PAVE_R: ARENA_PAVE_R, EDGE_R: ARENA_EDGE_R, STAIN_R: ARENA_STAIN_R },
+    cols: cols.length, broken: cols.filter(c => coloLook(c).broken).length,
+    standingH: cols.filter(c => !coloLook(c).broken).map(c => coloLook(c).H),
+    beams: colosseumBeams().map(b => ({ x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2, s: b.s })),
+    colX: cols.map(c => ({ x: c.x, y: c.y, broken: coloLook(c).broken })),
+    house: ancientHouse(), anvil: ancientAnvilPos(), flue: ancientFlue(), ANCIENT_HOUSE_OFF,
+    gate: shrineGatePos(), flocks: flocks.length, flockBirdsDrawn, particleKinds: kinds,
+    LEAF_CHANCE, BUTTERFLY_PLAINS, RABBIT_CELL, RABBIT_P, COLO_CROWS, SMOKE_NEAR,
+  };
+}
+/* The occlusion probe on demand: arm it over a rect, run one primitive, and
+   say whether that primitive reported covering it. */
+function debugOccProbe(rect, op) {
+  occProbe = { x0: rect.x0, x1: rect.x1, y0: rect.y0, y1: rect.y1, armed: !!op.armed, hit: false };
+  if (op.box) drawBox.apply(null, op.box);
+  if (op.pyramid) drawPyramid.apply(null, op.pyramid);
+  if (op.tree) drawTree(op.tree, 0);
+  if (op.beam) drawBeam.apply(null, op.beam);
+  const hit = occProbe.hit;
+  occProbe = null;
+  return hit;
+}
+/* LIFE, measured: stand the camera at (x, y) at midday (or night), empty the
+   ambient state, run the real updateParticles() for `secs` simulated seconds
+   at 30 Hz, and count what is moving inside the 1280x720 view — every
+   ambient particle, every rabbit, every bird in the air. */
+function debugLifeAt(x, y, secs, night) {
+  const ep = worldEpoch, mx = me.x, my = me.y, cx = cam.x, cy = cam.y;
+  worldEpoch = Date.now() / 1000 - DAY_LENGTH * (night ? 0.75 : 0.25);
+  me.x = cam.x = x; me.y = cam.y = y;
+  particles.length = 0; flocks.length = 0; flockNextAt = 0;
+  const t0 = 1e7;
+  for (let i = 0; i < secs * 30; i++) updateParticles(1 / 30, t0 + i * (1000 / 30));
+  const W = canvas.width, H = canvas.height;
+  const inView = (wx, wy, z) => { const [sx, sy] = worldToScreen(wx, wy, z || 0); return sx >= 0 && sy >= 0 && sx <= W && sy <= H; };
+  const byKind = {};
+  let parts = 0;
+  for (const p of particles) if (inView(p.x, p.y, p.z)) { parts++; byKind[p.kind] = (byKind[p.kind] || 0) + 1; }
+  const corners = [screenToWorld(0, 0), screenToWorld(W, 0), screenToWorld(0, H), screenToWorld(W, H)];
+  const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
+  let rabbits = 0;
+  for (const cr of localRabbits(Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys))) if (inView(cr.hx, cr.hy)) rabbits++;
+  for (const cr of critters) if (inView(cr.hx, cr.hy)) rabbits++;
+  let birds = 0;
+  for (const f of flocks) for (const bd of f.birds) if (inView(f.x, f.y, f.z)) birds++;
+  const crows = (!SETTINGS.reduceMotion && Math.hypot(COLOSSEUM.x - cam.x, COLOSSEUM.y - cam.y) < 40) ? COLO_CROWS : 0;
+  const out = { parts, byKind, rabbits, birds, crows, total: parts + rabbits + birds + crows,
+                kinds: Object.keys(byKind).length + (rabbits ? 1 : 0) + (birds ? 1 : 0) + (crows ? 1 : 0) };
+  worldEpoch = ep; me.x = mx; me.y = my; cam.x = cx; cam.y = cy;
+  particles.length = 0; flocks.length = 0; flockNextAt = 0;
+  return out;
 }
 
 function drawItemEntity(it, t) {
@@ -18406,6 +19016,7 @@ function render(t) {
         const b = biomeAt(tx, ty);
         if (b !== B.PLAINS && b !== B.MEADOW && b !== B.FOREST &&
             b !== B.ENCHFOREST && b !== B.SACMEADOW) continue;   // v17
+        if (arenaFloorAt(tx, ty, b)) continue;                    // S2 R1: no grass on sand or paving
         if (hash2(tx, ty, 881) < 0.7) continue;
         const gx = tx + 0.2 + hash2(tx, ty, 883) * 0.6;
         const gy = ty + 0.2 + hash2(tx, ty, 887) * 0.6;
@@ -18452,6 +19063,10 @@ function render(t) {
     if (cr.hx < minX - 3 || cr.hx > maxX + 3 || cr.hy < minY - 3 || cr.hy > maxY + 3) continue;
     ents.push({ s: cr.hx + cr.hy, kind: "critter", cr });
   }
+  /* Gauntlet S2 R1: the meadow rabbits at the world's scale (see LIFE). */
+  if (!inInterior()) for (const cr of localRabbits(minX, maxX, minY, maxY)) {
+    ents.push({ s: cr.hx + cr.hy, kind: "critter", cr });
+  }
   if (DOCK && DOCK.x > minX - 5 && DOCK.x < maxX + 5 && DOCK.y > minY - 5 && DOCK.y < maxY + 5) {
     ents.push({ s: DOCK.x + DOCK.y + 1.5, kind: "dock" });
   }
@@ -18462,6 +19077,7 @@ function render(t) {
      would be its own confusing bug. */
   if (isAdmin()) ents.push({ s: DEV_CHEST.x + DEV_CHEST.y + 0.3, kind: "chest" });   // ⚠️ DEV-ONLY, admin-gated
   ents.push({ s: SHRINE.x + SHRINE.y + 0.3, kind: "shrine" });
+  { const SG = shrineGatePos(); ents.push({ s: SG.x + SG.y, kind: "shrinegate" }); }   // Gauntlet S2 R1
   ents.push({ s: ORACLE.x + ORACLE.y + 0.3, kind: "oracle" });        // v35 PART E
   /* v35 PART B: the two tutorial props, which exist only while it runs. */
   if (tutorialActive && !inInterior()) {
@@ -18470,17 +19086,27 @@ function render(t) {
   }
   if (!inInterior()) {
     ents.push({ s: BAZAAR.x + BAZAAR.y + 0.3, kind: "bazaar" });
-    ents.push({ s: ANCIENT.x + ANCIENT.y + 0.3, kind: "ancient" });
+    {                                             // Gauntlet S2 R1: the house stands behind the point
+      const AH = ancientHouse(), AA = ancientAnvilPos();
+      ents.push({ s: AH.x + AH.y + 0.3, kind: "ancient" });
+      ents.push({ s: AA.x + AA.y, kind: "ancientanvil" });
+    }
     /* v52+53 PART B: the sand goes in at the centre's own key (it is flat
        ground and must paint under everything standing on it), and every
        structural piece goes in on ITS OWN key so the arena sorts against the
        players inside it. Culled by the same viewport bounds as the ruin
        pieces above, so a colosseum on the far side of the world costs one
        comparison per piece and draws none of them. */
-    ents.push({ s: COLOSSEUM.x + COLOSSEUM.y - 0.4, kind: "colofloor" });
+    /* Gauntlet S2 R1: the sand is no longer an entity — drawGroundTile()
+       paints the floor in the ground pass, under everything by construction. */
     for (const cp of colosseumPieces()) {
       if (cp.x < minX - 3 || cp.x > maxX + 4 || cp.y < minY - 3 || cp.y > maxY + 4) continue;
       ents.push({ s: cp.x + cp.y, kind: "colopiece", cp });
+    }
+    for (const bm of colosseumBeams()) {          // Gauntlet S2 R1: the lintels
+      if (Math.max(bm.x1, bm.x2) < minX - 3 || Math.min(bm.x1, bm.x2) > maxX + 4 ||
+          Math.max(bm.y1, bm.y2) < minY - 3 || Math.min(bm.y1, bm.y2) > maxY + 4) continue;
+      ents.push({ s: bm.s, kind: "colobeam", bm });
     }
     ents.push({ s: DRAGON_ALTAR.x + DRAGON_ALTAR.y + 0.3, kind: "altar" });   // v39
     /* v50 PART A: the Void Rift. Surface only, like every entity in this
@@ -18568,7 +19194,9 @@ function render(t) {
   for (const pr of projectiles) ents.push({ s: pr.x + pr.y + 0.01, kind: "proj", pr });
 
   ents.sort((a, b) => a.s - b.s);
+  occProbe = null; meGhost = null;          // Gauntlet S2 R1: set again when the local player draws
   for (const e of ents) {
+    if (occProbe) occProbe.armed = OCCLUDER_KINDS.has(e.kind);
     if (e.kind === "tree") drawTree(e.f, t);
     else if (e.kind === "rock") drawRockNode(e.f);
     else if (e.kind === "iron") drawIronNode(e.f);
@@ -18607,12 +19235,14 @@ function render(t) {
     else if (e.kind === "forge") drawForgeEntity(t);
     else if (e.kind === "chest") drawChestEntity(t);
     else if (e.kind === "shrine") drawShrineEntity(t);
+    else if (e.kind === "shrinegate") drawShrineGate(t);              // Gauntlet S2 R1
     else if (e.kind === "oracle") drawOracleEntity(t);        // v35 PART E
     else if (e.kind === "tutmark") drawTutorialMark(t);       // v35 PART B
     else if (e.kind === "tutdummy") drawTutorialDummy(t);     // v35 PART B
     else if (e.kind === "bazaar") drawBazaarEntity(t);
     else if (e.kind === "ancient") drawAncientEntity(t);
-    else if (e.kind === "colofloor") drawColosseumFloor(t);          // v52+53 PART B
+    else if (e.kind === "ancientanvil") drawAncientAnvil();           // Gauntlet S2 R1
+    else if (e.kind === "colobeam") drawColosseumBeam(e.bm);          // Gauntlet S2 R1
     else if (e.kind === "colopiece") drawColosseumPiece(e.cp, t);    // v52+53 PART B
     else if (e.kind === "altar") drawDragonAltarEntity(t);    // v39 PART B
     else if (e.kind === "voidrift") drawVoidRift(t);         // v50 PART A
@@ -18674,6 +19304,8 @@ function render(t) {
     }
   }
 
+  flushOverlayPass(t);   // Gauntlet S2 R1: ghost, world labels, player plates — after every world entity
+
   // Particles
   for (const p of particles) {
     const [px, py] = worldToScreen(p.x, p.y, (p.z || 0));
@@ -18698,6 +19330,12 @@ function render(t) {
       ctx.lineTo(px + 0.4, py - 0.6);
       ctx.closePath();
       ctx.fill();
+      ctx.globalAlpha = 1;
+    } else if (p.kind === "leaf") {           // Gauntlet S2 R1: a tumbling leaf, flat fill
+      const fl = Math.abs(Math.sin(t / 170 + p.ph * 4));
+      ctx.globalAlpha = Math.min(1, a * 1.6);
+      ctx.fillStyle = p.col;
+      ctx.fillRect(px - (0.6 + fl * 2.2) / 2, py - 0.8, 0.6 + fl * 2.2, 1.7);
       ctx.globalAlpha = 1;
     } else if (p.kind === "smoke") {
       ctx.fillStyle = `rgba(184,188,196,${0.35 * a})`;
@@ -18794,6 +19432,36 @@ function render(t) {
     ctx.quadraticCurveTo(bpx - 2.5, bpy - 2 - flap, bpx, bpy);
     ctx.quadraticCurveTo(bpx + 2.5, bpy - 2 - flap, bpx + 5, bpy);
     ctx.stroke();
+  }
+
+  /* Gauntlet S2 R1: flocks crossing the view, and crows wheeling over the
+     Colosseum — the Tower birds' glyph and colour, nothing else new. */
+  flockBirdsDrawn = 0;
+  if (!inInterior()) {
+    ctx.strokeStyle = "rgba(40,48,60,0.8)";
+    ctx.lineWidth = 1.5;
+    for (const f of flocks) {
+      const cs = Math.cos(f.ang), sn = Math.sin(f.ang);
+      for (const bd of f.birds) {
+        // the V trails behind the leader: rotate the formation into the heading
+        const wx = f.x - bd.dy * cs + bd.dx * -sn, wy = f.y - bd.dy * sn + bd.dx * cs;
+        const [bpx, bpy] = worldToScreen(wx, wy, f.z + Math.sin(t / 700 + bd.ph) * 4);
+        if (bpx < -20 || bpy < -20 || bpx > w + 20 || bpy > h + 20) continue;
+        drawBirdGlyph(bpx, bpy, Math.abs(Math.sin(t / 150 + bd.ph)) * 3, 0.9);
+        flockBirdsDrawn++;
+      }
+    }
+    if (!SETTINGS.reduceMotion && Math.hypot(COLOSSEUM.x - cam.x, COLOSSEUM.y - cam.y) < 40) {
+      for (let i = 0; i < COLO_CROWS; i++) {
+        const ang = t / 4300 * (0.8 + i * 0.17) + i * 2.4;
+        const rr = 7 + i * 2.2;
+        const [bpx, bpy] = worldToScreen(COLOSSEUM.x + Math.cos(ang) * rr, COLOSSEUM.y + Math.sin(ang) * rr * 0.8,
+                                         120 + Math.sin(t / 800 + i) * 12);
+        if (bpx < -20 || bpy < -20 || bpx > w + 20 || bpy > h + 20) continue;
+        drawBirdGlyph(bpx, bpy, Math.abs(Math.sin(t / 170 + i * 1.9)) * 3, 1);
+        flockBirdsDrawn++;
+      }
+    }
   }
 
   // Cloud shadows

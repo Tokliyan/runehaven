@@ -53,6 +53,74 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-14 (Gauntlet S2 round 1 — readability, landmark set pieces, ambient life)
+
+Showcase polish loop, round 1, targeting the three lowest categories of the
+2026-10-13 scoring (Landmark presence 2.17, Life 2.44, Readability 2.61).
+Rendering-scope changes:
+
+- **Nameplates are drawn last.** Player plates (name, guild rows, HP bar) are
+  queued and painted in one overlay pass after every y-sorted entity, at the
+  same offsets — the username row and HP bar have not moved a pixel. The three
+  world labels (SPAWN FORGE, THE ORACLE, BEASTMASTER SHRINE) sit on the
+  nameplate's own dark plate in the same pass.
+- **The player shows through cover.** Only when world structure sorted in
+  front of the local player overlaps its body (an occlusion probe inside
+  drawBox / drawPyramid / the tree crown / the lintel beam, armed only for
+  structure kinds), the sprite is re-drawn on top at PLAYER_GHOST_A 0.55 from
+  an offscreen canvas. No outline, no palette change; in the open nothing is
+  drawn, so swing arcs, auras and hit flashes keep their pixels.
+- **The Colosseum is a set piece.** The two alpha ellipses are gone: the floor
+  is painted tile by tile in the ground pass (locked Sand checker, an old
+  stain, a darker slab ring at the wall, locked Ruins paving breaking up into
+  grass toward the stands) — biome still PLAINS. Outer columns are plinth +
+  slender shaft + lighter capital, 8 of 22 broken stumps; lintels join
+  standing neighbours (drawBeam: the locked facet split on a rotated
+  footprint); seating blocks are two steps, the low wall has a coping; every
+  column and tier casts the SUN shadow. Pieces are visual only.
+- **The Ancient Forge is a furnace house**: basalt plinth, coursed body with a
+  molten arched mouth on its SW face, cornice, pyramid roof, tall chimney
+  with a glowing flue, embers and smoke, a molten sill, a quench pool and an
+  anvil. It stands 2.4 tiles behind the ANCIENT point, which is now the
+  forecourt you land on; crafting radius and landing are untouched. The Spawn
+  Forge silhouette is untouched.
+- **The Beastmaster Shrine has a gate**: two pillars, a lintel, a gold rune
+  plaque and a horned beast head, one tile behind the unchanged altar; the
+  label is lifted above it.
+- **Life**: leaves fall in Forest and Dark Forest by day; butterflies reach the
+  Sacred Meadow and a share of open plains; the Ancient Forge and the Volcano
+  breathe the forge's own `smoke` particle (only near the camera); bird flocks
+  cross the view by day and four crows wheel over the Colosseum (the Tower
+  birds' own glyph — the Tower's three birds are untouched); meadow rabbits
+  are placed per 10-tile cell at the world's scale with v8's exclusions (v8
+  had three in the whole world). Everything but the rabbits stops under Reduce
+  motion; fireflies stay gold, forest-only, night-only. No new gradient.
+
+**Score:** overall 2.97 -> 3.28. Landmark presence 2.17 -> 3.00, Readability
+2.61 -> 2.95, Life 2.44 -> 2.62, Depth 2.94 -> 3.63, Fill 3.00 -> 3.52,
+Palette 3.42 -> 3.86, Water 3.09 -> 3.27, Transitions 3.14 -> 3.13, Night
+3.50 -> 3.50, UI 3.35 -> 3.26 (the new fight and phone frames joined the card).
+Life barely moved because the new cues are 2-3 px and the tour snapped 1.5 s
+after each hop — round 2's first target. Still open: the Volcano reads as an
+orange carpet with no cone; actor contrast; grey seas; cave voids; the
+unplated COMPASS/MINIMAP captions.
+
+**Frame rate** (headless 1280x720, main vs this build, 4 samples each):
+Colosseum 36.0 -> 33.4 (-7%), Bazaar 25.9 -> 25.1 (-3%), Ancient Forge 23.5 ->
+23.3, Spawn 36.0 -> 37.4 (noise). Inside the stage's 10% budget.
+
+**Gate integrity:** run4 1800 -> 1840 PASS, 0 FAIL (run3 clean, run5 CAUGHT
+none). Two gates UPDATED, not relaxed, both still asserting their original
+claim: "all three render as real structures" now names `arenaFloorAt` (the
+floor's painter) instead of the removed `drawColosseumFloor`; "the sand goes
+UNDER everything standing on it" now asserts the stronger mechanism (ground
+pass before the entity gather, the ground tile paints it, no sorted floor
+entity left). 40 new S2 gates measure the overlay, the probe, the arena floor
+(208 sand / 488 paved tiles on the harness seed), columns and lintels, the
+forge and gate placement, and >= 6 moving things with >= 3 kinds of motion on
+seven day views. No tunable from the README list changed; parse floor intact;
+no service_role key.
+
 ### 2026-10-13 (World Check Fixes — landmarks, compass, caves, lava, Dark Forest)
 
 Built in the owner-started gauntlet session from last night's saved patch plus

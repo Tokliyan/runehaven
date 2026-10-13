@@ -3623,7 +3623,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         gameScript.indexOf('function drawBazaarEntity') > 0 &&
         gameScript.indexOf('function drawAncientEntity') > 0 &&
         gameScript.indexOf('function colosseumPieces()') > 0 &&
-        gameScript.indexOf('function drawColosseumFloor(') > 0 &&
+        /* Gauntlet S2 R1: UPDATED, not relaxed — the floor is painted by the
+           ground pass now (arenaFloorAt), so the function that paints it is
+           the one this asserts; the S2 block below proves it really does. */
+        gameScript.indexOf('function arenaFloorAt(') > 0 &&
         gameScript.indexOf('function drawColosseumPiece(') > 0 &&
         gameScript.indexOf('function drawColosseumEntity') < 0]);
       results.push(['each announces itself so a player knows what they found',
@@ -7720,9 +7723,24 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push(['v52 B: every piece sorts on its OWN world key, so the arena sorts against the players in it',
           code52.indexOf('ents.push({ s: cp.x + cp.y, kind: "colopiece", cp });') > 0 &&
           code52.indexOf('ents.push({ s: COLOSSEUM.x + COLOSSEUM.y + 0.3, kind: "colosseum" });') < 0]);
+        /* Gauntlet S2 R1: UPDATED, not relaxed. The claim is unchanged — the
+           sand goes under everything standing on it — and the mechanism is
+           stronger: v52 sorted a floor entity just ahead of the centre's key;
+           the floor is now painted by drawGroundTile() in the ground pass,
+           which runs before a single entity is even gathered. So the gate
+           asserts that order in render(), that the ground tile paints it, and
+           that no sorted floor entity is left to get the order wrong. */
         results.push(['v52 B: the sand goes UNDER everything standing on it',
-          code52.indexOf('kind: "colofloor"') > 0 &&
-          code52.indexOf('COLOSSEUM.y - 0.4, kind: "colofloor"') > 0]);
+          (() => {
+            const r = code52.indexOf('function render(t)');
+            const g = code52.indexOf('drawGroundTile(ctx, tx, ty);', r);
+            const e = code52.indexOf('const ents = [];', r);
+            const gt = code52.indexOf('function drawGroundTile(c, tx, ty)');
+            const gtBody = code52.slice(gt, code52.indexOf('\n}', gt));
+            return r > 0 && g > r && e > g &&
+                   gtBody.indexOf('const arenaK = arenaFloorAt(tx, ty, b);') > 0 &&
+                   code52.indexOf('kind: "colofloor"') < 0;
+          })()]);
         results.push(['v52 B: the composition is deterministic — the same arena every time',
           JSON.stringify(window.debugDuelInfo().podiums) === JSON.stringify(D.podiums) &&
           window.debugDuelInfo().pieceCount === pieces]);
@@ -11076,6 +11094,204 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       window.debugWorldSeedSet(seedBeforeWcf2);
     } else {
       results.push(['WCF: the PART D-J hooks exist', false]);
+    }
+
+    /* ================================================================
+       Gauntlet S2 round 1 — Readability, Landmark presence, Life
+
+       Scored 2026-10-13 on the S1 shots (overall 2.97/5): Landmark presence
+       2.17, Life 2.44 and Readability 2.61 were the three lowest of ten.
+       GAUNTLET.md S2: "Measured proxies beat opinion ... add them as run4
+       gates, so the polish can't silently regress later." Each claim below
+       is measured on the harness seed, in the real game functions.
+       ================================================================ */
+    if (window.debugS2Info && window.debugOccProbe && window.debugLifeAt && window.arenaFloorAt) {
+      const seedBeforeS2 = window.debugWorldSeedSet(123456789);
+      const V2 = window.debugV37Info(), WI2 = window.debugWorldInfo();
+      const B2 = WI2.B, C2 = V2.COLOSSEUM, A2 = V2.ANCIENT;
+      const S2 = window.debugS2Info();
+      const dsp2 = window.debugSetPlayer;
+
+      /* ---- A: readability — plates on top, a ghost only when hidden --- */
+      {
+        const r = gameScript.indexOf('function render(t)');
+        const loopEnd = gameScript.indexOf('else if (e.kind === "proj") {', r);
+        const flush = gameScript.indexOf('flushOverlayPass(t);', r);
+        const parts = gameScript.indexOf('// Particles', r);
+        results.push(['S2 A: the overlay pass runs after every world entity and before the particles',
+          r > 0 && loopEnd > r && flush > loopEnd && parts > flush]);
+        const pe = gameScript.indexOf('function drawPlayerEntity(');
+        const peBody = gameScript.slice(pe, gameScript.indexOf('\n}', pe));
+        const pp = gameScript.indexOf('function drawPlayerPlate(');
+        const ppBody = gameScript.slice(pp, gameScript.indexOf('\n}', pp));
+        results.push(['S2 A: drawPlayerEntity no longer paints the plate mid-sort — it queues it',
+          pe > 0 && peBody.indexOf('plateQueue.push({ p, name, isMe, sx, sy });') > 0 &&
+          peBody.indexOf('const label = `${name}  Lv ${p.level || 1}`;') < 0 &&
+          peBody.indexOf('guildPlateLines(') < 0]);
+        results.push(['S2 A: the plate is the same code at the same offsets — the username row and HP bar have not moved a pixel',
+          pp > 0 && ['const label = `${name}  Lv ${p.level || 1}`;',
+            'ctx.fillRect(sx - tw / 2 - 4, sy - 38, tw + 8, 13);', 'ctx.fillText(label, sx, sy - 28);',
+            'ctx.fillRect(sx - plateW / 2, sy - 56, plateW, 16);', 'ctx.fillRect(sx - mw / 2 - 4, sy - 71, mw + 8, 13);',
+            'ctx.fillRect(sx - 14, sy - 24, 28, 4);', 'ctx.fillRect(sx - 13, sy - 23, 26 * frac, 2);']
+            .every(l => ppBody.indexOf(l) > 0)]);
+        // The probe, primitive by primitive, on a 14x27 rect at a known spot.
+        const rect = { x0: 600, x1: 614, y0: 300, y1: 327 };
+        const [wx, wy] = window.screenToWorld(607, 340);
+        const boxOver = [wx, wy, 1.0, 1.0, 60, '#888888'];
+        results.push(['S2 A: a box drawn over the player, armed, reports covering it',
+          window.debugOccProbe(rect, { armed: true, box: boxOver }) === true]);
+        results.push(['S2 A: the same box, unarmed (a mob, a pet, another player), never does',
+          window.debugOccProbe(rect, { armed: false, box: boxOver }) === false]);
+        const [fx, fy] = window.screenToWorld(300, 600);
+        results.push(['S2 A: and a box somewhere else on screen does not',
+          window.debugOccProbe(rect, { armed: true, box: [fx, fy, 1.0, 1.0, 60, '#888888'] }) === false]);
+        const tr = { x: wx, y: wy, tx: Math.floor(wx), ty: Math.floor(wy), h: 0.9 };
+        results.push(['S2 A: a tree crown in front of the player covers it',
+          window.debugOccProbe(rect, { armed: true, tree: tr }) === true]);
+        results.push(['S2 A: a lintel beam across the player covers it',
+          window.debugOccProbe(rect, { armed: true, beam: [wx - 1.5, wy + 1.5, wx + 1.5, wy - 1.5, 0, 0.5, 30, '#888888'] }) === true]);
+        results.push(['S2 A: only world structure arms the probe — never a mob, pet, player, item, critter, wild or projectile',
+          ['mob', 'pet', 'player', 'item', 'critter', 'wild', 'proj'].every(k => S2.occluderKinds.indexOf(k) < 0) &&
+          ['tree', 'tower', 'colopiece', 'colobeam', 'ancient', 'shrinegate', 'basepiece', 'ruinpiece'].every(k => S2.occluderKinds.indexOf(k) >= 0)]);
+        // Real frames: in the open, then behind the Eternal Tower.
+        dsp2({ x: C2.x + 0.5, y: C2.y + 0.5, diving: false, hp: 100 });
+        window.render(500000);
+        const open = window.debugS2Info().overlay;
+        results.push([`S2 A: standing in the open, no ghost is drawn (occluded ${open.occluded}, ghosts ${open.ghosts}, plates ${open.plates})`,
+          open.occluded === false && open.ghosts === 0 && open.plates >= 1]);
+        dsp2({ x: WI2.TOWER.x - 2.2, y: WI2.TOWER.y - 2.2, diving: false, hp: 100 });
+        window.render(500016);
+        const hid = window.debugS2Info();
+        results.push([`S2 A: behind the Eternal Tower the player is found and shown through it (occluded ${hid.overlay.occluded}, ghosts ${hid.overlay.ghosts})`,
+          hid.overlay.occluded === true && hid.overlay.ghosts === 1 && hid.overlay.plates >= 1]);
+        results.push(['S2 A: and the frame leaves nothing behind — queues empty, probe cleared',
+          hid.plateQueue === 0 && hid.labelQueue === 0 && hid.probeLive === false]);
+        results.push([`S2 A: the world labels are drawn in the overlay pass on the nameplate's own plate (${hid.overlay.labels} this frame)`,
+          hid.overlay.labels >= 3 && (() => {
+            const f = gameScript.indexOf('function flushOverlayPass(');
+            const body = gameScript.slice(f, gameScript.indexOf('\n}', f));
+            return body.indexOf('ctx.fillStyle = "rgba(6,9,14,0.62)";') > 0 &&
+                   body.indexOf('ctx.fillRect(L.x - w / 2 - 4, L.y - 10, w + 8, 13);') < body.indexOf('ctx.fillText(L.text, L.x, L.y);');
+          })() && ['queueWorldLabel("SPAWN FORGE"', 'queueWorldLabel("THE ORACLE"', 'queueWorldLabel("BEASTMASTER SHRINE"']
+            .every(l => gameScript.indexOf(l) > 0)]);
+        results.push([`S2 A: the ghost is translucent, not a second opaque player (PLAYER_GHOST_A ${S2.PLAYER_GHOST_A})`,
+          S2.PLAYER_GHOST_A > 0.3 && S2.PLAYER_GHOST_A < 0.8]);
+      }
+
+      /* ---- B: landmark presence -------------------------------------- */
+      {
+        const af = (tx, ty) => window.arenaFloorAt(tx, ty, B2.PLAINS);
+        const cx = Math.floor(C2.x), cy = Math.floor(C2.y);
+        results.push(['S2 B: the arena centre is sand, the slab ring meets the wall, and well outside is untouched ground',
+          af(cx, cy) === 1 && window.arenaFloorAt(cx + 7, cy, B2.PLAINS) === 2 && af(cx + 30, cy) === 0]);
+        results.push(['S2 B: only the clearing\'s own PLAINS is ever painted — a guarded biome inside the ring keeps its face',
+          [B2.RUINB, B2.VOLROCK, B2.CALDERA, B2.SAND, B2.FOREST].every(b => window.arenaFloorAt(cx, cy, b) === 0)]);
+        const tally = { 0: 0, 1: 0, 2: 0, 3: 0 };
+        const binfo = window.debugBiomeAt || null;
+        for (let ty = cy - 19; ty <= cy + 19; ty++) for (let tx = cx - 19; tx <= cx + 19; tx++) {
+          if (Math.hypot(tx + 0.5 - C2.x, ty + 0.5 - C2.y) > 18.5) continue;
+          tally[window.arenaFloorAt(tx, ty, window.biomeAt(tx, ty))]++;
+        }
+        console.log(`S2 B arena floor on the harness seed: sand ${tally[1]}, slab ${tally[2]}, paving ${tally[3]}, ground ${tally[0]}`);
+        results.push([`S2 B: the floor fills the arena — ${tally[1] + tally[2]} sand tiles inside the wall, ${tally[3]} paved round it`,
+          tally[1] + tally[2] >= 190 && tally[3] >= 420]);
+        results.push(['S2 B: the two alpha ellipses are gone with the entity that drew them',
+          gameScript.indexOf('function drawColosseumFloor(') < 0 && gameScript.indexOf('"rgba(198,178,138,0.55)"') < 0]);
+        results.push(['S2 B: no grass tufts sprout on the sand or the paving',
+          gameScript.indexOf('if (arenaFloorAt(tx, ty, b)) continue;                    // S2 R1: no grass on sand or paving') > 0]);
+        results.push([`S2 B: ${S2.cols} outer columns, ${S2.broken} of them broken stumps — a ruin, not a fence`,
+          S2.cols === 22 && S2.broken >= 4 && S2.broken <= 11]);
+        results.push([`S2 B: every standing column is full height (${S2.standingH.length} at ${[...new Set(S2.standingH)].join('/')}px)`,
+          S2.standingH.length === S2.cols - S2.broken && S2.standingH.every(h => h === 54)]);
+        const key = (x, y) => x.toFixed(3) + ',' + y.toFixed(3);
+        const standing = new Set(S2.colX.filter(c => !c.broken).map(c => key(c.x, c.y)));
+        results.push([`S2 B: ${S2.beams.length} lintels, each resting on two standing neighbours`,
+          S2.beams.length >= 5 && S2.beams.every(b => standing.has(key(b.x1, b.y1)) && standing.has(key(b.x2, b.y2)) &&
+            Math.hypot(b.x2 - b.x1, b.y2 - b.y1) < 4.0)]);
+        results.push(['S2 B: and every lintel sorts after both columns it rests on',
+          S2.beams.every(b => b.s > b.x1 + b.y1 && b.s > b.x2 + b.y2)]);
+        results.push(['S2 B: every column and seating block casts the sun shadow the trees cast',
+          (() => {
+            const f = gameScript.indexOf('function drawColosseumPiece(');
+            const body = gameScript.slice(f, gameScript.indexOf('\n}', f));
+            return body.indexOf('drawShadow(px, py, 24, L.H);') > 0 && body.indexOf('drawShadow(px, py, 30, cp.h * 1.6);') > 0;
+          })()]);
+        const H = S2.house;
+        results.push([`S2 B: the Ancient Forge's house stands ${S2.ANCIENT_HOUSE_OFF} tiles behind its point, off the forecourt you land on`,
+          Math.abs(H.x - (A2.x - S2.ANCIENT_HOUSE_OFF)) < 1e-9 && Math.abs(H.y - (A2.y - S2.ANCIENT_HOUSE_OFF)) < 1e-9 &&
+          (A2.x - H.x) > 4.4 / 2 && (A2.y - H.y) > 4.0 / 2]);
+        results.push([`S2 B: and the whole house is inside the crafting radius (${Math.hypot(A2.x - H.x, A2.y - H.y).toFixed(2)} < ANCIENT_R ${V2.ANCIENT_R})`,
+          Math.hypot(A2.x - H.x, A2.y - H.y) < V2.ANCIENT_R]);
+        results.push(['S2 B: nearAncient() and fast-travel landing still measure from the point itself',
+          gameScript.indexOf('return Math.hypot(me.x - ANCIENT.x, me.y - ANCIENT.y) < ANCIENT_R;') > 0 &&
+          gameScript.indexOf('["The Ancient Forge",      ANCIENT],') > 0]);
+        results.push(['S2 B: the house and its anvil sort on their own keys',
+          gameScript.indexOf('ents.push({ s: AH.x + AH.y + 0.3, kind: "ancient" });') > 0 &&
+          gameScript.indexOf('ents.push({ s: AA.x + AA.y, kind: "ancientanvil" });') > 0]);
+        const G = S2.gate, SH = { x: WI2.SPAWN.x - 4, y: WI2.SPAWN.y - 4 };
+        results.push(['S2 B: the Beastmaster Shrine\'s gate stands one tile behind the altar and sorts behind it',
+          Math.abs(G.x - SH.x) < 1e-9 && Math.abs(G.y - (SH.y - 1.05)) < 1e-9 &&
+          gameScript.indexOf('ents.push({ s: SG.x + SG.y, kind: "shrinegate" });') > 0 &&
+          (G.x + G.y) < (SH.x + SH.y + 0.3)]);
+        results.push(['S2 B: nearShrine() is untouched',
+          gameScript.indexOf('function nearShrine() { return Math.hypot(me.x - SHRINE.x, me.y - SHRINE.y) < 1.7; }') > 0]);
+      }
+
+      /* ---- C: life — at least six moving things on every day view ----- */
+      {
+        const find = (id, r, far) => {
+          for (let y = 20; y < WI2.N - 20; y += 7) for (let x = 20; x < WI2.N - 20; x += 7) {
+            if (window.biomeAt(x, y) !== id) continue;
+            let ok = true;
+            for (let dy = -r; dy <= r && ok; dy += 2) for (let dx = -r; dx <= r; dx += 2) if (window.biomeAt(x + dx, y + dy) !== id) { ok = false; break; }
+            if (ok && (!far || Math.hypot(x - WI2.SPAWN.x, y - WI2.SPAWN.y) > 60)) return [x + 0.5, y + 0.5];
+          }
+          return null;
+        };
+        const views = {
+          plains: find(B2.PLAINS, 8, true), meadow: find(B2.MEADOW, 4), forest: find(B2.FOREST, 4),
+          darkforest: find(B2.DARKFOREST, 4), colosseum: [C2.x + 0.5, C2.y + 3.5],
+          volcano: [WI2.VOLCANO.x + 0.5, WI2.VOLCANO.y + 0.5], forge: [A2.x + 0.5, A2.y + 0.5],
+        };
+        const life = {};
+        for (const [k, p] of Object.entries(views)) if (p) life[k] = window.debugLifeAt(p[0], p[1], 10);
+        console.log('S2 C life after 10 simulated seconds by day: ' +
+          Object.entries(life).map(([k, v]) => `${k} ${v.total} (${v.kinds} kinds: ${JSON.stringify(v.byKind)} +${v.rabbits} rabbits +${v.birds} birds +${v.crows} crows)`).join('; '));
+        results.push([`S2 C: every one of the ${Object.keys(life).length} day views has at least six moving things on screen`,
+          Object.keys(life).length === 7 && Object.values(life).every(v => v.total >= 6)]);
+        results.push(['S2 C: and at least three different kinds of motion in each — not one effect repeated',
+          Object.values(life).every(v => v.kinds >= 3)]);
+        results.push([`S2 C: the forests drop leaves by day (${life.forest.byKind.leaf || 0} / ${life.darkforest.byKind.leaf || 0})`,
+          (life.forest.byKind.leaf || 0) > 0 && (life.darkforest.byKind.leaf || 0) > 0]);
+        results.push([`S2 C: rabbits graze the open plains (${life.plains.rabbits} in view)`, life.plains.rabbits >= 2]);
+        results.push([`S2 C: a flock crosses the sky (${life.plains.birds} birds) and crows wheel over the arena (${life.colosseum.crows})`,
+          life.plains.birds >= 3 && life.colosseum.crows >= 3]);
+        results.push(['S2 C: the Ancient Forge and the Volcano breathe smoke only where the camera can see it',
+          (() => {
+            window.debugLifeAt(views.forge[0], views.forge[1], 6);
+            const near = window.debugLifeAt(views.forge[0], views.forge[1], 6);
+            const far = window.debugLifeAt(views.plains[0], views.plains[1], 6);
+            return (near.byKind.smoke || 0) > 0 && (far.byKind.smoke || 0) === 0;
+          })()]);
+        const night = window.debugLifeAt(views.forest[0], views.forest[1], 10, true);
+        results.push([`S2 C: at night the forest keeps its fireflies and lets no leaves fall (${night.byKind.firefly || 0} / ${night.byKind.leaf || 0})`,
+          (night.byKind.firefly || 0) > 0 && !night.byKind.leaf && night.birds === 0]);
+        window.setSetting('reduceMotion', true);
+        const still = window.debugLifeAt(views.plains[0], views.plains[1], 10);
+        const stillC = window.debugLifeAt(views.colosseum[0], views.colosseum[1], 10);
+        window.setSetting('reduceMotion', false);
+        results.push([`S2 C: reduce motion stops all of it — leaves, butterflies, smoke, flocks and crows (${still.parts}+${still.birds}+${stillC.crows})`,
+          still.parts === 0 && still.birds === 0 && stillC.parts === 0 && stillC.crows === 0]);
+        results.push(['S2 C: fireflies are still gold, forest-only and night-only; leaves are day-only',
+          gameScript.indexOf('} else if ((b === B.FOREST || b === B.DARKFOREST) && isNight && Math.random() < 0.25) {') > 0 &&
+          gameScript.indexOf('} else if ((b === B.FOREST || b === B.DARKFOREST) && !isNight && Math.random() < LEAF_CHANCE) {') > 0 &&
+          gameScript.indexOf('col: "#ffe89a", size: 1.8, kind: "firefly"') > 0]);
+        results.push(['S2 C: the Tower\'s own three birds are untouched',
+          gameScript.indexOf('// Ambient life: birds circling the Eternal Tower (2026-07-11)\n  for (let i = 0; i < 3; i++) {') > 0]);
+      }
+      window.debugWorldSeedSet(seedBeforeS2);
+    } else {
+      results.push(['S2: the measurement hooks exist', false]);
     }
 
     let allOk = true;

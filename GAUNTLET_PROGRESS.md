@@ -19,7 +19,8 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
 - `NEXT_BUILD.md` now points at Mobile & Touch, so the nightly build won't redo this work.
 
 ## S2 — Showcase polish loop: IN PROGRESS
-- Round 1 scoring of the S1 shots: **overall 2.97 / 5**.
-  - Weakest categories: Landmark presence 2.17, Life 2.44, Readability 2.61.
-  - Strongest: Night mood 3.50, Palette 3.42, UI 3.35.
-- Round 1 targets: landmark set pieces (Colosseum, Ancient Forge, Shrine), ambient life (using the existing spawners), and readability (nameplates drawn last, see-through player when hidden).
+- **Round 1 SHIPPED to `main`** (2026-10-14): nameplates drawn last + see-through player behind cover; Colosseum floor/columns/lintels; Ancient Forge furnace house; Shrine gate; leaves, butterflies, landmark smoke, flocks, crows, rabbits at world scale.
+  - Score 2.97 -> **3.28** (Landmark 2.17 -> 3.00, Readability 2.61 -> 2.95, Life 2.44 -> 2.62).
+  - run4 1800 -> **1840 PASS / 0 FAIL**; frame rate within budget (Colosseum -7%, Bazaar -3% vs main).
+- Round 2 targets (lowest now: Life 2.62, Readability 2.95, Landmark 3.00): make the life cues big enough to see in a still and let the tour reach steady state; the Volcano (orange carpet, no cone, no night glow); actor labels in fights; COMPASS/MINIMAP caption plates.
+- Note: the 5:06am nightly on 2026-10-14 ran but pushed no branch, so nothing clashes with this work.
