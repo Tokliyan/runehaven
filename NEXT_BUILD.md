@@ -1,2 +1,1 @@
-Build exactly per "Confirmed, locked spec for the next build (World Check Fixes — Landmarks, Compass, Caves, Lava & Dark Forest)" in README.md, INCLUDING its "OWNER DECISIONS (2026-10-13)" block, which overrides the parts below it where they conflict.
-The prior attempt is saved as WORLD_CHECK_FIXES_blocked.patch on branch claude/stoic-tesla-22bq3v (see "How to resume" in the README block). Start from it rather than from scratch.
+Build exactly per "Confirmed, locked spec for a future version (Mobile & Touch)" in README.md.

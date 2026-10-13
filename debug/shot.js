@@ -4,7 +4,17 @@
    Needs the `playwright` package and a Chromium (PLAYWRIGHT_BROWSERS_PATH or
    /opt/pw-browsers/chromium). Never touches the network or the live database. */
 const fs = require('fs'), path = require('path');
-let pw; try { pw = require('playwright'); } catch (e) { pw = require(path.join(require('child_process').execSync('npm root -g').toString().trim(), 'playwright')); }
+/* World Check Fixes PART J: this harness is a look, never a gate, so a
+   machine without Playwright or without a Chromium must print "skipped" and
+   exit 0 rather than throwing a module-not-found stack. The standard process
+   says the same thing in words ("write visual check skipped: <reason> and
+   continue; never try to install them"); this makes the script itself say it. */
+let pw;
+try { pw = require('playwright'); }
+catch (e) {
+  try { pw = require(path.join(require('child_process').execSync('npm root -g').toString().trim(), 'playwright')); }
+  catch (e2) { console.log('skipped: playwright is not available (' + e.message.split('\n')[0] + ')'); process.exit(0); }
+}
 const OUT = path.resolve(process.argv[2] || 'shots');
 const FILE = path.resolve(process.argv[3] || path.join(__dirname, '..', 'runehaven.html'));
 fs.mkdirSync(OUT, { recursive: true });
@@ -84,6 +94,48 @@ const STUB = `
     await snap('30-interior-' + name.toLowerCase());
     await p.evaluate(() => { try { if (inInterior()) exitInterior && exitInterior(); } catch (e) {} });
   }
+  /* 4. World Check Fixes PART J — the views this build is judged on.
+     Night first, because worldEpoch is global state every later shot would
+     inherit; it is put back afterwards so nothing below sees night. */
+  const epoch0 = await p.evaluate(() => worldEpoch);
+  await p.evaluate(() => { worldEpoch = Date.now() / 1000 - DAY_LENGTH * 0.75; });
+  const spawnPt = await p.evaluate(() => [Math.floor(SPAWN.x), Math.floor(SPAWN.y)]);
+  await hop(spawnPt[0], spawnPt[1]);
+  await snap('40-night-spawn');
+  const volPt = await p.evaluate(() => [Math.floor(VOLCANO.x), Math.floor(VOLCANO.y)]);
+  await hop(volPt[0], volPt[1]);
+  await snap('41-night-volcano');
+  await p.evaluate(e => { worldEpoch = e; }, epoch0);
+
+  /* The full control list open, over the compass and the zone banner — the
+     two cards PART E lifts. Taken in the Bazaar so #hudZone is up too. */
+  const bazPt = await p.evaluate(() => [Math.floor(BAZAAR.x), Math.floor(BAZAAR.y)]);
+  await hop(bazPt[0], bazPt[1]);
+  await p.click('#helpToggle');
+  await snap('42-help-open');
+  /* Real-browser layout check for PART E (jsdom has no layout): does the open
+     help card still overlap the compass or the zone banner? */
+  const overlap = await p.evaluate(() => {
+    const r = id => { const e = document.getElementById(id); if (!e || getComputedStyle(e).display === 'none') return null; return e.getBoundingClientRect(); };
+    const h = r('hudHelp'), hit = (a, b) => a && b && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    const pairs = ['hudMinimap', 'hudZone'].filter(id => hit(h, r(id)));
+    if (hit(r('hudZone'), r('hudPrompt'))) pairs.push('hudZone/hudPrompt');
+    return pairs;
+  });
+  console.log('help-open overlap: ' + (overlap.length ? overlap.join(', ') : 'none'));
+
+  /* And the compass card on its own, at the Grand Bazaar, where the labels
+     collided. Clipped to the card so the labels are big enough to read. */
+  const mm = await p.$('#hudMinimap');
+  const box = mm && await mm.boundingBox();
+  if (box) {
+    await p.waitForTimeout(500);
+    await p.screenshot({ path: path.join(OUT, '43-compass.png'),
+      clip: { x: Math.max(0, box.x - 6), y: Math.max(0, box.y - 6), width: box.width + 12, height: box.height + 12 } });
+    console.log('shot 43-compass');
+  } else console.log('no #hudMinimap box for 43-compass');
+  await p.click('#helpToggle');
+
   console.log(errs.slice(0, 10).join('\n') || 'no page errors');
   await b.close();
 })();

@@ -167,9 +167,17 @@
     border-radius: 4px; backdrop-filter: blur(2px);
   }
   #hudPlayer { top: 12px; left: 12px; min-width: 190px; }
+  .help-hidden { visibility: hidden; }   /* World Check Fixes PART E: a card the open help list cannot clear on a short window */
   #hudWorld  { top: 12px; right: 12px; text-align: right; }
+  /* World Check Fixes PART E: the two cards that sit directly above the
+     help card now read their bottom offset through `--help-lift-zone` (here)
+     and `--help-lift-mm` (#hudMinimap), each 0px unless the open control
+     list actually overlaps that card. Their base offsets (64px here,
+     52px on #hudMinimap below) are UNCHANGED — the variable adds to them
+     and nothing else, so with the help collapsed both cards are pixel-for-
+     pixel where they have always been. */
   #hudZone {
-    bottom: 64px; left: 50%; transform: translateX(-50%);
+    bottom: calc(64px + var(--help-lift-zone, 0px)); left: 50%; transform: translateX(-50%);
     color: var(--gold); font-size: 14px; letter-spacing: 2px; display: none;
     border-color: rgba(232,182,76,0.4);
   }
@@ -196,7 +204,9 @@
     pointer-events: auto; vertical-align: middle;
   }
   #hudPrompt {
-    bottom: 112px; left: 50%; transform: translateX(-50%);
+    /* World Check Fixes PART E: rides the zone banner's lift, so a banner
+       lifted clear of the open help list never slides under this bubble. */
+    bottom: calc(112px + var(--help-lift-zone, 0px)); left: 50%; transform: translateX(-50%);
     /* v56 PART B: was `var(--gold-dim)`. The audit found two gold accent
        languages in one HUD: the rgba wash #hudZone and #hudTutorial wear (and
        that #hudUnmaking and #hudBoss wear in red), and the solid --gold-dim
@@ -479,7 +489,8 @@
      8px 14px — these two cards frame a fixed-size square widget rather than
      a line of text, and an asymmetric frame around a square reads as a
      mistake. That is the rule now, written down, rather than an accident. */
-  #hudMinimap { bottom: 52px; left: 12px; display: none; width: 150px; height: 150px; padding: 4px; }
+  /* World Check Fixes PART E: see #hudZone's note. 52px base, unchanged. */
+  #hudMinimap { bottom: calc(52px + var(--help-lift-mm, 0px)); left: 12px; display: none; width: 150px; height: 150px; padding: 4px; }
   #hudMinimap .mm-title, #hudMap .mm-title {
     position: absolute; top: -18px; left: 0; color: var(--gold);
     font-size: 11px; letter-spacing: 2px;
@@ -1825,6 +1836,7 @@ const ANCIENT_R = 4;     // crafting proximity, matching SPAWN_FORGE's own 4
    Forge and the volcano by 424 tiles and spawn by SAFE_RADIUS + 26, so a
    radius of 20 cannot bring it into contact with anything. */
 const COLOSSEUM_R = 20;       // the arena floor — v37's 9, rebuilt as a landmark
+const VOLROCK_R = 452;        // must equal biomeAt()'s `dV < 452` volcanic band (a run4 gate ties them)
 const COLOSSEUM_STAND_RING = 0.82;   // broken outer stands, as a fraction of R
 const COLOSSEUM_TIER_RING  = 0.62;   // the seating bowl's middle course
 const COLOSSEUM_WALL_RING  = 0.42;   // the low retaining wall around the sand
@@ -2015,6 +2027,27 @@ const B = { DEEP:0, WATER:1, SHALLOW:2, SAND:3, PLAINS:4, MEADOW:5, FOREST:6, DA
    offset. */
 const ENCH_RARITY = 0.68;      // Forest -> Enchanted Forest
 const SACRED_RARITY = 0.74;    // Meadow -> Sacred Meadow
+/* World Check Fixes PART H: the Dark Forest's own two tree thresholds. Both
+   TUNABLE. FOREST's own pair stays the 0.42 / 0.42 it has always been and is
+   deliberately left inline where it is, so nothing about regular Forest can
+   move by editing these.
+
+   OWNER DECISION 4 (2026-10-13) asked for "a visibly denser forest WITH
+   clearings, not a uniform scatter", and named the mechanism as "lower only
+   clusterNoise, keep h at 0.42". The doubt pass measured that the named
+   mechanism does the opposite of the stated goal: the CLEARINGS are exactly
+   where the smooth cluster field falls below its threshold (37.0% of the
+   ground at 0.42, 17.7% at 0.28 — over half the clearings gone), while `h` is
+   per-tile white noise that thins the inside of a clump and makes no
+   clearing at all. The owner delegated these calls to the builder, so the
+   GOAL wins over the mechanism: the cluster field stays at FOREST's 0.42,
+   which keeps every clearing exactly where it was, and the per-tile hash
+   drops so the clumps themselves fill in. Measured on the harness seed:
+   DARKFOREST 47.9% tree tiles against FOREST 36.8% (+11.1 points), with the
+   clearing area 37.3% against FOREST's 36.7%. Judgment call, flagged in the
+   changelog. */
+const DARKFOREST_CLUSTER_T = 0.42;   // = FOREST's: the clearings are untouched
+const DARKFOREST_H_T = 0.24;         // was 0.42, shared with FOREST: the clumps fill in (TUNABLE)
 /* v18: same mechanism a third time — Underground Caves are a rare pocket
    variant of ROCK/PEAK, on their OWN independent field and seed offset (not
    a reuse of either threshold above). Tunable: picked so cave tiles land
@@ -2401,6 +2434,135 @@ function debugSetV35(patch) {
   if ("oracleIdx" in patch) oracleIdx = patch.oracleIdx | 0;
   return debugV35Info();
 }
+/* ============ World Check Fixes PART I — THE GATHER-ORDER HOOK =======
+   PART I swaps two independent `continue` guards in the render gather so the
+   cheap screen-bounds test runs before isWildVisible(). The claim is that
+   the SET which gets through is unchanged and only the cost moves, and that
+   is a claim about both orderings at once — which the shipped code, running
+   one of them, cannot show on its own.
+
+   So this runs both over the real `wilds` list against the real camera's
+   bounds, counting the isWildVisible() calls each ordering makes. It reads
+   nothing and writes nothing: no entity is drawn, no state is touched.
+   HARNESS ONLY, like every hook beside it. */
+function debugWildGatherOrder() {
+  const w = canvas.width, h = canvas.height;
+  const corners = [screenToWorld(0, 0), screenToWorld(w, 0), screenToWorld(0, h), screenToWorld(w, h)];
+  const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
+  const minX = Math.max(0, Math.floor(Math.min(...xs)) - 2);
+  const maxX = Math.min(N - 1, Math.ceil(Math.max(...xs)) + 2);
+  const minY = Math.max(0, Math.floor(Math.min(...ys)) - 3);
+  const maxY = Math.min(N - 1, Math.ceil(Math.max(...ys)) + 6);
+  const inBox = q => !(q.x < minX - 3 || q.x > maxX + 3 || q.y < minY - 3 || q.y > maxY + 3);
+  let bf = 0, vf = 0, cbf = 0, cvf = 0;
+  for (const q of wilds) {                       // the shipped order
+    if (!inBox(q)) continue;
+    cbf++; if (!isWildVisible(q)) continue;
+    bf++;
+  }
+  for (const q of wilds) {                       // the order it replaced
+    cvf++; if (!isWildVisible(q)) continue;
+    if (!inBox(q)) continue;
+    vf++;
+  }
+  return { total: wilds.length, boundsFirst: bf, visibleFirst: vf,
+           callsBoundsFirst: cbf, callsVisibleFirst: cvf,
+           bounds: { minX, maxX, minY, maxY } };
+}
+
+/* ============ World Check Fixes PART A — THE MULTI-SEED HOOK ==========
+   The spec's gate A asks for five seeds, and a landmark's placement is only
+   observable from inside placeLandmarks(). The world is a PURE function of
+   worldSeed — TOWER, SPAWN, SHRINE and ORACLE are fixed consts and every
+   other landmark, Ruin and Zone is derived — so a seed can be swapped in,
+   measured, and the original TERRAIN and landmarks rebuilt exactly. The
+   rebuild is the admin world-reset's own sequence (cache clears,
+   placeLandmarks, buildFeatureList) and nothing else. Note what that
+   sequence does NOT preserve: buildFeatureList() re-rolls the wild-creature
+   roster (its presence roll uses Math.random) and rebuilds mobs, critters
+   and the feature chunks — so a gate must never compare wild or mob state
+   across a call to these hooks.
+
+   HARNESS ONLY. Nothing in the game calls this, and it must stay that way:
+   it is not a world reset, it has no server side, and it deliberately does
+   not touch wilds, mobs, base pieces or any player state — it restores the
+   world the caller was already in before it returns. */
+function debugWorldSeedSet(seed) {
+  /* The seed-PINNING twin of debugSeedLandSweep() below, sharing its exact
+     rebuild and therefore its exact guarantees. run4 performs a real world
+     reset to a RANDOM seed partway through its sweep, so any later gate that
+     quotes a measured number has to say which world it measured — this is
+     how such a gate stands on the harness seed and then hands the world
+     back. Returns the seed it replaced, so the caller can restore it.
+     HARNESS ONLY: no server side, no player state, not a world reset. */
+  const was = worldSeed;
+  worldSeed = Number(seed) % 2147483647;
+  tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear();
+  placeLandmarks();
+  buildFeatureList();
+  return was;
+}
+function debugSeedLandSweep(seeds) {
+  const was = worldSeed;
+  const rebuild = () => {
+    tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear();
+    placeLandmarks();
+  };
+  const out = [];
+  try {
+    for (const sd of seeds) {
+      worldSeed = Number(sd) % 2147483647;
+      rebuild();
+      out.push({
+        seed: worldSeed,
+        ANCIENT: { ...ANCIENT }, COLOSSEUM: { ...COLOSSEUM },
+        ancFrac: landFraction(ANCIENT.x, ANCIENT.y, ANCIENT_R + 2),
+        colFrac: landFraction(COLOSSEUM.x, COLOSSEUM.y, COLOSSEUM_R + 3),
+        chosen: Object.assign({}, landmarkLandFrac),
+        dVolcano: Math.hypot(ANCIENT.x - VOLCANO.x, ANCIENT.y - VOLCANO.y),
+        dTowerCol: Math.hypot(COLOSSEUM.x - TOWER.x, COLOSSEUM.y - TOWER.y),
+      });
+    }
+  } finally {
+    worldSeed = was;
+    rebuild();
+    buildFeatureList();
+  }
+  return out;
+}
+/* OWNER DECISION 7 (2026-10-13): the arena's terrain over many seeds, for a
+   permanent run4 gate — never on a >50% ROCK/PEAK elevation mass, never within
+   Mount Dragonspire's footprint, never reaching a Ruin or the volcanic band.
+   elevRaw only (it needs no tile cache); restores the world exactly as found. */
+function debugArenaSweep(seeds) {
+  const was = worldSeed;
+  const rebuild = () => {
+    tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear();
+    placeLandmarks();
+  };
+  const out = [];
+  try {
+    for (const sd of seeds) {
+      worldSeed = Number(sd) % 2147483647;
+      rebuild();
+      const R = COLOSSEUM_R + 3;
+      const t = discTerrain(COLOSSEUM.x, COLOSSEUM.y, R);
+      out.push({
+        seed: worldSeed, rockPeakFrac: t.rockPeak, sea: t.sea, peak: t.peak, band: t.band,
+        fallback: !!landmarkLandFrac.COLOSSEUM_fallback,
+        dMount: Math.hypot(COLOSSEUM.x - MOUNT.x, COLOSSEUM.y - MOUNT.y),
+        dVolcano: Math.hypot(COLOSSEUM.x - VOLCANO.x, COLOSSEUM.y - VOLCANO.y),
+        dRuin: RUINS.length ? Math.min(...RUINS.map(r => Math.hypot(r.x - COLOSSEUM.x, r.y - COLOSSEUM.y))) : Infinity,
+        RUIN_FOOT, R,
+      });
+    }
+  } finally {
+    worldSeed = was;
+    rebuild();
+    buildFeatureList();
+  }
+  return out;
+}
 function debugV37Info() {
   return {
     BAZAAR: { ...BAZAAR }, ANCIENT: { ...ANCIENT }, COLOSSEUM: { ...COLOSSEUM },
@@ -2460,6 +2622,28 @@ function debugV37Info() {
         biomes, heights: [...heights].sort((a, b) => a - b),
       };
     })(),
+    /* OWNER DECISION 5 (2026-10-13): the arena's clearance, measured the same
+       way as bazaarClear — tile coordinates for the keepout, draw position for
+       anything without a tile. Target 0 decor and 0 features inside. */
+    arenaClear: (() => {
+      const R = COLOSSEUM_R + 3;
+      const census = featureCensus(COLOSSEUM.x, COLOSSEUM.y, R + 6);
+      const d = f => (f.tx === undefined ? Math.hypot(f.x - COLOSSEUM.x, f.y - COLOSSEUM.y)
+                                         : Math.hypot(f.tx - COLOSSEUM.x, f.ty - COLOSSEUM.y));
+      /* Decor carries no tile, only its drawn position (tile + 0.5, plus up
+         to ~0.35 of jitter), so a bush grown on a tile just OUTSIDE the
+         keepout can be drawn a hair inside R — up to about 1.21 tiles
+         (tile centre 0.5 plus 0.35 jitter, each way). Counting decor inside
+         R - 1.25 measures the keepout, not the jitter (doubt pass). */
+      const inF = census.feats.filter(f => d(f) < R), inD = census.dec.filter(f => d(f) < R - 1.25);
+      const kinds = {}; for (const x of inD) kinds[x.kind] = (kinds[x.kind] || 0) + 1;
+      return { R, features: inF.length, decor: inD.length, decorKinds: kinds,
+               ringTrees: census.feats.filter(f => f.type === "tree" && d(f) >= R && d(f) < R + 6).length };
+    })(),
+    /* World Check Fixes PART A: the land fraction placeLandmarks() actually
+       chose, and whether the all-land test passed or the best-of-attempts
+       fallback fired. A copy, not the live object, like every hook here. */
+    landFrac: Object.assign({}, landmarkLandFrac),
     bazaarIsSafe: inSafeZone(BAZAAR.x, BAZAAR.y),
     colosseumIsSafe: inSafeZone(COLOSSEUM.x, COLOSSEUM.y),
     inColosseumAtCentre: inColosseum(COLOSSEUM.x, COLOSSEUM.y),
@@ -4081,6 +4265,9 @@ const PAL = {
    Each new value is old * 3.125 rounded, so every one keeps exactly the
    proportion to the feature it guards that it had at N=320. */
 function placeLandmarks() {
+  /* OWNER DECISION 6: both writes below are conditional, so without this a
+     seed that found no candidate would report the PREVIOUS world's fraction. */
+  for (const k of Object.keys(landmarkLandFrac)) delete landmarkLandFrac[k];
   // Landmarks must keep clear of spawn so the safe zone stays green grass
   for (let attempt = 0; attempt < 12; attempt++) {
     const a1 = (hash2(1 + attempt, 1, worldSeed)) * Math.PI * 2;
@@ -4102,21 +4289,94 @@ function placeLandmarks() {
         Math.hypot(BAZAAR.x - VOLCANO.x, BAZAAR.y - VOLCANO.y) > 500 &&
         Math.hypot(BAZAAR.x - MOUNT.x, BAZAAR.y - MOUNT.y) > 500) break;
   }
-  for (let attempt = 0; attempt < 20; attempt++) {
+  /* World Check Fixes PART A: 20 -> 40 attempts and a real land test, for
+     these two loops only. The DISTANCE rules below are untouched — they are
+     still the same separations, still hard constraints — and the land test
+     is an ADDITIONAL requirement on top of them, which is why the best-of
+     fallback only ever considers candidates that already satisfy them. A
+     candidate passes outright when every tile within ANCIENT_R + 2 is land;
+     if none of the forty does, the one with the most land wins instead of
+     the fortieth, which is the whole point (the old loop kept whatever the
+     last attempt happened to be). */
+  let bestANCIENT = null;
+  for (let attempt = 0; attempt < 40; attempt++) {
     const a5 = (hash2(5 + attempt, 5, worldSeed)) * Math.PI * 2;
     /* The Ancient Forge belongs near the volcano — it is the only place
        dragonsteel can be smelted, and dragonsteel comes from there. */
     ANCIENT = { x: Math.round(VOLCANO.x + Math.cos(a5) * 364), y: Math.round(VOLCANO.y + Math.sin(a5) * 364) };
-    if (Math.hypot(ANCIENT.x - SPAWN.x, ANCIENT.y - SPAWN.y) > SAFE_RADIUS + 30 &&
-        Math.hypot(ANCIENT.x - BAZAAR.x, ANCIENT.y - BAZAAR.y) > 376) break;
+    const sepA = Math.hypot(ANCIENT.x - SPAWN.x, ANCIENT.y - SPAWN.y) > SAFE_RADIUS + 30 &&
+                 Math.hypot(ANCIENT.x - BAZAAR.x, ANCIENT.y - BAZAAR.y) > 376;
+    if (!sepA) continue;
+    const tA = discTerrain(ANCIENT.x, ANCIENT.y, ANCIENT_R + 2);
+    if (betterLandSpot(tA, bestANCIENT)) bestANCIENT = Object.assign({ x: ANCIENT.x, y: ANCIENT.y }, tA);
+    if (tA.band >= 1 && tA.rockPeak <= 0.5) break;
   }
-  for (let attempt = 0; attempt < 20; attempt++) {
+  if (bestANCIENT) {
+    ANCIENT = { x: bestANCIENT.x, y: bestANCIENT.y };
+    landmarkLandFrac.ANCIENT = bestANCIENT.band;
+    landmarkLandFrac.ANCIENT_fallback = bestANCIENT.band < 1;
+    landmarkLandFrac.ANCIENT_sea = bestANCIENT.sea;
+  } else {
+    /* No attempt cleared the separations (never seen at N=4000): the last
+       attempt stands, as before this build, and the hook says so. */
+    landmarkLandFrac.ANCIENT = landFraction(ANCIENT.x, ANCIENT.y, ANCIENT_R + 2);
+    landmarkLandFrac.ANCIENT_noSeparation = true;
+  }
+  /* World Check Fixes PART A, the same shape at the arena's own radius.
+     Measured before: the COLOSSEUM_R + 3 disc held 219 WATER and 8 DEEP
+     tiles and some of its columns stood in the sea. COLOSSEUM_R + 3 is the
+     radius PART B clears and flattens, so it is the radius that has to be
+     land — a smaller test would leave the clearing's own rim in the water. */
+  let bestCOLOSSEUM = null;
+  const tryColosseum = (attempt) => {
     const a6 = (hash2(6 + attempt, 6, worldSeed)) * Math.PI * 2;
     COLOSSEUM = { x: Math.round(TOWER.x + Math.cos(a6) * 1000), y: Math.round(TOWER.y + Math.sin(a6) * 1000) };
-    if (Math.hypot(COLOSSEUM.x - SPAWN.x, COLOSSEUM.y - SPAWN.y) > SAFE_RADIUS + 26 &&
-        Math.hypot(COLOSSEUM.x - BAZAAR.x, COLOSSEUM.y - BAZAAR.y) > 424 &&
-        Math.hypot(COLOSSEUM.x - ANCIENT.x, COLOSSEUM.y - ANCIENT.y) > 424 &&
-        Math.hypot(COLOSSEUM.x - VOLCANO.x, COLOSSEUM.y - VOLCANO.y) > 424) break;
+    const sepC = Math.hypot(COLOSSEUM.x - SPAWN.x, COLOSSEUM.y - SPAWN.y) > SAFE_RADIUS + 26 &&
+                 Math.hypot(COLOSSEUM.x - BAZAAR.x, COLOSSEUM.y - BAZAAR.y) > 424 &&
+                 Math.hypot(COLOSSEUM.x - ANCIENT.x, COLOSSEUM.y - ANCIENT.y) > 424 &&
+                 /* Builder's call under the owner's 2026-10-13 delegation: the
+                    clearing must not reach the volcanic band (biomeAt's
+                    dV < VOLROCK_R). This replaces the old 424 from the VOLCANO
+                    — strictly larger, so it keeps everything 424 kept — and
+                    1 of 40 swept seeds reached the band at 424 alone. */
+                 Math.hypot(COLOSSEUM.x - VOLCANO.x, COLOSSEUM.y - VOLCANO.y) > VOLROCK_R + COLOSSEUM_R + 3 &&
+                 /* OWNER DECISION 2: the 424 this loop has always kept from the
+                    VOLCANO, now kept from Mount Dragonspire too. */
+                 Math.hypot(COLOSSEUM.x - MOUNT.x, COLOSSEUM.y - MOUNT.y) > 424;
+    if (!sepC) return null;
+    const tC = discTerrain(COLOSSEUM.x, COLOSSEUM.y, COLOSSEUM_R + 3);
+    if (betterLandSpot(tC, bestCOLOSSEUM)) bestCOLOSSEUM = Object.assign({ x: COLOSSEUM.x, y: COLOSSEUM.y }, tC);
+    return tC;
+  };
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const tC = tryColosseum(attempt);
+    if (tC && tC.band >= 1 && tC.rockPeak <= 0.5) break;
+  }
+  /* Extended search (builder's call, after the doubt pass swept 200 seeds):
+     on roughly one world in five (373 of 2,000 swept seeds) the best of the
+     forty still holds sea, a >50% ROCK/PEAK mass or snow-band ground, which
+     the clearing would flatten into a grass disc beside cliffs. Only then,
+     keep looking along the same 1000-tile ring — up to 80 more angles,
+     stopping at the first spot with none of the three (found on ~91% of
+     those worlds; the rest keep the best-ranked spot, at most a handful of
+     snow-band tiles at the rim). The distance rules are unchanged. */
+  const arenaAcceptable = t => !!t && t.sea === 0 && t.rockPeak <= 0.5 && t.peak === 0;
+  if (bestCOLOSSEUM && !arenaAcceptable(bestCOLOSSEUM)) {
+    for (let attempt = 40; attempt < 120; attempt++) {
+      const tC = tryColosseum(attempt);
+      if (arenaAcceptable(tC)) break;
+    }
+    landmarkLandFrac.COLOSSEUM_extended = true;
+  }
+  if (bestCOLOSSEUM) {
+    COLOSSEUM = { x: bestCOLOSSEUM.x, y: bestCOLOSSEUM.y };
+    landmarkLandFrac.COLOSSEUM = bestCOLOSSEUM.band;
+    landmarkLandFrac.COLOSSEUM_fallback = bestCOLOSSEUM.band < 1;
+    landmarkLandFrac.COLOSSEUM_sea = bestCOLOSSEUM.sea;
+    landmarkLandFrac.COLOSSEUM_rockPeak = bestCOLOSSEUM.rockPeak;
+  } else {
+    landmarkLandFrac.COLOSSEUM = landFraction(COLOSSEUM.x, COLOSSEUM.y, COLOSSEUM_R + 3);
+    landmarkLandFrac.COLOSSEUM_noSeparation = true;
   }
 
   /* v39 PART B: the Dragon Elder Altar, the same technique a seventh time.
@@ -4300,6 +4560,83 @@ function isPlaceableLand(tx, ty) {
   return e >= 0.44 && e < 0.84;
 }
 
+/* ============ World Check Fixes PART A — LANDMARKS MUST STAND ON LAND ===
+   Measured on the harness seed before a line was written: the Ancient Forge
+   — the only place dragonsteel can be smelted — had its centre on B.DEEP,
+   with 93 DEEP / 8 WATER / 5 SHALLOW / 3 VOLROCK tiles inside ANCIENT_R + 2
+   and only four non-blocked tiles anywhere in ANCIENT_R, all of them water.
+   The forge was a box floating in open sea. placeLandmarks() picked ANCIENT
+   and COLOSSEUM by hashed angle alone and never looked at the terrain.
+
+   The fraction of a disc that is land, and `elevRaw` ONLY — never biomeAt().
+   placeLandmarks() runs before tileCache.clear(), so a biomeAt() call here
+   would permanently bake a pre-Ruin, pre-Zone biome for every tile it
+   touched; that is the same trap isPlaceableLand()'s own comment above
+   describes, and this helper is deliberately written to the same rule.
+   elevRaw depends only on TOWER and MOUNT, both placed before ANCIENT and
+   COLOSSEUM are, so it is already final when these loops run.
+
+   OWNER DECISION 1 (2026-10-13): "land" is isPlaceableLand()'s band,
+   0.44 <= e < 0.84, NOT a bare e >= 0.42. With no upper bound the most
+   reliable way for every tile of the arena disc to clear 0.42 was to sit on
+   Mount Dragonspire (22 of 40 seeds put the arena on >50% ROCK/PEAK), and
+   PART B's flatten then punched a grass disc into the snow massif. Reusing
+   the band the Ruins, Zones and Dragon Altar already use is reuse, not a
+   new constant. */
+function landFraction(cx, cy, R) {
+  let total = 0, land = 0;
+  for (let ty = Math.floor(cy - R); ty <= Math.ceil(cy + R); ty++)
+    for (let tx = Math.floor(cx - R); tx <= Math.ceil(cx + R); tx++)
+      if (Math.hypot(tx - cx, ty - cy) < R) {
+        total++;
+        if (isPlaceableLand(tx, ty)) land++;
+      }
+  return total ? land / total : 0;
+}
+/* Harness hook companion — the chosen land fraction per landmark, and
+   whether the all-land test actually passed or the best-of-attempts
+   fallback fired. The same reason every other hook in this file exists:
+   placeLandmarks()'s working is invisible from outside it. */
+const landmarkLandFrac = {};
+/* The fallback's ranking (builder's call under the owner's 2026-10-13
+   delegation, after the doubt pass measured it). When no candidate is 100%
+   inside the band — 83% of seeds for the 1,661-tile arena disc — the old
+   "highest band fraction wins" treated tiles the clearing turns into grass
+   anyway (0.42-0.44 soil, 0.84+ rock) exactly like open sea, and on ~8% of
+   seeds picked an arena with columns in the water although a dry candidate
+   existed. Rank instead by what the clearing CANNOT fix, worst first:
+     1. sea tiles (elevRaw < 0.375, biomeAt's WATER/DEEP line) — fewest wins;
+     2. a ROCK/PEAK elevation mass (elevRaw >= 0.72) over half the disc —
+        owner decision 7's limit; the attempt loops also only stop early on
+        a spot that respects it, so a 100%-in-band disc that is mostly ROCK
+        no longer ends the search;
+     3. snow-band tiles (elevRaw >= 0.86, biomeAt's PEAK line) — fewest wins;
+     4. then the band fraction, highest wins.
+   elevRaw only, for the same tile-cache reason landFraction() gives. */
+const LAND_SEA_E = 0.375, LAND_ROCK_E = 0.72, LAND_PEAK_E = 0.86;   // biomeAt()'s own WATER, ROCK and PEAK lines
+function discTerrain(cx, cy, R) {
+  let total = 0, band = 0, sea = 0, peak = 0, rockPeak = 0;
+  for (let ty = Math.floor(cy - R); ty <= Math.ceil(cy + R); ty++)
+    for (let tx = Math.floor(cx - R); tx <= Math.ceil(cx + R); tx++)
+      if (Math.hypot(tx - cx, ty - cy) < R) {
+        total++;
+        if (isPlaceableLand(tx, ty)) band++;
+        const e = elevRaw(tx, ty);
+        if (e < LAND_SEA_E) sea++;
+        if (e >= LAND_ROCK_E) rockPeak++;
+        if (e >= LAND_PEAK_E) peak++;
+      }
+  return { band: total ? band / total : 0, sea, peak, rockPeak: total ? rockPeak / total : 0 };
+}
+function betterLandSpot(a, b) {
+  if (!b) return true;
+  if (a.sea !== b.sea) return a.sea < b.sea;
+  const ar = a.rockPeak > 0.5, br = b.rockPeak > 0.5;
+  if (ar !== br) return !ar;
+  if (a.peak !== b.peak) return a.peak < b.peak;
+  return a.band > b.band;
+}
+
 /* Ten Ruin clusters (v50 PART B; six before it) and four Other Safe
    Zones, both scattered with the
    wilds/mobs hashed-sampling pattern — hash2(a, offset, worldSeed + seed) * N
@@ -4329,6 +4666,14 @@ function placeRuinsAndZones() {
     if (H(tx, ty, VOLCANO) <= 700) continue;
     if (H(tx, ty, MOUNT) <= 700) continue;
     if (RUINS.some(r => H(tx, ty, r) <= RUIN_SEP)) continue;
+    /* OWNER DECISION 3: a Ruin is never placed where the arena's clearing
+       would reach its footprint (2 of 40 seeds did before this line). */
+    if (H(tx, ty, COLOSSEUM) <= RUIN_FOOT + COLOSSEUM_R + 3) continue;
+    /* The same for the Bazaar (doubt pass, 2026-10-13): with RUINB now guarded
+       out of its clearing, a Ruin carved over the trading floor would leave
+       the stalls on stepped ruin stone (2 of 50 seeds). Before this build the
+       clearing silently painted over the Ruin instead — also wrong. */
+    if (H(tx, ty, BAZAAR) <= RUIN_FOOT + BAZAAR_R) continue;
     /* v25 PART A: tag the cluster mountain-or-not once, here, while elevRaw()
        is already the safe thing to call (see isPlaceableLand's note — this
        runs before tileCache.clear(), so biomeAt() must not be touched). */
@@ -5355,7 +5700,42 @@ function biomeAt(tx, ty) {
      circle IS the protected area, with no invisible margin either way — and
      it leaves 4.5 tiles of open ground outside the stall ring. */
   if (b !== B.PLAINS && b !== B.DEEP && b !== B.LAVA && b !== B.WATER &&
+      b !== B.RUINB && b !== B.VOLROCK && b !== B.CALDERA &&   // OWNER DECISION 3
+      b !== B.UWCAVE && b !== B.ABYSSAL &&   // sea-cave pockets are carved from DEEP: never grass
       Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) b = B.PLAINS;
+  /* ============ World Check Fixes PART B — THE ARENA'S OWN CLEARING ====
+     Measured before a line was written: the COLOSSEUM_R + 3 disc held 297
+     FOREST, 293 DARKFOREST, 219 WATER, 157 ROCK and 152 SAND tiles, 346
+     features growing inside the arena and heights -1 to 2. The sand floor
+     was drawn as a see-through disc over trees and water and some columns
+     stood in the sea.
+
+     The Bazaar already solved exactly this, so this is the line directly
+     above reused VERBATIM with the arena's own radius and the same four
+     guards — nothing new was invented for it, the same way nothing new was
+     invented for the Bazaar. Radius is COLOSSEUM_R + 3, and PART A's land
+     test, PART C's tree keepout and the decor keepouts in buildFeatureChunk()
+     all use that same radius. What PART A guarantees at that radius is NO
+     SEA (the fallback ranks sea first); the all-in-band test itself passes
+     outright on only ~18% of worlds, and the clearing turns the rest of the
+     in-disc soil and rock into level ground. (For the record, the arena's OTHER radii are different
+     and unchanged: LANDMARK_KEEPOUT is COLOSSEUM_R + 2, inColosseum() — the
+     PvP rule — is bare COLOSSEUM_R, the low retaining wall stands at
+     COLOSSEUM_R * COLOSSEUM_WALL_RING (8.4 tiles), and the sand floor's
+     screen ellipse uses IW2 * 2 per unit where a world radius projects at
+     IW2 * sqrt(2), so the sand reaches about 11.9 tiles — v52's look, left
+     as it was.)
+
+     OWNER DECISION 3: B.RUINB, B.VOLROCK and B.CALDERA join the guards here
+     and on the Bazaar's line above, so a clearing can never paint grass over
+     a hand-composed Ruin or the volcanic band.
+
+     Nothing else about the Colosseum changes: pieces, podiums, the duel
+     logic, PvP rules and its keep-out are all untouched. */
+  if (b !== B.PLAINS && b !== B.DEEP && b !== B.LAVA && b !== B.WATER &&
+      b !== B.RUINB && b !== B.VOLROCK && b !== B.CALDERA &&   // OWNER DECISION 3
+      b !== B.UWCAVE && b !== B.ABYSSAL &&   // sea-cave pockets are carved from DEEP: never grass
+      Math.hypot(tx - COLOSSEUM.x, ty - COLOSSEUM.y) < COLOSSEUM_R + 3) b = B.PLAINS;
   if (dTower < 4.5 && (BLOCKED.has(b) || b === B.WATER || b === B.ROCK || b === B.VOLROCK)) b = B.PLAINS;
 
   // Shallow-water halo where sea touches land (Islanders coastline glow)
@@ -5435,7 +5815,16 @@ function rawHeight(tx, ty) {
        trading floor is that reason nine times over, and h = 0 also puts the
        whole disc below heightAt()'s h >= 1 erosion branch, so it needs no
        exemption there either. */
-    if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) h = 0;
+    /* OWNER DECISION 3, the height half: flatten only ground the clearing
+       actually cleared. A guarded tile (Ruin floor, volcanic band) keeps its
+       own height instead of becoming a hole. */
+    if (b === B.PLAINS && Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) h = 0;
+    /* World Check Fixes PART B, the second half of the same pattern. The
+       measured disc ran -1 to 2, which is what drew the arena floor across
+       a stepped cliff face with columns at two different levels. h = 0 also
+       puts the whole disc below heightAt()'s h >= 1 erosion branch, so it
+       needs no exemption there either — exactly the Bazaar's own reason. */
+    if (b === B.PLAINS && Math.hypot(tx - COLOSSEUM.x, ty - COLOSSEUM.y) < COLOSSEUM_R + 3) h = 0;
     if (Math.hypot(tx - TOWER.x, ty - TOWER.y) < 4.5) h = Math.min(h, 1);
   }
   rawHCache.set(key, h);
@@ -5512,6 +5901,20 @@ const ROCK_RUNIC_T = nodeCut(0.996), ROCK_IRON_T = nodeCut(0.93), ROCK_ROCK_T = 
 const VOLROCK_RUNIC_T = nodeCut(0.992), VOLROCK_IRON_T = nodeCut(0.92);
 
 function featureTypeAt(tx, ty) {
+  /* ============ World Check Fixes PART C — NO TREES IN EITHER CLEARING ==
+     A clearing turns the ground into PLAINS, but PLAINS still grows a tree
+     wherever its own hash clears 0.965 — measured: 13 of them still stood
+     inside BAZAAR_R, which is what the owner asked to have removed in the
+     Mount/Bazaar polish. The keepout in buildFeatureChunk() only ever
+     covered the Bazaar and only covered what that loop itself builds; at
+     the top of the generator it covers everything that asks what grows on
+     a tile, which is what makes the clearing true of the world rather than
+     true of one loop.
+
+     The Spawn safe zone is deliberately NOT here: its scattered trees are
+     the intended look. */
+  if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) return null;
+  if (Math.hypot(tx - COLOSSEUM.x, ty - COLOSSEUM.y) < COLOSSEUM_R + 3) return null;
   const b = biomeAt(tx, ty);
   const h = hash2(tx, ty, 91);
   /* v17: the two new collect-only resources. The bible names rare_herb and
@@ -5529,9 +5932,24 @@ function featureTypeAt(tx, ty) {
     if (h > 0.45) return "herb";
     return null;
   }
-  if (b === B.FOREST || b === B.DARKFOREST) {
+  if (b === B.FOREST) {
     // organic clumps with clearings, not a grid orchard
     if (clusterNoise(tx, ty) > 0.42 && h > 0.42) return "tree";
+    return null;
+  }
+  /* ============ World Check Fixes PART H — THE DENSEST FOREST ==========
+     Measured over the whole map: FOREST 36.7% tree tiles, DARKFOREST 36.2%
+     — because both biomes shared this one branch and therefore shared its
+     two thresholds exactly. The Dark-Forest screenshot was a large flat
+     dark clearing (22% trees in a 25x25 window), which reads as empty, and
+     "the densest forest in the world" is what the biome is for.
+
+     The branch is split rather than widened: FOREST keeps 0.42 / 0.42
+     untouched, to the letter, and DARKFOREST gets its own pair. Both are
+     TUNABLE and both are deliberately named rather than inline, since the
+     gate that measures the resulting share has to be able to follow them. */
+  if (b === B.DARKFOREST) {
+    if (clusterNoise(tx, ty) > DARKFOREST_CLUSTER_T && h > DARKFOREST_H_T) return "tree";
     return null;
   }
   if ((b === B.PLAINS || b === B.MEADOW) && h > 0.965) return "tree";
@@ -5785,6 +6203,10 @@ function buildFeatureChunk(cx, cy) {
          verbatim at the Bazaar's own radius and moved one branch earlier so
          it covers what grows there as well as what is scattered there. */
       if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) continue;
+      /* OWNER DECISION 5: the arena gets the Bazaar's keepout. featureTypeAt()
+         returning null alone FALLS THROUGH to the decor branch below, which is
+         why 151 bushes/pebbles/flowers stood inside the cleared arena. */
+      if (Math.hypot(tx - COLOSSEUM.x, ty - COLOSSEUM.y) < COLOSSEUM_R + 3) continue;
       const f = featureTypeAt(tx, ty);
       if (f) {
         const key = tx + "," + ty;
@@ -5885,6 +6307,7 @@ function buildFeatureChunk(cx, cy) {
       if (bl === B.PLAINS) {
         if (hash2(tx, ty, 617) <= PLAINS_DECOR_T) continue;
         if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) continue;
+        if (Math.hypot(tx - COLOSSEUM.x, ty - COLOSSEUM.y) < COLOSSEUM_R + 3) continue;   // OWNER DECISION 5
         if (Math.hypot(tx - TOWER.x, ty - TOWER.y) < 3.5) continue;
         if (Math.hypot(tx - SPAWN_FORGE.x, ty - SPAWN_FORGE.y) < 2.5) continue;
         if (distToSeg(tx + 0.5, ty + 0.5, SPAWN.x, SPAWN.y, SPAWN_FORGE.x, SPAWN_FORGE.y) < 1.6) continue;
@@ -17349,6 +17772,48 @@ function drawItemEntity(it, t) {
 const CAVE_LIGHT_R     = 7;     // TUNABLE: tiles a vein/crystal/exit lights
 const CAVE_LIGHT_STEPS = 5;     // TUNABLE: discrete falloff bands, never a ramp
 const CAVE_DARK_A      = 0.62;  // TUNABLE: how dark a fully unlit floor tile goes
+/* World Check Fixes PART G — the lava crust. Every one of these is TUNABLE.
+   LAVA_CRUST_COL is NOT a new palette entry: shade("#5c3c3c", 0.8) is the
+   locked Volcanic rock colour at the exact multiplier the VOLROCK/LAVA cliff
+   faces already use, computed once here rather than per tile per frame. The
+   two salts are fresh streams, confirmed unused anywhere else in this file. */
+const LAVA_CRUST_SHARE = 0.45;   // target share of lava tiles that have cooled over (LAVA_CRUST_T is tuned to it)
+/* Doubt pass, 2026-10-13: lone 0.62-inset diamonds on 45% of tiles read as a
+   grid of identical diamonds on an orange field, not as crust. Plates now come
+   from a smooth field (several tiles across), nearly fill their tile, and the
+   thin orange seams left between neighbouring plates ARE the glowing cracks. */
+const LAVA_CRUST_INSET = 0.86;   // plates nearly fill the tile: seams between neighbours stay thin
+const LAVA_CRUST_SALT  = 331;
+const LAVA_PLATE_SCALE = 3.5;    // tiles per plate-noise cell (TUNABLE)
+const LAVA_CRUST_T     = 0.52;   // plate threshold: measured 45.2% of the core crusts on the harness seed (TUNABLE)
+const LAVA_VENT_SHARE  = 0.20;   // share of LAVA tiles still breathing heat — of all lava, as the spec says
+const LAVA_VENT_SALT   = 333;
+const LAVA_CRUST_COL   = shade("#5c3c3c", 0.8);
+/* The vent pulse's fills, built once: the old per-frame template string was
+   an allocation per venting tile per frame. Indexed by alpha * 100. */
+const LAVA_VENT_FILLS = Array.from({ length: 101 }, (_, i) => `rgba(255,200,120,${(i / 100).toFixed(2)})`);
+function lavaCrustAt(tx, ty) {
+  return valueNoise(tx / LAVA_PLATE_SCALE, ty / LAVA_PLATE_SCALE, worldSeed + LAVA_CRUST_SALT) * 0.8 +
+         hash2(tx, ty, LAVA_CRUST_SALT) * 0.2 > LAVA_CRUST_T;
+}
+function lavaVentAt(tx, ty) { return hash2(tx, ty, LAVA_VENT_SALT) < LAVA_VENT_SHARE; }
+/* Harness counters for PARTs F and G — see debugLightInfo(), and the same
+   reason caveDarkTiles has one: both of these are decisions taken inside a
+   render path, so grepping the source proves a line was typed and never
+   that it ran. lavaCrustTiles/lavaVentTiles are per-frame (zeroed at the
+   top of the frame they describe); the two backdrop counters and
+   groundPassFrames are running totals. */
+let lavaCrustTiles = 0, lavaVentTiles = 0;
+let skyBackdropFrames = 0, interiorBackdropFrames = 0, groundPassFrames = 0;
+/* World Check Fixes PART F: what is BEHIND an interior's floor instead of a
+   sky. Both TUNABLE. The Abyssal Hollow's is the colder, more violet one, the
+   same distinction its wall and floor colours already make against an
+   ordinary cave's warm brown-black. Deliberately not pure black — a cave's
+   own dark stone has to read against it. Dungeons fall to the cave value:
+   near-black is "there is no sky above you", which is equally true of worked
+   stone, and the material difference is already carried by the floor. */
+const INTERIOR_BG_CAVE    = "#07080c";
+const INTERIOR_BG_ABYSSAL = "#0a0612";
 const CAVE_PLAYER_R    = 6;     // TUNABLE: you carry your own light, as on the surface
 let caveDarkTiles = 0, caveLitTiles = 0;   // harness — see debugLightInfo()
 function interiorLightMap(rec) {
@@ -17539,8 +18004,32 @@ function render(t) {
   ctx.save();
   ctx.translate(shX, shY);
 
+  /* ============ World Check Fixes PART F — CAVES HAVE NO SKY ==========
+     Inside both interiors the screenshots showed the cave floor as a diamond
+     island hanging over a bright blue sky, a sea band and two layers of
+     parallax hills: this backdrop ran unconditionally, and the interior was
+     simply drawn on top of it. A cave is underground. It has no horizon.
+
+     One flat fill replaces the whole backdrop — the gradient, the sea band
+     and both hill layers — and it is deliberately FLAT, with no gradient at
+     all, per the art-style skill's own rule. Near-black rather than black so
+     the interior's own dark stone still reads against it.
+
+     The v55 cave darkness pass (CAVE_DARK_A and the light map) is NOT
+     touched: that darkens the floor tiles themselves, this replaces what is
+     behind them, and the two are independent. */
+  /* The two lava counters are per-frame (zeroed here, so they describe THIS
+     frame, the same reason renderInteriorGround() zeroes caveDarkTiles).
+     skyBackdropFrames / interiorBackdropFrames below are running totals. */
+  lavaCrustTiles = 0; lavaVentTiles = 0;
+  if (inInterior()) {
+    interiorBackdropFrames++;
+    ctx.fillStyle = spaceKindOf(me.space) === "abyssal" ? INTERIOR_BG_ABYSSAL : INTERIOR_BG_CAVE;
+    ctx.fillRect(-8, -8, w + 16, h + 16);
+  }
   // Sky/horizon gradient reacting to time of day; deep water stays dark (2026-07-11)
-  {
+  else {
+    skyBackdropFrames++;
     const dayT0 = getDayT();
     const na0 = nightAlpha(dayT0);
     const gl0 = duskGlow(dayT0);
@@ -17607,10 +18096,15 @@ function render(t) {
      (GROUND_UP / GROUND_DOWN), and a run4 gate proves nothing that would
      have painted inside the canvas is ever skipped.
 
-     Deliberately NOT skipped inside a cave interior: the pre-change frame
-     blitted the world ground unconditionally and then drew the interior over
-     the top of it, so skipping here would be a visible change, not a saving. */
-  {
+     World Check Fixes, after the doubt pass: SKIPPED inside an interior. It
+     used to run there with `cam` in interior coordinates, so past a cave's
+     far edges (x or y >= INTERIOR_N) it painted the overworld's top-left
+     corner — deep sea — around the cave floor, which is exactly the "cave
+     floating over the sea" picture PART F exists to remove. The interior's
+     own pass draws everything a cave needs; the flat backdrop shows behind
+     it. A visible change on purpose, and a saving too. */
+  if (!inInterior()) {
+    groundPassFrames++;
     const camIX = isoX(cam.x, cam.y), camIY = isoY(cam.x, cam.y);
     const gMinX = Math.max(0, minX - GROUND_MARGIN), gMaxX = Math.min(N - 1, maxX + GROUND_MARGIN);
     const gMinY = Math.max(0, minY - GROUND_MARGIN), gMaxY = Math.min(N - 1, maxY + GROUND_MARGIN);
@@ -17746,6 +18240,61 @@ function render(t) {
         ctx.beginPath();
         ctx.moveTo(sx, sy - IH2); ctx.lineTo(sx + IW2, sy); ctx.lineTo(sx, sy + IH2); ctx.lineTo(sx - IW2, sy);
         ctx.closePath(); ctx.fill();
+        /* ============ World Check Fixes PART G — LAVA READS AS MOLTEN ====
+           By day the Volcano landing shot was an unbroken flat orange plane:
+           every LAVA tile got one fill, a faint 0.02-0.18 pulse and two
+           shimmer lines, and across a 124-tile core that is one colour from
+           edge to edge. Lava is not a flat field, it is crust with glowing
+           cracks between the plates.
+
+           Crust PLATES on about LAVA_CRUST_SHARE of the core: a smooth field
+           (lavaCrustAt, LAVA_PLATE_SCALE tiles per cell) decides where crust
+           has cooled, so plates span several tiles, and each plate nearly
+           fills its tile (LAVA_CRUST_INSET), so the thin orange seams left
+           between neighbouring plates are the glowing cracks. The colour is
+           shade("#5c3c3c", 0.8): "#5c3c3c" is the locked Volcanic rock
+           palette entry and 0.8 of it is the EXISTING VOLROCK/LAVA cliff
+           face colour this file already computes two places above, so this
+           introduces no palette entry at all.
+
+           Then a slow glow pulse on about LAVA_VENT_SHARE of the lava
+           tiles, in the existing rgba(255,200,120,...) the tile's own pulse
+           already wears, so some plates read as still breathing heat while
+           most have gone cold.
+
+           Cheap per-tile only, as the spec requires: two hash2 lookups, one
+           path and at most one more fill. No gradient, no second canvas, no
+           allocation — LAVA_CRUST_COL is computed once at load, not per
+           tile, and nothing here creates an object per frame. */
+        /* Only on tiles whose three front neighbours are lava too: this pass
+           runs after the whole ground, so a plate on a tile next to the h=2
+           VOLROCK rim would paint over the rim's top edge (the volcano
+           silhouette is on the art skill's MUST-NOT-REGRESS list). */
+        const interiorLava = biomeAt(tx + 1, ty) === B.LAVA && biomeAt(tx, ty + 1) === B.LAVA &&
+                             biomeAt(tx + 1, ty + 1) === B.LAVA;   // the diagonal front neighbour too (doubt pass, cycle 2)
+        const crusted = interiorLava && lavaCrustAt(tx, ty);
+        if (crusted) {
+          lavaCrustTiles++;
+          const ck = LAVA_CRUST_INSET;
+          ctx.fillStyle = LAVA_CRUST_COL;
+          ctx.beginPath();
+          ctx.moveTo(sx, sy - IH2 * ck); ctx.lineTo(sx + IW2 * ck, sy);
+          ctx.lineTo(sx, sy + IH2 * ck); ctx.lineTo(sx - IW2 * ck, sy);
+          ctx.closePath(); ctx.fill();
+        }
+        if (interiorLava && lavaVentAt(tx, ty)) {
+          lavaVentTiles++;
+          /* Peaks at 0.42 alpha, comfortably over the 0.35 the spec asks
+             for, on its own period so it does not beat with the tile pulse.
+             Through a plate it is a glowing core; on open lava, a hot spot. */
+          const vg = 0.20 + Math.sin(t / 520 + tx * 1.7 + ty * 2.3) * 0.22;
+          const vk = crusted ? 0.5 : 0.7;
+          ctx.fillStyle = LAVA_VENT_FILLS[Math.max(0, Math.round(vg * 100))];
+          ctx.beginPath();
+          ctx.moveTo(sx, sy - IH2 * vk); ctx.lineTo(sx + IW2 * vk, sy);
+          ctx.lineTo(sx, sy + IH2 * vk); ctx.lineTo(sx - IW2 * vk, sy);
+          ctx.closePath(); ctx.fill();
+        }
         // v8: heat shimmer — wavering translucent lines rising off the lava
         ctx.strokeStyle = "rgba(255,228,180,0.11)";
         ctx.lineWidth = 1.4;
@@ -18005,8 +18554,15 @@ function render(t) {
     }
   }
   if (!rec29) for (const w of wilds) {   // v29: surface wilds only on the surface
-    if (!isWildVisible(w)) continue;
+    /* World Check Fixes PART I: the bounds test first. isWildVisible() was
+       being asked about all of `wilds` — 3090 alive on the harness seed —
+       every frame, before anything had checked whether the creature was
+       even on screen; four comparisons are cheaper than that call. Pure
+       reordering of two independent `continue` guards: both must pass for a
+       wild to be gathered either way, so the set that reaches ents.push is
+       identical. The copy of this test in nearestWild() is untouched. */
     if (w.x < minX - 3 || w.x > maxX + 3 || w.y < minY - 3 || w.y > maxY + 3) continue;
+    if (!isWildVisible(w)) continue;
     ents.push({ s: w.x + w.y, kind: "wild", w });
   }
   for (const pr of projectiles) ents.push({ s: pr.x + pr.y + 0.01, kind: "proj", pr });
@@ -18505,7 +19061,13 @@ function minimapBearings() {
   for (const [label, get] of MINIMAP_MARKS) {
     const p = get();
     const dx = p.x - me.x, dy = p.y - me.y;
-    out.push({ label, deg: Math.atan2(isoY(dx, dy), isoX(dx, dy)) * 180 / Math.PI });
+    /* World Check Fixes PART D: the plain world distance, which is what the
+       label layout sorts by — nearest landmark keeps its label first. It is
+       deliberately NOT shown anywhere: the bible's compass "shows general
+       direction only", and v35's own comment forbids a distance readout. It
+       exists to order the layout and nothing reads it for display. */
+    out.push({ label, deg: Math.atan2(isoY(dx, dy), isoX(dx, dy)) * 180 / Math.PI,
+               d: Math.hypot(dx, dy) });
   }
   return out;
 }
@@ -18513,6 +19075,30 @@ const COMPASS_POINTS = [
   ["N", 0], ["NE", 45], ["E", 90], ["SE", 135],
   ["S", 180], ["SW", 225], ["W", 270], ["NW", 315],
 ];
+/* World Check Fixes PART D. All three TUNABLE, and all three are an estimate
+   of what the browser will do with 8px `.mm-mark-label` text rather than a
+   measurement of it — see the layout's own comment for why that is the right
+   trade here. */
+/* Box estimates for the dial, from the CSS they describe (doubt pass,
+   2026-10-13): .hud carries line-height 1.5, so an 8px label box is 12px tall,
+   and translate(-50%, -140%) lifts it 16.8px. Ticks are 9px (10px major) at
+   the same line-height, centred. */
+const LABEL_W_PER_CH = 5.4, LABEL_W_PAD = 4, LABEL_H = 12, LABEL_LIFT = 1.4;
+const TICK_W_PER_CH = 6.5, TICK_H = 15, DOT_BOX = 8;
+function boxesHit(a, b) {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
+/* Harness hook — the boxes updateMinimap() last placed, so a gate can prove
+   no two of them intersect. Same reason as every hook in this file: this is
+   computed inside a render path and never lands anywhere a grep can see. */
+let compassLabelBoxes = [];
+let compassBlockerBoxes = [];   // ticks, dots and centre the labels must not cover (for gates)
+function compassLabelLayout() {
+  return compassLabelBoxes.map(b => ({ label: b.label, x: b.x, y: b.y, w: b.w, h: b.h }));
+}
+function compassBlockerLayout() {
+  return compassBlockerBoxes.map(b => ({ x: b.x, y: b.y, w: b.w, h: b.h }));
+}
 function updateMinimap() {
   const el = document.getElementById("hudMinimap");
   if (!el) return;
@@ -18548,11 +19134,72 @@ function updateMinimap() {
       const x = CX + R_TICK * Math.cos(rad(deg)), y = CY + R_TICK * Math.sin(rad(deg));
       inner += `<div class="mm-tick${deg % 90 === 0 ? " major" : ""}" style="left:${x}px;top:${y}px">${label}</div>`;
     }
-    for (const r of minimapBearings()) {
-      const x = CX + R_MARK * Math.cos(rad(r.deg)), y = CY + R_MARK * Math.sin(rad(r.deg));
-      inner += `<div class="mm-mark" style="left:${x}px;top:${y}px"></div>` +
-               `<div class="mm-mark-label" style="left:${x}px;top:${y}px">${r.label}</div>`;
+    /* ============ World Check Fixes PART D — LABELS NEVER OVERLAP =======
+       In every landmark screenshot, labels that shared a bearing were drawn
+       on top of each other and were unreadable — "ARENA", "SHRINE" and
+       "SPAWN" printed as one blob, "TOWER" over "ORACLE". Nine marks all sit
+       at one radius, so two landmarks a few degrees apart put their labels
+       in the same place; the dots were never the problem.
+
+       Greedy, nearest landmark first, because when a label has to be dropped
+       the one worth keeping is the one for the place you are closest to.
+       Three candidate spots per label, all on the mark's OWN bearing so a
+       label never drifts away from the dot it belongs to: the normal spot,
+       then pulled in, then pushed out. If all three collide with a label
+       already placed, the dot is drawn alone.
+
+       DOTS NEVER MOVE. Only labels shift radius or drop — a dot that moved
+       would be a lie about a bearing, which is the one thing this dial is
+       for. The box estimate is deliberately arithmetic rather than measured:
+       this runs every frame the compass is up, the font is a fixed 8px, and
+       ctx.measureText() on nine labels per frame would be a real cost for a
+       collision test that only has to be approximately right. */
+    const placed = [];
+    /* Obstacles a label may not cover (doubt pass, 2026-10-13): the eight
+       tick letters — the old outward candidate printed over "N"/"NE"/"NW",
+       the exact "TOWEN" collision v35 fixed — every landmark's own dot, and
+       the centre marker. Labels still only ever test against each other AND
+       these; dots never move. */
+    const marks = minimapBearings().slice().sort((a, b) => a.d - b.d);
+    const blockers = [];
+    for (const [label, deg] of COMPASS_POINTS) {
+      const tx = CX + R_TICK * Math.cos(rad(deg)), ty = CY + R_TICK * Math.sin(rad(deg));
+      const tw = label.length * TICK_W_PER_CH + 2;
+      blockers.push({ x: tx - tw / 2, y: ty - TICK_H / 2, w: tw, h: TICK_H });
     }
+    for (const r of marks) {
+      const mx = CX + R_MARK * Math.cos(rad(r.deg)), my = CY + R_MARK * Math.sin(rad(r.deg));
+      blockers.push({ x: mx - DOT_BOX / 2, y: my - DOT_BOX / 2, w: DOT_BOX, h: DOT_BOX });
+    }
+    blockers.push({ x: CX - 4, y: CY - 4, w: 8, h: 8 });
+    compassBlockerBoxes = blockers;
+    for (const r of marks) {
+      const x = CX + R_MARK * Math.cos(rad(r.deg)), y = CY + R_MARK * Math.sin(rad(r.deg));
+      inner += `<div class="mm-mark" style="left:${x}px;top:${y}px"></div>`;
+      /* The box the CSS actually produces: .mm-mark-label is 8px text with
+         `translate(-50%, -140%)`, so the anchor point sits at the box's
+         horizontal centre and 140% of its height below its top. */
+      const bw = r.label.length * LABEL_W_PER_CH + LABEL_W_PAD, bh = LABEL_H;
+      let put = null;
+      /* Inward only: R_MARK, then two steps toward the centre (outward is
+         the tick ring's space) — and at each radius the label may sit above
+         its anchor (the normal look) or just below it, which roughly doubles
+         the room on a crowded bearing. `ty` is the CSS top that puts the box
+         where it was tested, given the label's fixed translate(-50%,-140%). */
+      for (const rr of [R_MARK, R_MARK - 14, R_MARK - 26]) {
+        const lx = CX + rr * Math.cos(rad(r.deg)), ly = CY + rr * Math.sin(rad(r.deg));
+        for (const below of [false, true]) {
+          const y0 = below ? ly + DOT_BOX / 2 + 1 : ly - bh * LABEL_LIFT;
+          const box = { label: r.label, x: lx - bw / 2, y: y0, w: bw, h: bh, lx, ly: y0 + bh * LABEL_LIFT };
+          if (!placed.some(p => boxesHit(p, box)) && !blockers.some(p => boxesHit(p, box))) { put = box; break; }
+        }
+        if (put) break;
+      }
+      if (!put) continue;                 // dot only — the label is dropped
+      placed.push(put);
+      inner += `<div class="mm-mark-label" style="left:${put.lx}px;top:${put.ly}px">${r.label}</div>`;
+    }
+    compassLabelBoxes = placed;
     dial.innerHTML = inner;
   }
   el.style.display = "block";
@@ -18813,6 +19460,7 @@ function updateHUD(dayT) {
     `<span class="dim">${others.size + 1} online</span>`;
 
   hudZone.style.display = inSafeZone(me.x, me.y) ? "block" : "none";
+  if (helpExpanded && performance.now() - helpLiftCheckedAt > HELP_LIFT_RECHECK_MS) applyHelpLift();
   updateMinimap();                     // v35 PART A — the compass dial
   updateWorldMap();                    // v46 PART D — the rendered minimap
   updateUnmakingHud();                 // v39 PART D
@@ -19450,6 +20098,11 @@ function debugLightInfo() {
                  UNMAKING_WISP_COL, unmakingIntensity: unmakingIntensity(),
                  elderHoldMs, ELDER_HOLD_MS, unmakingWispsSpawned,
                  unmakingParticles: particles.filter(p => p.unmaking).length,
+    /* World Check Fixes PART F */ INTERIOR_BG_CAVE, INTERIOR_BG_ABYSSAL,
+                 skyBackdropFrames, interiorBackdropFrames, groundPassFrames,
+    /* World Check Fixes PART G */ LAVA_CRUST_SHARE, LAVA_CRUST_INSET, LAVA_CRUST_SALT,
+                 LAVA_VENT_SHARE, LAVA_VENT_SALT, LAVA_CRUST_COL, LAVA_PLATE_SCALE, LAVA_CRUST_T,
+                 lavaCrustTiles, lavaVentTiles,
     /* shared  */ particles: particles.length,
   };
 }
@@ -19659,6 +20312,71 @@ const HELP_ENTRIES = [
    does not earn a row in the settings store or a column in the database. */
 let helpExpanded = false;
 
+/* ============ World Check Fixes PART E — HELP MUST NOT COVER THE HUD ===
+   With the full control list open, #hudHelp (bottom: 14px; left: 12px) grows
+   UPWARD straight over the compass card (#hudMinimap, bottom: 52px) and into
+   #hudZone ("SAFE ZONE — YOU ARE PROTECTED", bottom: 64px) — both visible in
+   the night-spawn and help screenshots.
+
+   The card's REAL rendered height, not a guess at it: the control list wraps
+   differently at different widths and after a rebind, so any constant here
+   would be wrong on some screen. offsetHeight is read once per toggle, never
+   per frame. Lifting by the full height rather than by the overlap is
+   deliberate — #hudHelp's top edge sits at 14 + height, so 52 + height and
+   64 + height clear it with the card's own 14px bottom margin to spare, and
+   there is no second number to keep in step with a CSS offset.
+
+   Doubt pass, 2026-10-13: each card is lifted by its OWN overlap with the
+   open card, not by the card's full height, and only when the two actually
+   share horizontal space — on a wide screen the SAFE ZONE banner sits clear
+   of the help card and used to jump 110-180px for nothing. The old 64px floor
+   for the un-laid-out case is gone: it was production code whose only job
+   was to make a jsdom gate non-zero. helpLiftFor() is a pure function of two
+   rectangles, so the jsdom gates test the arithmetic directly, and the real
+   layout is measured in a real browser by debug/shot.js.
+
+   Re-measured on toggle, on rebind (refreshHelpLine), on window resize, and
+   at most twice a second while the list is open, so a banner that appears
+   after the list was opened (walking into a safe zone) is lifted too.
+   Nothing about the help text itself changes. */
+const HELP_LIFT_GAP = 8;               // px of air between the help card and a lifted card (TUNABLE)
+const HELP_LIFT_RECHECK_MS = 500;      // while open, how often the overlap is re-measured
+let helpLiftCheckedAt = 0;
+/* Returns the px to lift `target` so it clears `help`, 0 when nothing needs
+   clearing, or -1 when the lift would push the card's top above `minTop`
+   (off the screen, or over the player card on a short window) — in which
+   case the card is hidden while the list is open instead (doubt pass,
+   cycle 2: the lift had no ceiling). */
+function helpLiftFor(help, target, minTop) {
+  if (!help || !target || !(help.height > 0) || !(target.height > 0)) return 0;
+  if (!(target.left < help.right && help.left < target.right)) return 0;   // side by side: nothing to clear
+  const need = target.bottom - help.top + HELP_LIFT_GAP;
+  if (!(need > 0)) return 0;
+  if (minTop !== undefined && target.top - need < minTop) return -1;
+  return Math.ceil(need);
+}
+function applyHelpLift() {
+  const root = document.documentElement.style;
+  helpLiftCheckedAt = performance.now();
+  root.setProperty("--help-lift-mm", "0px");
+  root.setProperty("--help-lift-zone", "0px");
+  const mmEl = document.getElementById("hudMinimap"), zEl = document.getElementById("hudZone");
+  if (mmEl) mmEl.classList.remove("help-hidden");
+  if (zEl) zEl.classList.remove("help-hidden");
+  if (!helpExpanded) return { mm: 0, zone: 0 };
+  const rect = el => el ? el.getBoundingClientRect() : null;
+  const help = rect(document.getElementById("hudHelp"));
+  const player = rect(document.getElementById("hudPlayer"));
+  const minTop = player && player.height > 0 ? player.bottom + HELP_LIFT_GAP : HELP_LIFT_GAP;
+  const mm = helpLiftFor(help, rect(mmEl), minTop);
+  const zone = helpLiftFor(help, rect(zEl), HELP_LIFT_GAP);
+  if (mm < 0 && mmEl) mmEl.classList.add("help-hidden");
+  if (zone < 0 && zEl) zEl.classList.add("help-hidden");
+  root.setProperty("--help-lift-mm", Math.max(0, mm) + "px");
+  root.setProperty("--help-lift-zone", Math.max(0, zone) + "px");
+  return { mm, zone };
+}
+addEventListener("resize", () => { if (helpExpanded) applyHelpLift(); });
 function helpLineHtml(core) {
   const dot = " &nbsp;&bull;&nbsp; ";
   return HELP_ENTRIES.filter(e => !!e.core === core)
@@ -19678,10 +20396,15 @@ function refreshHelpLine() {
     tog.setAttribute("aria-expanded", helpExpanded ? "true" : "false");
     tog.title = helpExpanded ? "Hide the full control list" : "Show all controls";
   }
+  /* World Check Fixes PART E: here rather than only in toggleHelpFull(), so
+     a rebind that rewraps the control list while it is already open moves
+     the two cards with it. toggleHelpFull() calls this, so the toggle still
+     drives it — this is simply the one place the card's height can change. */
+  applyHelpLift();
 }
 function toggleHelpFull() {
   helpExpanded = !helpExpanded;
-  refreshHelpLine();
+  refreshHelpLine();          // and refreshHelpLine() applies the lift
   return helpExpanded;
 }
 /* Harness hook — HELP_ENTRIES and helpExpanded are lexically scoped and the

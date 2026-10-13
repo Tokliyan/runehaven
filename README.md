@@ -787,6 +787,8 @@ behavior, confirm the bonus is real and measured against the base
 
 ## Confirmed, locked spec for the next build (World Check Fixes — Landmarks, Compass, Caves, Lava & Dark Forest)
 
+**SHIPPED 2026-10-13** in the owner-started gauntlet session (stage 1): saved patch + OWNER DECISIONS + two doubt-pass cycles; run4 1800 PASS / 0 FAIL. See the art-style skill's 2026-10-13 changelog entry for the judgment calls and the YELLOW live-world note.
+
 ### OWNER DECISIONS (2026-10-13) — these OVERRIDE the parts below wherever they conflict
 
 Harsh read the 2026-10-12 BUILD_FAILED.md and delegated every open game

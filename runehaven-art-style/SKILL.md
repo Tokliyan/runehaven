@@ -53,6 +53,79 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-13 (World Check Fixes — landmarks, compass, caves, lava, Dark Forest)
+
+Built in the owner-started gauntlet session from last night's saved patch plus
+README's OWNER DECISIONS (2026-10-13), then through two fresh-context doubt
+cycles (findings classified and fixed before shipping). Rendering-scope changes:
+
+- **Landmarks stand on land.** The Ancient Forge was a box in open sea on the
+  harness seed. ANCIENT and COLOSSEUM now pass a land test (isPlaceableLand's
+  0.44-0.84 band); when no spot is 100% in band, a ranked fallback picks the
+  spot with **no sea**, then no >50% ROCK/PEAK mass, then the fewest snow-band
+  tiles (`discTerrain` / `betterLandSpot`). An extended search (attempts
+  40-119, only when the best of forty is still bad) runs on ~1 world in 5.
+  Over 200 seeds: 0 arenas with sea, worst ROCK/PEAK mass 45%, at most a few
+  snow-band rim tiles.
+- **The Colosseum gets the Bazaar's clearing**: level PLAINS out to
+  COLOSSEUM_R + 3, no trees, no decor (was 346 features + 151
+  bushes/pebbles/flowers). The guard set grew for both clearings (RUINB,
+  VOLROCK, CALDERA, UWCAVE, ABYSSAL), the flatten only touches ground it
+  cleared, and Ruins are kept off both clearings. **The hand-composed ruin is
+  never altered.**
+- **Compass labels never overlap** each other, a tick letter, a landmark dot
+  or the centre: greedy nearest-first, three inward radii, above or below the
+  anchor, else dot only. Dots never move.
+- **[?] help never covers the HUD**: each card lifts by its own overlap
+  (`--help-lift-mm`, `--help-lift-zone`; #hudPrompt rides the zone lift), is
+  re-measured on resize and every 500 ms while open, and a card with no room
+  above it is hidden while the list is open (`.help-hidden`).
+- **Caves no longer float in the daytime sky**: flat near-black backdrop
+  (#07080c caves, #0a0612 Abyssal Hollow) and the overworld ground pass is
+  skipped inside interiors (it painted the map's top-left sea past a cave's
+  far edges). The v55 cave darkness pass is untouched.
+- **Lava reads as molten crust**: plates from a smooth field
+  (`lavaCrustAt`, LAVA_PLATE_SCALE 3.5, LAVA_CRUST_T 0.52 -> 45.2% of the
+  core) nearly fill their tile (inset 0.86), so the thin orange seams
+  between neighbouring plates are the glowing cracks (P(crusted neighbour)
+  79%); vents pulse on ~20% of lava tiles (peak alpha 0.42, fills pre-built).
+  **Volcano silhouette protected**: no plate or vent is drawn on a tile with
+  any front neighbour (side or diagonal) that is not lava — gated by real
+  heights. Crust colour is the existing VOLROCK face shade, no new palette
+  entry.
+- **Dark Forest is the densest forest, with its clearings** (owner-approved
+  exception to "never alter placement/density", DARKFOREST only):
+  47.9% tree tiles vs Forest 36.8%, clearing area 37.3% vs 36.7%.
+  **JUDGMENT CALL:** owner decision 4 named the mechanism "lower only
+  clusterNoise, keep h at 0.42"; measured, that removes about half the
+  clearings — the opposite of the decision's own aim ("denser WITH
+  clearings"). Under the owner's delegation the build follows the aim:
+  cluster stays 0.42, per-tile `h` 0.42 -> 0.24.
+
+**YELLOW — the live world moves.** Fixing placement moves the Ancient Forge
+and the Colosseum on almost every seed, and because Safe Zones keep ZONE_SEP
+from both, the four Safe Zones move on most seeds too; Ruins move on ~1 seed
+in 9 (now kept off the Bazaar and the arena). Existing bases may now sit near
+or inside a different Safe Zone. Open tabs on the old version disagree about
+zones/arena until refreshed.
+
+**Visual check** (debug/shot.js, real Chromium): forge on volcanic land;
+arena a clean level floor; volcano crust with glowing seams (night: dark
+plates, warm cracks); both caves on a dark backdrop; Dark Forest dense with
+clearings; help list open with nothing covered (browser overlap check:
+none). Showcase scoring of these shots (stage 2 round 1): overall 2.97/5,
+weakest Landmark presence 2.17 and Life 2.44 — the next pass's targets.
+
+**Gate integrity:** run4 1718 -> 1800 PASS, 0 FAIL. Gates changed with
+reasons: HELP_LIFT_MIN (a production constant that only existed to make a
+jsdom gate non-zero) removed and the lift tested as a pure function; two
+fallback gates that compared a number with itself now assert "no sea"; the
+Mount gate that could not fail now asserts owner decision 2's 424; the
+Dark Forest gates assert the measured aim; "Dark Forest band untouched"
+235,008 -> 237,760, proven to be landmark overrides only (old positions
+restored inside the new build give main's count minus exactly the 293 DF
+tiles the new arena clearing takes). Parse floor intact; no service_role key.
+
 ### 2026-09-24 (v59 — Matched-Tier Gear Bonus)
 
 A mechanics version, and the rendering-scope half of it is two branches:

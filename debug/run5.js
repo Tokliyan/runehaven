@@ -985,6 +985,69 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('matched-tier gear swept — ' + armsC.length + ' tiers, matched and mismatched, inventory row and HUD line both ways');
     }
 
+    /* ================= World Check Fixes — THE NEW RENDER BRANCHES =====
+       Step 7 of the standard process asks for this file's coverage lists to
+       grow with anything a build added. This version added NO species, mob,
+       weapon kind or class, so no list here gained an entry — what it added
+       is three new branches inside render(), and the GROUND_BIOMES sweep
+       above cannot reach any of them: it draws through drawGroundTile, and
+       all three live in the frame around it.
+
+         PART G — the lava crust, in render()'s own `b === B.LAVA` branch
+         PART F — the interior backdrop, which replaces the sky block
+         PART D — the compass label layout, in updateMinimap()
+
+       So each one is reached here the only way it can be: by standing the
+       player where it runs and rendering a real frame, then asking the
+       harness counters whether the branch actually fired. Hard-fails if any
+       of the three never ran, exactly like the sweeps above. */
+    if (window.debugLightInfo && window.compassLabelLayout) {
+      const wiW = window.debugWorldInfo();
+      /* The lava core: `dV < 124` around the volcano centre. */
+      window.debugSetPlayer({ x: wiW.VOLCANO.x + 0.5, y: wiW.VOLCANO.y + 0.5, hp: 100 });
+      for (let f = 0; f < 2; f++) { try { window.render(f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      const lavaL = window.debugLightInfo();
+      if (!(lavaL.lavaCrustTiles > 0 && lavaL.lavaVentTiles > 0)) {
+        console.log('COVERAGE GAP: a frame in the lava core drew no crust plates (' +
+                    lavaL.lavaCrustTiles + ' crust, ' + lavaL.lavaVentTiles + ' venting)');
+        process.exit(1);
+      }
+      console.log('lava crust swept — ' + lavaL.lavaCrustTiles + ' plates, ' +
+                  lavaL.lavaVentTiles + ' of them venting, on one frame in the core');
+      /* Both interior backdrops, which are two different colours. */
+      let bdDrawn = 0;
+      for (const name of ['UWCAVE', 'ABYSSAL']) {
+        let tile = null;
+        for (let y = 0; y < wiW.N && !tile; y += 3) for (let x = 0; x < wiW.N; x += 3) {
+          if (window.biomeAt(x, y) === wiW.B[name]) { tile = [x, y]; break; }
+        }
+        if (!tile) continue;
+        window.debugSetPlayer({ x: tile[0] + 0.5, y: tile[1] + 0.5, diving: true, hp: 100, breath: 30 });
+        window.enterInterior(tile[0], tile[1], wiW.B[name]);
+        const b1 = window.debugLightInfo().interiorBackdropFrames;
+        try { window.render(32); } catch (e) { if (!caught) caught = e; }
+        n += 1;
+        if (window.debugLightInfo().interiorBackdropFrames > b1) bdDrawn++;
+        if (window.inInterior()) window.exitInterior();
+      }
+      window.debugSetPlayer({ x: wiW.SPAWN.x + 0.5, y: wiW.SPAWN.y + 0.5, diving: false, hp: 100 });
+      if (bdDrawn !== 2) {
+        console.log('COVERAGE GAP: the interior backdrop drew in ' + bdDrawn + ' of 2 interior kinds');
+        process.exit(1);
+      }
+      console.log('interior backdrop swept — both kinds, the flat fill in place of the sky');
+      /* And the label layout, which only runs once the tutorial is done. */
+      window.debugSetV35({ tutorialDone: true, tutorialActive: false });
+      window.updateMinimap();
+      n += 1;
+      const boxesW = window.compassLabelLayout();
+      if (!(boxesW.length > 0)) {
+        console.log('COVERAGE GAP: the compass label layout placed nothing');
+        process.exit(1);
+      }
+      console.log('compass label layout swept — ' + boxesW.length + ' labels placed at Spawn');
+    }
+
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {

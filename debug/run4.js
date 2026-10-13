@@ -30,11 +30,23 @@ const drawOpsBy = Object.create(null);
    every canvas call the whole harness makes, and a rest parameter would
    allocate an array on each of them whether anything is recording or not. */
 let ellipseTrace = null;
+/* World Check Fixes PART F: gradients and their colour stops, counted on
+   their own two counters rather than through drawOps/drawOpsBy — gate F has
+   to say "the sky gradient's colour stops were not drawn this frame", and
+   every existing gate that measures draw cost must be unable to see this
+   addition. Nothing about the returned stub's behaviour changes. */
+let gradCalls = 0, colourStops = 0;
+/* The stop COLOURS as well as the count: gate F's claim is that the SKY
+   gradient's stops are not drawn inside a cave, and an interior frame draws
+   plenty of other gradients (the v55 cave lighting among them), so the count
+   alone cannot tell the two apart. `#22485c` and `#14303f` are the sky
+   block's own sea-band stops and nothing else in the file uses them. */
+let stopColours = [];
 const ctx2d = new Proxy({}, {
   get(t, prop) {
     if (prop === 'canvas') return { width: 1280, height: 720 };
     if (prop === 'createRadialGradient' || prop === 'createLinearGradient')
-      return () => ({ addColorStop: () => {} });
+      return () => { gradCalls++; return { addColorStop: (o, c) => { colourStops++; stopColours.push(String(c)); } }; };
     if (prop === 'measureText') return () => ({ width: 10 });
     if (typeof prop === 'string')
       return function () {
@@ -570,8 +582,35 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
      is ten more RUINB carves taking their tiles out of the same band, and
      RUIN_SEP 664 -> 360 lets them land closer in, so the band loses more
      again. Same invariant, same exercise v20 and v50 both did.
-     242,044 -> 236,495. */
-  results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 236495]);
+     242,044 -> 236,495.
+     World Check Fixes re-measured it again, did not relax it: 236,495 ->
+     235,008, and the cause was traced rather than assumed. TWO landmark
+     overrides move the number, both of them the kind this gate has always
+     allowed, and NEITHER of them is a rare-variant noise field:
+       - PART B's new arena clearing turns its own COLOSSEUM_R + 3 disc into
+         PLAINS, which takes 3 DARKFOREST tiles on this seed (measured by
+         removing that one line and re-counting: 235,011 with it gone).
+       - the other 1,484 come from PART A moving the Colosseum, which moved
+         one of the four Other Safe Zones and therefore moved that zone's
+         ZONE_R grass clearing. The zone loop has checked
+         `H(tx, ty, COLOSSEUM) <= ZONE_SEP` since the v41 hotfix, and the old
+         zone at 740,1521 is 531 tiles from the new arena against ZONE_SEP
+         664, so it is rejected and 1274,2008 is taken instead (667 away).
+         Still four zones, still the same twenty Ruins, same Dragon Altar —
+         all verified identical on this seed.
+     The invariant is unchanged and was checked both ways: the rare-variant
+     fields still never encroach on this band, only landmark overrides do. */
+  /* World Check Fixes, owner decisions (2026-10-13): 235,008 -> 237,760, and
+     again ONLY landmark overrides moved. Measured by restoring the old
+     ANCIENT, COLOSSEUM and four Safe Zone positions inside the new build:
+     236,202 = main's 236,495 minus exactly the 293 DARKFOREST tiles the new
+     arena clearing takes at the OLD arena spot (the cycle-1 doubt pass
+     measured 293 DF tiles in that disc). With the decisions applied, the
+     arena (1910,2988) and forge (2491,1209) moved and two of the four Safe
+     Zones followed (ZONE_SEP from both) — the twenty Ruins and the Dragon
+     Altar are identical on this seed. The rare-variant invariant is
+     unchanged. */
+  results.push([`Dark Forest band untouched (${dark} tiles)`, dark === 237760]);
       results.push(['regular Forest still exists', forest > 0]);
       results.push(['regular Meadow still exists', meadow > 0]);
       // Stag has no presence roll, so it must reliably find its biome. Unicorn
@@ -5173,11 +5212,17 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           bc.heights.every(h => h <= 0) && bc.heights.indexOf(0) >= 0]);
       }
       results.push(['PART B: the clearing REUSES the scattered-safe-zone pattern rather than inventing one',
+        /* World Check Fixes owner decision 3: the flatten now reads only ground
+           the clearing actually cleared (b === B.PLAINS) — same pattern. */
         gameScript.indexOf('Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) b = B.PLAINS;') > 0 &&
-        gameScript.indexOf('if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) h = 0;') > 0 &&
+        gameScript.indexOf('if (b === B.PLAINS && Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) h = 0;') > 0 &&
         gameScript.indexOf('if (Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) continue;') > 0]);
       results.push(['PART B: and it can no more paint grass over open water than a scattered zone can',
-        gameScript.indexOf('if (b !== B.PLAINS && b !== B.DEEP && b !== B.LAVA && b !== B.WATER &&\n      Math.hypot(tx - BAZAAR.x') > 0]);
+        /* Owner decision 3 GREW the guard set (RUINB, VOLROCK, CALDERA, and the
+           DEEP-carved sea-cave pockets); the original four guards must all
+           still be there, so it still cannot paint grass over open water. */
+        gameScript.indexOf('if (b !== B.PLAINS && b !== B.DEEP && b !== B.LAVA && b !== B.WATER &&\n      b !== B.RUINB && b !== B.VOLROCK && b !== B.CALDERA &&   // OWNER DECISION 3\n      b !== B.UWCAVE && b !== B.ABYSSAL &&') > 0 &&
+        gameScript.indexOf('Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) b = B.PLAINS;') > 0]);
       // preservation: nothing about the Bazaar ITSELF moved
       results.push([`PART B: the Bazaar is unchanged otherwise — still a safe zone, still ${v37b.BAZAAR_STALLS} stalls on a ${v37b.BAZAAR_RING} ring inside ${v37b.BAZAAR_R}`,
         v37b.bazaarIsSafe === true && v37b.BAZAAR_STALLS === 9 &&
@@ -10338,6 +10383,700 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           window.refreshPanels();
         }
       }
+
+    /* ================================================================
+       World Check Fixes (Landmarks, Compass, Caves, Lava & Dark Forest)
+
+       Every number quoted in these gates was MEASURED on the harness seed
+       before a line of the build was written — the Ancient Forge's 93 DEEP
+       tiles, the arena's 219 WATER and 346 features, FOREST 36.7% against
+       DARKFOREST 36.2%, the colliding compass labels. The gates below are
+       the same measurements taken again, from the other side.
+       ================================================================ */
+    if (window.debugV37Info && window.debugSeedLandSweep) {
+      /* run4 performs a real world reset to a RANDOM seed partway through,
+         well before this point, so every number quoted below has to say
+         which world it was measured in. The whole block stands on the
+         harness seed — the one the spec's own measurements were taken on —
+         and hands the world back at the end of PARTs D-J. */
+      const seedBeforeWcf = window.debugWorldSeedSet(123456789);
+      console.log('WCF: pinned to the harness seed 123456789 for these gates (was ' + seedBeforeWcf + ')');
+      const wcf = window.debugV37Info();
+      const wInfo = window.debugWorldInfo();
+      const Bw = wInfo.B, Nw = wInfo.N;
+      const bNames = Object.fromEntries(Object.entries(Bw).map(([k, v]) => [v, k]));
+      const discEach = (cx, cy, R, fn) => {
+        const o = [];
+        for (let ty = Math.floor(cy - R); ty <= Math.ceil(cy + R); ty++)
+          for (let tx = Math.floor(cx - R); tx <= Math.ceil(cx + R); tx++)
+            if (Math.hypot(tx - cx, ty - cy) < R) o.push(fn(tx, ty));
+        return o;
+      };
+      const tallyOf = a => { const c = {}; for (const v of a) c[v] = (c[v] || 0) + 1; return c; };
+
+      /* ---- PART A: landmarks stand on land, on five seeds ------------- */
+      {
+        const SEEDS = [123456789, 4242, 999331, 77, 20260101];
+        const sweep = window.debugSeedLandSweep(SEEDS);
+        for (const r of sweep)
+          console.log(`WCF A seed ${r.seed}: forge land ${(r.ancFrac * 100).toFixed(1)}% at ` +
+                      `${r.ANCIENT.x},${r.ANCIENT.y} (${r.dVolcano.toFixed(0)} from the volcano), ` +
+                      `arena land ${(r.colFrac * 100).toFixed(1)}% at ${r.COLOSSEUM.x},${r.COLOSSEUM.y} ` +
+                      `(${r.dTowerCol.toFixed(0)} from the Tower)` +
+                      (r.chosen.ANCIENT_fallback || r.chosen.COLOSSEUM_fallback
+                         ? ' — BEST-OF-ATTEMPTS FALLBACK FIRED' : ''));
+        results.push([`WCF A: the harness seed's Ancient Forge is no longer in the sea — ${SEEDS.length} seeds swept`,
+          sweep.length === SEEDS.length]);
+        /* The claim is "all land, OR the fallback fired and then the chosen
+           spot is the best of its attempts" — which is exactly what the hook
+           reports, since landmarkLandFrac records what placeLandmarks chose. */
+        results.push(['WCF A: on every seed the forge disc is all in-band, or the fallback chose a spot with no sea tile in it',
+          sweep.every(r => r.ancFrac >= 1 || (r.chosen.ANCIENT_fallback && r.chosen.ANCIENT_sea === 0))]);
+        /* Doubt pass 2026-10-13: the old fallback branch compared the hook's
+           number with a fresh copy of the same number. What the fallback
+           actually promises is the ranking: no sea when a candidate exists. */
+        results.push(['WCF A: and the arena disc is all in-band, or the fallback chose a spot with no sea tile in it',
+          sweep.every(r => r.colFrac >= 1 || (r.chosen.COLOSSEUM_fallback && r.chosen.COLOSSEUM_sea === 0))]);
+        /* The existing distance rules stay EXACTLY as they are: the forge is
+           still 364 from the volcano and the arena still 1000 from the Tower
+           on every seed, so the land test was added to them, not instead. */
+        results.push(['WCF A: the distance rules are untouched — forge 364 from the volcano, arena 1000 from the Tower, every seed',
+          sweep.every(r => Math.abs(r.dVolcano - 364) < 1.5 && Math.abs(r.dTowerCol - 1000) < 1.5)]);
+        /* Doubt pass cycle 2: the arena's extended search (attempts 40..119,
+           only when the best of forty is still unacceptable) is the one other
+           loop, pinned here so a later edit to its bound shows up. */
+        results.push(['WCF A: 40 attempts for these two loops, plus the arena\'s one extended search to 120 — VOLCANO/MOUNT keep 12 and BAZAAR keeps 20',
+          (gameScript.match(/for \(let attempt = 40; attempt < 120; attempt\+\+\) \{/g) || []).length === 1 &&
+          (gameScript.match(/for \(let attempt = 0; attempt < 40; attempt\+\+\) \{/g) || []).length === 2 &&
+          (gameScript.match(/for \(let attempt = 0; attempt < 12; attempt\+\+\) \{/g) || []).length === 2 &&
+          (gameScript.match(/for \(let attempt = 0; attempt < 20; attempt\+\+\) \{/g) || []).length === 1]);
+        /* The cache trap the existing comments at the top of isPlaceableLand
+           and inside placeLandmarks both warn about. elevRaw is pure noise;
+           biomeAt would bake a pre-Ruin, pre-Zone biome for every tile. */
+        /* The body with its comments STRIPPED, because placeLandmarks() is
+           full of comments that warn about this exact call — including the
+           new one — and a plain indexOf would be satisfied by the warning
+           rather than by the absence of the thing warned about. */
+        results.push(['WCF A: placeLandmarks() still contains no biomeAt call — the tile-cache trap its own comment warns about',
+          (() => {
+            const at = gameScript.indexOf('function placeLandmarks() {');
+            if (at < 0) return false;
+            const body = gameScript.slice(at, gameScript.indexOf('\n}', at));
+            if (body.indexOf('placeRuinsAndZones();') < 0) return false;   // slice really is the whole body
+            const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+            return code.indexOf('biomeAt') < 0 && code.indexOf('landFraction(') > 0;
+          })()]);
+        /* OWNER DECISION 1 (2026-10-13): land is isPlaceableLand()'s elevRaw
+           band (0.44 <= e < 0.84), not a bare e >= 0.42 — an upper bound, so
+           the arena can no longer win its land test by sitting on the Mount. */
+        /* Placement is decided by discTerrain()/betterLandSpot(); both must
+           read elevRaw only (through isPlaceableLand for the band). */
+        results.push(['WCF A: the placement test (discTerrain) uses the isPlaceableLand() band and elevRaw only — no biomeAt/heightAt (owner decision 1)',
+          (() => {
+            const at = gameScript.indexOf('function discTerrain(cx, cy, R) {');
+            if (at < 0) return false;
+            const body = gameScript.slice(at, gameScript.indexOf('\n}', at));
+            return body.indexOf('isPlaceableLand(tx, ty)') > 0 && body.indexOf('elevRaw(tx, ty)') > 0 &&
+                   body.indexOf('biomeAt') < 0 && body.indexOf('heightAt') < 0 &&
+                   gameScript.indexOf('return e >= 0.44 && e < 0.84;') > 0;
+          })()]);
+        /* Doubt pass cycle 2: the ranking's three elevation lines are copies
+           of biomeAt()'s own literals — tie them, as VOLROCK_R is tied. */
+        results.push(['WCF A: LAND_SEA_E / LAND_ROCK_E / LAND_PEAK_E are biomeAt\'s own WATER, ROCK and PEAK lines',
+          gameScript.indexOf('const LAND_SEA_E = 0.375, LAND_ROCK_E = 0.72, LAND_PEAK_E = 0.86;') > 0 &&
+          gameScript.indexOf('else if (e < 0.375) b = B.WATER;') > 0 &&
+          gameScript.indexOf('else if (e < 0.72) {') > 0 &&
+          gameScript.indexOf('else if (e < 0.86) b = B.ROCK;') > 0]);
+        results.push(['WCF A: the sweep hook puts the world back exactly as it found it',
+          JSON.stringify(window.debugV37Info().ANCIENT) === JSON.stringify(wcf.ANCIENT) &&
+          JSON.stringify(window.debugV37Info().COLOSSEUM) === JSON.stringify(wcf.COLOSSEUM)]);
+      }
+
+      /* ---- PART B: the arena gets a real clearing, like the Bazaar ---- */
+      {
+        const colR = wcf.COLOSSEUM_R + 3;
+        const cb = tallyOf(discEach(wcf.COLOSSEUM.x, wcf.COLOSSEUM.y, colR, (x, y) => bNames[window.biomeAt(x, y)]));
+        const ch = tallyOf(discEach(wcf.COLOSSEUM.x, wcf.COLOSSEUM.y, colR, (x, y) => window.heightAt(x, y)));
+        const fellBack = !!wcf.landFrac.COLOSSEUM_fallback;
+        console.log('WCF B arena disc biomes:', JSON.stringify(cb), 'heights:', JSON.stringify(ch),
+                    fellBack ? '(PART A fallback fired on this seed)' : '');
+        /* Measured before: 297 FOREST, 293 DARKFOREST, 219 WATER, 157 ROCK,
+           152 SAND and heights -1..2 inside this very disc. */
+        const allowed = fellBack ? ['PLAINS', 'LAVA', 'DEEP', 'WATER'] : ['PLAINS'];
+        results.push([`WCF B: every tile of the arena disc is cleared ground now (${Object.keys(cb).join('/')})`,
+          Object.keys(cb).every(k => allowed.indexOf(k) >= 0) && (cb.PLAINS || 0) > 0]);
+        results.push([`WCF B: and the arena floor is level — one height, 0 (was -1..2)`,
+          Object.keys(ch).length === 1 && ch['0'] > 0]);
+        /* PRESERVATION: the Bazaar's own two lines still do their job. */
+        const bb = tallyOf(discEach(wcf.BAZAAR.x, wcf.BAZAAR.y, wcf.BAZAAR_R, (x, y) => bNames[window.biomeAt(x, y)]));
+        const bh = tallyOf(discEach(wcf.BAZAAR.x, wcf.BAZAAR.y, wcf.BAZAAR_R, (x, y) => window.heightAt(x, y)));
+        /* The Bazaar's clearing deliberately exempts water — its own comment
+           says "a coastal Bazaar keeps its shoreline" — so the invariant is
+           that everything which is not sea is cleared PLAINS at height 0,
+           not that the whole disc is PLAINS. */
+        const WET = ['DEEP', 'WATER', 'SHALLOW', 'LAVA'];
+        const bazWet = Object.keys(bb).filter(k => WET.indexOf(k) >= 0)
+                             .reduce((n, k) => n + bb[k], 0);
+        const bazDry = discEach(wcf.BAZAAR.x, wcf.BAZAAR.y, wcf.BAZAAR_R,
+                                (x, y) => [bNames[window.biomeAt(x, y)], window.heightAt(x, y)])
+                         .filter(([b]) => WET.indexOf(b) < 0);
+        results.push([`WCF B P: the Bazaar's own clearing is untouched — ${bazDry.length} dry tiles all PLAINS at height 0, ${bazWet} tiles of its own shoreline (${Object.keys(bb).join('/')})`,
+          bazDry.length > 0 && bazDry.every(([b, h]) => b === 'PLAINS' && h === 0) &&
+          Object.keys(bb).every(k => k === 'PLAINS' || WET.indexOf(k) >= 0)]);
+        /* OWNER DECISION 3: both clearings carry the grown guard set (RUINB,
+           VOLROCK, CALDERA) and both flattens only touch ground they cleared. */
+        results.push(['WCF B P: the arena lines are the Bazaar lines reused — same guards (now + RUINB/VOLROCK/CALDERA), same shape, at COLOSSEUM_R + 3',
+          (gameScript.match(/b !== B\.RUINB && b !== B\.VOLROCK && b !== B\.CALDERA &&   \/\/ OWNER DECISION 3\n      b !== B\.UWCAVE && b !== B\.ABYSSAL &&[^\n]*\n      Math\.hypot\(tx - (BAZAAR|COLOSSEUM)\.x/g) || []).length === 2 &&
+          gameScript.indexOf('Math.hypot(tx - COLOSSEUM.x, ty - COLOSSEUM.y) < COLOSSEUM_R + 3) b = B.PLAINS;') > 0 &&
+          gameScript.indexOf('if (b === B.PLAINS && Math.hypot(tx - COLOSSEUM.x, ty - COLOSSEUM.y) < COLOSSEUM_R + 3) h = 0;') > 0 &&
+          gameScript.indexOf('Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) b = B.PLAINS;') > 0 &&
+          gameScript.indexOf('if (b === B.PLAINS && Math.hypot(tx - BAZAAR.x, ty - BAZAAR.y) < BAZAAR_R) h = 0;') > 0]);
+        /* OWNER DECISION 5: the arena's decor keepout. Measured before: 151
+           bushes/pebbles/flowers inside the cleared disc (49/55/47). */
+        {
+          const ac = window.debugV37Info().arenaClear;
+          console.log('WCF owner-5 arena clearance:', JSON.stringify(ac));
+          results.push([`WCF B (owner 5): no decor stands inside the arena clearing (${ac.decor}, was 151)`, ac.decor === 0]);
+          results.push([`WCF B (owner 5): and no feature either (${ac.features})`, ac.features === 0]);
+          results.push([`WCF B P (owner 5): the clearing is a clearing — the six tiles outside it still carry trees (${ac.ringTrees})`,
+            ac.ringTrees > 0]);
+          results.push(['WCF B (owner 5): both decor branches of buildFeatureChunk carry the arena keepout',
+            (gameScript.match(/if \(Math\.hypot\(tx - COLOSSEUM\.x, ty - COLOSSEUM\.y\) < COLOSSEUM_R \+ 3\) continue;/g) || []).length === 2]);
+        }
+        /* OWNER DECISION 7: permanent 40-seed gate on where the arena lands. */
+        {
+          const seeds = [123456789];
+          for (let i = 1; i < 40; i++) seeds.push(1 + Math.floor(((i * 2654435761) >>> 0) % 2147483646));
+          const t0 = Date.now();
+          const sw = window.debugArenaSweep(seeds);
+          const worst = Math.max(...sw.map(r => r.rockPeakFrac));
+          const mountFoot = 108;   // rawHeight()'s Mount boost radius (dM < 108 raises the ground)
+          console.log(`WCF owner-7 arena sweep over ${sw.length} seeds in ${Date.now() - t0}ms: worst ROCK/PEAK mass ${(worst * 100).toFixed(1)}%, ` +
+                      `min dMount ${Math.min(...sw.map(r => r.dMount)).toFixed(0)}, min dVolcano ${Math.min(...sw.map(r => r.dVolcano)).toFixed(0)}, ` +
+                      `min dRuin ${Math.min(...sw.map(r => r.dRuin)).toFixed(0)}`);
+          results.push([`WCF owner-7: over ${sw.length} seeds the arena never stands on a >50% ROCK/PEAK mass (worst ${(worst * 100).toFixed(1)}%)`,
+            sw.length === 40 && sw.every(r => r.rockPeakFrac <= 0.5)]);
+          /* Doubt pass cycle 2: the old "dMount > 108 + R" could not fail —
+             the arena's 1000-ring and the Mount's 1200-ring around the same
+             Tower keep them >= 200 apart regardless. Owner decision 2's own
+             number is the meaningful guard, and it fails if the rule goes. */
+          results.push(['WCF owner-2/7: the arena keeps owner decision 2\'s 424 from Mount Dragonspire on every seed (well outside its raised footprint)',
+            sw.every(r => r.dMount > 424 && r.dMount > mountFoot + r.R)]);
+          /* Snow-band ground in the clearing is ranked out and the extended
+             search looks for a spot with none; on ~1.6% of worlds no angle on
+             the ring has zero, and a few rim tiles remain. Bounded, so it can
+             only ever be a rim detail (2% of the 1,661-tile disc). */
+          const snowy = sw.filter(r => r.peak > 0);
+          console.log(`WCF arena sweep: snow-band tiles in the chosen clearing on ${snowy.length}/${sw.length} seeds` +
+                      (snowy.length ? ` (${snowy.map(r => r.seed + ':' + r.peak).join(', ')})` : ''));
+          results.push([`WCF owner-7: snow-band ground in any chosen clearing stays a rim detail — at most 33 tiles (2%) on every seed`,
+            sw.every(r => r.peak <= 33)]);
+          /* Doubt pass 2026-10-13: the fallback ranks sea first, so a chosen
+             arena never has a tile of sea in it on these seeds (8% did when
+             the fallback ranked band fraction alone). */
+          const wet = sw.filter(r => r.sea > 0);
+          console.log(`WCF arena sweep: fallback fired on ${sw.filter(r => r.fallback).length}/${sw.length} seeds; sea tiles inside the chosen arena on ${wet.length}` +
+                      (wet.length ? ` (${wet.map(r => r.seed + ':' + r.sea).join(', ')})` : ''));
+          results.push([`WCF A (doubt pass): no chosen arena has a single sea tile inside its clearing, across ${sw.length} seeds`, wet.length === 0]);
+          results.push(['WCF A (doubt pass): VOLROCK_R really is biomeAt\'s volcanic radius',
+            gameScript.indexOf('const VOLROCK_R = 452;') > 0 && gameScript.indexOf('if (dV < 452 && b !== B.DEEP && b !== B.WATER) {') > 0]);
+          results.push(['WCF owner-3: and its clearing never reaches a Ruin', sw.every(r => r.dRuin > r.RUIN_FOOT + r.R)]);
+          results.push(['WCF owner-3: nor the volcanic band (biomeAt dV < 452)', sw.every(r => r.dVolcano > 452 + r.R)]);
+          results.push(['WCF owner-7: the sweep hands the world back exactly as it found it',
+            JSON.stringify(window.debugV37Info().COLOSSEUM) === JSON.stringify(wcf.COLOSSEUM)]);
+          results.push(['WCF owner-6: placeLandmarks() resets the land-fraction record before writing it',
+            gameScript.indexOf('for (const k of Object.keys(landmarkLandFrac)) delete landmarkLandFrac[k];') > 0]);
+        }
+        results.push(['WCF B P: nothing else about the Colosseum moved — radius, podiums, wall ring and its keep-out all still there',
+          wcf.COLOSSEUM_R === 20 &&
+          gameScript.indexOf('[COLOSSEUM.x, COLOSSEUM.y, COLOSSEUM_R + 2]') > 0 &&
+          gameScript.indexOf('PODIUM_RING') > 0 &&
+          gameScript.indexOf('COLOSSEUM_WALL_RING') > 0 &&
+          window.debugV37Info().inColosseumAtCentre === true]);
+      }
+
+      /* ---- PART C: no trees in either clearing ----------------------- */
+      {
+        const colR = wcf.COLOSSEUM_R + 3;
+        const colF = discEach(wcf.COLOSSEUM.x, wcf.COLOSSEUM.y, colR, (x, y) => window.featureTypeAt(x, y)).filter(f => f);
+        const bazF = discEach(wcf.BAZAAR.x, wcf.BAZAAR.y, wcf.BAZAAR_R, (x, y) => window.featureTypeAt(x, y)).filter(f => f);
+        console.log(`WCF C: features inside the arena ${colF.length} (was 346), inside the Bazaar ${bazF.length} (was 13 trees)`);
+        results.push([`WCF C: featureTypeAt grows nothing anywhere inside the arena disc (${colF.length})`, colF.length === 0]);
+        results.push([`WCF C: nor anywhere inside the Bazaar's radius (${bazF.length})`, bazF.length === 0]);
+        /* PRESERVATION, and the spec's own exception: the Spawn safe zone
+           keeps its scattered trees, because that look is intended. */
+        let spawnTrees = 0;
+        const SR = wInfo.SAFE_RADIUS;
+        for (let ty = Math.floor(wInfo.SPAWN.y - SR); ty <= Math.ceil(wInfo.SPAWN.y + SR) && spawnTrees < 5; ty += 2)
+          for (let tx = Math.floor(wInfo.SPAWN.x - SR); tx <= Math.ceil(wInfo.SPAWN.x + SR) && spawnTrees < 5; tx += 2)
+            if (Math.hypot(tx - wInfo.SPAWN.x, ty - wInfo.SPAWN.y) < SR &&
+                window.featureTypeAt(tx, ty) === 'tree') spawnTrees++;
+        results.push([`WCF C P: the Spawn safe zone still grows its scattered trees (${spawnTrees} found in a partial scan)`,
+          spawnTrees > 0]);
+        results.push(['WCF C P: and Spawn was deliberately not added to the keepout',
+          (() => {
+            const at = gameScript.indexOf('function featureTypeAt(tx, ty) {');
+            const body = gameScript.slice(at, gameScript.indexOf('const b = biomeAt(tx, ty);', at));
+            return body.indexOf('BAZAAR_R) return null;') > 0 &&
+                   body.indexOf('COLOSSEUM_R + 3) return null;') > 0 &&
+                   body.indexOf('SPAWN') < 0;
+          })()]);
+      }
+
+      /* ---- PART H: the Dark Forest is the densest forest ------------- */
+      {
+        /* Sampled EXACTLY as the pre-build measurement was: every 3rd tile,
+           a 40-tile margin, over the whole map. */
+        const tally = {};
+        for (let ty = 40; ty < Nw - 40; ty += 3)
+          for (let tx = 40; tx < Nw - 40; tx += 3) {
+            const b = window.biomeAt(tx, ty);
+            if (b !== Bw.FOREST && b !== Bw.DARKFOREST && b !== Bw.ENCHFOREST) continue;
+            const k = bNames[b];
+            (tally[k] = tally[k] || { t: 0, tree: 0 }).t++;
+            if (window.featureTypeAt(tx, ty) === 'tree') tally[k].tree++;
+          }
+        const pc = k => tally[k] ? tally[k].tree / tally[k].t * 100 : 0;
+        const dfP = pc('DARKFOREST'), fP = pc('FOREST'), efP = pc('ENCHFOREST');
+        console.log(`WCF H: tree share — DARKFOREST ${dfP.toFixed(2)}% (was 36.2), ` +
+                    `FOREST ${fP.toFixed(2)}% (36.7), ENCHFOREST ${efP.toFixed(2)}% (29.1), ` +
+                    `on ${tally.DARKFOREST.t}/${tally.FOREST.t}/${tally.ENCHFOREST.t} sampled tiles`);
+        /* OWNER DECISION 4 (2026-10-13) replaces the spec's 50% / +12 floor
+           with "a visibly denser forest WITH clearings, not a uniform scatter",
+           about +10 points over Forest. The decision also named a mechanism —
+           lower only clusterNoise, keep h at 0.42 — and the doubt pass measured
+           that mechanism doing the opposite of its own aim (the clearings ARE
+           the low-clusterNoise area: 37.0% at 0.42, 17.7% at 0.28). Under the
+           owner's delegation ("use your discretion to make the game as good as
+           possible") the build follows the AIM: cluster stays 0.42, the
+           per-tile hash drops. These gates assert the aim, measured. Flagged
+           as a judgment call in the changelog. */
+        results.push([`WCF H (owner 4): the Dark Forest is clearly denser than regular Forest — +${(dfP - fP).toFixed(2)} points, the owner asked for ~+10`,
+          dfP >= fP + 10]);
+        {
+          /* The clearings, measured: the share of DARKFOREST ground below the
+             cluster threshold must stay where FOREST's is (within 2 points). */
+          let dfN = 0, dfClr = 0, fN = 0, fClr = 0;
+          for (let ty = 40; ty < Nw - 40; ty += 3)
+            for (let tx = 40; tx < Nw - 40; tx += 3) {
+              const b = window.biomeAt(tx, ty);
+              if (b !== Bw.DARKFOREST && b !== Bw.FOREST) continue;
+              const clear = window.clusterNoise(tx, ty) <= 0.42;
+              if (b === Bw.DARKFOREST) { dfN++; if (clear) dfClr++; } else { fN++; if (clear) fClr++; }
+            }
+          const dfC = dfClr / dfN * 100, fC = fClr / fN * 100;
+          console.log(`WCF H: clearing area — DARKFOREST ${dfC.toFixed(1)}%, FOREST ${fC.toFixed(1)}%`);
+          results.push([`WCF H (owner 4, aim): the Dark Forest keeps its clearings — ${dfC.toFixed(1)}% clearing area against Forest's ${fC.toFixed(1)}%`,
+            Math.abs(dfC - fC) <= 2 && dfC >= 30]);
+          results.push(['WCF H (owner 4, aim): the clump field is FOREST\'s own 0.42; only the per-tile fill changed',
+            gameScript.indexOf('const DARKFOREST_CLUSTER_T = 0.42;') > 0 &&
+            /const DARKFOREST_H_T = 0\.(1|2|3)\d*;/.test(gameScript)]);
+        }
+        /* FOREST and ENCHFOREST must not have moved AT ALL: the branch was
+           split, not widened, so regular Forest keeps its own 0.42 / 0.42. */
+        results.push([`WCF H P: regular Forest is untouched — ${fP.toFixed(2)}% against the measured 36.7`,
+          Math.abs(fP - 36.7) <= 1]);
+        results.push([`WCF H P: the Enchanted Forest is untouched too — ${efP.toFixed(2)}% against the measured 29.1`,
+          Math.abs(efP - 29.1) <= 1]);
+        results.push(['WCF H P: FOREST keeps its own inline 0.42 / 0.42 and only DARKFOREST reads the new thresholds',
+          gameScript.indexOf('if (b === B.FOREST) {') > 0 &&
+          gameScript.indexOf('if (b === B.DARKFOREST) {') > 0 &&
+          gameScript.indexOf('if (b === B.FOREST || b === B.DARKFOREST) {') < 0 &&
+          gameScript.indexOf('clusterNoise(tx, ty) > DARKFOREST_CLUSTER_T && h > DARKFOREST_H_T') > 0]);
+      }
+      window.debugWorldSeedSet(seedBeforeWcf);
+    } else {
+      results.push(['WCF: the World Check Fixes hooks exist', false]);
+    }
+
+    /* ---- PARTs D, E, F, G, I and J ---------------------------------- */
+    if (window.compassLabelLayout && window.debugLightInfo) {
+      const seedBeforeWcf2 = window.debugWorldSeedSet(123456789);
+      const wcf2 = window.debugV37Info();
+      const w2 = window.debugWorldInfo();
+      const doc2 = window.document;
+
+      /* ---- PART D: compass labels never overlap --------------------- */
+      {
+        /* The compass waits out the tutorial (v56 PART C), so a brand new
+           account has no dial at all until this is set. */
+        window.debugSetV35({ tutorialDone: true, tutorialActive: false });
+        const marks = (() => {
+          const at = gameScript.indexOf('const MINIMAP_MARKS = [');
+          return (gameScript.slice(at, gameScript.indexOf('];', at)).match(/\["/g) || []).length;
+        })();
+        /* Twenty real standing points, the Bazaar and Spawn among them as
+           the spec requires, plus the places the screenshots showed the
+           collisions: every landmark, then a spread across the map. */
+        const pts = [
+          [wcf2.BAZAAR.x, wcf2.BAZAAR.y], [w2.SPAWN.x, w2.SPAWN.y],
+          [wcf2.COLOSSEUM.x, wcf2.COLOSSEUM.y], [wcf2.ANCIENT.x, wcf2.ANCIENT.y],
+          [w2.TOWER.x, w2.TOWER.y], [w2.VOLCANO.x, w2.VOLCANO.y], [w2.MOUNT.x, w2.MOUNT.y],
+          [wcf2.BAZAAR.x + 40, wcf2.BAZAAR.y], [wcf2.BAZAAR.x, wcf2.BAZAAR.y + 40],
+          [w2.SPAWN.x + 120, w2.SPAWN.y - 90], [w2.TOWER.x - 300, w2.TOWER.y + 300],
+          [800, 800], [1200, 2600], [2600, 1200], [3100, 3100], [600, 3200],
+          [3200, 600], [2000, 1000], [1000, 2000], [1500, 1500],
+        ];
+        let worstPair = null, placedMin = 99, dotMiss = 0, frames = 0, nearestMiss = 0, blockHit = null;
+        const placedCounts = [];
+        for (const [px, py] of pts) {
+          window.debugSetPlayer({ x: px + 0.5, y: py + 0.5 });
+          window.updateMinimap();
+          frames++;
+          const boxes = window.compassLabelLayout();
+          placedMin = Math.min(placedMin, boxes.length);
+          placedCounts.push(boxes.length);
+          /* The greedy order's own promise: the label for the place you are
+             CLOSEST to is laid out first and so can never be the one dropped.
+             That is the whole reason the sort is by world distance. */
+          const nearest = window.minimapBearings()
+            .slice().sort((a, b) => a.d - b.d)[0];
+          if (!nearest || !boxes.some(bx => bx.label === nearest.label)) nearestMiss++;
+          /* Doubt pass 2026-10-13: a label may not cover a tick letter, any
+             landmark's dot, or the centre marker either (the old outward
+             candidate printed over "N"/"NE"/"NW"). */
+          const blk = window.compassBlockerLayout ? window.compassBlockerLayout() : [];
+          for (const a of boxes) for (const b of blk)
+            if (!blockHit && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) blockHit = [px, py, a.label];
+          for (let i = 0; i < boxes.length && !worstPair; i++)
+            for (let j = i + 1; j < boxes.length; j++) {
+              const a = boxes[i], b = boxes[j];
+              if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) {
+                worstPair = [px, py, a.label, b.label]; break;
+              }
+            }
+          /* DOTS NEVER MOVE and none is ever dropped — a dropped label still
+             leaves its mark on the dial, which is the whole compromise. */
+          const dial = doc2.getElementById('mmDial');
+          const dots = dial ? dial.querySelectorAll('.mm-mark').length : -1;
+          if (dots !== marks) dotMiss++;
+        }
+        console.log(`WCF D: ${frames} standing points swept, ${marks} landmarks, ` +
+                    `labels placed per point [${placedCounts.join(',')}], ` +
+                    `overlapping pair ${worstPair ? worstPair.join('/') : 'none'}`);
+        results.push([`WCF D: no two compass labels ever intersect, across ${frames} standing points`,
+          frames === 20 && worstPair === null]);
+        results.push([`WCF D: and every one of the ${marks} landmarks still has its dot at every point — only labels drop`,
+          marks === 9 && dotMiss === 0]);
+        /* Dropping a label IS the spec's answer when all three spots collide
+           ("draw the dot only"), so the count is reported rather than
+           asserted — what is asserted is that labels are genuinely placed
+           and that the nearest landmark's is never the one sacrificed. */
+        results.push([`WCF D: labels really are being placed, not silently all dropped (fewest at any point ${placedMin})`,
+          placedMin >= 1 && placedCounts.some(n => n >= 5)]);
+        results.push(['WCF D: and the nearest landmark never loses its label — that is what sorting by distance buys',
+          nearestMiss === 0]);
+        results.push(['WCF D: the layout is greedy by world distance, nearest landmark first',
+          gameScript.indexOf('minimapBearings().slice().sort((a, b) => a.d - b.d)') > 0]);
+        results.push([`WCF D: no label ever covers a tick letter, a landmark dot or the centre (${blockHit ? blockHit.join('/') : 'none'})`,
+          blockHit === null && typeof window.compassBlockerLayout === 'function' && window.compassBlockerLayout().length >= 8 + 9 + 1]);
+        results.push(['WCF D: three candidate radii, all on the mark\'s own bearing and all inward — R_MARK, then two steps in (never out into the tick ring)',
+          gameScript.indexOf('for (const rr of [R_MARK, R_MARK - 14, R_MARK - 26]) {') > 0 &&
+          gameScript.indexOf('R_MARK + 10]') < 0]);
+        /* The bible's compass "shows general direction only": the distance
+           the layout sorts by must not reach the screen. */
+        /* The bible's compass "shows general direction only, does not reveal
+           exact base locations". Asked of the RENDERED dial rather than of
+           the source, because `r.d` is a prefix of `r.deg` and a source grep
+           for it proves nothing: a distance readout would have to put a
+           digit on the dial, and there is not one anywhere on it. */
+        results.push(['WCF D P: the distance orders the layout and is never shown — not one digit anywhere on the dial',
+          (() => {
+            const dial = doc2.getElementById('mmDial');
+            if (!dial) return false;
+            const txt = dial.textContent || '';
+            return txt.length > 0 && !/[0-9]/.test(txt) &&
+                   gameScript.indexOf('${r.label}</div>`') > 0;
+          })()]);
+      }
+
+      /* ---- PART E: the help panel must not cover other HUD ---------- */
+      {
+        /* Doubt pass 2026-10-13: jsdom has no layout, so the old gate only
+           ever saw a non-zero lift because of a production floor constant
+           added to satisfy it. The arithmetic is now a pure function of two
+           rectangles and is tested directly here; the real layout is
+           measured in a real browser by debug/shot.js (help-open overlap). */
+        const R = (l, t, w, h) => ({ left: l, top: t, right: l + w, bottom: t + h, width: w, height: h });
+        const help = R(12, 520, 330, 180);          // an open help card, bottom-left
+        const lifts = {
+          overlapping: window.helpLiftFor(help, R(12, 470, 150, 150)),   // compass card straddling its top edge
+          sideBySide: window.helpLiftFor(help, R(700, 600, 300, 30)),   // banner far to the right
+          clearAbove: window.helpLiftFor(help, R(12, 300, 150, 150)),   // already above it
+          noLayout: window.helpLiftFor(R(0, 0, 0, 0), R(0, 0, 0, 0)),
+        };
+        console.log('WCF E: helpLiftFor on synthetic rects', JSON.stringify(lifts));
+        results.push(['WCF E: a card the open help overlaps is lifted by exactly its overlap plus the gap',
+          lifts.overlapping === 470 + 150 - 520 + 8]);
+        results.push(['WCF E: a card beside the help card (wide screens) is not moved at all', lifts.sideBySide === 0]);
+        results.push(['WCF E: nor one already clear of it, nor anything before layout exists',
+          lifts.clearAbove === 0 && lifts.noLayout === 0]);
+        /* Doubt pass cycle 2: the lift has a ceiling. A card that would have
+           to leave the screen (or cover the player card) to clear the list is
+           hidden while it is open instead: helpLiftFor returns -1. */
+        results.push(['WCF E: a card with no room above it is hidden rather than pushed off-screen',
+          window.helpLiftFor(R(12, 200, 330, 300), R(12, 150, 150, 160), 80) === -1 &&
+          window.helpLiftFor(R(12, 520, 330, 180), R(12, 470, 150, 150), 80) === 108 &&
+          html.indexOf('.help-hidden { visibility: hidden; }') > 0]);
+        const helpText = () => (doc2.getElementById('helpCore').textContent || '') + '|' +
+                               (doc2.getElementById('helpFull').textContent || '');
+        const vars = () => ['--help-lift-mm', '--help-lift-zone'].map(v => window.document.documentElement.style.getPropertyValue(v) || '0px');
+        const text0 = helpText();
+        const open = window.toggleHelpFull();
+        const textOpen = helpText();
+        const shut = window.toggleHelpFull();
+        const varsShut = vars(), textShut = helpText();
+        results.push(['WCF E: closing it puts both cards back exactly where they were',
+          open === true && shut === false && varsShut.every(v => parseFloat(v) === 0)]);
+        results.push(['WCF E: each card reads its own lift, off its own unchanged 52px and 64px',
+          html.indexOf('bottom: calc(52px + var(--help-lift-mm, 0px)); left: 12px;') > 0 &&
+          html.indexOf('bottom: calc(64px + var(--help-lift-zone, 0px)); left: 50%;') > 0]);
+        /* Found by the real-browser check: a zone banner lifted 36px slid
+           under #hudPrompt ("The Grand Bazaar — protected ground"). The
+           prompt now rides the same lift, so the two keep their spacing. */
+        results.push(['WCF E: the interaction prompt rides the zone banner\'s lift, off its own unchanged 112px',
+          html.indexOf('bottom: calc(112px + var(--help-lift-zone, 0px)); left: 50%;') > 0]);
+        results.push(['WCF E: the floor constant that only existed for the old gate is gone',
+          gameScript.indexOf('HELP_LIFT_MIN') < 0]);
+        results.push(['WCF E: re-measured on resize and periodically while open (a banner that appears later is lifted too)',
+          gameScript.indexOf('addEventListener("resize", () => { if (helpExpanded) applyHelpLift(); });') > 0 &&
+          gameScript.indexOf('if (helpExpanded && performance.now() - helpLiftCheckedAt > HELP_LIFT_RECHECK_MS) applyHelpLift();') > 0]);
+        results.push(['WCF E P: nothing about the help text itself changed — same list, open and shut',
+          text0 === textShut && textOpen.length >= text0.length]);
+        results.push(['WCF E: the lift is re-measured wherever the line is rebuilt, so a rebind while open moves them too',
+          (() => {
+            const at = gameScript.indexOf('function refreshHelpLine() {');
+            const body = gameScript.slice(at, gameScript.indexOf('\n}', at));
+            return body.indexOf('applyHelpLift();') > 0;
+          })()]);
+      }
+
+      /* ---- PART F: caves stop floating in the daytime sky ----------- */
+      {
+        const before = window.debugLightInfo();
+        /* The surface still draws the sky, with its real colour stops. */
+        const SKY_STOPS = ['#22485c', '#14303f'];   // the sky block's own sea-band stops
+        const skyStopsIn = a => a.filter(c => SKY_STOPS.indexOf(c) >= 0).length;
+        stopColours = [];
+        const stops0 = colourStops, grads0 = gradCalls;
+        window.render(16);
+        const surf = window.debugLightInfo();
+        const surfStops = colourStops - stops0, surfGrads = gradCalls - grads0;
+        const surfSky = skyStopsIn(stopColours);
+        const kinds = [];
+        for (const name of ['UWCAVE', 'ABYSSAL']) {
+          const id = w2.B[name];
+          let tile = null;
+          for (let y = 20; y < w2.N - 20 && !tile; y += 5)
+            for (let x = 20; x < w2.N - 20; x += 5) if (window.biomeAt(x, y) === id) { tile = [x, y]; break; }
+          if (!tile) { kinds.push({ name, entered: false }); continue; }
+          const entered = window.enterInterior(tile[0], tile[1], id);
+          const s1 = colourStops, g1 = gradCalls;
+          const f1 = window.debugLightInfo();
+          stopColours = [];
+          window.render(32);
+          const f2 = window.debugLightInfo();
+          kinds.push({ name, entered, stops: colourStops - s1, grads: gradCalls - g1,
+                       skyStops: skyStopsIn(stopColours),
+                       ground: f2.groundPassFrames - f1.groundPassFrames,
+                       sky: f2.skyBackdropFrames - f1.skyBackdropFrames,
+                       interior: f2.interiorBackdropFrames - f1.interiorBackdropFrames });
+          if (window.inInterior()) window.exitInterior();
+        }
+        console.log('WCF F: surface frame drew', surfStops, 'colour stops /', surfGrads,
+                    'gradients, of which', surfSky, 'are the sky\'s own;',
+                    kinds.map(k => `${k.name} entered=${k.entered} stops=${k.stops} skyStops=${k.skyStops} sky=${k.sky} interior=${k.interior}`).join('; '));
+        results.push([`WCF F: the surface still draws its sky gradient — ${surfSky} of the sky's own colour stops on a surface frame`,
+          surf.skyBackdropFrames > before.skyBackdropFrames && surfSky >= 2]);
+        results.push(['WCF F: both interior kinds were really entered',
+          kinds.length === 2 && kinds.every(k => k.entered === true)]);
+        results.push(['WCF F: inside a cave the backdrop is the flat fill and the sky block does not run at all',
+          kinds.every(k => k.interior === 1 && k.sky === 0)]);
+        /* The count alone would be wrong to assert: an interior frame draws
+           plenty of gradients, the v55 cave lighting's among them, and always
+           did. What must be absent is the SKY gradient's own stops. */
+        results.push(['WCF F: and the sky gradient\'s own colour stops are not drawn in there — none, on either kind',
+          kinds.every(k => k.skyStops === 0)]);
+        /* Doubt pass: the overworld ground pass no longer runs in a cave (it
+           painted the map's top-left sea past the cave's far edges). */
+        results.push(['WCF F: the overworld ground pass does not run inside either interior, and still runs on the surface',
+          kinds.every(k => k.ground === 0) && surf.groundPassFrames > before.groundPassFrames]);
+        results.push(['WCF F: the fill is FLAT, per the art-style skill — two plain hex tunables, no gradient',
+          before.INTERIOR_BG_CAVE === '#07080c' && before.INTERIOR_BG_ABYSSAL === '#0a0612' &&
+          (() => {
+            const at = gameScript.indexOf('if (inInterior()) {\n    interiorBackdropFrames++;');
+            const body = gameScript.slice(at, at + 400);
+            return at > 0 && body.indexOf('createLinearGradient') < 0 &&
+                   body.indexOf('createRadialGradient') < 0 && body.indexOf('ctx.fillRect(') > 0;
+          })()]);
+        results.push(['WCF F P: the v55 cave darkness pass is untouched — CAVE_DARK_A and the light map still 0.62 and in place',
+          before.CAVE_DARK_A === 0.62 && gameScript.indexOf('function interiorLightMap(') > 0 &&
+          gameScript.indexOf('CAVE_DARK_A * (1 - lit)') > 0]);
+      }
+
+      /* ---- PART G: lava looks molten, not like a flat orange field -- */
+      {
+        const L = window.debugLightInfo();
+        /* Counted over the lava disc itself — `dV < 124` is the core — through
+           the game's own lavaCrustAt()/lavaVentAt(), so the gate measures the
+           selection the renderer uses rather than a copy of it. */
+        let lavaTiles = 0, crust = 0, vent = 0;
+        for (let ty = Math.floor(w2.VOLCANO.y - 124); ty <= Math.ceil(w2.VOLCANO.y + 124); ty++)
+          for (let tx = Math.floor(w2.VOLCANO.x - 124); tx <= Math.ceil(w2.VOLCANO.x + 124); tx++) {
+            if (window.biomeAt(tx, ty) !== w2.B.LAVA) continue;
+            lavaTiles++;
+            if (window.lavaCrustAt(tx, ty)) crust++;
+            if (window.lavaVentAt(tx, ty)) vent++;
+          }
+        const share = lavaTiles ? crust / lavaTiles * 100 : 0;
+        const ventShare = lavaTiles ? vent / lavaTiles * 100 : 0;
+        console.log(`WCF G: ${lavaTiles} lava tiles in the core, ${crust} crusted (${share.toFixed(1)}%, ` +
+                    `tunable ${(L.LAVA_CRUST_SHARE * 100).toFixed(0)}%), ${vent} venting ` +
+                    `(${ventShare.toFixed(1)}% of all lava, tunable ${(L.LAVA_VENT_SHARE * 100).toFixed(0)}%)`);
+        results.push([`WCF G: the crust share lands on its tunable — ${share.toFixed(1)}% against 45%, the spec allows +/-8 points`,
+          lavaTiles > 2000 && Math.abs(share - L.LAVA_CRUST_SHARE * 100) <= 8]);
+        results.push([`WCF G: and vents are about 20% of the LAVA tiles, as the spec words it — ${ventShare.toFixed(1)}%`,
+          Math.abs(ventShare - L.LAVA_VENT_SHARE * 100) <= 4]);
+        /* Doubt pass 2026-10-13: crust comes in multi-tile plates, not lone
+           diamonds — a crusted tile has a crusted neighbour far more often
+           than the 45% independent hashing gave. */
+        {
+          let pairs = 0, both = 0;
+          for (let ty = Math.floor(w2.VOLCANO.y - 60); ty <= Math.ceil(w2.VOLCANO.y + 60); ty++)
+            for (let tx = Math.floor(w2.VOLCANO.x - 60); tx <= Math.ceil(w2.VOLCANO.x + 60); tx++) {
+              if (window.biomeAt(tx, ty) !== w2.B.LAVA || window.biomeAt(tx + 1, ty) !== w2.B.LAVA) continue;
+              if (!window.lavaCrustAt(tx, ty)) continue;
+              pairs++; if (window.lavaCrustAt(tx + 1, ty)) both++;
+            }
+          const pNeighbour = pairs ? both / pairs : 0;
+          console.log(`WCF G: P(crusted neighbour | crusted) = ${(pNeighbour * 100).toFixed(1)}% over ${pairs} pairs`);
+          results.push([`WCF G: crust forms plates — a crusted tile's neighbour is crusted ${(pNeighbour * 100).toFixed(1)}% of the time (independent tiles would give ~45%)`,
+            pairs > 500 && pNeighbour >= 0.6]);
+        }
+        /* Doubt pass cycle 2: measured with real heights, not a source grep.
+           Every tile the renderer would overlay (all three front neighbours
+           lava, then crust or vent) must have no front neighbour — side or
+           diagonal — standing higher than itself. */
+        {
+          let drawn = 0, overRim = 0;
+          for (let ty = Math.floor(w2.VOLCANO.y - 126); ty <= Math.ceil(w2.VOLCANO.y + 126); ty++)
+            for (let tx = Math.floor(w2.VOLCANO.x - 126); tx <= Math.ceil(w2.VOLCANO.x + 126); tx++) {
+              if (window.biomeAt(tx, ty) !== w2.B.LAVA) continue;
+              const inner = window.biomeAt(tx + 1, ty) === w2.B.LAVA && window.biomeAt(tx, ty + 1) === w2.B.LAVA &&
+                            window.biomeAt(tx + 1, ty + 1) === w2.B.LAVA;
+              if (!inner || !(window.lavaCrustAt(tx, ty) || window.lavaVentAt(tx, ty))) continue;
+              drawn++;
+              const h0 = window.heightAt(tx, ty);
+              if (window.heightAt(tx + 1, ty) > h0 || window.heightAt(tx, ty + 1) > h0 || window.heightAt(tx + 1, ty + 1) > h0) overRim++;
+            }
+          results.push([`WCF G: no plate or vent sits in front of higher ground — ${overRim} of ${drawn} overlaid tiles (diagonal neighbour included)`,
+            drawn > 1000 && overRim === 0 &&
+            gameScript.indexOf('biomeAt(tx + 1, ty + 1) === B.LAVA;') > 0 &&
+            gameScript.indexOf('const crusted = interiorLava && lavaCrustAt(tx, ty);') > 0 &&
+            gameScript.indexOf('if (interiorLava && lavaVentAt(tx, ty)) {') > 0]);
+        }
+        results.push(['WCF G: the vent fills are built once — no per-frame string per venting tile',
+          gameScript.indexOf('ctx.fillStyle = LAVA_VENT_FILLS[Math.max(0, Math.round(vg * 100))];') > 0 &&
+          gameScript.indexOf('ctx.fillStyle = `rgba(255,200,120,${Math.max(0, vg).toFixed(3)})`;') < 0]);
+        /* The crust colour is the EXISTING VOLROCK/LAVA cliff face colour,
+           so this adds no palette entry — proven by computing it, not by
+           reading the literal back. */
+        results.push(['WCF G: the crust wears the existing VOLROCK face colour, so no palette entry was added',
+          L.LAVA_CRUST_COL === window.shade('#5c3c3c', 0.8) &&
+          (gameScript.match(/#5c3c3c/g) || []).length >= 3]);
+        /* The vent pulse has to actually brighten to something visible: the
+           spec asks for at least 0.35 alpha at its peak. */
+        results.push(['WCF G: the vent pulse peaks over the 0.35 alpha the spec asks for (0.20 + 0.22 = 0.42)',
+          gameScript.indexOf('const vg = 0.20 + Math.sin(t / 520 + tx * 1.7 + ty * 2.3) * 0.22;') > 0 &&
+          0.20 + 0.22 >= 0.35]);
+        /* Cheap per-tile only — no gradient anywhere in the LAVA branch. */
+        results.push(['WCF G: no gradient was added inside the LAVA branch, and no new canvas',
+          (() => {
+            const at = gameScript.indexOf('} else if (b === B.LAVA) {');
+            const end = gameScript.indexOf('} else if (b === B.CALDERA) {', at);
+            if (at < 0 || end < 0) return false;
+            const branch = gameScript.slice(at, end);
+            return branch.indexOf('createLinearGradient') < 0 &&
+                   branch.indexOf('createRadialGradient') < 0 &&
+                   branch.indexOf('createElement') < 0 &&
+                   branch.indexOf('LAVA_CRUST_COL') > 0;
+          })()]);
+        /* Comments stripped: this build's own comments quote the expression
+           they are explaining, so a raw count would be measuring prose. Two
+           real call sites — the pre-existing cliff face, and this const. */
+        results.push(['WCF G: and the colour is computed once at load, not per tile per frame',
+          gameScript.indexOf('const LAVA_CRUST_COL   = shade("#5c3c3c", 0.8);') > 0 &&
+          (gameScript.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+                     .match(/shade\("#5c3c3c", 0\.8\)/g) || []).length === 2]);
+        /* And it really runs: a frame standing in the lava core draws them. */
+        window.debugSetPlayer({ x: w2.VOLCANO.x + 0.5, y: w2.VOLCANO.y + 0.5 });
+        window.render(48);
+        const L2 = window.debugLightInfo();
+        console.log(`WCF G: a frame in the volcano drew ${L2.lavaCrustTiles} crust plates, ${L2.lavaVentTiles} of them venting`);
+        results.push([`WCF G: and the branch really runs — ${L2.lavaCrustTiles} crust plates drawn on one frame in the core`,
+          L2.lavaCrustTiles > 0 && L2.lavaVentTiles > 0 && L2.lavaVentTiles < L2.lavaCrustTiles]);
+      }
+
+      /* ---- PART I: one cheap render fix ----------------------------- */
+      {
+        /* The claim is that reordering two independent `continue` guards
+           cannot change the set that gets through. Measured, both ways,
+           over the real `wilds` list against a real camera's bounds. */
+        /* Standing in the volcano core (where PART G left the player) there
+           is nothing alive on screen, and "both orderings yield zero" is not
+           a measurement. Hop to a real wild first. */
+        const spot = (window.debugWorldInfo().wildSpots || [])[0];
+        if (spot) window.debugSetPlayer({ x: spot.x, y: spot.y });
+        window.render(64);
+        const both = window.debugWildGatherOrder();
+        console.log(`WCF I: ${both.total} wilds alive — bounds-first yields ${both.boundsFirst}, ` +
+                    `visible-first yields ${both.visibleFirst}, ` +
+                    `isWildVisible calls ${both.callsBoundsFirst} against ${both.callsVisibleFirst}`);
+        results.push([`WCF I: the gather yields the identical wild set either way (${both.boundsFirst} = ${both.visibleFirst})`,
+          both.total > 1000 && both.boundsFirst === both.visibleFirst && both.boundsFirst > 0]);
+        results.push([`WCF I: and it is genuinely cheaper — ${both.callsBoundsFirst} isWildVisible calls instead of ${both.callsVisibleFirst}`,
+          both.callsBoundsFirst < both.callsVisibleFirst]);
+        results.push(['WCF I: the bounds test now runs first in the render gather',
+          (() => {
+            const at = gameScript.indexOf('if (!rec29) for (const w of wilds) {');
+            const body = gameScript.slice(at, gameScript.indexOf('ents.push({ s: w.x + w.y, kind: "wild", w });', at));
+            return at > 0 && body.indexOf('w.x < minX - 3') < body.indexOf('!isWildVisible(w)');
+          })()]);
+        results.push(['WCF I P: and the copy in nearestWild() is untouched — still visibility-first there',
+          (() => {
+            const at = gameScript.indexOf('function nearestWild(');
+            const body = gameScript.slice(at, gameScript.indexOf('\n}', at));
+            return at > 0 && body.indexOf('if (!isWildVisible(w)) continue;') > 0 &&
+                   body.indexOf('minX') < 0;
+          })()]);
+      }
+
+      /* ---- PART J: shot.js knows the views this build is judged on -- */
+      {
+        const shot = fs.readFileSync(require('path').join(__dirname, 'shot.js'), 'utf8');
+        results.push(['WCF J: shot.js takes the four new views this build is judged on',
+          ["'40-night-spawn'", "'41-night-volcano'", "'42-help-open'", "'43-compass.png'"]
+            .every(n => shot.indexOf(n) > 0)]);
+        results.push(['WCF J: night is set through worldEpoch exactly as the spec says, and put back afterwards',
+          shot.indexOf('worldEpoch = Date.now() / 1000 - DAY_LENGTH * 0.75;') > 0 &&
+          shot.indexOf('await p.evaluate(e => { worldEpoch = e; }, epoch0);') > 0]);
+        results.push(['WCF J: the help shot clicks #helpToggle and the compass shot is clipped to #hudMinimap',
+          shot.indexOf("await p.click('#helpToggle');") > 0 &&
+          shot.indexOf("await p.$('#hudMinimap')") > 0 && shot.indexOf('clip: {') > 0]);
+        results.push(['WCF J: and with no Playwright it prints "skipped" and exits 0 rather than throwing',
+          shot.indexOf("console.log('skipped: playwright is not available") > 0 &&
+          shot.indexOf('process.exit(0);') > 0]);
+        results.push(['WCF J P: still no new dependency and still never the network',
+          (shot.match(/require\('(playwright|fs|path|child_process)'\)/g) || []).length >= 2 &&
+          shot.indexOf("require('puppeteer')") < 0 &&
+          shot.indexOf('r.abort()') > 0]);
+      }
+      /* And hand the world back, so nothing after this block is looking at
+         a world the rest of the harness did not put it in. */
+      window.debugWorldSeedSet(seedBeforeWcf2);
+    } else {
+      results.push(['WCF: the PART D-J hooks exist', false]);
+    }
 
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
