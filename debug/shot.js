@@ -56,7 +56,7 @@ const STUB = `
   await p.screenshot({ path: path.join(OUT, '01-spawn.png') });
   /* Dismiss the tutorial banner so it does not cover shots. */
   await p.keyboard.press('Escape');
-  const snap = async (name) => { await p.waitForTimeout(1500); await p.screenshot({ path: path.join(OUT, name + '.png') }); console.log('shot', name); };
+  const snap = async (name) => { await p.waitForTimeout(4000); await p.screenshot({ path: path.join(OUT, name + '.png') }); console.log('shot', name); };
   const hop = (x, y) => p.evaluate(([x, y]) => { me.x = x + 0.5; me.y = y + 0.5; cam.x = me.x; cam.y = me.y; me.diving = false; }, [x, y]);
   /* 1. every fast-travel landmark */
   const pts = await p.evaluate(() => fastTravelPoints().map(q => q[0]));

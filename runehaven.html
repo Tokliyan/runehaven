@@ -494,6 +494,9 @@
   #hudMinimap .mm-title, #hudMap .mm-title {
     position: absolute; top: -18px; left: 0; color: var(--gold);
     font-size: 11px; letter-spacing: 2px;
+    /* Gauntlet S2 R2: the caption sat straight on the world (1.2-1.7:1 on
+       grass and lava); it now wears the nameplate's own dark plate. */
+    background: rgba(6,9,14,0.62); padding: 1px 6px 0 6px; border-radius: 4px; line-height: 15px;
   }
   /* ---------- v46 PART D: THE REAL MINIMAP ----------
      Deliberately a SECOND card, not a replacement. The compass above answers
@@ -1978,6 +1981,7 @@ function shade(hex, f) {
 const CLIFF = "#c9bda2";
 const CLIFF_SW = shade(CLIFF, 0.82);
 const CLIFF_SE = shade(CLIFF, 0.62);
+const TILE_SEAM_PAD = 0.8;     // Gauntlet S2 R3: px each ground top face overlaps its neighbours (TUNABLE)
 
 /* =========================================================
    WORLD GENERATION
@@ -7046,12 +7050,18 @@ function drawGroundTile(c, tx, ty) {
     }
   }
 
+  /* Gauntlet S2 round 3: the top face is grown by TILE_SEAM_PAD px on each
+     corner so neighbouring diamonds overlap. Two anti-aliased edges meeting
+     exactly each cover a shared pixel by about half, which let the dark clear
+     colour through as a 1px lattice on every tile in the world — scored three
+     times as "graph paper" / "wireframe". The locked checker alone now
+     separates tiles. */
   c.fillStyle = top;
   c.beginPath();
-  c.moveTo(cx, cy - IH2);
-  c.lineTo(cx + IW2, cy);
-  c.lineTo(cx, cy + IH2);
-  c.lineTo(cx - IW2, cy);
+  c.moveTo(cx, cy - IH2 - TILE_SEAM_PAD * 0.5);
+  c.lineTo(cx + IW2 + TILE_SEAM_PAD, cy);
+  c.lineTo(cx, cy + IH2 + TILE_SEAM_PAD * 0.5);
+  c.lineTo(cx - IW2 - TILE_SEAM_PAD, cy);
   c.closePath();
   c.fill();
   if (arenaK) drawArenaFloorDetail(c, arenaK, tx, ty, cx, cy);   // Gauntlet S2 R1
@@ -13032,20 +13042,26 @@ function updateFlocks(dt, t) {
   for (let i = flocks.length - 1; i >= 0; i--) {
     const f = flocks[i];
     f.x += f.vx * dt; f.y += f.vy * dt;
-    if (Math.hypot(f.x - cam.x, f.y - cam.y) > 60 || now - f.born > 40000) flocks.splice(i, 1);
+    if (Math.hypot(f.x - cam.x, f.y - cam.y) > 60 || now - f.born > 40000) {
+      flocks.splice(i, 1);
+      if (!flocks.length) flockNextAt = Math.min(flockNextAt || Infinity, now + 1500);   // S2 R2: a camera jump refills the sky soon
+    }
   }
-  if (SETTINGS.reduceMotion || inInterior() || nightAlpha(getDayT()) > 0.4) return;
+  const night = nightAlpha(getDayT()) > 0.4;
+  if (SETTINGS.reduceMotion || inInterior()) return;
   if (!flockNextAt) flockNextAt = now + 2500;
   if (now < flockNextAt || flocks.length >= 2) return;
   flockNextAt = now + FLOCK_GAP_MS[0] + Math.random() * (FLOCK_GAP_MS[1] - FLOCK_GAP_MS[0]);
   const ang = Math.random() * Math.PI * 2;
-  const n = 3 + Math.floor(Math.random() * 4);
+  /* S2 R2: by night the flock is bats — two to four, lower and faster, on a
+     jittering line (Night frames lost every bird and scored Life 2). */
+  const n = night ? 2 + Math.floor(Math.random() * 3) : 3 + Math.floor(Math.random() * 4);
   const birds = [];
   for (let k = 0; k < n; k++) birds.push({ dx: (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.9 + (Math.random() - 0.5) * 0.4,
     dy: Math.ceil(k / 2) * 0.9 + (Math.random() - 0.5) * 0.4, ph: Math.random() * 6 });
-  flocks.push({ x: cam.x - Math.cos(ang) * 26, y: cam.y - Math.sin(ang) * 26,
-    vx: Math.cos(ang) * FLOCK_SPEED, vy: Math.sin(ang) * FLOCK_SPEED, ang,
-    z: 130 + Math.random() * 60, born: now, birds });
+  flocks.push({ x: cam.x - Math.cos(ang) * 20, y: cam.y - Math.sin(ang) * 20,
+    vx: Math.cos(ang) * FLOCK_SPEED * (night ? 1.4 : 1), vy: Math.sin(ang) * FLOCK_SPEED * (night ? 1.4 : 1), ang,
+    z: night ? 60 + Math.random() * 30 : 130 + Math.random() * 60, born: now, birds, bat: night });
 }
 /* The Tower birds' own glyph — one stroke, two arcs — so every bird in the
    world is drawn the same way. */
@@ -13242,10 +13258,11 @@ function updateParticles(dt, t) {
       particles.push({ x: FL.x, y: FL.y, z: groundZ(FL.x, FL.y) + FL.z + 2,
         vx: 0.1, vy: -0.06, vz: 16, life: 3, maxLife: 3, col: "#b8bcc4", size: 4, kind: "smoke", lmSmoke: "ancient" });
     }
-    if (Math.random() < 0.2 && Math.hypot(VOLCANO.x - cam.x, VOLCANO.y - cam.y) < SMOKE_NEAR) {
-      const vx0 = VOLCANO.x + (Math.random() - 0.5) * 3, vy0 = VOLCANO.y + (Math.random() - 0.5) * 3;
-      particles.push({ x: vx0, y: vy0, z: groundZ(vx0, vy0) + 12,
-        vx: 0.16, vy: -0.08, vz: 22, life: 4, maxLife: 4, col: "#b8bcc4", size: 6, kind: "smoke", lmSmoke: "volcano" });
+    const VC = volcanoConeSite() || VOLCANO;      // S2 R2: out of the crater, when there is one
+    if (Math.random() < 0.2 && Math.hypot(VC.x - cam.x, VC.y - cam.y) < SMOKE_NEAR) {
+      const vx0 = VC.x + (Math.random() - 0.5) * 1.6, vy0 = VC.y + (Math.random() - 0.5) * 1.6;
+      particles.push({ x: vx0, y: vy0, z: groundZ(vx0, vy0) + (VC === VOLCANO ? 12 : 70),
+        vx: 0.16, vy: -0.08, vz: 26, life: 4.5, maxLife: 4.5, col: "#b8bcc4", size: 7, kind: "smoke", lmSmoke: "volcano", dark: VC !== VOLCANO });
     }
   }
   updateFlocks(dt, t);
@@ -15918,10 +15935,12 @@ function drawMobOverlays(m, sx, sy, t, def) {
     ctx.fillRect(sx - 10, sy - 17 - tall, 20 * Math.max(0, m.hp / m.maxHp), 2);
   }
   if (Math.hypot(m.x - me.x, m.y - me.y) < 4) {
-    ctx.font = "10px 'Barlow', sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillStyle = canWearDownTame(m) ? `rgba(${tameRgb()},0.9)` : "rgba(216,120,100,0.85)";
-    ctx.fillText(canWearDownTame(m) ? `${def.name} — weakened!` : def.name, sx, sy - 23 - tall);
+    /* Gauntlet S2 R2: the name tag joins the overlay pass — on the
+       nameplate's dark plate, over the world, and moved clear of the local
+       player's own plate (44-fight: "the goblin hidden under its own caption,
+       which sits on the player's plate"). Same text, colour and anchor. */
+    queueWorldLabel(canWearDownTame(m) ? `${def.name} — weakened!` : def.name, sx, sy - 27 - tall,
+      "10px 'Barlow', sans-serif", canWearDownTame(m) ? `rgba(${tameRgb()},0.9)` : "rgba(216,120,100,0.85)");
   }
 }
 
@@ -15980,6 +15999,7 @@ function drawBazaarEntity(t) {
    this is a different building, in the volcano's near-black basalt. Flat
    fills and the locked facet split only; no new gradient. */
 const ANCIENT_HOUSE_OFF = 2.4;        // tiles behind the point, on x and on y
+const ANCIENT_ROOF = shade("#5c3c3c", 1.45);   // the locked Volcanic rock, fired lighter
 function ancientHouse() { return { x: ANCIENT.x - ANCIENT_HOUSE_OFF, y: ANCIENT.y - ANCIENT_HOUSE_OFF }; }
 function ancientFlue() { const F = ancientHouse(); return { x: F.x + 0.75, y: F.y - 0.6, z: 103 }; }
 function drawAncientEntity(t) {
@@ -15992,7 +16012,7 @@ function drawAncientEntity(t) {
   drawBox(F.x, F.y, 3.0, 2.7, 40, "#241a16", 9);                  // the furnace body
   drawBox(F.x, F.y, 3.12, 2.82, 4, "#3a2a26", 27);                // a course band
   drawBox(F.x, F.y, 3.4, 3.1, 5, "#3a2a26", 49);                  // cornice
-  drawPyramid(F.x, F.y, 3.4, 3.1, 5, 16, "#2a1e1a", 49);           // roof
+  drawPyramid(F.x, F.y, 3.4, 3.1, 5, 16, ANCIENT_ROOF, 49);        // roof — S2 R3: fired-brick red, so it reads off the dark floor
   const FL = ancientFlue();                                        // the chimney
   drawBox(FL.x, FL.y, 0.8, 0.8, 44, "#1f1612", 54);
   drawBox(FL.x, FL.y, 1.0, 1.0, 5, "#3a2a26", 98);
@@ -16051,6 +16071,130 @@ function drawAncientEntity(t) {
     ctx.fillRect(m[3][0] - 6 + i * 4, m[3][1] + 8 - ph * 16, 1.8, 1.8);
   }
 }
+/* ============ Gauntlet S2 round 2 — THE VOLCANO HAS A CONE ==============
+   Scored 2026-10-14 (10-volcano): Landmark presence 2 — "no cone, crater,
+   smoke or glow; recognisable only by the toast and the minimap colour". The
+   Volcano's terrain is a 124-tile lava pit inside a raised VOLROCK rim; from
+   anywhere you can stand near it, the whole screen is lava. So the vent the
+   lava comes from now stands in it: a stepped cone in the locked Volcanic
+   rock tones (the Tower's own stacked-prism language), a crater of the locked
+   Lava colour with a hot core, lava spilling down its face, embers, and the
+   Volcano's smoke rising from the crater instead of from the bare field.
+
+   ⚠️ JUDGMENT CALL (flagged): the art skill's must-not-regress list names the
+   volcano silhouette. Nothing about the terrain changes — not one height, not
+   one biome — and the rim is untouched; this ADDS the central vent the
+   silhouette was missing. It stands only where its whole footprint is LAVA
+   (BLOCKED ground nobody stands on): volcanoConeSite() rings out from the
+   centre for the nearest spot whose disc is all lava, so a lake in the pit
+   (the harness seed has one, and fast travel lands on it) is never built over. */
+const VCONE_R = 7.0;                                       // tiles: the base's reach, checked all-lava (S2 R3: 6.6 -> 7.0 for the wider base)
+/* S2 R3: five taller tiers (96px, was 64) — scored "a ziggurat on ground of
+   the same value"; the foot now stands in a ring of open lava (lavaCrustAt is
+   not consulted within VCONE_MOAT tiles of the cone), so the dark cone sits
+   on a bright field. */
+const VCONE_TIERS = [[9.6, 0, 22], [7.6, 22, 22], [5.8, 44, 20], [4.2, 64, 18], [2.8, 82, 14]];   // [size, zoff, height]
+const VCONE_TOP = 96;
+const VCONE_MOAT = 6.4;       // tiles from the cone's centre that stay open lava
+const VCONE_COLS = ["#563838", "#5c3c3c", shade("#5c3c3c", 1.06), shade("#5c3c3c", 1.12), shade("#5c3c3c", 1.18)];
+const VCONE_RIM = shade("#5c3c3c", 0.62);
+let _vconeKey = null, _vcone = null;
+/* Per frame, set while the cone is drawn: its four tiers' screen outlines (so
+   the night pass never lights lava that the cone is standing in front of) and
+   its glowing parts (crater and flow, which the night pass does light). */
+let vconeSil = null, vconeGlow = null;
+function vconeTierHex(C, gz, f, zoff, hp) {
+  const z = gz + zoff;
+  const c0 = worldToScreen(C.x - f / 2, C.y - f / 2, z), c1 = worldToScreen(C.x + f / 2, C.y - f / 2, z);
+  const c2 = worldToScreen(C.x + f / 2, C.y + f / 2, z), c3 = worldToScreen(C.x - f / 2, C.y + f / 2, z);
+  return [[c0[0], c0[1] - hp], [c1[0], c1[1] - hp], [c1[0], c1[1]], [c2[0], c2[1]], [c3[0], c3[1]], [c3[0], c3[1] - hp]];
+}
+function inConvex(poly, x, y) {
+  let sgn = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const cr = (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]);
+    if (cr !== 0) { if (sgn === 0) sgn = Math.sign(cr); else if (Math.sign(cr) !== sgn) return false; }
+  }
+  return true;
+}
+function volcanoConeSite() {
+  const key = worldSeed + "," + VOLCANO.x + "," + VOLCANO.y;
+  if (_vconeKey === key) return _vcone;
+  _vconeKey = key; _vcone = null;
+  const allLava = (cx, cy) => {
+    for (let dy = -VCONE_R; dy <= VCONE_R; dy++) for (let dx = -VCONE_R; dx <= VCONE_R; dx++) {
+      if (Math.abs(dx) + Math.abs(dy) > VCONE_R * 1.42) continue;
+      if (biomeAt(Math.round(cx + dx), Math.round(cy + dy)) !== B.LAVA) return false;
+    }
+    return true;
+  };
+  for (let r = 0; r <= 60 && !_vcone; r += 2) {
+    const n = Math.max(1, Math.round(r * 3));
+    for (let a = 0; a < n; a++) {
+      const cx = Math.round(VOLCANO.x + Math.cos(a / n * Math.PI * 2) * r);
+      const cy = Math.round(VOLCANO.y + Math.sin(a / n * Math.PI * 2) * r);
+      if (allLava(cx, cy)) { _vcone = { x: cx + 0.5, y: cy + 0.5 }; break; }
+    }
+  }
+  return _vcone;
+}
+function inConeMoat(tx, ty) {
+  const C = _vcone;                 // only once the site has been found this world; never a search per tile
+  return !!C && _vconeKey !== null && Math.abs(tx + 0.5 - C.x) < VCONE_MOAT && Math.abs(ty + 0.5 - C.y) < VCONE_MOAT;
+}
+function drawVolcanoCone(t) {
+  const C = volcanoConeSite();
+  if (!C) return;
+  const gz = groundZ(C.x, C.y);
+  const [sx, sy] = worldToScreen(C.x, C.y, gz);
+  drawShadow(sx, sy, 250, 76);
+  vconeSil = VCONE_TIERS.map(([f, z, hp]) => vconeTierHex(C, gz, f, z, hp));
+  vconeGlow = [];
+  VCONE_TIERS.forEach(([f, z, hp], i) => drawBox(C.x, C.y, f, f, hp, VCONE_COLS[i], z));
+  const heat = 0.55 + 0.45 * Math.sin(t / 380);
+  const top = gz + VCONE_TOP;
+  const dia = (k, col) => {                        // a diamond on the top face, k tiles across
+    const [cx2, cy2] = worldToScreen(C.x, C.y, top);
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.moveTo(cx2, cy2 - IH2 * k); ctx.lineTo(cx2 + IW2 * k, cy2); ctx.lineTo(cx2, cy2 + IH2 * k); ctx.lineTo(cx2 - IW2 * k, cy2);
+    ctx.closePath(); ctx.fill();
+    return [cx2, cy2];
+  };
+  dia(2.4, VCONE_RIM);                                       // the crater's lip
+  const [lx0, ly0] = dia(1.9, "#ff7a3c");                    // locked Lava
+  vconeGlow.push([[lx0, ly0 - IH2 * 1.9], [lx0 + IW2 * 1.9, ly0], [lx0, ly0 + IH2 * 1.9], [lx0 - IW2 * 1.9, ly0]]);
+  const [kx, ky] = dia(0.9, `rgba(255,214,140,${(0.55 + heat * 0.4).toFixed(3)})`);   // the hot core
+  /* Lava spilling over the lip and down the SW (+y) faces, tier by tier:
+     a strip ON each face (through that face's own world points) and a strip
+     across each step's top between them, so it reads as one flow. */
+  ctx.fillStyle = `rgba(255,122,60,${(0.78 + heat * 0.22).toFixed(3)})`;
+  const quad = (p1, p2, p3, p4) => {
+    ctx.beginPath(); ctx.moveTo(p1[0], p1[1]); ctx.lineTo(p2[0], p2[1]); ctx.lineTo(p3[0], p3[1]); ctx.lineTo(p4[0], p4[1]);
+    ctx.closePath(); ctx.fill();
+    vconeGlow.push([p1, p2, p3, p4]);
+  };
+  // [x offset, half-width, face y offset, z top, z bottom] — the four tiers' SW faces
+  const FLOW = VCONE_TIERS.slice().reverse().map(([f, z, hp], i) => [-0.55 + i * 0.05, 0.2 + i * 0.025, f / 2, z + hp, z + (i === VCONE_TIERS.length - 1 ? 1 : 0)]);
+  for (let i = 0; i < FLOW.length; i++) {
+    const [ox, wv, fy, z0, z1] = FLOW[i];
+    const X = C.x + ox, Y = C.y + fy;
+    quad(worldToScreen(X - wv, Y, gz + z0), worldToScreen(X + wv, Y, gz + z0),
+         worldToScreen(X + wv, Y, gz + z1), worldToScreen(X - wv, Y, gz + z1));
+    if (i + 1 < FLOW.length) {                                       // across the step below
+      const [ox2, wv2, fy2] = FLOW[i + 1];
+      quad(worldToScreen(X - wv, Y, gz + z1), worldToScreen(X + wv, Y, gz + z1),
+           worldToScreen(C.x + ox2 + wv2, C.y + fy2, gz + z1), worldToScreen(C.x + ox2 - wv2, C.y + fy2, gz + z1));
+    }
+  }
+  for (let i = 0; i < 10; i++) {                                    // embers out of the crater
+    const ph = (t / 1100 + i / 10) % 1;
+    ctx.fillStyle = `rgba(255,176,102,${((1 - ph) * 0.85).toFixed(3)})`;
+    ctx.fillRect(kx - 8 + (hash2(i, 3, 41) * 16) + Math.sin(t / 340 + i * 1.7) * ph * 8, ky - 4 - ph * 60, 2.4, 2.4);
+  }
+}
+
 /* The anvil on the forecourt, a hand's reach from the point you arrive on.
    Its own entity so it sorts against the people standing round it. */
 function ancientAnvilPos() { return { x: ANCIENT.x + 0.7, y: ANCIENT.y - 0.3 }; }
@@ -16543,37 +16687,57 @@ function drawTutorialDummy(t) {
    own centre, one tile behind the altar, so the altar and anyone at it draw
    in front of it. Flat fills and the locked facet split; no gradient. */
 function shrineGatePos() { return { x: SHRINE.x, y: SHRINE.y - 1.05 }; }
+/* S2 R3: scored "a ~75x80 px grey arch at the same value as the olive
+   ground". Taller (pillars 32 -> 44px, lintel 2.1 -> 2.6 tiles), in a darker
+   weathered shade of the altar's own stone so it separates from the grass by
+   value, and two braziers burning at its feet — the flame is flat squares,
+   flickering, and at night each is a light (collectLights). */
+const SHRINE_GATE_STONE = [shade("#a8a094", 0.74), shade("#b4ac9e", 0.78), shade("#9a9084", 0.7)];
+function shrineBraziers() { const G = shrineGatePos(); return [{ x: G.x - 1.25, y: G.y + 0.55 }, { x: G.x + 1.25, y: G.y + 0.55 }]; }
 function drawShrineGate(t) {
   const G = shrineGatePos();
   const gz = groundZ(G.x, G.y);
   const [gx, gy] = worldToScreen(G.x, G.y, gz);
-  drawShadow(gx, gy, 46, 44);
-  for (const ox of [-0.8, 0.8]) {
-    drawBox(G.x + ox, G.y, 0.44, 0.44, 4, "#9a9084");              // footing
-    drawBox(G.x + ox, G.y, 0.32, 0.32, 32, "#a8a094", 4);          // pillar
+  drawShadow(gx, gy, 60, 58);
+  const [STONE, CAP, FOOT] = SHRINE_GATE_STONE;
+  for (const ox of [-1.0, 1.0]) {
+    drawBox(G.x + ox, G.y, 0.52, 0.52, 5, FOOT);                   // footing
+    drawBox(G.x + ox, G.y, 0.38, 0.38, 44, STONE, 5);              // pillar
   }
-  drawBox(G.x, G.y, 2.1, 0.44, 5, "#b4ac9e", 36);                  // the lintel
-  drawBox(G.x, G.y, 1.5, 0.34, 3, "#a8a094", 41);                  // the upper course
+  drawBox(G.x, G.y, 2.6, 0.5, 6, CAP, 49);                         // the lintel
+  drawBox(G.x, G.y, 1.9, 0.4, 4, STONE, 55);                       // the upper course
   // the rune plaque, ON the lintel's SW face
-  const pf = G.y + 0.22, pz = gz + 37;
-  const P = [worldToScreen(G.x - 0.32, pf, pz), worldToScreen(G.x + 0.32, pf, pz),
-             worldToScreen(G.x + 0.32, pf, pz + 3.2), worldToScreen(G.x - 0.32, pf, pz + 3.2)];
+  const pf = G.y + 0.25, pz = gz + 50;
+  const P = [worldToScreen(G.x - 0.4, pf, pz), worldToScreen(G.x + 0.4, pf, pz),
+             worldToScreen(G.x + 0.4, pf, pz + 4), worldToScreen(G.x - 0.4, pf, pz + 4)];
   const glow = 0.62 + 0.28 * Math.sin(t / 520);
   ctx.fillStyle = `rgba(232,176,74,${glow.toFixed(3)})`;
   ctx.beginPath();
   ctx.moveTo(P[0][0], P[0][1]); ctx.lineTo(P[1][0], P[1][1]); ctx.lineTo(P[2][0], P[2][1]); ctx.lineTo(P[3][0], P[3][1]);
   ctx.closePath(); ctx.fill();
   // the beast head: a block, two swept horns, in the lintel's stone
-  drawBox(G.x, G.y, 0.36, 0.3, 6, "#b4ac9e", 44);
-  const [hx, hy] = worldToScreen(G.x, G.y, gz + 50);
-  ctx.fillStyle = "#c4bcaa";                                       // lit horn
-  ctx.beginPath(); ctx.moveTo(hx - 2, hy + 1); ctx.lineTo(hx - 10, hy - 8); ctx.lineTo(hx - 7, hy - 11);
-  ctx.lineTo(hx - 6, hy - 6); ctx.lineTo(hx + 0.5, hy + 0.5); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = shade("#c4bcaa", 0.62);                          // shaded horn
-  ctx.beginPath(); ctx.moveTo(hx + 2, hy + 1); ctx.lineTo(hx + 10, hy - 8); ctx.lineTo(hx + 7, hy - 11);
-  ctx.lineTo(hx + 6, hy - 6); ctx.lineTo(hx - 0.5, hy + 0.5); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = "rgba(232,176,74,0.85)";                         // two gold eyes
-  ctx.fillRect(hx - 3, hy + 3, 1.6, 1.4); ctx.fillRect(hx + 1.4, hy + 3, 1.6, 1.4);
+  drawBox(G.x, G.y, 0.44, 0.36, 7, CAP, 59);
+  const [hx, hy] = worldToScreen(G.x, G.y, gz + 66);
+  ctx.fillStyle = shade("#c4bcaa", 0.86);                          // lit horn
+  ctx.beginPath(); ctx.moveTo(hx - 2.5, hy + 1); ctx.lineTo(hx - 13, hy - 10); ctx.lineTo(hx - 9, hy - 14);
+  ctx.lineTo(hx - 7.5, hy - 7.5); ctx.lineTo(hx + 0.5, hy + 0.5); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = shade("#c4bcaa", 0.55);                          // shaded horn
+  ctx.beginPath(); ctx.moveTo(hx + 2.5, hy + 1); ctx.lineTo(hx + 13, hy - 10); ctx.lineTo(hx + 9, hy - 14);
+  ctx.lineTo(hx + 7.5, hy - 7.5); ctx.lineTo(hx - 0.5, hy + 0.5); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "rgba(232,176,74,0.9)";                          // two gold eyes
+  ctx.fillRect(hx - 3.5, hy + 4, 2, 1.6); ctx.fillRect(hx + 1.5, hy + 4, 2, 1.6);
+  // the braziers
+  for (const [i, Bz] of shrineBraziers().entries()) {
+    const [bx, by] = worldToScreen(Bz.x, Bz.y, groundZ(Bz.x, Bz.y));
+    drawShadow(bx, by, 12, 16);
+    drawBox(Bz.x, Bz.y, 0.3, 0.3, 12, FOOT);                       // the post
+    drawBox(Bz.x, Bz.y, 0.46, 0.46, 3, "#3a3430", 12);             // the bowl
+    const [fx, fy2] = worldToScreen(Bz.x, Bz.y, groundZ(Bz.x, Bz.y) + 15);
+    const fl = Math.sin(t / 90 + i * 2.1) * 1.2, fl2 = Math.sin(t / 130 + i * 1.3);
+    ctx.fillStyle = "#ff7a3c"; ctx.fillRect(fx - 3, fy2 - 6 + fl * 0.5, 6, 6);           // flame
+    ctx.fillStyle = "#ffb066"; ctx.fillRect(fx - 2 + fl2, fy2 - 9 + fl, 4, 5);
+    ctx.fillStyle = "#ffe0a0"; ctx.fillRect(fx - 1 + fl2 * 0.5, fy2 - 11 + fl, 2, 3);
+  }
 }
 function drawShrineEntity(t) {
   const [sx, sy] = worldToScreen(SHRINE.x, SHRINE.y, groundZ(SHRINE.x, SHRINE.y));
@@ -16609,7 +16773,7 @@ function drawShrineEntity(t) {
   /* S2 R1: overlay pass, and lifted above the new gate's horns (the gate's
      top is ~62px over the altar's ground point), so the name crowns the set
      piece instead of sitting across its pillars. */
-  queueWorldLabel("BEASTMASTER SHRINE", sx, sy - 76, "10px 'Barlow', sans-serif", "rgba(232,182,76,0.85)");
+  queueWorldLabel("BEASTMASTER SHRINE", sx, sy - 98, "10px 'Barlow', sans-serif", "rgba(232,182,76,0.85)");   // S2 R3: above the taller gate
 }
 
 /* ⚠️ DEV-ONLY (v9): unlimited materials chest. Distinct wooden-chest
@@ -18208,11 +18372,20 @@ function drawPlayerPlate(q) {
 const PLAYER_GHOST_A = 0.55;            // TUNABLE: how strongly the player shows through cover
 const GHOST_W = 112, GHOST_H = 112, GHOST_AX = 56, GHOST_AY = 84;   // offscreen box, anchor = feet
 const OCC_CORE = { l: -7, r: 7, t: -30, b: -3 };                    // body core, px from the feet
+const PLATE_HALF_W = 48;                // S2 R2: half-width of the local plate stack labels step clear of
 const OCCLUDER_KINDS = new Set(["tree", "rock", "iron", "runic", "meteor", "ruinpiece", "decor",
   "dock", "tower", "forge", "chest", "shrine", "shrinegate", "oracle", "bazaar", "ancient", "ancientanvil",
-  "colopiece", "colobeam", "altar", "basepiece", "kelp", "inode", "iore"]);
+  "colopiece", "colobeam", "volcanocone", "altar", "basepiece", "kelp", "inode", "iore"]);
 let plateQueue = [], labelQueue = [], meGhost = null, ghostCanvas = null, ghostCtx = null;
 let overlayStats = { ghosts: 0, plates: 0, labels: 0, occluded: false };
+/* S2 R2: a label never lands on the local player's plate stack (name, guild
+   rows and HP bar span sy-72 .. sy-19): it steps up above it. Pure, so the
+   harness can ask it directly. */
+function labelClearOfPlate(x, y, w, mine) {
+  if (mine && x - w / 2 - 4 < mine.sx + PLATE_HALF_W && x + w / 2 + 4 > mine.sx - PLATE_HALF_W &&
+      y - 10 < mine.sy - 19 && y + 3 > mine.sy - 72) return mine.sy - 76;
+  return y;
+}
 function queueWorldLabel(text, x, y, font, color) {
   labelQueue.push({ text, x, y, font, color });
 }
@@ -18243,10 +18416,12 @@ function flushOverlayPass(t) {
   }
   meGhost = null;
   occProbe = null;
+  const mine = plateQueue.find(q => q.isMe);
   for (const L of labelQueue) {
     ctx.font = L.font;
     ctx.textAlign = "center";
     const w = ctx.measureText(L.text).width;
+    L.y = labelClearOfPlate(L.x, L.y, w, mine);
     ctx.fillStyle = "rgba(6,9,14,0.62)";           // the nameplate's own plate
     ctx.fillRect(L.x - w / 2 - 4, L.y - 10, w + 8, 13);
     ctx.fillStyle = L.color;
@@ -18277,7 +18452,17 @@ function debugS2Info() {
     house: ancientHouse(), anvil: ancientAnvilPos(), flue: ancientFlue(), ANCIENT_HOUSE_OFF,
     gate: shrineGatePos(), flocks: flocks.length, flockBirdsDrawn, particleKinds: kinds,
     LEAF_CHANCE, BUTTERFLY_PLAINS, RABBIT_CELL, RABBIT_P, COLO_CROWS, SMOKE_NEAR,
+    // S2 R2
+    cone: volcanoConeSite(), VCONE_R, coneDrawn: vconeSil !== null,
+    lavaCrackCount, lavaNightLit, lavaNightShaded, LAVA_CRUST_INSET, LAVA_CRACK_T, LAVA_NIGHT_GLOW, PLATE_HALF_W,
   };
+}
+/* One real frame at night (or by day), then the same snapshot. */
+function debugRenderAtTime(t, night) {
+  const ep = worldEpoch;
+  worldEpoch = Date.now() / 1000 - DAY_LENGTH * (night ? 0.75 : 0.25);
+  try { render(t); } finally { worldEpoch = ep; }
+  return debugS2Info();
 }
 /* The occlusion probe on demand: arm it over a rect, run one primitive, and
    say whether that primitive reported covering it. */
@@ -18312,11 +18497,11 @@ function debugLifeAt(x, y, secs, night) {
   let rabbits = 0;
   for (const cr of localRabbits(Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys))) if (inView(cr.hx, cr.hy)) rabbits++;
   for (const cr of critters) if (inView(cr.hx, cr.hy)) rabbits++;
-  let birds = 0;
-  for (const f of flocks) for (const bd of f.birds) if (inView(f.x, f.y, f.z)) birds++;
+  let birds = 0, bats = 0;
+  for (const f of flocks) for (const bd of f.birds) if (inView(f.x, f.y, f.z)) { if (f.bat) bats++; else birds++; }
   const crows = (!SETTINGS.reduceMotion && Math.hypot(COLOSSEUM.x - cam.x, COLOSSEUM.y - cam.y) < 40) ? COLO_CROWS : 0;
-  const out = { parts, byKind, rabbits, birds, crows, total: parts + rabbits + birds + crows,
-                kinds: Object.keys(byKind).length + (rabbits ? 1 : 0) + (birds ? 1 : 0) + (crows ? 1 : 0) };
+  const out = { parts, byKind, rabbits, birds, bats, crows, total: parts + rabbits + birds + bats + crows,
+                kinds: Object.keys(byKind).length + (rabbits ? 1 : 0) + (birds ? 1 : 0) + (bats ? 1 : 0) + (crows ? 1 : 0) };
   worldEpoch = ep; me.x = mx; me.y = my; cam.x = cx; cam.y = cy;
   particles.length = 0; flocks.length = 0; flockNextAt = 0;
   return out;
@@ -18387,15 +18572,31 @@ const CAVE_DARK_A      = 0.62;  // TUNABLE: how dark a fully unlit floor tile go
    locked Volcanic rock colour at the exact multiplier the VOLROCK/LAVA cliff
    faces already use, computed once here rather than per tile per frame. The
    two salts are fresh streams, confirmed unused anywhere else in this file. */
-const LAVA_CRUST_SHARE = 0.45;   // target share of lava tiles that have cooled over (LAVA_CRUST_T is tuned to it)
+/* Gauntlet S2 round 2 — THE CRUST IS THE GROUND, THE LAVA RUNS THROUGH IT.
+   Scored 2026-10-14: the Volcano was the worst landmark frame (M 2, F 2, P 3):
+   "a flat orange carpet with chains of dark diamonds laid like a checker". The
+   inset plates left an orange seam round EVERY plate, so crust read as a grid.
+   Now a crusted tile is crust edge to edge (LAVA_CRUST_INSET just over 1, so
+   neighbours overlap and no hairline shows), about two thirds of the core has
+   cooled (the art skill's "volcano red-black"), and what stays open is the
+   smooth field's low ground — rivers and pools of lava, not single holes.
+   The glowing cracks are a network on the plates' SHARED edges (the v50
+   Caldera technique: the decision belongs to the edge, hashed by the tile
+   pair, so neighbours always agree), batched into two strokes per frame. At
+   night the open lava and the cracks are punched out of the darkness, so the
+   volcano glows instead of going rust-brown. */
+const LAVA_CRUST_SHARE = 0.66;   // target share of lava tiles that have cooled over (LAVA_CRUST_T is tuned to it)
 /* Doubt pass, 2026-10-13: lone 0.62-inset diamonds on 45% of tiles read as a
    grid of identical diamonds on an orange field, not as crust. Plates now come
    from a smooth field (several tiles across), nearly fill their tile, and the
    thin orange seams left between neighbouring plates ARE the glowing cracks. */
-const LAVA_CRUST_INSET = 0.86;   // plates nearly fill the tile: seams between neighbours stay thin
+const LAVA_CRUST_INSET = 1.04;   // S2 R2: crust fills its tile and overlaps a hair, so plates join seamlessly
 const LAVA_CRUST_SALT  = 331;
 const LAVA_PLATE_SCALE = 3.5;    // tiles per plate-noise cell (TUNABLE)
-const LAVA_CRUST_T     = 0.52;   // plate threshold: measured 45.2% of the core crusts on the harness seed (TUNABLE)
+const LAVA_CRUST_T     = 0.404;  // plate threshold: the field's 34th percentile over the core on the harness seed -> 66% crust (TUNABLE)
+const LAVA_CRACK_T     = 0.5;    // S2 R2: share of crust-to-crust edges with no crack (TUNABLE)
+const LAVA_CRACK_SALT  = 335;
+const LAVA_NIGHT_GLOW  = 0.72;   // S2 R2: how much night darkness open lava and cracks cut through (TUNABLE)
 const LAVA_VENT_SHARE  = 0.20;   // share of LAVA tiles still breathing heat — of all lava, as the spec says
 const LAVA_VENT_SALT   = 333;
 const LAVA_CRUST_COL   = shade("#5c3c3c", 0.8);
@@ -18403,8 +18604,8 @@ const LAVA_CRUST_COL   = shade("#5c3c3c", 0.8);
    an allocation per venting tile per frame. Indexed by alpha * 100. */
 const LAVA_VENT_FILLS = Array.from({ length: 101 }, (_, i) => `rgba(255,200,120,${(i / 100).toFixed(2)})`);
 function lavaCrustAt(tx, ty) {
-  return valueNoise(tx / LAVA_PLATE_SCALE, ty / LAVA_PLATE_SCALE, worldSeed + LAVA_CRUST_SALT) * 0.8 +
-         hash2(tx, ty, LAVA_CRUST_SALT) * 0.2 > LAVA_CRUST_T;
+  return valueNoise(tx / LAVA_PLATE_SCALE, ty / LAVA_PLATE_SCALE, worldSeed + LAVA_CRUST_SALT) * 0.92 +
+         hash2(tx, ty, LAVA_CRUST_SALT) * 0.08 > LAVA_CRUST_T;      // S2 R2: less per-tile noise, smoother edges
 }
 function lavaVentAt(tx, ty) { return hash2(tx, ty, LAVA_VENT_SALT) < LAVA_VENT_SHARE; }
 /* Harness counters for PARTs F and G — see debugLightInfo(), and the same
@@ -18414,6 +18615,10 @@ function lavaVentAt(tx, ty) { return hash2(tx, ty, LAVA_VENT_SALT) < LAVA_VENT_S
    top of the frame they describe); the two backdrop counters and
    groundPassFrames are running totals. */
 let lavaCrustTiles = 0, lavaVentTiles = 0;
+/* S2 R2: per-frame, reused — the crack segments (6 numbers each: start, kink,
+   end) and the open-lava tile centres the night pass punches through. */
+const lavaCrackSegs = [], lavaOpenPts = [];
+let lavaCrackCount = 0, lavaNightLit = 0, lavaNightShaded = 0;   // harness counters (night pass)
 let skyBackdropFrames = 0, interiorBackdropFrames = 0, groundPassFrames = 0;
 /* World Check Fixes PART F: what is BEHIND an interior's floor instead of a
    sky. Both TUNABLE. The Abyssal Hollow's is the colder, more violet one, the
@@ -18632,6 +18837,8 @@ function render(t) {
      frame, the same reason renderInteriorGround() zeroes caveDarkTiles).
      skyBackdropFrames / interiorBackdropFrames below are running totals. */
   lavaCrustTiles = 0; lavaVentTiles = 0;
+  lavaCrackSegs.length = 0; lavaOpenPts.length = 0; lavaCrackCount = 0;
+  vconeSil = null; vconeGlow = null; lavaNightLit = 0; lavaNightShaded = 0;
   if (inInterior()) {
     interiorBackdropFrames++;
     ctx.fillStyle = spaceKindOf(me.space) === "abyssal" ? INTERIOR_BG_ABYSSAL : INTERIOR_BG_CAVE;
@@ -18832,14 +19039,23 @@ function render(t) {
             const [bx2, by2] = worldToScreen(tx + 0.08, ty + 0.92, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
-          if (heightAt(tx, ty + 1) >= 0) {   // land to the south edge
-            const [ax, ay] = worldToScreen(tx + 0.08, ty + 0.92, zw);
-            const [bx2, by2] = worldToScreen(tx + 0.92, ty + 0.92, zw);
+          /* Gauntlet S2 R3: no foam on the SOUTH or EAST edge any more. Land
+             there stands IN FRONT of the water, its top face 16px above the
+             water line, so a stroke on that edge at water height landed on the
+             grass — scored as "white L-brackets drawn on the land side of the
+             shore that read as debug tile outlines". That shoreline is behind
+             the land and hidden by it. Instead the two edges the viewer
+             actually sees (land behind, north and west) carry a second,
+             fainter line further out, so the foam reads as a band. */
+          ctx.strokeStyle = `rgba(238,248,250,${0.26 * pulse})`;
+          if (heightAt(tx, ty - 1) >= 0) {
+            const [ax, ay] = worldToScreen(tx + 0.14, ty + 0.24, zw);
+            const [bx2, by2] = worldToScreen(tx + 0.86, ty + 0.24, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
-          if (heightAt(tx + 1, ty) >= 0) {   // land to the east edge
-            const [ax, ay] = worldToScreen(tx + 0.92, ty + 0.08, zw);
-            const [bx2, by2] = worldToScreen(tx + 0.92, ty + 0.92, zw);
+          if (heightAt(tx - 1, ty) >= 0) {
+            const [ax, ay] = worldToScreen(tx + 0.24, ty + 0.14, zw);
+            const [bx2, by2] = worldToScreen(tx + 0.24, ty + 0.86, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
         }
@@ -18882,7 +19098,7 @@ function render(t) {
            silhouette is on the art skill's MUST-NOT-REGRESS list). */
         const interiorLava = biomeAt(tx + 1, ty) === B.LAVA && biomeAt(tx, ty + 1) === B.LAVA &&
                              biomeAt(tx + 1, ty + 1) === B.LAVA;   // the diagonal front neighbour too (doubt pass, cycle 2)
-        const crusted = interiorLava && lavaCrustAt(tx, ty);
+        const crusted = interiorLava && lavaCrustAt(tx, ty) && !inConeMoat(tx, ty);   // S2 R3: the cone's foot stays molten
         if (crusted) {
           lavaCrustTiles++;
           const ck = LAVA_CRUST_INSET;
@@ -18891,7 +19107,28 @@ function render(t) {
           ctx.moveTo(sx, sy - IH2 * ck); ctx.lineTo(sx + IW2 * ck, sy);
           ctx.lineTo(sx, sy + IH2 * ck); ctx.lineTo(sx - IW2 * ck, sy);
           ctx.closePath(); ctx.fill();
-        }
+          /* S2 R2: this tile's half of every crack on a shared crust edge —
+             N, W, S, E — from a wandering junction to the edge midpoint. */
+          const lek = [
+            hash2(tx, ty, LAVA_CRACK_SALT) > LAVA_CRACK_T && lavaCrustAt(tx, ty - 1),
+            hash2(tx, ty, LAVA_CRACK_SALT + 2) > LAVA_CRACK_T && lavaCrustAt(tx - 1, ty),
+            hash2(tx, ty + 1, LAVA_CRACK_SALT) > LAVA_CRACK_T && lavaCrustAt(tx, ty + 1),
+            hash2(tx + 1, ty, LAVA_CRACK_SALT + 2) > LAVA_CRACK_T && lavaCrustAt(tx + 1, ty),
+          ];
+          if (lek[0] || lek[1] || lek[2] || lek[3]) {
+            const jx = sx + (hash2(tx, ty, LAVA_CRACK_SALT + 4) - 0.5) * IW2 * 0.34;
+            const jy = sy + (hash2(tx, ty, LAVA_CRACK_SALT + 6) - 0.5) * IH2 * 0.34;
+            for (let k = 0; k < 4; k++) {
+              if (!lek[k]) continue;
+              const ex = sx + (k === 0 || k === 3 ? IW2 * 0.5 : -IW2 * 0.5);
+              const ey = sy + (k < 2 ? -IH2 * 0.5 : IH2 * 0.5);
+              lavaCrackSegs.push(jx, jy,
+                (jx + ex) / 2 + (hash2(tx, ty, LAVA_CRACK_SALT + 8 + k) - 0.5) * 4,
+                (jy + ey) / 2 + (hash2(tx, ty, LAVA_CRACK_SALT + 12 + k) - 0.5) * 3, ex, ey);
+              lavaCrackCount++;
+            }
+          }
+        } else lavaOpenPts.push(sx, sy);
         if (interiorLava && lavaVentAt(tx, ty)) {
           lavaVentTiles++;
           /* Peaks at 0.42 alpha, comfortably over the 0.35 the spec asks
@@ -18949,6 +19186,21 @@ function render(t) {
           ctx.stroke();
         }
       }
+    }
+  }
+  /* S2 R2: the lava crack network, batched — one halo stroke and one hot core
+     over every segment collected above. */
+  if (lavaCrackCount) {
+    for (let pass = 0; pass < 2; pass++) {
+      ctx.strokeStyle = pass ? "rgba(255,196,120,0.82)" : "rgba(255,122,60,0.34)";
+      ctx.lineWidth = pass ? 1.1 : 3.4;
+      ctx.beginPath();
+      for (let i = 0; i < lavaCrackSegs.length; i += 6) {
+        ctx.moveTo(lavaCrackSegs[i], lavaCrackSegs[i + 1]);
+        ctx.lineTo(lavaCrackSegs[i + 2], lavaCrackSegs[i + 3]);
+        ctx.lineTo(lavaCrackSegs[i + 4], lavaCrackSegs[i + 5]);
+      }
+      ctx.stroke();
     }
   }
 
@@ -19109,6 +19361,11 @@ function render(t) {
       ents.push({ s: bm.s, kind: "colobeam", bm });
     }
     ents.push({ s: DRAGON_ALTAR.x + DRAGON_ALTAR.y + 0.3, kind: "altar" });   // v39
+    {                                             // Gauntlet S2 R2: the Volcano's cone
+      const VC = volcanoConeSite();
+      if (VC && VC.x > minX - 12 && VC.x < maxX + 12 && VC.y > minY - 12 && VC.y < maxY + 12)
+        ents.push({ s: VC.x + VC.y, kind: "volcanocone" });
+    }
     /* v50 PART A: the Void Rift. Surface only, like every entity in this
        block — the Hollow's floor IS the surface here, reached by diving —
        and culled by the same viewport bounds as everything else, so a rift
@@ -19245,6 +19502,7 @@ function render(t) {
     else if (e.kind === "colobeam") drawColosseumBeam(e.bm);          // Gauntlet S2 R1
     else if (e.kind === "colopiece") drawColosseumPiece(e.cp, t);    // v52+53 PART B
     else if (e.kind === "altar") drawDragonAltarEntity(t);    // v39 PART B
+    else if (e.kind === "volcanocone") drawVolcanoCone(t);     // Gauntlet S2 R2
     else if (e.kind === "voidrift") drawVoidRift(t);         // v50 PART A
     else if (e.kind === "orb") drawOrbNode(e.f, t);           // v39 PART B
     else if (e.kind === "basepiece") drawBasePiece(e.bp, t);   // v33
@@ -19318,16 +19576,19 @@ function render(t) {
       const flap = Math.sin(t / 80 + p.ph * 5);
       ctx.fillStyle = p.col;
       ctx.globalAlpha = a;
+      /* Gauntlet S2 R2: half as big again (wings 2.6/0.6 -> 3.8/1.0, rise
+         2 -> 2.8). Scored 2026-10-14: at 3px the butterflies were invisible
+         in every still, so the Life score could not see them at all. */
       ctx.beginPath();
       ctx.moveTo(px, py);
-      ctx.lineTo(px - 2.6 * Math.abs(flap) - 0.6, py - 2);
-      ctx.lineTo(px - 0.4, py - 0.6);
+      ctx.lineTo(px - 3.8 * Math.abs(flap) - 1.0, py - 2.8);
+      ctx.lineTo(px - 0.6, py - 0.9);
       ctx.closePath();
       ctx.fill();
       ctx.beginPath();
       ctx.moveTo(px, py);
-      ctx.lineTo(px + 2.6 * Math.abs(flap) + 0.6, py - 2);
-      ctx.lineTo(px + 0.4, py - 0.6);
+      ctx.lineTo(px + 3.8 * Math.abs(flap) + 1.0, py - 2.8);
+      ctx.lineTo(px + 0.6, py - 0.9);
       ctx.closePath();
       ctx.fill();
       ctx.globalAlpha = 1;
@@ -19335,10 +19596,11 @@ function render(t) {
       const fl = Math.abs(Math.sin(t / 170 + p.ph * 4));
       ctx.globalAlpha = Math.min(1, a * 1.6);
       ctx.fillStyle = p.col;
-      ctx.fillRect(px - (0.6 + fl * 2.2) / 2, py - 0.8, 0.6 + fl * 2.2, 1.7);
+      ctx.fillRect(px - (1 + fl * 3.2) / 2, py - 1.1, 1 + fl * 3.2, 2.2);
       ctx.globalAlpha = 1;
     } else if (p.kind === "smoke") {
-      ctx.fillStyle = `rgba(184,188,196,${0.35 * a})`;
+      /* S2 R3: a crater breathes ash, not the forge's pale steam. */
+      ctx.fillStyle = p.dark ? `rgba(70,58,58,${0.5 * a})` : `rgba(184,188,196,${0.35 * a})`;
       ctx.beginPath();
       ctx.arc(px, py, p.size, 0, Math.PI * 2);
       ctx.fill();
@@ -19442,14 +19704,17 @@ function render(t) {
     ctx.lineWidth = 1.5;
     for (const f of flocks) {
       const cs = Math.cos(f.ang), sn = Math.sin(f.ang);
+      if (f.bat) ctx.strokeStyle = "rgba(26,22,34,0.85)";
       for (const bd of f.birds) {
         // the V trails behind the leader: rotate the formation into the heading
-        const wx = f.x - bd.dy * cs + bd.dx * -sn, wy = f.y - bd.dy * sn + bd.dx * cs;
-        const [bpx, bpy] = worldToScreen(wx, wy, f.z + Math.sin(t / 700 + bd.ph) * 4);
+        let wx = f.x - bd.dy * cs + bd.dx * -sn, wy = f.y - bd.dy * sn + bd.dx * cs;
+        if (f.bat) { wx += Math.sin(t / 210 + bd.ph * 3) * 0.6; wy += Math.cos(t / 170 + bd.ph * 2) * 0.6; }
+        const [bpx, bpy] = worldToScreen(wx, wy, f.z + Math.sin(t / (f.bat ? 260 : 700) + bd.ph) * 4);
         if (bpx < -20 || bpy < -20 || bpx > w + 20 || bpy > h + 20) continue;
-        drawBirdGlyph(bpx, bpy, Math.abs(Math.sin(t / 150 + bd.ph)) * 3, 0.9);
+        drawBirdGlyph(bpx, bpy, Math.abs(Math.sin(t / (f.bat ? 60 : 150) + bd.ph)) * 3, f.bat ? 0.75 : 0.9);
         flockBirdsDrawn++;
       }
+      if (f.bat) ctx.strokeStyle = "rgba(40,48,60,0.8)";
     }
     if (!SETTINGS.reduceMotion && Math.hypot(COLOSSEUM.x - cam.x, COLOSSEUM.y - cam.y) < 40) {
       for (let i = 0; i < COLO_CROWS; i++) {
@@ -19504,6 +19769,34 @@ function render(t) {
       g.addColorStop(1, "rgba(255,255,255,0)");
       lctx.fillStyle = g;
       lctx.fillRect(lx2 - L.r, ly2 - L.r, L.r * 2, L.r * 2);
+    }
+    /* S2 R2: lava is its own light. Open lava and the crack network cut
+       through the darkness with hard edges — one batched fill, one batched
+       stroke, both from the positions the lava pass already collected. */
+    if (lavaOpenPts.length || lavaCrackCount) {
+      lctx.fillStyle = lctx.strokeStyle = `rgba(255,255,255,${LAVA_NIGHT_GLOW})`;
+      lctx.beginPath();
+      for (let i = 0; i < lavaOpenPts.length; i += 2) {
+        const ox = lavaOpenPts[i], oy = lavaOpenPts[i + 1];
+        if (vconeSil && vconeSil.some(hx => inConvex(hx, ox, oy))) { lavaNightShaded++; continue; }   // lava the cone stands in front of
+        lavaNightLit++;
+        lctx.moveTo(ox, oy - IH2); lctx.lineTo(ox + IW2, oy); lctx.lineTo(ox, oy + IH2); lctx.lineTo(ox - IW2, oy); lctx.closePath();
+      }
+      if (vconeGlow) for (const q of vconeGlow) {                                // the crater and its flow
+        lctx.moveTo(q[0][0], q[0][1]); for (let k = 1; k < q.length; k++) lctx.lineTo(q[k][0], q[k][1]); lctx.closePath();
+      }
+      lctx.fill();
+      if (lavaCrackCount) {
+        lctx.lineWidth = 2.4;
+        lctx.beginPath();
+        for (let i = 0; i < lavaCrackSegs.length; i += 6) {
+          if (vconeSil && vconeSil.some(hx => inConvex(hx, lavaCrackSegs[i + 4], lavaCrackSegs[i + 5]))) continue;
+          lctx.moveTo(lavaCrackSegs[i], lavaCrackSegs[i + 1]);
+          lctx.lineTo(lavaCrackSegs[i + 2], lavaCrackSegs[i + 3]);
+          lctx.lineTo(lavaCrackSegs[i + 4], lavaCrackSegs[i + 5]);
+        }
+        lctx.stroke();
+      }
     }
     lctx.globalCompositeOperation = "source-over";
     ctx.drawImage(lightCanvas, 0, 0);
@@ -19631,6 +19924,7 @@ function collectLights() {
     r: mothLit ? GLOW_MOTH_LIGHT_R : 150, a: mothLit ? 0.9 : 0.8,
     col: mothLit ? "rgba(244,232,160,A)" : "rgba(255,190,120,A)" });
   for (const tp of TORCHES) lights.push({ x: tp.x, y: tp.y, z: 12, r: 78, a: 0.85, col: "rgba(255,176,80,A)" });
+  if (!inInterior()) for (const bz of shrineBraziers()) lights.push({ x: bz.x, y: bz.y, z: 14, r: 70, a: 0.8, col: "rgba(255,176,80,A)" });   // S2 R3
   /* ============ v55 PART G — SOMEONE LIVES HERE =====================
      A base has never had any way to read as inhabited from outside
      interaction range: the pieces are flat-shaded boxes like every rock
