@@ -127,12 +127,14 @@ Up to 4 rounds. Each round:
 - Performance must not drop more than 10% against S0 in this stage.
 
 ### S3 — Mobile & Touch
+**DROPPED by owner, 2026-10-15** ("no need for mobile and touch, for now"). Skip it.
 Build the README spec, plus its phone shots.
 
 ### S4 — Performance
 Build the README spec, with the pixel-match and frame-rate gates. Re-measure S2's frame-rate floor.
 
 ### S5 — Account Security
+**DROPPED by owner, 2026-10-15** ("no need for s5 account security"). Skip it; write no SQL.
 Build the README spec: code, plus `supabase_s5.sql` containing the owner's numbered steps. Do not run the SQL.
 
 ### S6 — World Encounters
@@ -156,7 +158,9 @@ Build the README spec.
    - frame rate before and after;
    - run4 PASS before and after;
    - what's left;
-   - the owner's to-do list (Supabase steps, iPhone test, App Store wrapper).
+   - the owner's to-do list. (Owner, 2026-10-15: the iPhone test and App Store
+     wrapper are not targets for a long time — leave them off; S5 is dropped, so
+     there are no Supabase steps from this session.)
 
 ## Reporting
 

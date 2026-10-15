@@ -18,9 +18,18 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
 - Night Run report (README step 9) was skipped: `NIGHT_RUN_TOKEN` is not set in this session.
 - `NEXT_BUILD.md` now points at Mobile & Touch, so the nightly build won't redo this work.
 
-## S2 — Showcase polish loop: IN PROGRESS
-- **Round 1 SHIPPED to `main`** (2026-10-14): nameplates drawn last + see-through player behind cover; Colosseum floor/columns/lintels; Ancient Forge furnace house; Shrine gate; leaves, butterflies, landmark smoke, flocks, crows, rabbits at world scale.
-  - Score 2.97 -> **3.28** (Landmark 2.17 -> 3.00, Readability 2.61 -> 2.95, Life 2.44 -> 2.62).
-  - run4 1800 -> **1840 PASS / 0 FAIL**; frame rate within budget (Colosseum -7%, Bazaar -3% vs main).
-- Round 2 targets (lowest now: Life 2.62, Readability 2.95, Landmark 3.00): make the life cues big enough to see in a still and let the tour reach steady state; the Volcano (orange carpet, no cone, no night glow); actor labels in fights; COMPASS/MINIMAP caption plates.
-- Note: the 5:06am nightly on 2026-10-14 ran but pushed no branch, so nothing clashes with this work.
+## S2 — Showcase polish loop: SHIPPED to `main` (4 rounds, the cap)
+- **Round 1 SHIPPED** (2026-10-14, 6a2585c): nameplates drawn last + see-through player behind cover; Colosseum floor/columns/lintels; Ancient Forge furnace house; Shrine gate; leaves, butterflies, landmark smoke, flocks, crows, rabbits. 2.97 -> 3.28.
+- **Rounds 2-4 SHIPPED** (2026-10-16): Volcano cone with lava moat and crack network, lava as its own night light, plated labels and mob tags, compass/minimap caption plates; Shrine braziers, Forge roof, foam off the land; team-colour ground discs under every actor, enemy tags kept off the player's body, continuous surf; tile seams closed by a cheap ground underlay (the round 3 pad cost 9-13% fps and was removed).
+  - Score 3.28 -> 3.54 (r2) -> 3.57 (r3) -> **3.67** (r4). Weakest now: Readability 3.24, Transitions 3.27, Landmark 3.50. **The "every category >= 4" target was not met**; the stage stopped on its four-round cap.
+  - run4 1840 -> **1865 PASS / 0 FAIL**; run3 clean; run5 CAUGHT none.
+  - Frame rate vs S1 (interleaved, 9-20 samples): Colosseum -8.2%, Bazaar -3%, Forge -1.2%, Spawn -8.0% — inside the 10% budget.
+  - **Flagged:** LAVA_CRUST_SHARE moved 45% -> 66% for the Volcano's scored problem; README PART G calls it tunable but its gate text still says 45%.
+  - Adversarial (Opus) review of the S2 diff could not run in round 1 (rate limit) and was not re-run; the gates and screenshot checks are the evidence.
+
+## Owner decisions (2026-10-15)
+- **S3 Mobile & Touch: dropped for now.** **S5 Account Security: dropped for now** (no `supabase_s5.sql`). The iPhone test and App Store wrapper are not targets for a long time. Recorded in GAUNTLET.md and as DEFERRED notes in README (insert-only; specs untouched).
+- `NEXT_BUILD.md` now points at **Performance — Ground Cache & Quiet HUD** (S4), the next unbuilt spec. Its ground cache should also make the seam underlay unnecessary.
+
+## Remaining stages
+S4 Performance, S6 World Encounters, S7 Real Stakes, S8 Feel pass, S9 Final report.

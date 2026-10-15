@@ -9304,7 +9304,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             codeA.indexOf('if (b === B.SHALLOW || b === B.WATER) {\n          const rp = hash2(tx, ty, 57);') > 0]);
           results.push(['ANIM C: the v6 chop stroke and the v6 shoreline foam both survive — this ADDS, it does not replace',
             codeA.indexOf("ctx.strokeStyle = `rgba(225,242,246,${0.4 * (1 - cyc / 0.3)})`;") > 0 &&
-            codeA.indexOf('const pulse = 0.55 + Math.sin(t / 700 + (tx + ty) * 1.7) * 0.35;') > 0]);
+            /* Gauntlet S2 R4: the foam's pulse now shares its phase across a run
+               of FOAM_RUN tiles (continuous surf, scored on Water). The pin
+               follows the line; the foam itself is still here and stronger. */
+            codeA.indexOf('const pulse = 0.62 + Math.sin(t / 700 + Math.floor((tx + ty) / FOAM_RUN) * 1.7) * 0.3;') > 0]);
           /* A ring outside its own 0..1 life is skipped BEFORE any path
              opens, and only a hashed fraction of tiles carry a set at all. */
           results.push([`ANIM C: a ring outside its own life opens no path, and only tiles over the ${a.RIPPLE_GATE} hash gate carry a set`,
@@ -10996,7 +10999,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           results.push([`WCF G: no plate or vent sits in front of higher ground — ${overRim} of ${drawn} overlaid tiles (diagonal neighbour included)`,
             drawn > 1000 && overRim === 0 &&
             gameScript.indexOf('biomeAt(tx + 1, ty + 1) === B.LAVA;') > 0 &&
-            gameScript.indexOf('const crusted = interiorLava && lavaCrustAt(tx, ty);') > 0 &&
+            /* Gauntlet S2 R3: the line gained "&& !inConeMoat(tx, ty)" (the cone's
+               open-lava moat). That only REMOVES crust, never adds an overlay, and
+               the height loop above still counts every lavaCrustAt tile, moat
+               included, so the measurement is unchanged and no weaker. */
+            gameScript.indexOf('const crusted = interiorLava && lavaCrustAt(tx, ty) && !inConeMoat(tx, ty);') > 0 &&
             gameScript.indexOf('if (interiorLava && lavaVentAt(tx, ty)) {') > 0]);
         }
         results.push(['WCF G: the vent fills are built once — no per-frame string per venting tile',
@@ -11367,9 +11374,47 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       {
         const gt = gameScript.indexOf('function drawGroundTile(c, tx, ty)');
         const gtBody = gameScript.slice(gt, gameScript.indexOf('\n}', gt));
-        results.push(['S2 R3: ground tiles overlap their neighbours, so no 1px lattice shows through between them',
-          gtBody.indexOf('c.lineTo(cx + IW2 + TILE_SEAM_PAD, cy);') > 0 && gtBody.indexOf('c.lineTo(cx - IW2 - TILE_SEAM_PAD, cy);') > 0 &&
-          /const TILE_SEAM_PAD = 0\.[5-9]/.test(gameScript)]);
+        /* Gauntlet S2 R4: the seams are closed a different way. R3 grew every
+           top face 0.8px (TILE_SEAM_PAD), measured at -13% fps at the Colosseum
+           and -9% at Spawn against the stage's 10% budget. They are now closed
+           by an underlay: a coarse grid of plain fills under the ground pass,
+           each cell the ground colour right under it, so a seam blends two
+           near-equal colours instead of letting the dark clear colour through.
+           This gate MEASURES it — the grid sits under the ground loop, it is
+           plain fillRects (no image, no gradient), every cell's colour is
+           recomputed here from the tile under its centre and must match, and
+           a tile's colour is its own PAL pair — where the old one only matched
+           a constant. */
+        {
+          const gp = gameScript.indexOf('drawGroundUnderlay();                               // Gauntlet S2 R4: closes the tile seams');
+          const loop = gameScript.indexOf('drawGroundTile(ctx, tx, ty);');
+          const fu = gameScript.indexOf('function drawGroundUnderlay()');
+          const fuBody = gameScript.slice(fu, gameScript.indexOf('\n}', fu));
+          window.drawGroundUnderlay();
+          const U = window.debugS2Info();
+          let cells = 0, cellOk = 0;
+          for (let i = 0; i < U.underCells.length; i += 3) {
+            const [wx, wy] = window.screenToWorld(U.underCells[i] + U.UNDER_CELL / 2, U.underCells[i + 1] + U.UNDER_CELL / 2);
+            cells++; if (window.underTileMid(Math.floor(wx), Math.floor(wy)) === U.underCells[i + 2]) cellOk++;
+          }
+          let sameCol = 0, checked = 0;
+          for (let k = 0; k < 400; k++) {
+            const tx = Math.floor(U.SPAWN.x) - 40 + (k * 37) % 80, ty = Math.floor(U.SPAWN.y) - 40 + (k * 53) % 80;
+            const b = window.biomeAt(tx, ty);
+            if (window.arenaFloorAt(tx, ty, b)) continue;
+            checked++; if (window.underTileHex(tx, ty, 0) === U.PAL[b][0] && window.underTileHex(tx, ty, 1) === U.PAL[b][1]) sameCol++;
+          }
+          const mid = (h0, h1) => '#' + [1, 3, 5].map(i => Math.round((parseInt(h0.slice(i, i + 2), 16) + parseInt(h1.slice(i, i + 2), 16)) / 2).toString(16).padStart(2, '0')).join('');
+          const pl = U.PAL[B2.PLAINS];
+          results.push([`S2 R3/R4: no 1px lattice between ground tiles — ${cells} underlay cells, ${cellOk} the colour of the ground under them; ${sameCol}/${checked} tiles their own PAL pair`,
+            gp > 0 && loop > gp && gp > loop - 2500 &&
+            (fuBody.match(/fillRect\(/g) || []).length === 1 && fuBody.indexOf('drawImage') < 0 && fuBody.indexOf('Gradient') < 0 &&
+            gtBody.indexOf('c.lineTo(cx + IW2, cy);') > 0 && gameScript.indexOf('TILE_SEAM_PAD') < 0 &&
+            cells >= 4 && cellOk === cells && checked > 300 && sameCol === checked &&
+            U.UNDER_CELL <= 96 && window.underTileMid(Math.floor(U.SPAWN.x), Math.floor(U.SPAWN.y)).length === 7 &&
+            mid(pl[0], pl[1]) === (() => { for (let k = 0; k < 4000; k++) { const tx = 50 + (k * 7) % 3000, ty = 50 + (k * 13) % 3000;
+              if (window.biomeAt(tx, ty) === B2.PLAINS && !window.arenaFloorAt(tx, ty, B2.PLAINS)) return window.underTileMid(tx, ty); } return null; })()]);
+        }
         const foamAt = gameScript.indexOf('// Foam where shallow water laps against land (2026-07-11)');
         const foam = gameScript.slice(foamAt, gameScript.indexOf('} else if (b === B.LAVA) {', foamAt));
         results.push(['S2 R3: no foam is drawn on the land in front of the water — only on the north and west shores the viewer sees',
@@ -11400,6 +11445,40 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         const nl = window.debugRenderAtTime(710000, true);
         results.push([`S2 R3: and the night volcano frame still renders cleanly with the moat and the taller cone (${nl.lavaNightLit} lit / ${nl.lavaNightShaded} shaded)`,
           nl.lavaNightLit > 50 && !caught]);
+        results.push(['S2 R3 fix: the cone site checks its whole SQUARE base for lava, corners included, not only the diamond reach',
+          gameScript.indexOf('const half = Math.ceil(VCONE_TIERS[0][0] / 2);') > 0 &&
+          gameScript.indexOf('if (Math.abs(dx) + Math.abs(dy) > VCONE_R * 1.42 && (Math.abs(dx) > half || Math.abs(dy) > half)) continue;') > 0 &&
+          !!VC3 && (() => {
+            const hf = Math.ceil(9.6 / 2);
+            for (let dy = -hf; dy <= hf; dy++) for (let dx = -hf; dx <= hf; dx++)
+              if (window.biomeAt(Math.floor(VC3.x - 0.5 + dx), Math.floor(VC3.y - 0.5 + dy)) !== B2.LAVA) return false;
+            return true;
+          })()]);
+      }
+      /* ---- F: round 4 — actors you can find, surf that reads ---------- */
+      {
+        results.push(['S2 R4: every actor stands on a flat team-colour disc — you gold, players blue, mobs red — on the ground, not bobbing',
+          gameScript.indexOf('if (!mountedNow) drawActorDisc(sx, sy, isMe ? "me" : "friend", 1);') > 0 &&
+          gameScript.indexOf('drawActorDisc(gx, gy, "foe", Math.min(Math.max(mk, 0.8), 2.4));') > 0 &&
+          gameScript.indexOf('const [gx, gy] = worldToScreen(m.x, m.y, groundZ(m.x, m.y));') > 0 &&
+          // drawn BEFORE the sprite, so the sprite and its sun shadow sit on it
+          gameScript.indexOf('if (!mountedNow) drawActorDisc(') < gameScript.indexOf('drawUnit(ctx, sx + rx, sy - bob + ry + seatLift')]);
+        results.push(['S2 R4: and the disc is a flat fill — no outline, no gradient',
+          (() => {
+            const f = gameScript.indexOf('function drawActorDisc(');
+            const body = gameScript.slice(f, gameScript.indexOf('\n}', f));
+            return f > 0 && body.indexOf('ctx.fill()') > 0 && body.indexOf('stroke') < 0 && body.indexOf('Gradient') < 0;
+          })()]);
+        const me4 = { sx: 600, sy: 400 };
+        results.push(['S2 R4: an enemy tag that would land on the local player\'s body steps up above the plate; one below the feet stays put',
+          window.labelClearOfPlate(600, 395, 40, me4) === 324 && window.labelClearOfPlate(600, 385, 40, me4) === 324 &&
+          window.labelClearOfPlate(600, 415, 40, me4) === 415 && window.labelClearOfPlate(600, 377, 40, me4) === 324]);
+        const foamAt4 = gameScript.indexOf('// Foam where shallow water laps against land (2026-07-11)');
+        const foam4 = gameScript.slice(foamAt4, gameScript.indexOf('} else if (b === B.LAVA) {', foamAt4));
+        results.push(['S2 R4: the surf is one continuous band — each stroke spans its full tile edge and runs of tiles pulse together',
+          foam4.indexOf('worldToScreen(tx, ty + 0.08, zw)') > 0 && foam4.indexOf('worldToScreen(tx + 1, ty + 0.08, zw)') > 0 &&
+          foam4.indexOf('worldToScreen(tx + 0.08, ty, zw)') > 0 && foam4.indexOf('worldToScreen(tx + 0.08, ty + 1, zw)') > 0 &&
+          foam4.indexOf('Math.floor((tx + ty) / FOAM_RUN)') > 0 && /const FOAM_RUN = [3-5];/.test(gameScript)]);
       }
       window.debugWorldSeedSet(seedBeforeS2);
     } else {

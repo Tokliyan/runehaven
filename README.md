@@ -1025,6 +1025,9 @@ Add no new dependencies, and never touch the network.
 ## QUEUED, AFTER THE WORLD CHECK FIXES — do not build until the spec above ships.
 ## Confirmed, locked spec for a future version (Mobile & Touch)
 
+**DEFERRED — owner decision 2026-10-15:** not needed for now. The spec stays
+locked here, unbuilt; NEXT_BUILD.md skips it until the owner says otherwise.
+
 **Why this is next.** The owner's goal is the App Store. On 2026-10-12
 the game was checked at iPhone sizes (844×390 landscape, 390×844
 portrait) with Playwright using `hasTouch`. The game cannot be played on
@@ -1156,6 +1159,8 @@ and print any pair that intersects.
 ---
 
 ## QUEUED, AFTER MOBILE & TOUCH — do not build until the spec above ships.
+**Owner decision 2026-10-15:** Mobile & Touch is deferred (above), so this
+queue gate is lifted — the spec below is next.
 ## Confirmed, locked spec for a future version (Performance — Ground Cache & Quiet HUD)
 
 **Measured 2026-10-12** in headless Chromium at 1280×720, which uses
@@ -1242,6 +1247,9 @@ reads, so it can be raised later.
 
 ## QUEUED, AFTER PERFORMANCE — do not build until the spec above ships.
 ## Confirmed, locked spec for a future version (Account Security — Own Your Row)
+
+**DEFERRED — owner decision 2026-10-15:** not needed for now; no
+`supabase_s5.sql` is written. The spec stays locked here, unbuilt.
 
 **Measured 2026-10-12 from the source.** The game talks to Supabase with
 the public anon key and has no Supabase Auth at all (`sb.auth` is never

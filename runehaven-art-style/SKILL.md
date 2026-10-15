@@ -53,6 +53,86 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-16 (Gauntlet S2 rounds 2–4 — the Volcano, actors you can find, seams, surf)
+
+Showcase polish loop, rounds 2, 3 and 4 (the last the stage allows). Each
+round fixed the lowest categories of the previous Sonnet re-score.
+Rendering-scope changes:
+
+- **Round 2 — the Volcano and the labels.** A drawn (never terrain-written)
+  stepped **cone** stands on the lava, found by `volcanoConeSite()` (cached
+  per world). The crust became one surface: LAVA_CRUST_SHARE 0.45 -> 0.66
+  with the threshold re-tuned to it (LAVA_CRUST_T 0.52 -> 0.404), plates
+  inset 1.04 so they join, and a **crack network** owned by tile EDGES
+  (both neighbours hash the same pair, so they always agree), batched into
+  two strokes a frame. At night open lava and cracks **cut through the dark**
+  as one flat batched fill in the light pass (LAVA_NIGHT_GLOW 0.72); lava
+  behind the cone stays dark. World labels **step clear of the local
+  player's plate**; mob name tags moved into the overlay pass on the dark
+  plate; the COMPASS / MINIMAP captions wear the same plate. Night flocks
+  are bats, never birds. The shot tour settles 4 s per view and adds a
+  fight and both phone layouts.
+- **Round 3 — set pieces and shores.** The cone is five tiers, 96 px to the
+  crater, standing in a **moat of open lava** (VCONE_MOAT 6.4 — no crust
+  near it, so the dark cone sits on a bright ring) with dark ash from the
+  crater (the forges keep their pale smoke). Shore **foam only on the north
+  and west edges** — on the south/east edge the land stands in front of the
+  water and the stroke landed on the grass as white "L-brackets". The
+  Beastmaster gate has two braziers that are night lights; the Ancient Forge
+  roof is the locked Volcanic rock fired lighter (ANCIENT_ROOF, no new
+  palette entry).
+- **Round 4 — actors you can find, surf that reads.** A **flat team-colour
+  disc** on the ground under every actor (you gold, other players blue,
+  mobs red; ACTOR_DISC / ACTOR_DISC_R), under the sun shadow and sprite,
+  no outline, no gradient, not bobbing. An enemy tag that would land on the
+  local player's BODY (not just the plate) now steps above the plate.
+  **Foam is a continuous band**: each stroke spans its full tile edge and a
+  run of FOAM_RUN 4 tiles pulses together. The cone site now checks its
+  whole SQUARE base for lava — at VCONE_R 7.0 the diamond reach skipped the
+  (±5,±5) corners and the base overhung volcanic rock (a run4 gate caught it).
+- **The tile seams, and what they cost.** Round 3 closed the 1px lattice
+  between ground tiles by growing every top face 0.8px (TILE_SEAM_PAD).
+  Measured: −13% fps at the Colosseum, −9% at Spawn. Round 4 removed it and
+  closes the seams with a **ground underlay** instead: a coarse grid of plain
+  fillRects (UNDER_CELL 80 px) under the ground pass, each the mean of the two
+  checker tones of the tile under it, re-sampled only when the camera crosses
+  a tile. A one-texel-per-tile image through the iso transform was tried
+  first and measured ~5% (rejected). No lattice on land or sea at 1x.
+
+**Score** (mean of ten category averages): 2.97 (S0) -> 3.28 (r1) -> 3.54
+(r2) -> 3.57 (r3) -> **3.67** (r4). Final categories: Readability 3.24,
+Transitions 3.27, Landmark 3.50, Fill 3.62, Depth 3.63, UI 3.70, Water 3.82,
+Life 3.95, Palette 3.96, Night 4.00. The stage's stop rule (every category
+>= 4) was NOT met; it stopped on the four-round cap. Round 4 was scored on
+the TILE_SEAM_PAD build; the underlay that replaced it shows the same
+seam-free ground. Still open, weakest first: actors are 8x16 px (the disc
+helps on dark ground, not on pale grass/sand); no sand rim on the plains
+and stair-step biome seams; landmarks other than the Tower, Colosseum and
+Volcano need proximity; cave interiors are ~55% void; the floating HP bar
+and phone HUD; no rim light; the forge/volcano pools are paler than the
+locked water pair; south/east shores carry no foam.
+
+**Frame rate** (headless 1280x720, interleaved runs against S1 — the start
+of S2 — 9 samples each, Bazaar 20): Colosseum 27.4 -> 25.2 (-8.2%),
+Bazaar 22.2 -> 21.5 (-3%), Ancient Forge -1.2%, Spawn -8.0%. Inside the
+stage's 10% budget. (Against S0 the Forge and Colosseum views are not
+comparable: S1 moved both on this seed.)
+
+**Gate integrity:** run4 1840 -> 1865 PASS, 0 FAIL (run3 clean, run5 CAUGHT
+none; parse floor intact). Gates UPDATED, not relaxed, each with its reason
+in run4.js: "WCF G: crust share" now quotes the tunable instead of a literal
+45 and still allows +/-8 points; "WCF G: crust forms plates" bar raised to
+share + 0.15 (stronger); "WCF G: no plate or vent in front of higher ground"
+pins the new `&& !inConeMoat(tx, ty)` line (it only removes crust; the height
+loop still counts every crust tile); "ANIM C: chop and foam survive" pins the
+new foam pulse line; the R3 seam gate now MEASURES the underlay (every cell
+recomputed from the tile under it, every tile its own PAL pair) instead of
+matching a constant. Tunables changed: LAVA_CRUST_SHARE 0.45 -> 0.66 (with
+LAVA_CRUST_T, LAVA_CRUST_INSET) — README PART G names it "(tunable)", changed
+for S2's scored Volcano problem; **flagged for the owner**, since README's
+gate text still says 45%. No README-listed tunable otherwise; no new
+gradient; no service_role key.
+
 ### 2026-10-14 (Gauntlet S2 round 1 — readability, landmark set pieces, ambient life)
 
 Showcase polish loop, round 1, targeting the three lowest categories of the

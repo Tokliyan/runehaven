@@ -1981,7 +1981,19 @@ function shade(hex, f) {
 const CLIFF = "#c9bda2";
 const CLIFF_SW = shade(CLIFF, 0.82);
 const CLIFF_SE = shade(CLIFF, 0.62);
-const TILE_SEAM_PAD = 0.8;     // Gauntlet S2 R3: px each ground top face overlaps its neighbours (TUNABLE)
+const FOAM_RUN = 4;            // Gauntlet S2 R4: tiles of shoreline whose surf brightens together (TUNABLE)
+/* Gauntlet S2 R4: a flat team-colour disc on the ground under every actor —
+   you gold, other players blue, mobs red — drawn under the sun shadow and the
+   sprite. Scored problem: an 8x16 brown sprite measured 1.2-2.3:1 against
+   forest, forge and lava ground and was found only by its nameplate. A flat
+   fill (no outline, no gradient), the same move Thronefall makes. */
+const ACTOR_DISC = { me: "rgba(255,211,77,0.62)", friend: "rgba(111,208,255,0.5)", foe: "rgba(224,75,75,0.55)" };
+const ACTOR_DISC_R = 10;       // px half-width at scale 1 (TUNABLE)
+function drawActorDisc(sx, sy, kind, k) {
+  const r = ACTOR_DISC_R * k;
+  ctx.fillStyle = ACTOR_DISC[kind];
+  ctx.beginPath(); ctx.ellipse(sx, sy + 1, r, r * 0.46, 0, 0, Math.PI * 2); ctx.fill();
+}
 
 /* =========================================================
    WORLD GENERATION
@@ -6891,6 +6903,60 @@ function variedZ(tx2, ty2) {
    The caller draws tiles back-to-front by tx + ty, exactly as the bake's own
    diagonal sweep did, because tiles overlap: a cliff face hangs down over its
    southern and eastern neighbours. */
+/* ===== Gauntlet S2 R4: THE GROUND UNDERLAY ================================
+   Two anti-aliased diamond edges meeting exactly each cover a shared pixel by
+   about half, so the dark clear colour showed through as a 1px lattice on
+   every tile ("graph paper", scored three times). Round 3 closed it by growing
+   every top face 0.8px into its neighbours — measured at -13% frame rate at
+   the Colosseum and -9% at Spawn, because every one of ~1900 AA fills got
+   bigger and overlapped. A first R4 version drew a one-pixel-per-tile image
+   under the ground through the iso transform (exact, every seam its own
+   tile's colour), but MEASURED in-page A/B that transformed full-screen
+   drawImage still cost
+   ~5% (Bazaar 23.9 vs 25.6, Colosseum 29.2 vs 30.4 fps). The underlay is
+   therefore a coarse grid of plain axis-aligned fillRects, UNDER_CELL px
+   square, each in the ground colour under that cell (the mean of the tile's
+   two checker tones, so it never flickers with the checker). The cells are
+   re-sampled only when the camera crosses a tile. A seam lets about a quarter
+   of the base through; at the colour of the ground right there that is a
+   1-3% shift, where the clear colour drew a dark line. One plain full-screen
+   fill measured the same as no underlay at all; a 16x9 grid of them is the
+   same pixels, cut so the sea's seams get sea colour, not grass. */
+const UNDER_CELL = 80;
+let underCells = [], underCellKey = "", underBuilds = 0;
+const _underMid = {};
+function underTileHex(tx, ty, alt) {      // the same top colour drawGroundTile starts from
+  if (tx < 0 || ty < 0 || tx >= N || ty >= N) return PAL[B.DEEP][alt];
+  const b = biomeAt(tx, ty);
+  const a = arenaFloorAt(tx, ty, b);
+  if (a) return a === 1 ? ARENA_TONES.sand[alt] : a === 2 ? ARENA_TONES.slab[alt] : ARENA_TONES.pave[alt];
+  return PAL[b][alt];
+}
+function underTileMid(tx, ty) {           // the midpoint of the tile's two checker tones
+  const h0 = underTileHex(tx, ty, 0), h1 = underTileHex(tx, ty, 1), k = h0 + h1;
+  let v = _underMid[k];
+  if (!v) {
+    const c = (h, i) => parseInt(h.slice(i, i + 2), 16);
+    v = _underMid[k] = "#" + [1, 3, 5].map(i => Math.round((c(h0, i) + c(h1, i)) / 2).toString(16).padStart(2, "0")).join("");
+  }
+  return v;
+}
+function drawGroundUnderlay() {
+  const W = canvas.width, H = canvas.height;
+  const k = worldSeed + "," + Math.floor(cam.x) + "," + Math.floor(cam.y) + "," + W + "x" + H;
+  if (k !== underCellKey) {
+    underCellKey = k; underBuilds++;
+    underCells = [];
+    for (let y = 0; y < H; y += UNDER_CELL) for (let x = 0; x < W; x += UNDER_CELL) {
+      const [wx, wy] = screenToWorld(x + UNDER_CELL / 2, y + UNDER_CELL / 2);
+      underCells.push(x, y, underTileMid(Math.floor(wx), Math.floor(wy)));
+    }
+  }
+  for (let i = 0; i < underCells.length; i += 3) {
+    ctx.fillStyle = underCells[i + 2];
+    ctx.fillRect(underCells[i], underCells[i + 1], UNDER_CELL, UNDER_CELL);
+  }
+}
 function drawGroundTile(c, tx, ty) {
   const b = biomeAt(tx, ty);
   const h = heightAt(tx, ty);
@@ -7050,18 +7116,14 @@ function drawGroundTile(c, tx, ty) {
     }
   }
 
-  /* Gauntlet S2 round 3: the top face is grown by TILE_SEAM_PAD px on each
-     corner so neighbouring diamonds overlap. Two anti-aliased edges meeting
-     exactly each cover a shared pixel by about half, which let the dark clear
-     colour through as a 1px lattice on every tile in the world — scored three
-     times as "graph paper" / "wireframe". The locked checker alone now
-     separates tiles. */
+  /* The tile seams are closed by the ground UNDERLAY (drawGroundUnderlay),
+     not by growing this face: see there. The face is the exact diamond. */
   c.fillStyle = top;
   c.beginPath();
-  c.moveTo(cx, cy - IH2 - TILE_SEAM_PAD * 0.5);
-  c.lineTo(cx + IW2 + TILE_SEAM_PAD, cy);
-  c.lineTo(cx, cy + IH2 + TILE_SEAM_PAD * 0.5);
-  c.lineTo(cx - IW2 - TILE_SEAM_PAD, cy);
+  c.moveTo(cx, cy - IH2);
+  c.lineTo(cx + IW2, cy);
+  c.lineTo(cx, cy + IH2);
+  c.lineTo(cx - IW2, cy);
   c.closePath();
   c.fill();
   if (arenaK) drawArenaFloorDetail(c, arenaK, tx, ty, cx, cy);   // Gauntlet S2 R1
@@ -15570,6 +15632,10 @@ function drawMob(m, t) {
   const flip = m.fx < -0.15 ? -1 : 1;
   // v14: weakened tame-window ring — the state-change advertisement
   const mk = MOB_K[m.kind] || SPECIES_K[m.kind] || 1;
+  {                                                  // S2 R4: the hostile disc, on the ground (no bob, no crouch)
+    const [gx, gy] = worldToScreen(m.x, m.y, groundZ(m.x, m.y));
+    drawActorDisc(gx, gy, "foe", Math.min(Math.max(mk, 0.8), 2.4));
+  }
   if (canWearDownTame(m)) {
     const pulse = 0.45 + Math.sin(t / 300) * 0.3;
     const rr = 9 * Math.min(mk, 1.5) + Math.sin(t / 300) * 1.2;
@@ -16122,9 +16188,14 @@ function volcanoConeSite() {
   const key = worldSeed + "," + VOLCANO.x + "," + VOLCANO.y;
   if (_vconeKey === key) return _vcone;
   _vconeKey = key; _vcone = null;
+  /* S2 R3 fix: the base is a SQUARE footprint (VCONE_TIERS[0][0] tiles across),
+     so every tile under it is checked, corners included; the diamond reach
+     beyond it is the margin. At 7.0 the diamond alone skipped the (±5,±5)
+     corners and the base overhung volcanic rock. */
+  const half = Math.ceil(VCONE_TIERS[0][0] / 2);
   const allLava = (cx, cy) => {
     for (let dy = -VCONE_R; dy <= VCONE_R; dy++) for (let dx = -VCONE_R; dx <= VCONE_R; dx++) {
-      if (Math.abs(dx) + Math.abs(dy) > VCONE_R * 1.42) continue;
+      if (Math.abs(dx) + Math.abs(dy) > VCONE_R * 1.42 && (Math.abs(dx) > half || Math.abs(dy) > half)) continue;
       if (biomeAt(Math.round(cx + dx), Math.round(cy + dy)) !== B.LAVA) return false;
     }
     return true;
@@ -18194,6 +18265,7 @@ function drawPlayerEntity(p, name, t, isMe) {
      other. A mounted rider is not walking: their legs are over a mount's
      back, so the step is held at 0 exactly as the shadow is suppressed. */
   const step = walkStep(t, moving && !mountedNow, WALK_MS);
+  if (!mountedNow) drawActorDisc(sx, sy, isMe ? "me" : "friend", 1);   // S2 R4: on the ground, so no bob
   drawUnit(ctx, sx + rx, sy - bob + ry + seatLift, p.cls, S, tier, face, t,
            !mountedNow, wkind, atier, blocking, cosNow, step);
 
@@ -18382,8 +18454,11 @@ let overlayStats = { ghosts: 0, plates: 0, labels: 0, occluded: false };
    rows and HP bar span sy-72 .. sy-19): it steps up above it. Pure, so the
    harness can ask it directly. */
 function labelClearOfPlate(x, y, w, mine) {
+  /* Gauntlet S2 R4: the blocked box now runs down to the feet (sy + 2), not
+     just the plate. Lifting the mob tag in R2 cleared the HP bar but, in a
+     fight, landed it across the player's torso — scored on 44-fight. */
   if (mine && x - w / 2 - 4 < mine.sx + PLATE_HALF_W && x + w / 2 + 4 > mine.sx - PLATE_HALF_W &&
-      y - 10 < mine.sy - 19 && y + 3 > mine.sy - 72) return mine.sy - 76;
+      y - 10 < mine.sy + 2 && y + 3 > mine.sy - 72) return mine.sy - 76;
   return y;
 }
 function queueWorldLabel(text, x, y, font, color) {
@@ -18453,7 +18528,7 @@ function debugS2Info() {
     gate: shrineGatePos(), flocks: flocks.length, flockBirdsDrawn, particleKinds: kinds,
     LEAF_CHANCE, BUTTERFLY_PLAINS, RABBIT_CELL, RABBIT_P, COLO_CROWS, SMOKE_NEAR,
     // S2 R2
-    cone: volcanoConeSite(), VCONE_R, coneDrawn: vconeSil !== null,
+    cone: volcanoConeSite(), VCONE_R, coneDrawn: vconeSil !== null, underBuilds, underCells: underCells.slice(), UNDER_CELL, cam: { x: cam.x, y: cam.y }, PAL, SPAWN: { x: SPAWN.x, y: SPAWN.y },
     lavaCrackCount, lavaNightLit, lavaNightShaded, LAVA_CRUST_INSET, LAVA_CRACK_T, LAVA_NIGHT_GLOW, PLATE_HALF_W,
   };
 }
@@ -18925,6 +19000,7 @@ function render(t) {
     const camIX = isoX(cam.x, cam.y), camIY = isoY(cam.x, cam.y);
     const gMinX = Math.max(0, minX - GROUND_MARGIN), gMaxX = Math.min(N - 1, maxX + GROUND_MARGIN);
     const gMinY = Math.max(0, minY - GROUND_MARGIN), gMaxY = Math.min(N - 1, maxY + GROUND_MARGIN);
+    drawGroundUnderlay();                               // Gauntlet S2 R4: closes the tile seams
     let drawn = 0, scanned = 0;
     for (let s = gMinX + gMinY; s <= gMaxX + gMaxY; s++) {
       const txLo = Math.max(gMinX, s - gMaxY), txHi = Math.min(gMaxX, s - gMinY);
@@ -19025,18 +19101,23 @@ function render(t) {
         }
         // Foam where shallow water laps against land (2026-07-11)
         if (b === B.SHALLOW) {
-          const pulse = 0.55 + Math.sin(t / 700 + (tx + ty) * 1.7) * 0.35;
-          ctx.strokeStyle = `rgba(238,248,250,${0.5 * pulse})`;
-          ctx.lineWidth = 1.6;
+          /* Gauntlet S2 R4: the foam is one continuous band, not dashes. Each
+             stroke runs the FULL tile edge (it used to stop 0.08 short at both
+             ends, so every tile seam was a gap), and the pulse is shared by a
+             run of FOAM_RUN tiles instead of changing every tile, so a shore
+             reads as 3-5-tile runs of surf that brighten together. */
+          const pulse = 0.62 + Math.sin(t / 700 + Math.floor((tx + ty) / FOAM_RUN) * 1.7) * 0.3;
+          ctx.strokeStyle = `rgba(238,248,250,${0.72 * pulse})`;
+          ctx.lineWidth = 2.4;
           const zw = -HZ;
           if (heightAt(tx, ty - 1) >= 0) {   // land to the north edge
-            const [ax, ay] = worldToScreen(tx + 0.08, ty + 0.08, zw);
-            const [bx2, by2] = worldToScreen(tx + 0.92, ty + 0.08, zw);
+            const [ax, ay] = worldToScreen(tx, ty + 0.08, zw);
+            const [bx2, by2] = worldToScreen(tx + 1, ty + 0.08, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
           if (heightAt(tx - 1, ty) >= 0) {   // land to the west edge
-            const [ax, ay] = worldToScreen(tx + 0.08, ty + 0.08, zw);
-            const [bx2, by2] = worldToScreen(tx + 0.08, ty + 0.92, zw);
+            const [ax, ay] = worldToScreen(tx + 0.08, ty, zw);
+            const [bx2, by2] = worldToScreen(tx + 0.08, ty + 1, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
           /* Gauntlet S2 R3: no foam on the SOUTH or EAST edge any more. Land
@@ -19047,15 +19128,16 @@ function render(t) {
              the land and hidden by it. Instead the two edges the viewer
              actually sees (land behind, north and west) carry a second,
              fainter line further out, so the foam reads as a band. */
-          ctx.strokeStyle = `rgba(238,248,250,${0.26 * pulse})`;
+          ctx.strokeStyle = `rgba(238,248,250,${0.3 * pulse})`;
+          ctx.lineWidth = 1.6;
           if (heightAt(tx, ty - 1) >= 0) {
-            const [ax, ay] = worldToScreen(tx + 0.14, ty + 0.24, zw);
-            const [bx2, by2] = worldToScreen(tx + 0.86, ty + 0.24, zw);
+            const [ax, ay] = worldToScreen(tx, ty + 0.26, zw);
+            const [bx2, by2] = worldToScreen(tx + 1, ty + 0.26, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
           if (heightAt(tx - 1, ty) >= 0) {
-            const [ax, ay] = worldToScreen(tx + 0.24, ty + 0.14, zw);
-            const [bx2, by2] = worldToScreen(tx + 0.24, ty + 0.86, zw);
+            const [ax, ay] = worldToScreen(tx + 0.26, ty, zw);
+            const [bx2, by2] = worldToScreen(tx + 0.26, ty + 1, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
         }
