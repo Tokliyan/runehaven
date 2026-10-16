@@ -1982,6 +1982,7 @@ const CLIFF = "#c9bda2";
 const CLIFF_SW = shade(CLIFF, 0.82);
 const CLIFF_SE = shade(CLIFF, 0.62);
 const FOAM_RUN = 4;            // Gauntlet S2 R4: tiles of shoreline whose surf brightens together (TUNABLE)
+const FOAM_FRONT_T = 0.27;     // share of a shore edge left visible when land stands in front of it (projection: 1.545 - 2t = 1)
 /* Gauntlet S2 R4: a flat team-colour disc on the ground under every actor —
    you gold, other players blue, mobs red — drawn under the sun shadow and the
    sprite. Scored problem: an 8x16 brown sprite measured 1.2-2.3:1 against
@@ -6949,6 +6950,7 @@ function drawGroundUnderlay() {
     underCells = [];
     for (let y = 0; y < H; y += UNDER_CELL) for (let x = 0; x < W; x += UNDER_CELL) {
       const [wx, wy] = screenToWorld(x + UNDER_CELL / 2, y + UNDER_CELL / 2);
+      if (wx < 0 || wy < 0 || wx >= N || wy >= N) continue;   // doubt pass: past the world edge the sky shows, not a sea block
       underCells.push(x, y, underTileMid(Math.floor(wx), Math.floor(wy)));
     }
   }
@@ -18445,6 +18447,7 @@ const PLAYER_GHOST_A = 0.55;            // TUNABLE: how strongly the player show
 const GHOST_W = 112, GHOST_H = 112, GHOST_AX = 56, GHOST_AY = 84;   // offscreen box, anchor = feet
 const OCC_CORE = { l: -7, r: 7, t: -30, b: -3 };                    // body core, px from the feet
 const PLATE_HALF_W = 48;                // S2 R2: half-width of the local plate stack labels step clear of
+const LABEL_STACK_PX = 15;              // doubt pass: row pitch when several lifted labels stack above the plate
 const OCCLUDER_KINDS = new Set(["tree", "rock", "iron", "runic", "meteor", "ruinpiece", "decor",
   "dock", "tower", "forge", "chest", "shrine", "shrinegate", "oracle", "bazaar", "ancient", "ancientanvil",
   "colopiece", "colobeam", "volcanocone", "altar", "basepiece", "kelp", "inode", "iore"]);
@@ -18492,11 +18495,14 @@ function flushOverlayPass(t) {
   meGhost = null;
   occProbe = null;
   const mine = plateQueue.find(q => q.isMe);
+  let lifted = 0;                                   // doubt pass: lifted labels stack, never print on each other
   for (const L of labelQueue) {
     ctx.font = L.font;
     ctx.textAlign = "center";
     const w = ctx.measureText(L.text).width;
+    const y0 = L.y;
     L.y = labelClearOfPlate(L.x, L.y, w, mine);
+    if (L.y !== y0) L.y -= LABEL_STACK_PX * lifted++;
     ctx.fillStyle = "rgba(6,9,14,0.62)";           // the nameplate's own plate
     ctx.fillRect(L.x - w / 2 - 4, L.y - 10, w + 8, 13);
     ctx.fillStyle = L.color;
@@ -19107,17 +19113,27 @@ function render(t) {
              run of FOAM_RUN tiles instead of changing every tile, so a shore
              reads as 3-5-tile runs of surf that brighten together. */
           const pulse = 0.62 + Math.sin(t / 700 + Math.floor((tx + ty) / FOAM_RUN) * 1.7) * 0.3;
+          const landN = heightAt(tx, ty - 1) >= 0, landW = heightAt(tx - 1, ty) >= 0;
+          if (landN || landW) {              // doubt pass: no colour strings built for open water
+          /* Doubt pass (S2 close): where the shore runs up the screen the water
+             tile has land BEHIND it (north) and IN FRONT of it (east), and the
+             front tile's top face, 16px above the water line, covers the far
+             part of the north edge; the same for west + south. Measured on the
+             projection, only the first FOAM_FRONT_T of that edge shows, so the
+             stroke stops there instead of running over the grass. */
+          const nEnd = heightAt(tx + 1, ty) >= 0 ? FOAM_FRONT_T : 1;
+          const wEnd = heightAt(tx, ty + 1) >= 0 ? FOAM_FRONT_T : 1;
           ctx.strokeStyle = `rgba(238,248,250,${0.72 * pulse})`;
           ctx.lineWidth = 2.4;
           const zw = -HZ;
-          if (heightAt(tx, ty - 1) >= 0) {   // land to the north edge
+          if (landN) {   // land to the north edge
             const [ax, ay] = worldToScreen(tx, ty + 0.08, zw);
-            const [bx2, by2] = worldToScreen(tx + 1, ty + 0.08, zw);
+            const [bx2, by2] = worldToScreen(tx + nEnd, ty + 0.08, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
-          if (heightAt(tx - 1, ty) >= 0) {   // land to the west edge
+          if (landW) {   // land to the west edge
             const [ax, ay] = worldToScreen(tx + 0.08, ty, zw);
-            const [bx2, by2] = worldToScreen(tx + 0.08, ty + 1, zw);
+            const [bx2, by2] = worldToScreen(tx + 0.08, ty + wEnd, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
           /* Gauntlet S2 R3: no foam on the SOUTH or EAST edge any more. Land
@@ -19130,15 +19146,16 @@ function render(t) {
              fainter line further out, so the foam reads as a band. */
           ctx.strokeStyle = `rgba(238,248,250,${0.3 * pulse})`;
           ctx.lineWidth = 1.6;
-          if (heightAt(tx, ty - 1) >= 0) {
+          if (landN) {
             const [ax, ay] = worldToScreen(tx, ty + 0.26, zw);
-            const [bx2, by2] = worldToScreen(tx + 1, ty + 0.26, zw);
+            const [bx2, by2] = worldToScreen(tx + nEnd, ty + 0.26, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
-          if (heightAt(tx - 1, ty) >= 0) {
+          if (landW) {
             const [ax, ay] = worldToScreen(tx + 0.26, ty, zw);
-            const [bx2, by2] = worldToScreen(tx + 0.26, ty + 1, zw);
+            const [bx2, by2] = worldToScreen(tx + 0.26, ty + wEnd, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
+          }
           }
         }
       } else if (b === B.LAVA) {
@@ -19191,17 +19208,17 @@ function render(t) {
           ctx.closePath(); ctx.fill();
           /* S2 R2: this tile's half of every crack on a shared crust edge —
              N, W, S, E — from a wandering junction to the edge midpoint. */
-          const lek = [
-            hash2(tx, ty, LAVA_CRACK_SALT) > LAVA_CRACK_T && lavaCrustAt(tx, ty - 1),
-            hash2(tx, ty, LAVA_CRACK_SALT + 2) > LAVA_CRACK_T && lavaCrustAt(tx - 1, ty),
-            hash2(tx, ty + 1, LAVA_CRACK_SALT) > LAVA_CRACK_T && lavaCrustAt(tx, ty + 1),
-            hash2(tx + 1, ty, LAVA_CRACK_SALT + 2) > LAVA_CRACK_T && lavaCrustAt(tx + 1, ty),
-          ];
-          if (lek[0] || lek[1] || lek[2] || lek[3]) {
+          /* a 4-bit mask, not an array: no allocation per crusted tile per frame */
+          const lek =
+            (hash2(tx, ty, LAVA_CRACK_SALT) > LAVA_CRACK_T && lavaCrustAt(tx, ty - 1) ? 1 : 0) |
+            (hash2(tx, ty, LAVA_CRACK_SALT + 2) > LAVA_CRACK_T && lavaCrustAt(tx - 1, ty) ? 2 : 0) |
+            (hash2(tx, ty + 1, LAVA_CRACK_SALT) > LAVA_CRACK_T && lavaCrustAt(tx, ty + 1) ? 4 : 0) |
+            (hash2(tx + 1, ty, LAVA_CRACK_SALT + 2) > LAVA_CRACK_T && lavaCrustAt(tx + 1, ty) ? 8 : 0);
+          if (lek) {
             const jx = sx + (hash2(tx, ty, LAVA_CRACK_SALT + 4) - 0.5) * IW2 * 0.34;
             const jy = sy + (hash2(tx, ty, LAVA_CRACK_SALT + 6) - 0.5) * IH2 * 0.34;
             for (let k = 0; k < 4; k++) {
-              if (!lek[k]) continue;
+              if (!(lek & (1 << k))) continue;
               const ex = sx + (k === 0 || k === 3 ? IW2 * 0.5 : -IW2 * 0.5);
               const ey = sy + (k < 2 ? -IH2 * 0.5 : IH2 * 0.5);
               lavaCrackSegs.push(jx, jy,
@@ -19210,7 +19227,7 @@ function render(t) {
               lavaCrackCount++;
             }
           }
-        } else lavaOpenPts.push(sx, sy);
+        } else if (interiorLava) lavaOpenPts.push(sx, sy);   // doubt pass: an edge tile has the higher rim in front of it
         if (interiorLava && lavaVentAt(tx, ty)) {
           lavaVentTiles++;
           /* Peaks at 0.42 alpha, comfortably over the 0.35 the spec asks
@@ -19857,27 +19874,45 @@ function render(t) {
        stroke, both from the positions the lava pass already collected. */
     if (lavaOpenPts.length || lavaCrackCount) {
       lctx.fillStyle = lctx.strokeStyle = `rgba(255,255,255,${LAVA_NIGHT_GLOW})`;
+      /* Doubt pass (S2 close): the cone is cut out of the punch-out at the
+         PIXEL level — one "everything but this tier" evenodd clip per tier,
+         intersected, is everything but the cone's silhouette. The old per-tile
+         centre test left a lit sawtooth round the cone and built a closure per
+         tile. The counters below are for the harness only (bbox first). */
+      lctx.save();
+      let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+      if (vconeSil) for (const hx of vconeSil) {
+        lctx.beginPath(); lctx.rect(0, 0, w, h);
+        lctx.moveTo(hx[0][0], hx[0][1]);
+        for (let k = 1; k < hx.length; k++) lctx.lineTo(hx[k][0], hx[k][1]);
+        lctx.closePath(); lctx.clip("evenodd");
+        for (const q of hx) { if (q[0] < bx0) bx0 = q[0]; if (q[0] > bx1) bx1 = q[0]; if (q[1] < by0) by0 = q[1]; if (q[1] > by1) by1 = q[1]; }
+      }
       lctx.beginPath();
       for (let i = 0; i < lavaOpenPts.length; i += 2) {
         const ox = lavaOpenPts[i], oy = lavaOpenPts[i + 1];
-        if (vconeSil && vconeSil.some(hx => inConvex(hx, ox, oy))) { lavaNightShaded++; continue; }   // lava the cone stands in front of
-        lavaNightLit++;
+        let behind = false;
+        if (vconeSil && ox > bx0 && ox < bx1 && oy > by0 && oy < by1)
+          for (let k = 0; k < vconeSil.length && !behind; k++) behind = inConvex(vconeSil[k], ox, oy);
+        if (behind) lavaNightShaded++; else lavaNightLit++;
         lctx.moveTo(ox, oy - IH2); lctx.lineTo(ox + IW2, oy); lctx.lineTo(ox, oy + IH2); lctx.lineTo(ox - IW2, oy); lctx.closePath();
-      }
-      if (vconeGlow) for (const q of vconeGlow) {                                // the crater and its flow
-        lctx.moveTo(q[0][0], q[0][1]); for (let k = 1; k < q.length; k++) lctx.lineTo(q[k][0], q[k][1]); lctx.closePath();
       }
       lctx.fill();
       if (lavaCrackCount) {
         lctx.lineWidth = 2.4;
         lctx.beginPath();
         for (let i = 0; i < lavaCrackSegs.length; i += 6) {
-          if (vconeSil && vconeSil.some(hx => inConvex(hx, lavaCrackSegs[i + 4], lavaCrackSegs[i + 5]))) continue;
           lctx.moveTo(lavaCrackSegs[i], lavaCrackSegs[i + 1]);
           lctx.lineTo(lavaCrackSegs[i + 2], lavaCrackSegs[i + 3]);
           lctx.lineTo(lavaCrackSegs[i + 4], lavaCrackSegs[i + 5]);
         }
         lctx.stroke();
+      }
+      lctx.restore();
+      if (vconeGlow && vconeGlow.length) {                                       // the crater and its flow, on the cone
+        lctx.beginPath();
+        for (const q of vconeGlow) { lctx.moveTo(q[0][0], q[0][1]); for (let k = 1; k < q.length; k++) lctx.lineTo(q[k][0], q[k][1]); lctx.closePath(); }
+        lctx.fill();
       }
     }
     lctx.globalCompositeOperation = "source-over";
