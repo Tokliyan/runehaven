@@ -1553,6 +1553,157 @@ let pocketAnchorCache = new Map();
 const GROUND_MARGIN = 3;
 const GROUND_UP = 4 * HZ + 9 + 15 + 8;
 const GROUND_DOWN = IH2 + HZ + 8;
+/* ============ S4 Performance PART A — THE GROUND CACHE =====================
+   Measured 2026-10-12: ~51% of a frame at the Colosseum is native canvas
+   rasterising, and the ground pass redraws every visible tile's diamond and
+   cliff faces from scratch every frame. drawGroundTile(c, tx, ty) takes no
+   time and draws only from biomeAt / heightAt / variedZ / arenaFloorAt and
+   hashes — all static per world — so its output can be baked once.
+   - The world is cut into GC_TILES x GC_TILES chunks. A chunk is baked into
+     its own offscreen canvas by calling the SAME drawGroundTile for its
+     tiles in the same diagonal (tx + ty) order the live pass uses, with the
+     context translated so the chunk's top corner (world cx*GC_TILES,
+     cy*GC_TILES, z 0) sits at (GC_PADX, GC_PADY). The pads are the live
+     cull's own GROUND_UP / GROUND_DOWN, so nothing a tile draws is clipped.
+   - Chunks are blitted back to front by cx + cy. Two chunks with the same
+     sum never share a screen column, and across a chunk edge every pair of
+     tiles that overlap on screen is in the same order the live sweep draws
+     them, so cliff faces that overhang south / east still land right. The
+     pixel-match gate (debug/run6.js) is the judge.
+   - At most GC_BAKE_PER_FRAME bakes a frame; a visible chunk that is not
+     baked yet is drawn by the direct path in its slot that frame, so
+     nothing pops in. LRU of GC_MAX chunks (a Map in use order); evicted
+     canvases are reused, never re-created.
+   - Invalidation: tileCache.clear() itself empties this cache (hooked just
+     below), so every world build and reset — and every harness seed swap —
+     drops it, with no call site to forget.
+   - Not cached: interiors (their own pass; the ground pass is skipped there),
+     the S2 underlay, and everything animated, which draws after the ground.
+   The camera's screen offset is snapped to whole pixels (camOffset), so a
+   chunk's corner always lands on a whole pixel and the blit is exactly what
+   the direct path would have drawn — never resampled, never half a pixel off. */
+let GROUND_CACHE = true;            // flipped only by the harness (debugSetGroundCache) to compare paths
+const GC_TILES = 16;                // tiles per chunk side (TUNABLE)
+const GC_MAX = 48;                  // baked chunks kept (TUNABLE)
+const GC_BAKE_PER_FRAME = 2;        // new bakes allowed per frame (TUNABLE)
+const GC_PADX = GC_TILES * IW2 + 2;
+const GC_PADY = GROUND_UP - IH2 + 2;
+const GC_W = 2 * GC_PADX;
+const GC_H = GC_PADY + (2 * GC_TILES - 1) * IH2 + GROUND_DOWN + 2;
+/* A chunk's content is a diamond inside its rectangle, so one blit blended
+   ~2.6x the ground's own area, mostly transparent corners. Each chunk is
+   blitted as GC_BANDS horizontal bands, each trimmed to the widest the
+   diamond (plus a tile and the cliff margins) gets inside that band. The
+   bands are fixed per chunk shape, computed once here. */
+const GC_BANDS = 8;
+const gcBands = (() => {
+  const out = [], bh = Math.ceil(GC_H / GC_BANDS), kMax = 2 * GC_TILES - 2;
+  for (let y0 = 0; y0 < GC_H; y0 += bh) {
+    const y1 = Math.min(GC_H, y0 + bh);
+    // tiles whose pixel rows [c - GROUND_UP, c + GROUND_DOWN] meet this band; c = GC_PADY + (k + 1) * IH2
+    const kLo = Math.max(0, Math.floor((y0 - GROUND_DOWN - GC_PADY) / IH2) - 2);
+    const kHi = Math.min(kMax, Math.ceil((y1 + GROUND_UP - GC_PADY) / IH2));
+    if (kLo > kHi) continue;
+    const kPeak = Math.min(Math.max(GC_TILES - 1, kLo), kHi);
+    const half = Math.min(kPeak, kMax - kPeak) * IW2 + IW2 + 2;
+    const x0 = Math.max(0, GC_PADX - half), x1 = Math.min(GC_W, GC_PADX + half);
+    out.push([x0, y0, x1 - x0, y1 - y0]);
+  }
+  return out;
+})();
+const gcChunks = new Map(), gcPool = [];
+const gcStats = { bakes: 0, bakesThisFrame: 0, maxBakesPerFrame: 0, blits: 0, directChunks: 0,
+                  resets: 0, evictions: 0, maxSize: 0, interiorTouches: 0 };
+function groundCacheReset() {
+  for (const ch of gcChunks.values()) gcPool.push(ch);
+  gcChunks.clear();
+  gcStats.resets++;
+}
+{
+  const clearTiles = tileCache.clear.bind(tileCache);
+  tileCache.clear = function () { clearTiles(); groundCacheReset(); };
+}
+function gcBake(cx, cy) {
+  const cv = gcPool.pop() || document.createElement("canvas");
+  if (cv.width !== GC_W || cv.height !== GC_H) { cv.width = GC_W; cv.height = GC_H; }
+  const c = cv.getContext("2d");
+  if (!c) return null;
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.clearRect(0, 0, GC_W, GC_H);
+  const [ox, oy] = worldToScreen(cx * GC_TILES, cy * GC_TILES, 0);
+  c.setTransform(1, 0, 0, 1, GC_PADX - ox, GC_PADY - oy);
+  const x0 = cx * GC_TILES, y0 = cy * GC_TILES;
+  const x1 = Math.min(N - 1, x0 + GC_TILES - 1), y1 = Math.min(N - 1, y0 + GC_TILES - 1);
+  for (let s2 = x0 + y0; s2 <= x1 + y1; s2++) {
+    const lo = Math.max(x0, s2 - y1), hi = Math.min(x1, s2 - y0);
+    for (let tx = lo; tx <= hi; tx++) drawGroundTile(c, tx, s2 - tx);
+  }
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  gcStats.bakes++;
+  return cv;
+}
+/* The ground pass with the cache on. Same arguments as the live loop's
+   bounds; returns how many tiles it drew DIRECTLY (unbaked chunks) and how
+   many it scanned, for groundStats. */
+function drawGroundCached(gMinX, gMaxX, gMinY, gMaxY, w, h, camIX, camIY) {
+  if (inInterior()) { gcStats.interiorTouches++; return { drawn: 0, scanned: 0 }; }
+  let drawn = 0, scanned = 0, bakes = 0;
+  const c0x = Math.floor(gMinX / GC_TILES), c1x = Math.floor(gMaxX / GC_TILES);
+  const c0y = Math.floor(gMinY / GC_TILES), c1y = Math.floor(gMaxY / GC_TILES);
+  for (let s = c0x + c0y; s <= c1x + c1y; s++) {
+    const lo = Math.max(c0x, s - c1y), hi = Math.min(c1x, s - c0y);
+    for (let cx = lo; cx <= hi; cx++) {
+      const cy = s - cx;
+      const left = w / 2 + isoX(cx * GC_TILES, cy * GC_TILES) - camIX - GC_PADX;
+      const top = h / 2 + isoY(cx * GC_TILES, cy * GC_TILES) - camIY - GC_PADY;
+      if (left + GC_W < 0 || left > w || top + GC_H < 0 || top > h) continue;
+      const key = cx * 65536 + cy;
+      let cv = gcChunks.get(key);
+      if (cv) { gcChunks.delete(key); gcChunks.set(key, cv); }
+      else if (bakes < GC_BAKE_PER_FRAME) {
+        cv = gcBake(cx, cy);
+        if (cv) {
+          bakes++;
+          gcChunks.set(key, cv);
+          while (gcChunks.size > GC_MAX) {
+            const old = gcChunks.keys().next().value;
+            gcPool.push(gcChunks.get(old)); gcChunks.delete(old); gcStats.evictions++;
+          }
+          if (gcChunks.size > gcStats.maxSize) gcStats.maxSize = gcChunks.size;
+        }
+      }
+      if (cv) {                                   // whole pixels: the camera offset is snapped
+        for (let bi = 0; bi < gcBands.length; bi++) {
+          const B4 = gcBands[bi];
+          const dy = top + B4[1];
+          if (dy + B4[3] < 0 || dy > h) continue;
+          ctx.drawImage(cv, B4[0], B4[1], B4[2], B4[3], left + B4[0], dy, B4[2], B4[3]);
+        }
+        gcStats.blits++; continue;
+      }
+      // not baked yet: the direct path, in this chunk's slot, with the live cull
+      gcStats.directChunks++;
+      const x0 = Math.max(gMinX, cx * GC_TILES), y0 = Math.max(gMinY, cy * GC_TILES);
+      const x1 = Math.min(gMaxX, cx * GC_TILES + GC_TILES - 1), y1 = Math.min(gMaxY, cy * GC_TILES + GC_TILES - 1);
+      for (let s2 = x0 + y0; s2 <= x1 + y1; s2++) {
+        const tlo = Math.max(x0, s2 - y1), thi = Math.min(x1, s2 - y0);
+        for (let tx = tlo; tx <= thi; tx++) {
+          const ty = s2 - tx;
+          scanned++;
+          const bcx = w / 2 + isoX(tx + 0.5, ty + 0.5) - camIX;
+          if (bcx + IW2 < 0 || bcx - IW2 > w) continue;
+          const bcy = h / 2 + isoY(tx + 0.5, ty + 0.5) - camIY;
+          if (bcy + GROUND_DOWN < 0 || bcy - GROUND_UP > h) continue;
+          drawGroundTile(ctx, tx, ty);
+          drawn++;
+        }
+      }
+    }
+  }
+  gcStats.bakesThisFrame = bakes;
+  if (bakes > gcStats.maxBakesPerFrame) gcStats.maxBakesPerFrame = bakes;
+  return { drawn, scanned };
+}
 /* ============ Animation Pass PART C — THE WATER RIPPLE ==============
    Concentric rings opening out of a hashed point on a tile and fading as
    they widen, on the ground plane rather than facing the camera — which
@@ -6855,15 +7006,30 @@ function removeFeature(key) {
    ========================================================= */
 function isoX(wx, wy) { return (wx - wy) * IW2; }
 function isoY(wx, wy) { return (wx + wy) * IH2; }
+/* S4 PART A: THE CAMERA LANDS ON WHOLE PIXELS. The world's screen offset
+   (where world 0,0 sits) is rounded once per camera position. Before, the
+   camera sat at fractional pixels, so every ground edge was rasterised at a
+   different sub-pixel phase each frame; a baked ground chunk can only match
+   that if the phase is fixed. With the offset whole, a chunk baked once is
+   pixel-identical to drawing the tiles directly (run6's pixel gate), and
+   characters stay locked to the ground instead of drifting up to half a
+   pixel against it. Cached per camera so the hot path is four compares. */
+let _camKX = NaN, _camKY = NaN, _camKW = -1, _camKH = -1, camOX = 0, camOY = 0;
+function camOffset() {
+  if (cam.x !== _camKX || cam.y !== _camKY || canvas.width !== _camKW || canvas.height !== _camKH) {
+    _camKX = cam.x; _camKY = cam.y; _camKW = canvas.width; _camKH = canvas.height;
+    camOX = Math.round(canvas.width / 2 - isoX(cam.x, cam.y));
+    camOY = Math.round(canvas.height / 2 - isoY(cam.x, cam.y));
+  }
+}
 function worldToScreen(wx, wy, zpx = 0) {
-  return [
-    canvas.width / 2 + isoX(wx, wy) - isoX(cam.x, cam.y),
-    canvas.height / 2 + isoY(wx, wy) - isoY(cam.x, cam.y) - zpx,
-  ];
+  camOffset();
+  return [camOX + isoX(wx, wy), camOY + isoY(wx, wy) - zpx];
 }
 function screenToWorld(sx, sy) {
-  const rx = sx - canvas.width / 2 + isoX(cam.x, cam.y);
-  const ry = sy - canvas.height / 2 + isoY(cam.x, cam.y);
+  camOffset();
+  const rx = sx - camOX;
+  const ry = sy - camOY;
   const a = rx / IW2, b = ry / IH2;
   return [(a + b) / 2, (b - a) / 2];
 }
@@ -12615,9 +12781,17 @@ const ctx = canvas.getContext("2d");
 let lightCanvas = document.createElement("canvas");
 let lctx = lightCanvas.getContext("2d");
 
+/* S4 PART C — THE PIXEL-RATIO DECISION, RECORDED. The canvas is sized in CSS
+   pixels (innerWidth x innerHeight), NOT innerWidth * devicePixelRatio. That
+   is deliberate: a 3x phone would rasterise nine times the pixels every frame
+   for a flat-shaded style that does not need them. RENDER_SCALE is where that
+   can be raised later; at 1 the canvas is exactly what it has always been.
+   (Raising it also needs the pointer mapping and the drawing scale to follow
+   it; nothing reads it but resize() today.) */
+const RENDER_SCALE = 1;   // TUNABLE — backing-store pixels per CSS pixel
 function resize() {
-  canvas.width = innerWidth; canvas.height = innerHeight;
-  lightCanvas.width = innerWidth; lightCanvas.height = innerHeight;
+  canvas.width = Math.round(innerWidth * RENDER_SCALE); canvas.height = Math.round(innerHeight * RENDER_SCALE);
+  lightCanvas.width = canvas.width; lightCanvas.height = canvas.height;
 }
 addEventListener("resize", resize); resize();
 
@@ -18514,6 +18688,39 @@ function flushOverlayPass(t) {
   plateQueue.length = 0;
 }
 
+/* ⚠️ HARNESS ONLY (S4): flip the ground cache and read its counters. */
+function debugSetGroundCache(on) { GROUND_CACHE = !!on; }
+function debugGroundCache() {
+  return { on: GROUND_CACHE, size: gcChunks.size, pool: gcPool.length, GC_TILES, GC_MAX, GC_BAKE_PER_FRAME,
+           GC_W, GC_H, ...gcStats, ground: Object.assign({}, groundStats) };
+}
+/* ⚠️ HARNESS ONLY (S4 pixel gate): draw ONE ground-only frame — underlay and
+   ground pass, nothing else — at the current camera, with the cache on or
+   off. With it on, every visible chunk is baked first (the per-frame bake
+   budget is honoured; it just repeats the pass until nothing is drawn by the
+   direct path), so the frame compared is the fully cached one. */
+function debugGroundFrame(on) {
+  const w = canvas.width, h = canvas.height, was = GROUND_CACHE;
+  GROUND_CACHE = !!on;
+  const corners = [screenToWorld(0, 0), screenToWorld(w, 0), screenToWorld(0, h), screenToWorld(w, h)];
+  const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
+  const minX = Math.max(0, Math.floor(Math.min(...xs)) - 2), maxX = Math.min(N - 1, Math.ceil(Math.max(...xs)) + 2);
+  const minY = Math.max(0, Math.floor(Math.min(...ys)) - 3), maxY = Math.min(N - 1, Math.ceil(Math.max(...ys)) + 6);
+  let passes = 0;
+  for (;;) {
+    passes++;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, w, h);
+    const d0 = gcStats.directChunks;
+    drawGroundPass(w, h, minX, maxX, minY, maxY);
+    if (!on || gcStats.directChunks === d0 || passes > 80) break;
+  }
+  GROUND_CACHE = was;
+  return { passes, tiles: groundStats.tiles, size: gcChunks.size };
+}
+function debugHudStats() {
+  return { compassBuilds, mapDraws, hudWritesSkipped, hudWritesDone, MAP_REDRAW_MS, RENDER_SCALE };
+}
 /* ⚠️ HARNESS ONLY (S2 doubt pass): put the camera somewhere for a gate. */
 function debugSetCam(x, y) { cam.x = x; cam.y = y; }
 /* ⚠️ HARNESS ONLY (Gauntlet S2): read-only views of the polish pass, so
@@ -18882,6 +19089,42 @@ function renderInteriorGround(t) {
   }
 }
 
+/* S4: the ground pass itself, moved out of render() unchanged so the pixel
+   gate (debug/run6.js) can draw exactly this — underlay and ground, cached or
+   direct — at a fixed camera with nothing else on top. render() calls it
+   once a frame outside interiors, at the same point in the frame as before. */
+function drawGroundPass(w, h, minX, maxX, minY, maxY) {
+  camOffset();
+  const camIX = w / 2 - camOX, camIY = h / 2 - camOY;   // S4: the snapped camera, so w / 2 + isoX(p) - camIX === worldToScreen(p)
+  const gMinX = Math.max(0, minX - GROUND_MARGIN), gMaxX = Math.min(N - 1, maxX + GROUND_MARGIN);
+  const gMinY = Math.max(0, minY - GROUND_MARGIN), gMaxY = Math.min(N - 1, maxY + GROUND_MARGIN);
+  drawGroundUnderlay();                               // Gauntlet S2 R4: closes the tile seams
+  let drawn = 0, scanned = 0;
+  if (GROUND_CACHE) {                                 // S4 PART A: baked chunks, direct path only for unbaked ones
+    const r = drawGroundCached(gMinX, gMaxX, gMinY, gMaxY, w, h, camIX, camIY);
+    drawn = r.drawn; scanned = r.scanned;
+  } else
+  for (let s = gMinX + gMinY; s <= gMaxX + gMaxY; s++) {
+    const txLo = Math.max(gMinX, s - gMaxY), txHi = Math.min(gMaxX, s - gMinY);
+    for (let tx = txLo; tx <= txHi; tx++) {
+      const ty = s - tx;
+      scanned++;
+      const bcx = w / 2 + isoX(tx + 0.5, ty + 0.5) - camIX;
+      if (bcx + IW2 < 0 || bcx - IW2 > w) continue;
+      const bcy = h / 2 + isoY(tx + 0.5, ty + 0.5) - camIY;
+      if (bcy + GROUND_DOWN < 0 || bcy - GROUND_UP > h) continue;
+      drawGroundTile(ctx, tx, ty);
+      drawn++;
+    }
+  }
+  groundStats.tiles = drawn; groundStats.scanned = scanned;
+  groundStats.minX = gMinX; groundStats.maxX = gMaxX;
+  groundStats.minY = gMinY; groundStats.maxY = gMaxY;
+  /* The camera and viewport this pass actually ran at, so a proof gate can
+     recompute the same screen positions instead of assuming them. */
+  groundStats.camX = cam.x; groundStats.camY = cam.y;
+  groundStats.w = w; groundStats.h = h;
+}
 function render(t) {
   const w = canvas.width, h = canvas.height;
   SUN = sunShadow(getDayT());
@@ -19005,31 +19248,7 @@ function render(t) {
      it. A visible change on purpose, and a saving too. */
   if (!inInterior()) {
     groundPassFrames++;
-    const camIX = isoX(cam.x, cam.y), camIY = isoY(cam.x, cam.y);
-    const gMinX = Math.max(0, minX - GROUND_MARGIN), gMaxX = Math.min(N - 1, maxX + GROUND_MARGIN);
-    const gMinY = Math.max(0, minY - GROUND_MARGIN), gMaxY = Math.min(N - 1, maxY + GROUND_MARGIN);
-    drawGroundUnderlay();                               // Gauntlet S2 R4: closes the tile seams
-    let drawn = 0, scanned = 0;
-    for (let s = gMinX + gMinY; s <= gMaxX + gMaxY; s++) {
-      const txLo = Math.max(gMinX, s - gMaxY), txHi = Math.min(gMaxX, s - gMinY);
-      for (let tx = txLo; tx <= txHi; tx++) {
-        const ty = s - tx;
-        scanned++;
-        const bcx = w / 2 + isoX(tx + 0.5, ty + 0.5) - camIX;
-        if (bcx + IW2 < 0 || bcx - IW2 > w) continue;
-        const bcy = h / 2 + isoY(tx + 0.5, ty + 0.5) - camIY;
-        if (bcy + GROUND_DOWN < 0 || bcy - GROUND_UP > h) continue;
-        drawGroundTile(ctx, tx, ty);
-        drawn++;
-      }
-    }
-    groundStats.tiles = drawn; groundStats.scanned = scanned;
-    groundStats.minX = gMinX; groundStats.maxX = gMaxX;
-    groundStats.minY = gMinY; groundStats.maxY = gMaxY;
-    /* The camera and viewport this pass actually ran at, so a proof gate can
-       recompute the same screen positions instead of assuming them. */
-    groundStats.camX = cam.x; groundStats.camY = cam.y;
-    groundStats.w = w; groundStats.h = h;
+    drawGroundPass(w, h, minX, maxX, minY, maxY);   // S4: the ground pass, one function so the harness can draw it alone
   }
 
   // v8: faded mirrored tower silhouette in the water below it (when coastal)
@@ -19065,8 +19284,21 @@ function render(t) {
   if (inInterior()) { try { renderInteriorGround(t); } catch (e) { } }
 
   // Water ripples + lava flicker
+  /* S4: each row walks only the tiles whose drawing can reach the screen.
+     The bounds rectangle is axis-aligned in WORLD space, so in the iso view
+     its corners are always off-screen — about half its tiles — and every one
+     of them paid a biomeAt() a frame for nothing. A tile's centre sits at
+     camOX + (tx - ty) * IW2, camOY + (tx + ty + 1) * IH2; the margins cover the
+     widest thing drawn here (a ripple ring, a lava diamond raised by its
+     height), so nothing that would have touched the canvas is skipped. */
+  camOffset();
+  const ANIM_MX = 2 * IW2, ANIM_UP = GROUND_UP, ANIM_DOWN = GROUND_DOWN;
   if (!inInterior()) for (let ty = minY; ty <= maxY; ty++) {
-    for (let tx = minX; tx <= maxX; tx++) {
+    const axLo = Math.max(minX, ty + Math.ceil((-ANIM_MX - camOX) / IW2),
+                          Math.ceil((-ANIM_DOWN - camOY) / IH2) - 1 - ty);
+    const axHi = Math.min(maxX, ty + Math.floor((w + ANIM_MX - camOX) / IW2),
+                          Math.floor((h + ANIM_UP - camOY) / IH2) - 1 - ty);
+    for (let tx = axLo; tx <= axHi; tx++) {
       const b = biomeAt(tx, ty);
       if (b === B.WATER || b === B.DEEP || b === B.SHALLOW) {
         const ph = hash2(tx, ty, 33);
@@ -20180,6 +20412,7 @@ function compassLabelLayout() {
 function compassBlockerLayout() {
   return compassBlockerBoxes.map(b => ({ x: b.x, y: b.y, w: b.w, h: b.h }));
 }
+let lastCompassKey = null, compassBuilds = 0;   // S4 PART B
 function updateMinimap() {
   const el = document.getElementById("hudMinimap");
   if (!el) return;
@@ -20197,7 +20430,14 @@ function updateMinimap() {
      inInterior() beside it: the card goes away while it would be noise. */
   if (!me || inInterior() || !tutorialDone) { el.style.display = "none"; return; }
   const dial = document.getElementById("mmDial");
-  if (dial) {
+  /* S4 PART B: the dial is rebuilt only when the set of rounded (1°) bearings
+     or labels changed since the last build — standing still it was re-parsed
+     every frame. The key follows the nearest-first order the labels are
+     placed in, so a change of order is a change. */
+  const marksNow = dial ? minimapBearings().slice().sort((a, b) => a.d - b.d) : null;
+  const compassKey = marksNow ? marksNow.map(r => Math.round(r.deg) + ":" + r.label).join("|") : "";
+  if (dial && compassKey !== lastCompassKey) {
+    lastCompassKey = compassKey; compassBuilds++;
     /* hotfix: R_TICK and R_MARK used to be 46/36 — only 10px apart, which
        is why a landmark near the same bearing as a tick (Tower sitting
        close to due north) collided with it and read as "TOWEN". Ticks
@@ -20241,7 +20481,7 @@ function updateMinimap() {
        the exact "TOWEN" collision v35 fixed — every landmark's own dot, and
        the centre marker. Labels still only ever test against each other AND
        these; dots never move. */
-    const marks = minimapBearings().slice().sort((a, b) => a.d - b.d);
+    const marks = marksNow;
     const blockers = [];
     for (const [label, deg] of COMPASS_POINTS) {
       const tx = CX + R_TICK * Math.cos(rad(deg)), ty = CY + R_TICK * Math.sin(rad(deg));
@@ -20283,7 +20523,7 @@ function updateMinimap() {
     compassLabelBoxes = placed;
     dial.innerHTML = inner;
   }
-  el.style.display = "block";
+  if (el.style.display !== "block") el.style.display = "block";
 }
 
 /* =========================================================
@@ -20361,6 +20601,8 @@ function mapPixel(wx, wy, px, py) {
   return [(wx - (px - MAP_R)) * MAP_CELL, (wy - (py - MAP_R)) * MAP_CELL];
 }
 
+const MAP_REDRAW_MS = 250;   // S4 PART B: longest the minimap goes without a redraw while nothing changes (TUNABLE)
+let lastMapKey = null, lastMapDraw = 0, mapDraws = 0;
 function updateWorldMap() {
   const el = document.getElementById("hudMap");
   if (!el) return;
@@ -20374,6 +20616,21 @@ function updateWorldMap() {
   const c = mapCtx;
   if (!c) { el.style.display = "none"; return; }
   const px = Math.floor(me.x), py = Math.floor(me.y);
+  /* S4 PART B: the card is redrawn only when the player's tile changes, the
+     set of players on it changes, or MAP_REDRAW_MS has passed. Standing
+     still it was a 31x31 fill loop every frame for an identical picture. */
+  let onMap = "";
+  for (const [id, o] of others) {
+    if (o.dead || (o.space || "main") !== (me.space || "main")) continue;
+    if (Math.abs(o.x - me.x) > MAP_R + 0.5 || Math.abs(o.y - me.y) > MAP_R + 0.5) continue;
+    onMap += id + ",";
+  }
+  const mapKey = px + "," + py + "|" + onMap, nowMs = performance.now();
+  if (mapKey === lastMapKey && nowMs - lastMapDraw < MAP_REDRAW_MS) {
+    if (el.style.display !== "block") el.style.display = "block";
+    return;
+  }
+  lastMapKey = mapKey; lastMapDraw = nowMs; mapDraws++;
   c.clearRect(0, 0, MAP_PX, MAP_PX);
   mapFleckStats = { cells: 0, trees: 0, rocks: 0, marks: [] };
   for (let dy = -MAP_R; dy <= MAP_R; dy++) {
@@ -20439,7 +20696,7 @@ function updateWorldMap() {
   const [sx, sy] = mapPixel(me.x, me.y, px, py);
   c.fillStyle = MAP_SELF_COL;
   c.fillRect(sx - MAP_SELF_DOT / 2, sy - MAP_SELF_DOT / 2, MAP_SELF_DOT, MAP_SELF_DOT);
-  el.style.display = "block";
+  if (el.style.display !== "block") el.style.display = "block";
 }
 
 /* Harness hook — MAP_R/MAP_CELL and the canvas context are top-level and
@@ -20483,11 +20740,25 @@ function updateUnmakingHud() {
   el.style.display = "block";
 }
 
+/* S4 PART B: a HUD write is skipped when the string equals the last one
+   written to that element — the browser re-parses and re-lays-out even an
+   identical innerHTML, every frame. */
+let hudWritesSkipped = 0, hudWritesDone = 0;
+function setHtmlIfChanged(el, html) {
+  if (!el) return;
+  if (el.__lastHtml === html) { hudWritesSkipped++; return; }
+  el.__lastHtml = html; el.innerHTML = html; hudWritesDone++;
+}
+function setTextIfChanged(el, text) {
+  if (!el) return;
+  if (el.__lastText === text) { hudWritesSkipped++; return; }
+  el.__lastText = text; el.textContent = text; hudWritesDone++;
+}
 function updateHUD(dayT) {
   const w = equippedWeapon();
   const mtier = matchedGearTier();        // Matched-Tier Gear Bonus, once
   const hpPct = Math.round(me.hp);
-  hudPlayer.innerHTML =
+  setHtmlIfChanged(hudPlayer, 
     `<span class="gold">${me.username}</span> — ${me.cls}<br>` +
     `<span class="dim">Level ${me.level} &nbsp;•&nbsp; ${w.name} (${w.dmg})</span><br>` +
     `<span class="hpnum ${hpPct < 35 ? "low" : ""}">HP ${hpPct}/${me.maxHp}</span>` +
@@ -20532,13 +20803,13 @@ function updateHUD(dayT) {
        no new card, no new CSS: this is the Shrine blessing's line again. */
     (mtier
       ? `<br><span style="color:${tierColor(mtier)}">Matched ${mtier} gear — −${Math.round(armorReduceNow() * 100)}% dmg taken</span>` : "") +
-    petHudLine();
+    petHudLine());
 
   const phase = dayT < 0.25 ? "Morning" : dayT < 0.5 ? "Afternoon" : dayT < 0.62 ? "Dusk" : "Night";
   const dayNum = worldDayNum();   // v25 PART B: one counter, shared with the Krakenling gate
-  hudWorld.innerHTML =
+  setHtmlIfChanged(hudWorld, 
     `Day <span class="gold">${dayNum}</span> — ${phase}<br>` +
-    `<span class="dim">${others.size + 1} online</span>`;
+    `<span class="dim">${others.size + 1} online</span>`);
 
   hudZone.style.display = inSafeZone(me.x, me.y) ? "block" : "none";
   if (helpExpanded && performance.now() - helpLiftCheckedAt > HELP_LIFT_RECHECK_MS) applyHelpLift();
@@ -20557,54 +20828,54 @@ function updateHUD(dayT) {
   const wldNear = nearestWild();
   if (wdMob) {
     const wpct = Math.round(tameChanceFor({ id: wdMob.id, species: wdMob.kind }, (me.inv.trail_bait || 0) > 0) * 100);
-    hudPrompt.textContent = `[Hold E] Tame weakened ${MOBS[wdMob.kind].name} (${wpct}%)`;
+    setTextIfChanged(hudPrompt, `[Hold E] Tame weakened ${MOBS[wdMob.kind].name} (${wpct}%)`);
     hudPrompt.style.display = "block";
   }
   else if (wldNear) {
     const pct = Math.round(tameChanceFor(wldNear, (me.inv.trail_bait || 0) > 0) * 100);
-    hudPrompt.textContent = `[Hold E] Tame ${WILD_SPECIES[wldNear.species].name} (${pct}%)`;
+    setTextIfChanged(hudPrompt, `[Hold E] Tame ${WILD_SPECIES[wldNear.species].name} (${pct}%)`);
     hudPrompt.style.display = "block";
   }
-  else if (nearShrine()) { hudPrompt.textContent = "[E] Beastmaster Shrine — 3 Runic Stone for a taming blessing"; hudPrompt.style.display = "block"; }
+  else if (nearShrine()) { setTextIfChanged(hudPrompt, "[E] Beastmaster Shrine — 3 Runic Stone for a taming blessing"); hudPrompt.style.display = "block"; }
   /* v35 PART E: the Oracle says what it is, like every other landmark. */
-  else if (nearOracle()) { hudPrompt.textContent = "[E] The Oracle — ask where a rare companion may be found"; hudPrompt.style.display = "block"; }
+  else if (nearOracle()) { setTextIfChanged(hudPrompt, "[E] The Oracle — ask where a rare companion may be found"); hudPrompt.style.display = "block"; }
   /* v37: the three new landmarks announce what they are. The Bazaar and
      Colosseum are informational (their mechanic is the zone you stand in,
      not a keypress); the Ancient Forge tells you what it unlocks. */
-  else if (nearAncient()) { hudPrompt.textContent = "The Ancient Forge — dragonsteel can be smelted here, and nowhere else"; hudPrompt.style.display = "block"; }
-  else if (Math.hypot(me.x - BAZAAR.x, me.y - BAZAAR.y) < BAZAAR_R) { hudPrompt.textContent = "The Grand Bazaar — protected ground. Trade item-for-item, at your own risk"; hudPrompt.style.display = "block"; }
+  else if (nearAncient()) { setTextIfChanged(hudPrompt, "The Ancient Forge — dragonsteel can be smelted here, and nowhere else"); hudPrompt.style.display = "block"; }
+  else if (Math.hypot(me.x - BAZAAR.x, me.y - BAZAAR.y) < BAZAAR_R) { setTextIfChanged(hudPrompt, "The Grand Bazaar — protected ground. Trade item-for-item, at your own risk"); hudPrompt.style.display = "block"; }
   /* v52+53 PART B: the arena's own three states, ahead of the plain ring line
      so the more specific thing always wins. The last of the three is v37's
      original line, unchanged — everywhere inside the ring that is not a podium
      behaves exactly as it always has. */
-  else if (duel.state === "active") { hudPrompt.textContent = `DUEL — ${me.username} against ${duel.opponent}`; hudPrompt.style.display = "block"; }
+  else if (duel.state === "active") { setTextIfChanged(hudPrompt, `DUEL — ${me.username} against ${duel.opponent}`); hudPrompt.style.display = "block"; }
   else if (duelCandidate()) {
     const other = duelCandidate();
-    hudPrompt.textContent = duel.mine
+    setTextIfChanged(hudPrompt, duel.mine
       ? `Waiting for ${other} to accept the duel…`
-      : `[${(KEYBINDS.interact || "e").toUpperCase()}] Accept a duel with ${other} — victor takes ${DUEL_REWARD_RUNIC} Runic Stone`;
+      : `[${(KEYBINDS.interact || "e").toUpperCase()}] Accept a duel with ${other} — victor takes ${DUEL_REWARD_RUNIC} Runic Stone`);
     hudPrompt.style.display = "block";
   }
-  else if (me && podiumAt(me.x, me.y) !== null) { hudPrompt.textContent = `${PODIUMS[podiumAt(me.x, me.y)].name} — a duel needs a challenger on the other podium`; hudPrompt.style.display = "block"; }
-  else if (inColosseum(me.x, me.y)) { hudPrompt.textContent = "The Ruined Colosseum — PvP is live inside the ring"; hudPrompt.style.display = "block"; }
+  else if (me && podiumAt(me.x, me.y) !== null) { setTextIfChanged(hudPrompt, `${PODIUMS[podiumAt(me.x, me.y)].name} — a duel needs a challenger on the other podium`); hudPrompt.style.display = "block"; }
+  else if (inColosseum(me.x, me.y)) { setTextIfChanged(hudPrompt, "The Ruined Colosseum — PvP is live inside the ring"); hudPrompt.style.display = "block"; }
   /* Dungeons PART E: in the same position in this chain as the branch it
      mirrors in doInteract(), so the prompt can never advertise something a
      keypress would not actually do. It says which of the two states the
      door is in, because "sealed" with no reason given is the one thing a
      player standing in front of it cannot work out on their own. */
   else if (me && nearVaultDoor()) {
-    hudPrompt.textContent = haveVaultKey(me.space)
+    setTextIfChanged(hudPrompt, haveVaultKey(me.space)
       ? `[${(KEYBINDS.interact || "e").toUpperCase()}] Unlock the vault`
-      : "The vault is sealed — its Demon Knight carries the key";
+      : "The vault is sealed — its Demon Knight carries the key");
     hudPrompt.style.display = "block";
   }
-  else if (nearChest()) { hudPrompt.textContent = "[E] Dev Supply Chest — stock all materials"; hudPrompt.style.display = "block"; }
-  else if (nearBaseChest()) { hudPrompt.textContent = "[E] Storage Chest — open"; hudPrompt.style.display = "block"; }
-  else if (item) { hudPrompt.textContent = `[E] Pick up ${ITEM_META[item.type]?.name || item.type}`; hudPrompt.style.display = "block"; }
+  else if (nearChest()) { setTextIfChanged(hudPrompt, "[E] Dev Supply Chest — stock all materials"); hudPrompt.style.display = "block"; }
+  else if (nearBaseChest()) { setTextIfChanged(hudPrompt, "[E] Storage Chest — open"); hudPrompt.style.display = "block"; }
+  else if (item) { setTextIfChanged(hudPrompt, `[E] Pick up ${ITEM_META[item.type]?.name || item.type}`); hudPrompt.style.display = "block"; }
   /* v47 PART F: in the same position in this chain as the branch it mirrors
      in doInteract() — after the ground item, before the gatherable — so the
      prompt can never advertise something a keypress would not actually do. */
-  else if (giveNear) { hudPrompt.textContent = `[E] Give an item to ${giveNear}`; hudPrompt.style.display = "block"; }
+  else if (giveNear) { setTextIfChanged(hudPrompt, `[E] Give an item to ${giveNear}`); hudPrompt.style.display = "block"; }
   else if (g) {
     const verb = (FINITE.has(g.type) && !PICKED.has(g.type)) ? "Mine" : "Gather";
     /* Caves & Enchanted Forest Expansion PART A, found by this build's new
@@ -20619,12 +20890,12 @@ function updateHUD(dayT) {
        PART A tripled the nodes in a cave, which is what finally made it
        reproducible. */
     const gives = g._node ? (g._node.type || "aquatic_essence") : FEATURE_GIVES[g.type];
-    hudPrompt.textContent = `[E] ${verb} ${(ITEM_META[gives] || {}).name || g.type}`;
+    setTextIfChanged(hudPrompt, `[E] ${verb} ${(ITEM_META[gives] || {}).name || g.type}`);
     hudPrompt.style.display = "block";
   }
   else if (nearForge()) {
-    hudPrompt.textContent = nearPlacedForge()
-      ? "[C] Your Forge — craft & smelt" : "[C] Spawn Forge — craft & smelt";
+    setTextIfChanged(hudPrompt, nearPlacedForge()
+      ? "[C] Your Forge — craft & smelt" : "[C] Spawn Forge — craft & smelt");
     hudPrompt.style.display = "block";
   }
   else hudPrompt.style.display = "none";
@@ -20654,7 +20925,7 @@ function updateHUD(dayT) {
     const left = Math.max(0, me.deadUntil - Date.now());
     const mm = String(Math.floor(left / 60000)).padStart(2, "0");
     const ss = String(Math.floor((left % 60000) / 1000)).padStart(2, "0");
-    document.getElementById("deathTimer").textContent = `${mm}:${ss}`;
+    setTextIfChanged(document.getElementById("deathTimer"), `${mm}:${ss}`);
   }
 }
 

@@ -3658,6 +3658,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
        tiles, 203,433 draw ops, zero mismatches. What is pinned HERE is
        everything that can still be checked from the shipped file alone. */
     if (typeof window.drawGroundTile === 'function' && window.debugWorldInfo) {
+      /* S4: everything in this block measures the DIRECT ground path (its
+         per-tile cull, its tile count, its scan). The spec says such gates run
+         with GROUND_CACHE false; it is switched back on at the block's end. */
+      if (window.debugSetGroundCache) window.debugSetGroundCache(false);
       const g2a = () => window.debugWorldInfo().ground;
       const info2a = window.debugWorldInfo();
       const pump2a = (from, n) => {
@@ -3745,13 +3749,19 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       function missedTiles() {
         const g = g2a();
         const w2 = g.w, h2 = g.h;
+        /* S4: the game's projection now lands the camera on whole pixels
+           (camOffset: the world's screen offset is rounded once per camera).
+           This model follows the same projection — offset rounded, then
+           exact — so the comparison stays exact rather than drifting by the
+           half pixel the old fractional model would disagree on. */
+        const offX = Math.round(w2 / 2 - isoXa(g.camX, g.camY)), offY = Math.round(h2 / 2 - isoYa(g.camX, g.camY));
         const drawn = new Set();
         for (let s = g.minX + g.minY; s <= g.maxX + g.maxY; s++) {
           for (let tx = Math.max(g.minX, s - g.maxY); tx <= Math.min(g.maxX, s - g.minY); tx++) {
             const ty = s - tx;
-            const bcx = w2 / 2 + isoXa(tx + 0.5, ty + 0.5) - isoXa(g.camX, g.camY);
+            const bcx = offX + isoXa(tx + 0.5, ty + 0.5);
             if (bcx + IW2 < 0 || bcx - IW2 > w2) continue;
-            const bcy = h2 / 2 + isoYa(tx + 0.5, ty + 0.5) - isoYa(g.camX, g.camY);
+            const bcy = offY + isoYa(tx + 0.5, ty + 0.5);
             if (bcy + info2a.GROUND_DOWN < 0 || bcy - info2a.GROUND_UP > h2) continue;
             drawn.add(tx + ',' + ty);
           }
@@ -3762,8 +3772,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           for (let ty = Math.max(0, g.minY - PAD); ty <= Math.min(N2a - 1, g.maxY + PAD); ty++) {
             if (drawn.has(tx + ',' + ty)) continue;
             const zTop = window.variedZ(tx, ty);
-            const cx = w2 / 2 + isoXa(tx + 0.5, ty + 0.5) - isoXa(g.camX, g.camY);
-            const cy = h2 / 2 + isoYa(tx + 0.5, ty + 0.5) - isoYa(g.camX, g.camY) - zTop;
+            const cx = offX + isoXa(tx + 0.5, ty + 0.5);
+            const cy = offY + isoYa(tx + 0.5, ty + 0.5) - zTop;
             const hh = window.heightAt(tx, ty);
             const hS = window.heightAt(tx, ty + 1), hE = window.heightAt(tx + 1, ty);
             let bot = cy + IH2;
@@ -3873,6 +3883,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       if (before2a) window.debugSetPlayer({ x: before2a.x, y: before2a.y, diving: !!before2a.diving });
       pump2a(1600);
       results.push(['frames still run clean after the whole Expansion 2a sweep', !caught]);
+      if (window.debugSetGroundCache) window.debugSetGroundCache(true);
     } else {
       results.push(['Expansion 2a ground hooks are reachable', false]);
     }
@@ -7732,12 +7743,21 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
            that no sorted floor entity is left to get the order wrong. */
         results.push(['v52 B: the sand goes UNDER everything standing on it',
           (() => {
+            /* S4: the ground pass moved, unchanged, into drawGroundPass(),
+               which render() calls at the same point; both of its paths (the
+               direct loop and the baked chunks) paint through drawGroundTile.
+               The order asserted is the same: ground before the entity gather. */
             const r = code52.indexOf('function render(t)');
-            const g = code52.indexOf('drawGroundTile(ctx, tx, ty);', r);
+            const g = code52.indexOf('drawGroundPass(w, h, minX, maxX, minY, maxY);', r);
+            const gp = code52.indexOf('function drawGroundPass(');
+            const gpBody = code52.slice(gp, code52.indexOf('\n}', gp));
+            const bk = code52.indexOf('function gcBake(cx, cy)');
+            const bkBody = code52.slice(bk, code52.indexOf('\n}', bk));
             const e = code52.indexOf('const ents = [];', r);
             const gt = code52.indexOf('function drawGroundTile(c, tx, ty)');
             const gtBody = code52.slice(gt, code52.indexOf('\n}', gt));
-            return r > 0 && g > r && e > g &&
+            return r > 0 && g > r && e > g && gp > 0 && gpBody.indexOf('drawGroundTile(ctx, tx, ty);') > 0 &&
+                   bkBody.indexOf('drawGroundTile(c, tx, s2 - tx);') > 0 &&
                    gtBody.indexOf('const arenaK = arenaFloorAt(tx, ty, b);') > 0 &&
                    code52.indexOf('kind: "colofloor"') < 0;
           })()]);
@@ -8828,9 +8848,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
              })]);
           /* 4. Frame cost stays inside the existing per-frame budgets. */
           window.debugSetPlayer({ x: W55.SPAWN.x, y: W55.SPAWN.y, hp: 200 });
+          /* S4: the tile count is the DIRECT path's (with the cache on a
+             settled frame draws 0 tiles directly); measured with it off. */
+          if (window.debugSetGroundCache) window.debugSetGroundCache(false);
           for (let fr = 0; fr < 20; fr++) { window.update && window.update(0.05, fr * 50); window.render(fr * 50); }
           const parts = LI().particles;
           const tiles = window.debugWorldInfo().ground.tiles;
+          if (window.debugSetGroundCache) window.debugSetGroundCache(true);
           results.push([`v55 GATE 4: the ambient particle budget is unchanged — ${parts} alive against the 160 ceiling the spawner has always used`,
             parts <= 200]);
           results.push([`v55 GATE 4: and the ground pass still draws ${tiles} tiles a frame, so no part of this widened the viewport`,
@@ -11398,7 +11422,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
            a constant. */
         {
           const gp = gameScript.indexOf('drawGroundUnderlay();                               // Gauntlet S2 R4: closes the tile seams');
-          const loop = gameScript.indexOf('drawGroundTile(ctx, tx, ty);');
+          /* S4: drawGroundTile(ctx, tx, ty) now also appears earlier, in the
+             cache's direct fallback; the loop meant here is the one after the
+             underlay call, and the cached path's call must follow it too. */
+          const loop = gameScript.indexOf('drawGroundTile(ctx, tx, ty);', gp);
+          const cachedCall = gameScript.indexOf('const r = drawGroundCached(', gp);
           const fu = gameScript.indexOf('function drawGroundUnderlay()');
           const fuBody = gameScript.slice(fu, gameScript.indexOf('\n}', fu));
           window.drawGroundUnderlay();
@@ -11418,7 +11446,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           const mid = (h0, h1) => '#' + [1, 3, 5].map(i => Math.round((parseInt(h0.slice(i, i + 2), 16) + parseInt(h1.slice(i, i + 2), 16)) / 2).toString(16).padStart(2, '0')).join('');
           const pl = U.PAL[B2.PLAINS];
           results.push([`S2 R3/R4: no 1px lattice between ground tiles — ${cells} underlay cells, ${cellOk} the colour of the ground under them; ${sameCol}/${checked} tiles their own PAL pair`,
-            gp > 0 && loop > gp && gp > loop - 2500 &&
+            gp > 0 && loop > gp && gp > loop - 2500 && cachedCall > gp && cachedCall < loop &&
             (fuBody.match(/fillRect\(/g) || []).length === 1 && fuBody.indexOf('drawImage') < 0 && fuBody.indexOf('Gradient') < 0 &&
             gtBody.indexOf('c.lineTo(cx + IW2, cy);') > 0 && gameScript.indexOf('TILE_SEAM_PAD') < 0 &&
             cells >= 4 && cellOk === cells && checked > 300 && sameCol === checked &&
@@ -11543,6 +11571,127 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       window.debugWorldSeedSet(seedBeforeS2);
     } else {
       results.push(['S2: the measurement hooks exist', false]);
+    }
+
+    /* ===================== S4 Performance — ground cache, quiet HUD ===========
+       README "Performance — Ground Cache & Quiet HUD", Proof gates (jsdom half;
+       the pixel match and the frame rate are debug/run6.js, in a real browser). */
+    if (window.debugGroundCache && window.debugSetGroundCache && window.debugHudStats && window.debugSetCam) {
+      const G0 = window.debugGroundCache(), info4 = window.debugWorldInfo(), B4 = info4.B, N4 = info4.N;
+      results.push([`S4 A: the cache is on by default with the spec's tunables — GC_TILES ${G0.GC_TILES}, GC_MAX ${G0.GC_MAX}, GC_BAKE_PER_FRAME ${G0.GC_BAKE_PER_FRAME}`,
+        G0.on === true && G0.GC_TILES === 16 && G0.GC_MAX === 48 && G0.GC_BAKE_PER_FRAME === 2 &&
+        /let GROUND_CACHE = true;/.test(gameScript)]);
+      // Walk the camera over the world: 160 frames, a jump every 4 frames.
+      window.debugSetGroundCache(true);
+      const sizes = [];
+      let bakesBefore = window.debugGroundCache().bakes;
+      for (let f = 0; f < 160; f++) {
+        if (f % 4 === 0) {
+          const x = 60 + ((f * 7919) % (N4 - 120)), y = 60 + ((f * 104729) % (N4 - 120));
+          window.debugSetPlayer({ x: x + 0.5, y: y + 0.5, diving: false, hp: 100 });
+          window.debugSetCam(x + 0.5, y + 0.5);
+        }
+        window.render(1000 + f * 16);
+        sizes.push(window.debugGroundCache().size);
+      }
+      const G1 = window.debugGroundCache();
+      results.push([`S4 A: the LRU never holds more than GC_MAX chunks — peak ${Math.max(...sizes)} / ${G1.GC_MAX} over 160 frames, ${G1.evictions} evictions`,
+        Math.max(...sizes) <= G1.GC_MAX && G1.maxSize <= G1.GC_MAX && G1.evictions > 0]);
+      results.push([`S4 A: at most GC_BAKE_PER_FRAME bakes a frame — peak ${G1.maxBakesPerFrame}, ${G1.bakes - bakesBefore} bakes in all`,
+        G1.maxBakesPerFrame <= G1.GC_BAKE_PER_FRAME && G1.maxBakesPerFrame >= 1 && G1.bakes - bakesBefore > 10]);
+      results.push(['S4 A: an unbaked visible chunk is drawn by the direct path that frame, so nothing pops in',
+        G1.directChunks > 0 && G1.blits > 0]);
+      // Standing still, every visible chunk ends up baked and nothing is drawn directly.
+      {
+        const sp = window.debugS2Info().SPAWN;
+        window.debugSetPlayer({ x: sp.x + 0.5, y: sp.y + 0.5, diving: false, hp: 100 });
+        window.debugSetCam(sp.x + 0.5, sp.y + 0.5);
+        for (let f = 0; f < 40; f++) window.render(5000 + f * 16);
+        const before = window.debugGroundCache();
+        window.render(6000);
+        const after = window.debugGroundCache();
+        results.push([`S4 A: standing still the ground is all blits — ${after.blits - before.blits} chunk blits and ${after.directChunks - before.directChunks} direct chunks in a settled frame, ${after.ground.tiles} tiles drawn directly`,
+          after.blits - before.blits > 0 && after.directChunks === before.directChunks && after.ground.tiles === 0 && after.bakesThisFrame === 0]);
+      }
+      // A world reset (everything that clears tileCache) empties the cache.
+      {
+        const r0 = window.debugGroundCache();
+        const was = window.debugWorldSeedSet(424242);
+        const r1 = window.debugGroundCache();
+        window.debugWorldSeedSet(was);
+        results.push([`S4 A: a world reset empties the cache — ${r0.size} chunks before, ${r1.size} after (tileCache.clear itself drops it)`,
+          r0.size > 0 && r1.size === 0 && r1.resets > r0.resets &&
+          gameScript.indexOf('tileCache.clear = function () { clearTiles(); groundCacheReset(); };') > 0]);
+      }
+      // Interiors never touch it.
+      {
+        let spot = null;
+        for (let y = 0; y < N4 && !spot; y += 3) for (let x = 0; x < N4; x += 3) if (window.biomeAt(x, y) === B4.UWCAVE) { spot = [x, y]; break; }
+        if (spot) {
+          window.debugSetPlayer({ x: spot[0] + 0.5, y: spot[1] + 0.5, diving: true, hp: 100, breath: 30 });
+          window.enterInterior(spot[0], spot[1], B4.UWCAVE);
+          const i0 = window.debugGroundCache();
+          for (let f = 0; f < 30; f++) window.render(9000 + f * 16);
+          const i1 = window.debugGroundCache();
+          window.exitInterior();
+          results.push([`S4 A: interiors never touch the cache — ${i1.bakes - i0.bakes} bakes, ${i1.blits - i0.blits} blits, ${i1.interiorTouches} interior calls over 30 cave frames`,
+            i1.bakes === i0.bakes && i1.blits === i0.blits && i1.interiorTouches === 0 && i1.size === i0.size]);
+        } else results.push(['S4 A: found a cave to test the interior rule in', false]);
+      }
+      results.push(['S4 A: a chunk is baked by the same drawGroundTile, in the live pass\'s diagonal order, translated to a fixed origin',
+        (() => {
+          const f = gameScript.indexOf('function gcBake(cx, cy)');
+          const body = gameScript.slice(f, gameScript.indexOf('\n}', f));
+          return f > 0 && body.indexOf('for (let tx = lo; tx <= hi; tx++) drawGroundTile(c, tx, s2 - tx);') > 0 &&
+                 body.indexOf('c.setTransform(1, 0, 0, 1, GC_PADX - ox, GC_PADY - oy);') > 0;
+        })()]);
+      results.push(['S4 A: chunks are composited back to front by cx + cy',
+        (() => {
+          const f = gameScript.indexOf('function drawGroundCached(');
+          const body = gameScript.slice(f, gameScript.indexOf('\n}', f));
+          return f > 0 && body.indexOf('for (let s = c0x + c0y; s <= c1x + c1y; s++) {') > 0 && body.indexOf('const cy = s - cx;') > 0;
+        })()]);
+      // The snapped camera: whole-pixel offset, and the two conversions still invert.
+      {
+        window.debugSetCam(1234.37, 987.61);
+        const a = window.worldToScreen(1200, 1000, 0), b2 = window.worldToScreen(1201.25, 999.5, 7);
+        const back = window.screenToWorld(400.5, 300.25), fwd = window.worldToScreen(back[0], back[1], 0);
+        results.push([`S4 A: the camera's screen offset is whole pixels and worldToScreen / screenToWorld still invert (${a.join(',')}; round trip off by ${Math.hypot(fwd[0] - 400.5, fwd[1] - 300.25).toExponential(1)})`,
+          Number.isInteger(a[0]) && Number.isInteger(a[1]) && Math.abs(b2[0] - a[0] - 1.75 * 22) < 1e-9 &&
+          Math.hypot(fwd[0] - 400.5, fwd[1] - 300.25) < 1e-6]);
+      }
+      // HUD: 120 still frames, then one tile of movement.
+      {
+        const sp = window.debugS2Info().SPAWN;
+        window.debugSetV35 && window.debugSetV35({ tutorialDone: true, tutorialActive: false });
+        window.debugSetPlayer({ x: sp.x + 0.5, y: sp.y + 0.5, diving: false, hp: 100 });
+        window.debugSetCam(sp.x + 0.5, sp.y + 0.5);
+        window.render(20000);
+        const h0 = window.debugHudStats(), t0 = Date.now();
+        for (let f = 0; f < 120; f++) window.render(20016 + f * 16);
+        const h1 = window.debugHudStats(), ms = Date.now() - t0;
+        const windows = Math.ceil(ms / h1.MAP_REDRAW_MS) + 1;
+        results.push([`S4 B: standing still for 120 frames the compass is rebuilt ${h1.compassBuilds - h0.compassBuilds}x (at most once)`,
+          h1.compassBuilds - h0.compassBuilds <= 1]);
+        results.push([`S4 B: and the minimap redraws ${h1.mapDraws - h0.mapDraws}x in ${ms} ms — at most once per ${h1.MAP_REDRAW_MS} ms window (${windows} windows)`,
+          h1.mapDraws - h0.mapDraws <= windows]);
+        results.push([`S4 B: an unchanged HUD string is not rewritten — ${h1.hudWritesSkipped - h0.hudWritesSkipped} writes skipped, ${h1.hudWritesDone - h0.hudWritesDone} done over those frames`,
+          h1.hudWritesSkipped - h0.hudWritesSkipped >= 120 && h1.hudWritesDone - h0.hudWritesDone <= 6]);
+        window.debugSetPlayer({ x: sp.x + 1.5, y: sp.y + 0.5, diving: false, hp: 100 });
+        window.debugSetCam(sp.x + 1.5, sp.y + 0.5);
+        window.render(22000);
+        const h2 = window.debugHudStats();
+        results.push([`S4 B: moving one tile triggers a minimap redraw (${h2.mapDraws - h1.mapDraws})`, h2.mapDraws - h1.mapDraws === 1]);
+      }
+      results.push(['S4 C: the canvas stays at CSS pixels — resize() reads RENDER_SCALE, which is 1',
+        window.debugHudStats().RENDER_SCALE === 1 &&
+        gameScript.indexOf('canvas.width = Math.round(innerWidth * RENDER_SCALE); canvas.height = Math.round(innerHeight * RENDER_SCALE);') > 0 &&
+        /THE PIXEL-RATIO DECISION, RECORDED/.test(gameScript)]);
+      results.push(['S4: the water/lava animation loop walks only the tiles whose drawing can reach the screen',
+        gameScript.indexOf('const ANIM_MX = 2 * IW2, ANIM_UP = GROUND_UP, ANIM_DOWN = GROUND_DOWN;') > 0 &&
+        gameScript.indexOf('for (let tx = axLo; tx <= axHi; tx++) {') > 0]);
+    } else {
+      results.push(['S4: the ground-cache and HUD hooks exist', false]);
     }
 
     let allOk = true;
