@@ -53,6 +53,224 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-20 (Performance — Ground Cache & Quiet HUD)
+
+README's locked spec (Gauntlet S4), the one `NEXT_BUILD.md` points at, built
+in full: the ground is baked into chunk canvases and composited, the HUD only
+writes when something changed, and the pixel-ratio decision is recorded rather
+than changed. Rendering-scope changes:
+
+- **PART A — the ground is baked, not re-rasterised.** Behind `GROUND_CACHE`
+  (ships on) the world splits into `GC_TILES` 16-tile chunks held in an LRU of
+  `GC_MAX` 48 offscreen canvases, at most `GC_BAKE_PER_FRAME` 2 baked a frame.
+  A chunk is baked by **the existing `drawGroundTile()`**, in the live pass's
+  own diagonal `tx + ty` order, into a context translated so the camera term
+  cancels — a move, not a second painter. Chunks composite back to front by
+  `cx + cy`, which is sufficient and proved rather than asserted: two tiles'
+  paint can only overlap when `|dtx - dty| <= 1`, and together with "drawn
+  later" that forces both chunk indices to be non-decreasing. Blits are
+  **clipped to the viewport** — a chunk canvas is the bounding box of a block
+  of diamonds, so blitting all of it was 6.3 Mpx of compositing against a
+  0.92 Mpx frame. A chunk not yet baked is drawn the old way that frame, so
+  nothing pops in. The cache clears wherever `tileCache` does. **Interiors
+  never reach it** (the overworld ground pass already does not run in a cave),
+  and the water ripple, foam and lava flicker pass stays live per frame, after
+  the ground, exactly as before.
+- **The direct path is kept byte for byte** as what `GROUND_CACHE` false runs,
+  so the pixel gate compares the cache against the code that shipped rather
+  than a tidied copy of it.
+- **PART B — the HUD stops talking to itself.** The compass dial rebuilt its
+  `innerHTML` — nine bearings, a greedy collision layout against the ticks and
+  dots, then a subtree parse — on every frame the player stood still. It now
+  rebuilds only when the ordered list of label-plus-bearing-rounded-to-1°
+  changes. The minimap redraws only on a tile step, a change in who is in the
+  window, or `MAP_REDRAW_MS` 250. The text cards carry the guard **at their
+  declaration**, so not one of `updateHUD()`'s twenty prompt branches changed.
+  Measured: 120 frames standing still, **0 dial rebuilds and 336 skipped card
+  writes against 24 real ones**.
+- **PART C — the pixel-ratio decision, written down.** The canvas stays at
+  CSS-pixel size, deliberately, because this build exists precisely because
+  the frame is rasteriser-bound and a phone at dpr 3 would be nine times the
+  pixels. `RENDER_SCALE` records it. It is a marker rather than a dial, and
+  the comment says so and says what turning it would really cost.
+
+**Measured in a real browser** (headless Chromium 1280x720, the new
+`debug/perf.js`, which exists because jsdom stubs the canvas and can count
+calls but never rasterise a pixel or measure a millisecond):
+
+- **Pixel match: 0.0100% of the frame at worst**, against the spec's 0.5%
+  budget — 92 pixels of 921,600 at Spawn, 3 at a coastline, 0 at the volcano
+  rim, 0 at a forest edge. Every determinism control frame differed by **0
+  pixels**, which is what makes those four numbers mean the ground rather than
+  an animation that happened to move between captures.
+- **Frame rate: the spec's 1.4x gate FAILED.** See judgment call 1 — it is the
+  headline of the night, and `perf.js` still asserts the spec's number.
+
+**Visual check** (`debug/shot.js`, real Chromium, final build, 23 shots, no
+page errors): Spawn is clean flat-shaded ground with no lattice and no chunk
+seam anywhere an edge falls; the Colosseum — the widest ground view in the
+tour — shows the sand floor, the paving breaking into grass, every column and
+lintel, with no boundary visible across it; the Volcano keeps its stepped cone
+on the lava moat with the crust plates and glowing crack network, and at night
+the lava still punches through the dark as one flat fill with the cone cut out
+of it; **the fight shot — the one frame of the tour taken while the screen
+shake is running, which is the case the pixel gate cannot reach — has crisp
+biome edges and sharp stepped cliffs**, no blur and no softness seam between a
+baked and a directly drawn chunk; both cave interiors are flat dark backdrops
+with no overworld ground behind them, which is the cache never being reached.
+Nothing in the tour looks different from the pre-build shots, which is the
+whole point of the version.
+
+**Gate integrity:** run4 1870 -> **1904 PASS, 0 FAIL** (run3 `CAUGHT ERROR:
+none`; run5 `CAUGHT: none`, 1366 -> 1504 coverage draws; parse floor intact,
+script body 1.25M chars). No gate silenced, none loosened, and **no
+pre-existing gate line in `debug/` was changed or removed at all** — the
+diff there is pure addition. Every Expansion 2a ground gate (the cull proof,
+the bounds, `groundStats`) still passes unmodified with the cache on, because
+`drawGroundChunks()` applies the same two culls character for character and
+reports identical `tiles`/`scanned`; a new gate measures that at five camera
+positions. Several of this build's OWN new gates were rewritten after the
+doubt passes found them weak, every one in the stronger direction: the
+chunk-order gate filtered on the very premise it claimed to prove, so it now
+**measures** a real tile's painted reach over 900 tiles at terrain heights -1
+to 4 (widest 22.0px either side of centre against IW2 22, 82.1px above
+baseline against GROUND_UP 96) before enumerating a deliberately wider overlap
+window; the never-thrash gate was a grep, so it now lowers the cap under a
+real viewport and pans the camera across it; and a new gate drives a
+degenerate `GC_MAX` because that value used to crash the frame. No
+README-listed tunable changed. `GC_MAX` is `let` rather than `const` only so a
+gate can lower it, and still ships at the spec's 48. No new gradient, no new
+palette entry, no new hex, no service_role key.
+
+## JUDGMENT CALLS THIS VERSION
+
+1. **⚠️ THE SPEC'S 1.4x FRAME-RATE GATE FAILED, AND IT IS THE ONE THING TO
+   LOOK AT IN THE MORNING. This is the honest number, not a rounding.**
+   Measured on the final build, headless Chromium 1280x720, five interleaved
+   two-second samples each way, medians: **Colosseum 39.2 -> 48.0 fps (1.23x),
+   Bazaar 26.4 -> 30.2 fps (1.15x)**. The spec asks for 1.4x at both. Across
+   five separate runs of the gate the ratio landed between 1.15x and 1.42x;
+   this is a noisy measurement on a shared box and the spread is reported
+   rather than the best of it.
+
+   **Why, measured rather than argued.** A third measurement was taken with
+   the ground pass removed from the frame ENTIRELY, which is the ceiling any
+   ground optimisation can reach: Colosseum 37.0 -> 54.4 fps, Bazaar 27.2 ->
+   39.3 fps — a **1.47x and 1.44x ceiling**, and an earlier run of the same
+   probe put them at 1.36x and 1.40x. The spec's bar therefore sits at or
+   above the ceiling for deleting the ground altogether, inside the spread of
+   the measurement itself. The ground is **31-32% of the frame** at those two
+   spots; this build takes it to **6-9%**, i.e. it removes roughly three
+   quarters of what it set out to remove, and the remaining frame is entity
+   work the spec does not cover.
+
+   **What changed under the spec.** The spec was written against a profile
+   taken 2026-10-12, which put the ground at **51.5%** of the frame — at that
+   share, 1.4x needed only about half the ground removed and was comfortably
+   reachable. Gauntlet S2 then added the Colosseum set piece, the volcano
+   cone, actor discs, plated labels and ambient life, all of it entity-pass
+   work. The ground's share roughly halved, and the reachable ceiling halved
+   with it. The number is stale, not the build.
+
+   **`debug/perf.js` still asserts the spec's 1.4x and still reports FAIL.**
+   It was deliberately NOT relaxed to fit what shipped — that is exactly the
+   move gate-integrity exists to catch. The owner's call: re-target the
+   number against the current profile, or make the entity pass the next
+   performance stage. Everything else in the spec passes.
+2. **The owner's note that the cache "should also make the seam underlay
+   unnecessary" (GAUNTLET_PROGRESS, 2026-10-15) was NOT acted on.** The
+   locked spec does not ask for it, the S2 R3/R4 gate measures the underlay,
+   and removing it is a look change rather than a performance one: a baked
+   chunk carries the same part-covered seam pixels the live pass does, so the
+   underlay is still what fills them. Left exactly as it was, flagged here.
+3. **The ground is snapped to whole pixels and the world standing on it is
+   not.** A cached chunk must blit at a whole pixel or the browser resamples
+   it, so the ground sits up to half a pixel off the foam, the ripples and
+   every entity, and the offset changes as the camera pans. Measured against
+   the spec's own gate at 0.0099% of the frame, and invisible on the two
+   things fine enough to show it (a 2.4px anti-aliased foam stroke, an 80px
+   underlay block). Named in the code because a gate comparing ground to
+   ground can never see it.
+4. **Your own minimap dot now steps at 4 Hz** rather than every frame, as do
+   a chopped tree's fleck and other players' dots. That is what the spec's
+   three redraw reasons plus a 250 ms floor come to. `MAP_REDRAW_MS` is a
+   tunable: lower it if the stutter on your own marker reads badly.
+5. **`GC_MAX` is `let` rather than `const`**, same value, purely so a gate
+   can lower the cap under a normal viewport and genuinely drive the
+   never-thrash path instead of asserting it is unreachable.
+
+## WHAT THE FRESH-CONTEXT REVIEWS FOUND
+
+**Doubt pass** (`.claude/skills/doubt-driven-development`): **two cycles**,
+a fresh Opus reviewer each time, handed the diff and the spec text only —
+never the claim, never the reasoning. **Cross-model skipped: non-interactive
+context.** Both cycles were worth running, and the second was worth running
+*because* the first one's fixes were new code.
+
+**Cycle 1 — ten findings against the first build. Seven actionable, fixed:**
+
+- **The screen shake defeated the whole rounding argument.** `render()` draws
+  the entire frame through `ctx.translate(shX, shY)`, a fresh fractional
+  random for the 220 ms after *any* hit — so a chunk blitted at a whole pixel
+  in USER space landed on a fractional DEVICE pixel and the browser
+  bilinearly resampled the entire ground, with a new phase every frame,
+  throughout combat. That is exactly the swimming Expansion 2a removed,
+  reintroduced, at the moment the player is most likely to be looking at it —
+  and the pixel gate renders still frames, so it could never have seen it.
+  The ground pass now rounds against the shake and clips in device space.
+- **The LRU thrashed above `GC_MAX` visible chunks**: every bake evicted a
+  chunk the same frame had already blitted, forever, which is strictly slower
+  than no cache at all. It now declines to grow instead.
+- **`hudCard` cached each property separately**, so a future mixed-setter
+  call site would have frozen a card for the rest of the session.
+- **`updateUnmakingHud()` and `updateBossHud()` were still writing every
+  frame** — the first of them through the ten most frame-rate-sensitive
+  seconds in the game. Both are guarded now.
+- **A world reset could leave the previous world's terrain on the minimap**
+  for a redraw window.
+- **The `RENDER_SCALE` comment was wrong**: it said raising the dial needed
+  one more edit, when it would in fact render the whole game at half size.
+- **This build's own chunk-order gate was vacuous** — it filtered on the very
+  premise it claimed to prove, so it could not fail.
+
+Two were classified as trade-offs and documented (the half pixel, the 4 Hz
+minimap dot); one was noise. The reviewer independently tried and **failed**
+to break the compositing order, the identical `groundStats` counting, the
+chunk padding, the cache invalidation, the numeric key, the blit clipping and
+the baked-vs-direct pixel phase.
+
+**Cycle 2 — the fixes themselves, and it found a crash I had just added.**
+
+- **⚠️ `GC_MAX = 0` crashed the frame, and only because of cycle 1's fix.**
+  Sizing an evicted canvas to 0 is right, but the eviction ran *after* the
+  insert — so at a cap of 0 the LRU head was the entry just inserted, and
+  `gcBake()` returned a canvas it had itself destroyed. `drawImage` on a 0x0
+  source throws, out of `render()`, every frame. Before that fix the same
+  value was harmless. Room is now made **before** the insert, and a chunk
+  used this frame or last is never the victim — which fixes the crash and the
+  next finding together.
+- **The thrash guard did not cover the case that matters.** A working set
+  that *straddles* the cap (~49 visible chunks against 48 at 1440p,
+  alternating as the camera pans) is false on half the frames, so half of
+  them thrashed anyway. Protecting the last two frames' chunks removes it at
+  every viewport, and the gate now pans a camera across a lowered cap instead
+  of sitting statically over it.
+- **The per-frame bake budget evaporated exactly when it was needed**:
+  `gcBakesFrame` counted successes, so on a phone whose `getContext` starts
+  refusing, *every* visible chunk was attempted every frame. The budget is
+  spent on the attempt now.
+- Three comments were still not true — "there is no `ctx.scale()` anywhere"
+  (there are five, all in the entity pass), "integer offsets inside its own
+  canvas" (`variedZ` jitter is fractional), and a memory note that stopped one
+  resolution short of the one that matters. All corrected.
+- Smaller: the harness cache hooks did not release canvases or restore state
+  on a throw; `hudCard` recorded a write that had not happened when the
+  element was missing; `updateBossHud` counted a missing node as a skipped
+  write. All fixed, and the cap and cache gates now run under `try/finally`.
+
+Every actionable finding from both cycles is fixed and carries its own new
+gate. Nothing was left open.
+
 ### 2026-10-16 (Gauntlet S2 rounds 2–4 — the Volcano, actors you can find, seams, surf)
 
 Showcase polish loop, rounds 2, 3 and 4 (the last the stage allows). Each

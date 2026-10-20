@@ -30,6 +30,37 @@ const drawOpsBy = Object.create(null);
    every canvas call the whole harness makes, and a rest parameter would
    allocate an array on each of them whether anything is recording or not. */
 let ellipseTrace = null;
+/* Performance: the painted EXTENT of a draw, so a gate can measure how far a
+   single ground tile actually reaches instead of assuming it. Set to a fresh
+   {x0,x1,y0,y1} to record, null to stop — same shape and same cost argument
+   as ellipseTrace above: `arguments` rather than a rest parameter, because
+   this sits on every canvas call the whole harness makes. */
+let coordTrace = null;
+function traceXY(prop, a) {
+  if (!coordTrace) return;
+  let x, y, rx = 0, ry = 0;
+  if (prop === 'moveTo' || prop === 'lineTo') { x = a[0]; y = a[1]; }
+  else if (prop === 'fillRect' || prop === 'strokeRect' || prop === 'clearRect') {
+    if (typeof a[0] !== 'number') return;
+    coordTrace.x0 = Math.min(coordTrace.x0, a[0]); coordTrace.x1 = Math.max(coordTrace.x1, a[0] + (a[2] || 0));
+    coordTrace.y0 = Math.min(coordTrace.y0, a[1]); coordTrace.y1 = Math.max(coordTrace.y1, a[1] + (a[3] || 0));
+    return;
+  }
+  else if (prop === 'arc') { x = a[0]; y = a[1]; rx = ry = a[2] || 0; }
+  else if (prop === 'ellipse') { x = a[0]; y = a[1]; rx = a[2] || 0; ry = a[3] || 0; }
+  else if (prop === 'quadraticCurveTo' || prop === 'bezierCurveTo') {
+    for (let i = 0; i + 1 < a.length; i += 2) {
+      if (typeof a[i] !== 'number') continue;
+      coordTrace.x0 = Math.min(coordTrace.x0, a[i]); coordTrace.x1 = Math.max(coordTrace.x1, a[i]);
+      coordTrace.y0 = Math.min(coordTrace.y0, a[i + 1]); coordTrace.y1 = Math.max(coordTrace.y1, a[i + 1]);
+    }
+    return;
+  }
+  else return;
+  if (typeof x !== 'number' || typeof y !== 'number') return;
+  coordTrace.x0 = Math.min(coordTrace.x0, x - rx); coordTrace.x1 = Math.max(coordTrace.x1, x + rx);
+  coordTrace.y0 = Math.min(coordTrace.y0, y - ry); coordTrace.y1 = Math.max(coordTrace.y1, y + ry);
+}
 /* World Check Fixes PART F: gradients and their colour stops, counted on
    their own two counters rather than through drawOps/drawOpsBy — gate F has
    to say "the sky gradient's colour stops were not drawn this frame", and
@@ -53,6 +84,7 @@ const ctx2d = new Proxy({}, {
         drawOps++; drawOpsBy[prop] = (drawOpsBy[prop] || 0) + 1;
         if (prop === 'ellipse' && ellipseTrace)
           ellipseTrace.push([arguments[2], arguments[3]]);
+        if (coordTrace) traceXY(prop, arguments);
       };
     return undefined;
   },
@@ -11543,6 +11575,578 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       window.debugWorldSeedSet(seedBeforeS2);
     } else {
       results.push(['S2: the measurement hooks exist', false]);
+    }
+
+    /* =====================================================================
+       PERFORMANCE — GROUND CACHE & QUIET HUD
+       The spec's own proof gates, minus the two that need a real rasteriser
+       and a real clock (pixel match and frame rate), which live in
+       debug/perf.js because jsdom stubs the canvas and can only count calls.
+       ===================================================================== */
+    if (window.debugGroundCacheInfo && window.debugHudInfo) {
+      const seedBeforePerf = window.debugWorldSeedSet(123456789);
+      const GC = () => window.debugGroundCacheInfo();
+      const HU = () => window.debugHudInfo();
+      const pumpP = (from, n) => {
+        for (let f = from; f < from + (n || 3); f++) {
+          const q = rafQ; rafQ = [];
+          for (const cb of q) { try { cb(f * 50); } catch (e) { if (!caught) caught = e; } }
+        }
+      };
+      const Wp = window.debugWorldInfo();
+      window.debugSetV35 && window.debugSetV35({ tutorialDone: true, tutorialActive: false });
+
+      /* ---- PART A: the cache is real, and it is behind the switch ------ */
+      {
+        const g0 = GC();
+        results.push([`PART A: the ground cache is behind GROUND_CACHE and ships ON (GC_TILES ${g0.GC_TILES}, GC_MAX ${g0.GC_MAX}, GC_BAKE_PER_FRAME ${g0.GC_BAKE_PER_FRAME})`,
+          g0.on === true && g0.GC_TILES === 16 && g0.GC_MAX === 48 && g0.GC_BAKE_PER_FRAME === 2 &&
+          gameScript.indexOf('let GROUND_CACHE = true;') > 0 &&
+          gameScript.indexOf('let GC_MAX = 48;') > 0]);
+        /* The chunk canvas has to be able to hold a chunk's tiles PLUS
+           everything that hangs off their edges, and the padding is the
+           file's own proved bounds rather than a guess. */
+        results.push([`PART A: a chunk canvas (${g0.GC_W}x${g0.GC_H}) covers its 16x16 block plus GROUND_UP/GROUND_DOWN and a half tile each side, so no cliff face or snow spike is clipped`,
+          g0.GC_W === (g0.GC_TILES - 1) * 2 * g0.IW2 + 2 * g0.GC_PAD_X &&
+          g0.GC_H === (g0.GC_TILES - 1) * 2 * g0.IH2 + g0.GROUND_UP + g0.GROUND_DOWN &&
+          g0.GC_PAD_X >= g0.IW2 && g0.GROUND_UP === 4 * g0.HZ + 9 + 15 + 8]);
+        /* The bake is drawGroundTile()'s own output, in the live pass's own
+           diagonal order, and it is the EXISTING function — not a copy. */
+        const bk = gameScript.indexOf('function gcBake(cx, cy)');
+        const bkBody = gameScript.slice(bk, gameScript.indexOf('\n}', bk));
+        results.push(['PART A: a chunk is baked by the existing drawGroundTile(), in the live pass\'s own diagonal tx + ty order',
+          bk > 0 && bkBody.indexOf('drawGroundTile(cc, tx, s - tx)') > 0 &&
+          bkBody.indexOf('for (let s = tx0 + ty0; s <= tx1 + ty1; s++)') > 0 &&
+          bkBody.indexOf('cc.translate(') > 0]);
+        /* ⚠️ THE ORDER PROOF, enumerated rather than asserted. Two tiles'
+           paint can only overlap if |dtx - dty| <= 1 (a tile spans +/-IW2
+           about its centre and isoX scales dtx - dty). For every such offset
+           that also needs drawing LATER (dtx + dty > 0), both chunk indices
+           must be >= the earlier tile's — otherwise compositing chunks by
+           cx + cy could put a cliff face over a tile that should cover it. */
+        /* ⚠️ THE PREMISE IS MEASURED, NOT ASSUMED — a doubt pass found the
+           first version of this gate vacuous. The order argument rests on
+           "a tile's paint never reaches further than IW2 either side of its
+           own centre", and the enumeration below FILTERS on exactly that,
+           so filtering alone can only ever restate it. The reach is
+           therefore measured first, off real tiles, by recording every
+           coordinate drawGroundTile() hands the canvas. If a future change
+           widens a tile, this fails rather than passing green. The same
+           trace measures the vertical reach against GROUND_UP/GROUND_DOWN,
+           which is what says a chunk canvas cannot clip a cliff face. */
+        {
+          const W0 = window.debugWorldInfo();
+          let worstX = 0, worstUp = 0, worstDown = 0, tilesMeasured = 0, worstAt = null;
+          let heights = {};
+          /* ⚠️ SAMPLED WHERE THE GROUND IS TALL, not only where it is flat.
+             GROUND_UP exists for a height-4 PEAK carrying its jitter and its
+             snow spike, and GROUND_DOWN for a cliff face hanging over a
+             neighbour — a sample of level plains measures neither and would
+             report a comfortable 11px either way while proving nothing. The
+             three centres below are Spawn, Mount Dragonspire and the Volcano,
+             which is where this world keeps its elevation. The measurement is
+             relative to each tile's OWN baseline, so the camera cancels and
+             any one will do. */
+          const centres = [W0.SPAWN, W0.MOUNT, W0.VOLCANO];
+          for (let k = 0; k < 900; k++) {
+            const C = centres[k % 3];
+            const tx = Math.floor(C.x) - 60 + (k * 37) % 120;
+            const ty = Math.floor(C.y) - 60 + (k * 53) % 120;
+            if (tx < 1 || ty < 1 || tx >= g0.N - 1 || ty >= g0.N - 1) continue;
+            heights[window.heightAt(tx, ty)] = (heights[window.heightAt(tx, ty)] || 0) + 1;
+            const [cxT, cyT] = window.worldToScreen(tx + 0.5, ty + 0.5, 0);   // the z = 0 baseline
+            coordTrace = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity };
+            try { window.drawGroundTile(ctx2d, tx, ty); } catch (e) { if (!caught) caught = e; }
+            const tr = coordTrace; coordTrace = null;
+            if (!isFinite(tr.x0)) continue;
+            tilesMeasured++;
+            const rx = Math.max(cxT - tr.x0, tr.x1 - cxT);
+            const up = cyT - tr.y0, down = tr.y1 - cyT;
+            if (rx > worstX) { worstX = rx; worstAt = tx + ',' + ty; }
+            worstUp = Math.max(worstUp, up); worstDown = Math.max(worstDown, down);
+          }
+          const hSeen = Object.keys(heights).map(Number).sort((a, b) => a - b);
+          console.log(`PERF A: ${tilesMeasured} real tiles measured across heights [${hSeen.join(',')}] — widest paint ${worstX.toFixed(1)}px either side of centre ` +
+                      `(IW2 ${g0.IW2}, GC_PAD_X ${g0.GC_PAD_X}), reaching ${worstUp.toFixed(1)}px above and ` +
+                      `${worstDown.toFixed(1)}px below its baseline (GROUND_UP ${g0.GROUND_UP}, GROUND_DOWN ${g0.GROUND_DOWN})`);
+          results.push([`PART A: measured on ${tilesMeasured} real tiles over ${hSeen.length} terrain heights, a tile's paint stays inside IW2 either side of its centre (worst ${worstX.toFixed(1)} of ${g0.IW2}${worstAt ? ' at ' + worstAt : ''}) and inside GROUND_UP/GROUND_DOWN vertically (${worstUp.toFixed(1)}/${worstDown.toFixed(1)} of ${g0.GROUND_UP}/${g0.GROUND_DOWN}) — so a chunk canvas cannot clip one, and the overlap window below is the right one`,
+            tilesMeasured >= 600 && hSeen.length >= 3 && Math.max.apply(null, hSeen) >= 2 &&
+            worstX > 0 && worstX <= g0.IW2 &&
+            worstUp > 0 && worstUp <= g0.GROUND_UP && worstDown > 0 && worstDown <= g0.GROUND_DOWN &&
+            g0.GC_PAD_X >= worstX]);
+
+          /* With the reach measured, the enumeration. The window is DELIBERATELY
+             wider than the measurement needs (|dtx - dty| <= 2 against a
+             measured reach inside one tile width), so the conclusion survives a
+             tile growing by half a tile before this gate would have to change. */
+          let violations = 0, pairs = 0, checked = 0;
+          const T = g0.GC_TILES;
+          for (let dtx = -4; dtx <= 4; dtx++) for (let dty = -4; dty <= 4; dty++) {
+            if (Math.abs(dtx - dty) > 2) continue;          // wider than any tile can overlap
+            if (dtx + dty <= 0) continue;                   // the other tile is the later one
+            pairs++;
+            for (let px = 0; px < T; px++) for (let py = 0; py < T; py++) {
+              const ax = 160 + px, ay = 160 + py, bx = ax + dtx, by = ay + dty;
+              const ca = Math.floor(ax / T) + Math.floor(ay / T);
+              const cb = Math.floor(bx / T) + Math.floor(by / T);
+              checked++;
+              /* the later tile's chunk must composite no earlier */
+              if (cb < ca) violations++;
+              /* and two DISTINCT chunks with the same cx + cy must hold no
+                 overlapping pair at all, or the arbitrary tie-break between
+                 them would be deciding the picture */
+              if (cb === ca && (Math.floor(ax / T) !== Math.floor(bx / T) ||
+                                Math.floor(ay / T) !== Math.floor(by / T))) violations++;
+            }
+          }
+          results.push([`PART A: compositing chunks back-to-front by cx + cy keeps every cliff-face overlap correct — ${pairs} overlapping tile offsets x ${T * T} in-chunk phases (${checked} pairs), ${violations} violations`,
+            pairs >= 12 && checked > 3000 && violations === 0 &&
+            gameScript.indexOf('for (let cs = cx0 + cy0; cs <= cx1 + cy1; cs++)') > 0]);
+        }
+        /* Nothing animated can be in there, and that is a property of the
+           function rather than a promise: drawGroundTile reads no clock. */
+        {
+          const gt = gameScript.indexOf('function drawGroundTile(c, tx, ty)');
+          const body = gameScript.slice(gt, gameScript.indexOf('\n}\n', gt));
+          const strip = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+          results.push(['PART A: nothing animated can be baked — drawGroundTile() reads no clock and draws only into the context it is handed',
+            gt > 0 && strip.length > 4000 &&
+            strip.indexOf('performance.now') < 0 && strip.indexOf('Date.now') < 0 &&
+            strip.indexOf('getDayT') < 0 && /\bctx\b/.test(strip) === false]);
+          /* and the live ripple/foam/lava pass is still AFTER the ground and
+             still per frame, which is where the animation lives */
+          const rip = gameScript.indexOf('// Water ripples + lava flicker');
+          const loop = gameScript.indexOf('drawGroundTile(ctx, tx, ty);');
+          results.push(['PART A: the water ripple, foam and lava flicker pass still runs after the ground, live, every frame',
+            rip > loop && gameScript.indexOf('const cyc = (t / 1400 + ph) % 1;') > 0]);
+        }
+      }
+
+      /* ---- PART A: driven — the LRU, the bake budget, the invalidation -- */
+      {
+        window.debugSetGroundCache(true);
+        window.debugGroundCacheReset(true);
+        /* Walk the camera a long way, a chunk at a time, so far more than
+           GC_MAX distinct chunks are asked for. */
+        let overCap = 0, overBudget = 0, frames = 0, maxSize = 0;
+        for (let i = 0; i < 60; i++) {
+          window.debugSetPlayer({ x: Wp.SPAWN.x + i * 11 + 0.5, y: Wp.SPAWN.y + i * 7 + 0.5 });
+          pumpP(3000 + i * 10, 1);
+          frames++;
+          const g = GC();
+          maxSize = Math.max(maxSize, g.size);
+          if (g.size > g.GC_MAX) overCap++;
+          if (g.bakesFrame > g.GC_BAKE_PER_FRAME) overBudget++;
+        }
+        const gEnd = GC();
+        console.log(`PERF A: ${frames} frames across the world — ${gEnd.bakes} bakes, ${gEnd.blits} blits, ` +
+                    `${gEnd.direct} tiles drawn direct while warming, ${gEnd.evicts} chunks evicted, ` +
+                    `cache peaked at ${maxSize} of ${gEnd.GC_MAX}`);
+        results.push([`PART A: the LRU never holds more than GC_MAX chunks (peaked at ${maxSize} of ${gEnd.GC_MAX} over ${frames} frames, ${gEnd.evicts} evicted)`,
+          gEnd.bakes > gEnd.GC_MAX && overCap === 0 && maxSize <= gEnd.GC_MAX && gEnd.evicts > 0]);
+        results.push([`PART A: at most GC_BAKE_PER_FRAME chunks are baked in a frame (worst frame ${gEnd.bakeFrameMax}, budget ${gEnd.GC_BAKE_PER_FRAME})`,
+          gEnd.bakeFrameMax > 0 && gEnd.bakeFrameMax <= gEnd.GC_BAKE_PER_FRAME && overBudget === 0]);
+        /* Nothing pops in: a visible chunk over the budget is drawn the old
+           way that frame, so tiles still reach the canvas while warming. */
+        results.push(['PART A: a visible chunk that is not baked yet is still drawn the direct way that frame, so nothing pops in',
+          gEnd.direct > 0 && gameScript.indexOf('gcDirect++;') > 0]);
+        results.push([`PART A: and the frame still blits every visible chunk (${gEnd.chunksFrame} chunks for ${gEnd.ground.tiles} tiles)`,
+          gEnd.chunksFrame > 0 && gEnd.blits > 0 && gEnd.ground.tiles > 0]);
+
+        /* Invalidation. Structural first: every tileCache.clear() in the file
+           carries a groundCacheClear() beside it, the world reset among them. */
+        /* ⚠️ COUNTED ON THE CALL SITES, NOT ON THE NAME. Four comments in
+           the file mention `tileCache.clear()` while explaining other things,
+           and every one of them writes it without the semicolon (", so" /
+           " — the"), so the statement form picks out exactly the real sites.
+           Each must carry a groundCacheClear() within the next few lines —
+           the login build spells its four clears one per line, so the window
+           is a few lines rather than the same one. */
+        const linesP = gameScript.split('\n');
+        let sites = 0, unpaired = 0, firstBad = null;
+        for (let i = 0; i < linesP.length; i++) {
+          if (linesP[i].indexOf('tileCache.clear();') < 0) continue;
+          sites++;
+          if (linesP.slice(i, i + 6).join('\n').indexOf('groundCacheClear()') >= 0) continue;
+          unpaired++; if (!firstBad) firstBad = linesP[i].trim();
+        }
+        const wr = gameScript.indexOf('async function performWorldReset()');
+        const wrBody = gameScript.slice(wr, gameScript.indexOf('\n}\n', wr));
+        results.push([`PART A: the cache is cleared wherever tileCache is (${sites} real clear sites, ${unpaired} of them unpaired${firstBad ? ' — ' + firstBad : ''}), the world reset and the login build included`,
+          sites >= 4 && unpaired === 0 && wr > 0 && wrBody.indexOf('groundCacheClear()') > 0 &&
+          gameScript.indexOf('pocketAnchorCache.clear();   // v50 PART A\n    groundCacheClear();') > 0]);
+        /* Then driven: a warm cache, a new world, an empty cache. */
+        window.debugSetPlayer({ x: Wp.SPAWN.x + 0.5, y: Wp.SPAWN.y + 0.5 });
+        pumpP(4000, 30);
+        const warm = GC().size;
+        const seedTmp = window.debugWorldSeedSet(987654321);
+        const afterSeed = GC().size;
+        window.debugWorldSeedSet(seedTmp);
+        results.push([`PART A: a new world empties the cache (${warm} chunks baked, ${afterSeed} after the rebuild)`,
+          warm > 0 && afterSeed === 0 && GC().clears > 0]);
+      }
+
+      /* ---- DOUBT PASS: the shake, and the working set ----------------- */
+      {
+        /* ⚠️ THE SCREEN SHAKE IS THE CASE THE PIXEL GATE CANNOT SEE. The whole
+           frame is drawn through render()'s `ctx.translate(shX, shY)`, which
+           is a fresh fractional random for the 220 ms after any hit — so a
+           chunk blitted at a whole pixel in USER space lands on a fractional
+           DEVICE pixel and the browser resamples the entire ground, every
+           frame, in combat. perf.js renders four static cameras with shakeT
+           at 0, so it never runs. The fix is to round against shX/shY; this
+           proves the arithmetic does, at a shake offset the gate chooses. */
+        window.debugSetGroundCache(true);
+        window.debugSetPlayer({ x: Wp.SPAWN.x + 0.5, y: Wp.SPAWN.y + 0.5 });
+        pumpP(9800, 30);
+        const rest = GC();
+        /* Re-armed immediately before each pumped frame: `shakeT` opens a
+           220 ms WALL-CLOCK window while the harness pumps synthetic
+           timestamps, so trusting one arming to cover several frames is a
+           flake waiting for a loaded machine (second doubt pass). */
+        window.debugSetShake(true);
+        let shaken = null;
+        try {
+          for (let i = 0; i < 2; i++) { window.debugSetShake(true); pumpP(9900 + i * 10, 1); }
+          shaken = GC();
+        } finally { window.debugSetShake(false); }   // the harness has no real shake to put back
+        /* The claim, checked as arithmetic rather than as a grep: for the
+           shake offset the frame really ran at, the device-space position of
+           a chunk origin is a whole pixel. */
+        const devWhole = (g) => {
+          const bx = g.ground.w / 2 - ((g.ground.camX - g.ground.camY) * g.IW2);
+          const rbx = Math.round(bx + g.shakeOX) - g.shakeOX;
+          const dev = rbx + g.isoX0(3, 4) - g.GC_PAD_X + g.shakeOX;
+          return Math.abs(dev - Math.round(dev));
+        };
+        console.log(`PERF A: shake offset ${shaken.shakeOX.toFixed(3)},${shaken.shakeOY.toFixed(3)} — ` +
+                    `chunk origin lands ${devWhole(shaken).toExponential(1)} px off a whole device pixel`);
+        results.push([`PART A doubt: a blit lands on a WHOLE DEVICE pixel even while the screen is shaking, so combat cannot resample the ground (offset ${shaken.shakeOX.toFixed(2)},${shaken.shakeOY.toFixed(2)}, off by ${devWhole(shaken).toExponential(1)} px)`,
+          Math.abs(shaken.shakeOX) > 0 && devWhole(shaken) < 1e-6 && devWhole(rest) < 1e-6 &&
+          gameScript.indexOf('const sbx = Math.round(bx + shakeOX), sby = Math.round(by + shakeOY);') > 0 &&
+          gameScript.indexOf('const ex = sbx + gcIsoX0(cx, cy) - GC_PAD_X, ey = sby + gcIsoY0(cx, cy) - GROUND_UP;') > 0 &&
+          gameScript.indexOf('shakeOX = shX; shakeOY = shY;') > 0]);
+
+        /* ⚠️ AND THE CACHE MUST NEVER THRASH. If a viewport needs more chunks
+           at once than the LRU can hold, every bake evicts something this
+           same frame already blitted: the cache never converges and the frame
+           pays two canvas allocations and two full bakes forever, on top of
+           still drawing the uncached chunks directly — strictly worse than
+           not caching. Driven by shrinking the cap's room rather than by
+           claiming it cannot happen: GC_MAX chunks are warmed, then the
+           camera is put where more than GC_MAX are visible. */
+        /* No harness viewport needs more than GC_MAX chunks, so the cap is
+           lowered UNDER a normal viewport instead of asserting the path is
+           unreachable.
+
+           ⚠️ AND THE CAMERA MOVES, because a second doubt pass showed the
+           STATIC over-cap case is the easy half. The dangerous one is a
+           working set that STRADDLES the cap — ~49 visible chunks against 48
+           on a 1440p screen, alternating as the camera pans — where a
+           "is the viewport too big" test is false on half the frames and
+           lets each of those evict a chunk the next frame wants straight
+           back. So this walks the camera a fraction of a chunk at a time
+           across a cap set just under what is visible, which is exactly that
+           oscillation, and requires ZERO evictions across all of it.
+
+           try/finally because leaving GC_MAX lowered would cripple the cache
+           for every gate after this one, and for the live page. */
+        window.debugSetPlayer({ x: Wp.SPAWN.x + 0.5, y: Wp.SPAWN.y + 0.5 });
+        window.debugGroundCacheReset(true);
+        pumpP(9950, 40);                                  // warm what fits
+        const visible = GC().chunksFrame;
+        let maxOver = 0, bakesWhileOver = 0, evictsWhileOver = 0, framesOver = 0;
+        let cappedSize = 0, cappedMax = 0, declined = 0;
+        const wasCap = window.debugSetGroundCacheCap(Math.max(1, visible - 1));
+        try {
+          const ev0 = GC().evicts, th0 = GC().thrashFrames;
+          for (let i = 0; i < 40; i++) {
+            /* a fraction of a tile at a time, so the visible set genuinely
+               crosses the cap back and forth rather than sitting over it */
+            window.debugSetPlayer({ x: Wp.SPAWN.x + i * 0.37 + 0.5, y: Wp.SPAWN.y + i * 0.23 + 0.5 });
+            pumpP(10000 + i * 10, 1);
+            const g = GC();
+            if (g.chunksFrame > g.GC_MAX) { framesOver++; maxOver = Math.max(maxOver, g.chunksFrame); bakesWhileOver += g.bakesFrame; }
+          }
+          evictsWhileOver = GC().evicts - ev0;
+          declined = GC().thrashFrames - th0;
+          cappedSize = GC().size; cappedMax = GC().GC_MAX;
+        } finally {
+          window.debugSetGroundCacheCap(wasCap);
+        }
+        console.log(`PERF A: ${visible} chunks visible, cap forced to ${cappedMax} — ${framesOver} frames over it across a moving camera, ` +
+                    `${bakesWhileOver} bakes, ${evictsWhileOver} evictions, ${declined} bakes declined ` +
+                    `(a thrashing cache would churn a bake AND an eviction on every one)`);
+        /* ⚠️ ONE FRAME'S BUDGET IS ALLOWED, AND NO MORE. The guard reads the
+           PREVIOUS frame's visible-chunk count, because this frame's is not
+           known until it has been walked — so the first frame after the
+           working set grows still spends its two bakes finding out. What
+           matters is that it then stops: over forty frames the thrash case
+           costs at most that one budget, and crucially ZERO evictions, where
+           a thrashing cache would churn two bakes and two evictions on every
+           single frame forever. */
+        results.push([`PART A doubt: a working set at or over GC_MAX makes the cache DECLINE to grow rather than thrash, even while the camera pans across the cap — ${framesOver} frames with up to ${maxOver} chunks over a ${cappedMax} cap, ${evictsWhileOver} evictions and ${declined} declined bakes, against ${framesOver * 2} evictions if it churned`,
+          /* ⚠️ NOT "zero evictions" — the camera is MOVING, so chunks
+             genuinely leave the working set and those evictions are the
+             cache doing its job. The claim is that the cache DECLINES
+             instead of churning: a thrashing one evicts about twice per
+             over-cap frame (it re-takes what it just gave up), so the bar is
+             a small fraction of that, together with real declines. */
+          framesOver >= 20 && maxOver > cappedMax && declined > 0 &&
+          evictsWhileOver * 4 < framesOver * 2 && cappedSize <= cappedMax && GC().GC_MAX === 48 &&
+          gameScript.indexOf('if (victim === null) { gcThrashFrames++; return null; }') > 0 &&
+          gameScript.indexOf('held.used < gcFrameId - 1') > 0]);
+        /* ⚠️ AND THE CAP MUST SURVIVE ITS OWN DEGENERATE VALUE. GC_MAX is a
+           bare tunable; at 0 the first version inserted a chunk, evicted that
+           same chunk as the LRU head, sized its canvas to 0x0 and returned it
+           anyway — and the next drawImage on a 0x0 source throws, out of
+           render(), every frame. Driven rather than argued. */
+        {
+          const was0 = window.debugSetGroundCacheCap(0);
+          let threw = null;
+          try {
+            window.debugSetPlayer({ x: Wp.SPAWN.x + 0.5, y: Wp.SPAWN.y + 0.5 });
+            pumpP(10500, 4);
+          } catch (e) { threw = e; } finally { window.debugSetGroundCacheCap(was0); }
+          const g0cap = GC();
+          results.push(['PART A doubt: a degenerate GC_MAX bakes nothing and throws nothing — it can never hand the frame a canvas it has just destroyed',
+            threw === null && !caught && g0cap.GC_MAX === 48]);
+        }
+        /* and an evicted chunk gives its pixels back rather than waiting on
+           a collector — 48 chunks is ~64 MB and the target is phones */
+        window.debugGroundCacheReset(true);
+        for (let i = 0; i < 40; i++) {
+          window.debugSetPlayer({ x: Wp.SPAWN.x + i * 11 + 0.5, y: Wp.SPAWN.y + i * 7 + 0.5 });
+          pumpP(11000 + i * 10, 1);
+        }
+        const ev = GC();
+        results.push([`PART A doubt: an evicted chunk releases its backing store, and every chunk still held keeps its own (${ev.liveSized} of ${ev.size} live, ${ev.evicts} evicted)`,
+          ev.evicts > 0 && ev.size > 0 && ev.liveSized === ev.size &&
+          gameScript.indexOf('function gcRelease(e)') > 0 &&
+          gameScript.indexOf('e.cv.width = 0; e.cv.height = 0;') > 0]);
+      }
+
+      /* ---- PART A: interiors never touch it --------------------------- */
+      {
+        window.debugSetGroundCache(true);
+        window.debugSetPlayer({ x: Wp.SPAWN.x + 0.5, y: Wp.SPAWN.y + 0.5 });
+        pumpP(5000, 24);
+        const before = GC();
+        let entered = null;
+        for (const name of ['UWCAVE', 'ABYSSAL']) {
+          const id = window.debugWorldInfo().B[name];
+          let tile = null;
+          for (let y = 20; y < before.N - 20 && !tile; y += 5)
+            for (let x = 20; x < before.N - 20; x += 5) if (window.biomeAt(x, y) === id) { tile = [x, y]; break; }
+          if (!tile) continue;
+          try { if (window.enterInterior(tile[0], tile[1], id)) entered = name; } catch (e) {}
+          if (!entered) continue;
+          pumpP(6000, 40);
+          break;
+        }
+        const after = GC();
+        const inside = window.inInterior();
+        try { if (window.inInterior()) window.exitInterior(); } catch (e) {}
+        results.push([`PART A: inside an interior the cache is never touched — 40 frames in the ${entered || '(none)'} changed no bake, blit or direct draw`,
+          !!entered && inside === true &&
+          after.bakes === before.bakes && after.blits === before.blits &&
+          after.direct === before.direct && after.size === before.size]);
+      }
+
+      /* ---- PRESERVATION: the two paths report the same frame ---------- */
+      {
+        window.debugSetPlayer({ x: Wp.SPAWN.x + 0.5, y: Wp.SPAWN.y + 0.5 });
+        const spots = [[Wp.SPAWN.x, Wp.SPAWN.y], [Wp.VOLCANO.x, Wp.VOLCANO.y],
+                       [Wp.TOWER.x, Wp.TOWER.y], [Wp.MOUNT.x, Wp.MOUNT.y],
+                       [Wp.SPAWN.x + 37.25, Wp.SPAWN.y - 19.5]];
+        let mismatch = 0, pairs = 0, sample = null;
+        for (const [sx, sy] of spots) {
+          window.debugSetPlayer({ x: sx + 0.5, y: sy + 0.5 });
+          let a, bb;
+          try {
+            window.debugSetGroundCache(false);          // finally, so a throw here
+            pumpP(7000, 2);                             // cannot leave the cache off
+            a = GC().ground;
+          } finally { window.debugSetGroundCache(true); }
+          pumpP(7100, 2);
+          bb = GC().ground;
+          pairs++;
+          if (!sample) sample = a.tiles + '/' + a.scanned;
+          if (a.tiles !== bb.tiles || a.scanned !== bb.scanned ||
+              a.minX !== bb.minX || a.maxX !== bb.maxX || a.minY !== bb.minY || a.maxY !== bb.maxY) mismatch++;
+        }
+        results.push([`PRESERVATION: groundStats is identical with the cache on and off, so every existing ground-pass gate keeps measuring what it measured (${pairs} camera positions, first ${sample} tiles/scanned, ${mismatch} mismatches)`,
+          pairs === 5 && mismatch === 0]);
+        /* The direct path is still in the file, byte for byte, as the thing
+           GROUND_CACHE false runs and the pixel gate compares against. */
+        results.push(['PRESERVATION: the direct path is untouched — the same diagonal sweep, the same two culls, still what GROUND_CACHE false runs',
+          gameScript.indexOf('for (let s = gMinX + gMinY; s <= gMaxX + gMaxY; s++)') > 0 &&
+          gameScript.indexOf('drawGroundTile(ctx, tx, ty);') > 0 &&
+          gameScript.indexOf('if (GROUND_CACHE) {') > 0 &&
+          gameScript.indexOf('} else {') > 0 &&
+          gameScript.indexOf('DELIBERATELY NOT RE-INDENTED') > 0]);
+        window.debugSetGroundCache(true);
+      }
+
+      /* ---- PART B: the HUD only writes when something changed ---------- */
+      {
+        window.debugSetPlayer({ x: Wp.SPAWN.x + 0.5, y: Wp.SPAWN.y + 0.5 });
+        pumpP(8000, 4);                           // settle the cards
+        window.debugHudReset();
+        const t0 = Date.now();
+        pumpP(9000, 120);
+        const elapsed = Date.now() - t0;
+        const h = HU();
+        const mapWindows = Math.ceil(elapsed / h.MAP_REDRAW_MS) + 1;
+        console.log(`PERF B: 120 frames standing still in ${elapsed} ms — ${h.compassBuilds} compass rebuilds, ` +
+                    `${h.mapDraws} minimap redraws (<= ${mapWindows} for the 250 ms windows), ` +
+                    `${h.writes} card writes, ${h.skips} skipped`);
+        results.push([`PART B: over 120 frames standing still the compass dial is rebuilt at most once (${h.compassBuilds}), and it skipped ${h.compassSkips} frames`,
+          h.compassBuilds <= 1 && h.compassSkips >= 110]);
+        results.push([`PART B: and the minimap is redrawn at most once per ${h.MAP_REDRAW_MS} ms window (${h.mapDraws} in ${elapsed} ms, ceiling ${mapWindows})`,
+          h.mapDraws >= 1 && h.mapDraws <= mapWindows]);
+        results.push([`PART B: and every other card write is skipped when the string has not changed (${h.writes} writes, ${h.skips} skips over 120 frames)`,
+          h.skips > h.writes * 4 && h.writes >= 1]);
+        /* Moving one tile is a reason, and it must take effect at once. */
+        const before = HU();
+        window.debugSetPlayer({ x: Wp.SPAWN.x + 1.5, y: Wp.SPAWN.y + 0.5 });
+        window.updateWorldMap();
+        const afterStep = HU();
+        results.push(['PART B: moving one tile triggers a minimap redraw immediately, not on the next 250 ms tick',
+          afterStep.mapDraws === before.mapDraws + 1 && afterStep.mapSig !== before.mapSig]);
+        /* And the dial rebuilds when a bearing really changes. */
+        const b2 = HU();
+        window.debugSetPlayer({ x: Wp.SPAWN.x + 260.5, y: Wp.SPAWN.y - 180.5 });
+        window.updateMinimap();
+        const a2 = HU();
+        results.push(['PART B: and the dial rebuilds as soon as a rounded bearing or a label changes',
+          a2.compassBuilds === b2.compassBuilds + 1 && a2.compassSig !== b2.compassSig]);
+        /* ⚠️ THE TWO WRITERS updateHUD() CALLS OUT TO, which the first draft
+           of PART B left running every frame — found by the doubt pass. The
+           world-unmaking countdown is ten seconds of innerHTML on every
+           frame of the most frame-rate-sensitive moment in the game, and the
+           boss bar rewrites a CONSTANT name on every frame of a fight. The
+           120-frame gate above stands at Spawn, where neither is running, so
+           it could never have seen them. */
+        {
+          const w0 = HU().writes;
+          window.updateUnmakingHud(); window.updateUnmakingHud();
+          window.updateBossHud(); window.updateBossHud();
+          const quiet = HU().writes - w0;
+          results.push([`PART B doubt: the unmaking countdown and the boss bar are guarded too — neither writes when nothing changed (${quiet} writes over two idle calls of each)`,
+            quiet === 0 &&
+            gameScript.indexOf('if (un !== unmakingLast)') > 0 &&
+            gameScript.indexOf('if (bn !== bossNameLast)') > 0 &&
+            gameScript.indexOf('if (bh !== bossHpLast)') > 0]);
+        }
+        /* ⚠️ ONE CACHE, NOT ONE PER SETTER. Two independent caches never
+           invalidate each other, so innerHTML "A" / textContent "B" /
+           innerHTML "A" would skip the third write and leave the card showing
+           B for good. Driven on a real card rather than grepped. */
+        {
+          const probe = window.hudCard('hudWorld');
+          const el = doc.getElementById('hudWorld');
+          const was = el.innerHTML;
+          probe.innerHTML = 'DOUBT-A';
+          const a1 = el.innerHTML;
+          probe.textContent = 'DOUBT-B';
+          const b1 = el.textContent;
+          probe.innerHTML = 'DOUBT-A';
+          const a2 = el.innerHTML;
+          el.innerHTML = was;
+          results.push([`PART B doubt: a card that is written through both setters cannot stick — A, then B, then A again really shows A ("${a2}")`,
+            a1 === 'DOUBT-A' && b1 === 'DOUBT-B' && a2 === 'DOUBT-A' &&
+            gameScript.indexOf('let last = null, lastProp = "";') > 0]);
+        }
+        /* And a new world voids the cards that picture it, rather than
+           leaving the old terrain on the minimap for a redraw window. */
+        {
+          window.debugSetPlayer({ x: Wp.SPAWN.x + 0.5, y: Wp.SPAWN.y + 0.5 });
+          window.updateWorldMap();
+          const before = HU().mapSig;
+          const sTmp = window.debugWorldSeedSet(555000111);
+          const cleared = HU();
+          window.debugWorldSeedSet(sTmp);
+          results.push([`PART B doubt: a new world voids the minimap and compass signatures, so neither card can show the old world ("${before}" -> "${cleared.mapSig}")`,
+            before.length > 0 && cleared.mapSig === '' && cleared.compassSig === '' &&
+            gameScript.indexOf('mapSig = ""; compassSig = "";') > 0]);
+        }
+        /* The guard is at the declaration, so no call site had to change. */
+        results.push(['PART B: the guard lives on the three cards themselves, so none of updateHUD()\'s twenty prompt branches changed',
+          gameScript.indexOf('const hudPlayer = hudCard("hudPlayer");') > 0 &&
+          gameScript.indexOf('const hudPrompt = hudCard("hudPrompt");') > 0 &&
+          gameScript.indexOf('hudPrompt.textContent = "[E] Storage Chest — open"; hudPrompt.style.display = "block";') > 0 &&
+          (gameScript.match(/hudPrompt\.textContent = /g) || []).length >= 15]);
+        /* ⚠️ THE GUARD SKIPS THE WRITE, NEVER THE CONTENT. Driven on the
+           real element: standing in the Grand Bazaar the prompt names it,
+           and stepping off it the prompt changes. A guard that compared
+           against the DOM instead of its own last string would pass the
+           gate above and fail this one. */
+        const promptEl = doc.getElementById('hudPrompt');
+        const V37 = window.debugV37Info ? window.debugV37Info() : null;
+        let bazTxt = '', awayTxt = '';
+        if (V37 && V37.BAZAAR) {
+          window.debugSetPlayer({ x: V37.BAZAAR.x, y: V37.BAZAAR.y });
+          window.updateHUD(0.3);
+          bazTxt = promptEl.textContent;
+          window.debugSetPlayer({ x: Wp.SPAWN.x + 0.5, y: Wp.SPAWN.y + 0.5 });
+          window.updateHUD(0.3);
+          awayTxt = promptEl.textContent;
+        }
+        results.push(['PART B: and the real element still carries the text — standing in the Bazaar the prompt names it, stepping off it the prompt changes',
+          bazTxt.indexOf('Grand Bazaar') >= 0 && awayTxt !== bazTxt]);
+        /* The write itself, counted: a string that really changed is written,
+           the identical string straight after is not. */
+        {
+          const el = doc.getElementById('hudWorld');
+          const w0 = HU().writes;
+          window.updateHUD(0.1);                  // "Morning"
+          const w1 = HU().writes;
+          window.updateHUD(0.3);                  // "Afternoon" — a real change
+          const mid = el.innerHTML;
+          const w2 = HU().writes;
+          window.updateHUD(0.3);                  // the same string again
+          const w3 = HU().writes;
+          results.push([`PART B: a HUD string that really changed is written (+${w2 - w1}), the identical string straight after is not (+${w3 - w2})`,
+            mid.indexOf('Afternoon') > 0 && el.innerHTML === mid &&
+            (w2 - w1) >= 1 && (w3 - w2) === 0 && w1 >= w0]);
+        }
+      }
+
+      /* ---- PART C: the pixel-ratio decision, recorded not changed ----- */
+      {
+        const g = GC();
+        /* The claim is that ONE line decides the backing-store size and it
+           reads innerWidth/innerHeight and RENDER_SCALE only. Asserted as the
+           single assignment rather than as "the file never says
+           devicePixelRatio" — PART C's own comment has to say the word in
+           order to record the decision. */
+        const dprUse = (gameScript.match(/devicePixelRatio/g) || []).length;
+        const widthSets = (gameScript.match(/canvas\.width = /g) || []).length;
+        results.push([`PART C: one line sizes the canvas, from CSS pixels and RENDER_SCALE ${g.RENDER_SCALE} only (${widthSets} assignment, devicePixelRatio named ${dprUse}x and read 0x)`,
+          g.RENDER_SCALE === 1 && widthSets === 1 && dprUse === 1 &&
+          gameScript.indexOf('const RENDER_SCALE = 1;') > 0 &&
+          gameScript.indexOf('canvas.width = Math.round(innerWidth * RENDER_SCALE); canvas.height = Math.round(innerHeight * RENDER_SCALE);') > 0 &&
+          /devicePixelRatio\s*[*\/)]/.test(gameScript) === false]);
+        /* ⚠️ The first version of this comment called RENDER_SCALE a dial you
+           could simply turn, and a doubt pass showed that is false: nothing
+           scales the DRAWING, so raising it would shrink the whole game to
+           half size rather than sharpen it. The gate now pins the corrected
+           claim, including the ctx.scale() that would really be needed. */
+        results.push(['PART C: and it says WHY, and says honestly what raising it would really cost — not just the pointer path',
+          gameScript.indexOf('THIS IS DELIBERATE AND IT IS NOT A BUG') > 0 &&
+          gameScript.indexOf('IT IS A MARKER, NOT A DIAL YOU CAN JUST TURN') > 0 &&
+          gameScript.indexOf('screenToWorld(e.clientX, e.clientY)') > 0 &&
+          gameScript.indexOf('ctx.scale(RENDER_SCALE, RENDER_SCALE)') > 0 &&
+          gameScript.indexOf('RAISING IT NEEDS ONE MORE EDIT') < 0]);
+        results.push(['PART C: the light canvas follows the main one, so the two can never disagree about size',
+          gameScript.indexOf('lightCanvas.width = canvas.width; lightCanvas.height = canvas.height;') > 0]);
+      }
+
+      window.debugWorldSeedSet(seedBeforePerf);
+      window.debugSetGroundCache(true);
+    } else {
+      results.push(['PERFORMANCE: the ground cache and HUD hooks exist', false]);
     }
 
     let allOk = true;

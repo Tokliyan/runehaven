@@ -1048,6 +1048,91 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       console.log('compass label layout swept — ' + boxesW.length + ' labels placed at Spawn');
     }
 
+    /* ============ Performance — BOTH GROUND PATHS, AND THE QUIET HUD =====
+       This build adds branches no earlier sweep can reach, and they are the
+       kind that only ever run on one side in a given session: the ground
+       pass now has a cached path AND the direct one it kept, the cached path
+       has a cold branch (over the per-frame bake budget, drawn direct) and a
+       warm one (blitted), and all three HUD guards have a "changed" side and
+       a "same again" side. Each is reached here the only way it can be — by
+       rendering real frames in the state that runs it — and the sweep hard
+       fails if any of them never fired, exactly like the sweeps above. */
+    if (window.debugGroundCacheInfo && window.debugHudInfo) {
+      const wiG = window.debugWorldInfo();
+      window.debugSetPlayer({ x: wiG.SPAWN.x + 0.5, y: wiG.SPAWN.y + 0.5, diving: false, hp: 100 });
+      /* 1. the direct path, with the cache switched off */
+      window.debugSetGroundCache(false);
+      window.debugGroundCacheReset(true);
+      for (let f = 0; f < 3; f++) { try { window.render(4000 + f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      const offG = window.debugGroundCacheInfo();
+      /* 2. the cached path from cold — the first frames spend the bake budget
+             and draw the rest of the view the direct way */
+      window.debugSetGroundCache(true);
+      window.debugGroundCacheReset(true);
+      try { window.render(5000); } catch (e) { if (!caught) caught = e; } n += 1;
+      const coldG = window.debugGroundCacheInfo();
+      /* 3. and warm, where every visible chunk is a blit */
+      for (let f = 0; f < 40; f++) { try { window.render(5100 + f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      const warmG = window.debugGroundCacheInfo();
+      if (!(offG.bakes === 0 && offG.blits === 0 && offG.ground.tiles > 0)) {
+        console.log('COVERAGE GAP: GROUND_CACHE false did not run the direct path (' +
+                    offG.bakes + ' bakes, ' + offG.blits + ' blits, ' + offG.ground.tiles + ' tiles)');
+        process.exit(1);
+      }
+      if (!(coldG.bakes > 0 && coldG.direct > 0)) {
+        console.log('COVERAGE GAP: the cold cache never drew a chunk the direct way (' +
+                    coldG.bakes + ' bakes, ' + coldG.direct + ' direct tiles)');
+        process.exit(1);
+      }
+      if (!(warmG.blits > coldG.blits && warmG.size > 0 && warmG.bakeFrameMax <= warmG.GC_BAKE_PER_FRAME)) {
+        console.log('COVERAGE GAP: the warm cache never settled into blits (' +
+                    warmG.blits + ' blits, ' + warmG.size + ' chunks, worst bake frame ' + warmG.bakeFrameMax + ')');
+        process.exit(1);
+      }
+      /* and the eviction branch, which needs more than GC_MAX chunks asked for */
+      for (let i = 0; i < 60; i++) {
+        window.debugSetPlayer({ x: wiG.SPAWN.x + i * 11 + 0.5, y: wiG.SPAWN.y + i * 7 + 0.5, hp: 100 });
+        try { window.render(6000 + i * 16); } catch (e) { if (!caught) caught = e; } n += 1;
+      }
+      const lruG = window.debugGroundCacheInfo();
+      if (!(lruG.evicts > 0 && lruG.size <= lruG.GC_MAX)) {
+        console.log('COVERAGE GAP: the LRU never evicted (' + lruG.evicts + ' evicted, ' +
+                    lruG.size + ' of ' + lruG.GC_MAX + ' held)');
+        process.exit(1);
+      }
+      console.log('ground cache swept — direct path, cold (' + coldG.direct + ' tiles drawn direct), warm (' +
+                  warmG.blits + ' blits), LRU (' + lruG.evicts + ' evicted, ' + lruG.size + ' of ' + lruG.GC_MAX + ' held)');
+      /* The three HUD guards, both sides of each. */
+      window.debugSetPlayer({ x: wiG.SPAWN.x + 0.5, y: wiG.SPAWN.y + 0.5, hp: 100 });
+      window.debugSetV35({ tutorialDone: true, tutorialActive: false });
+      window.debugHudReset();
+      for (let f = 0; f < 30; f++) { try { window.render(7000 + f * 16); } catch (e) { if (!caught) caught = e; } n += 1; }
+      const stillH = window.debugHudInfo();
+      window.debugSetPlayer({ x: wiG.SPAWN.x + 220.5, y: wiG.SPAWN.y - 160.5, hp: 100 });
+      window.updateMinimap(); window.updateWorldMap(); n += 2;
+      const movedH = window.debugHudInfo();
+      if (!(stillH.compassSkips > 0 && stillH.mapSkips > 0 && stillH.skips > 0)) {
+        console.log('COVERAGE GAP: the HUD guards never skipped a write (' + stillH.compassSkips +
+                    ' compass, ' + stillH.mapSkips + ' minimap, ' + stillH.skips + ' cards)');
+        process.exit(1);
+      }
+      if (!(movedH.compassBuilds > stillH.compassBuilds && movedH.mapDraws > stillH.mapDraws)) {
+        console.log('COVERAGE GAP: moving did not rebuild the dial and redraw the minimap (' +
+                    movedH.compassBuilds + '/' + stillH.compassBuilds + ' builds, ' +
+                    movedH.mapDraws + '/' + stillH.mapDraws + ' draws)');
+        process.exit(1);
+      }
+      /* The death timer's guard, which only runs while dead. */
+      window.debugSetPlayer({ x: wiG.SPAWN.x + 0.5, y: wiG.SPAWN.y + 0.5, hp: 0 });
+      try { window.updateHUD(0.3); window.updateHUD(0.3); } catch (e) { if (!caught) caught = e; }
+      n += 2;
+      window.debugSetPlayer({ x: wiG.SPAWN.x + 0.5, y: wiG.SPAWN.y + 0.5, hp: 100 });
+      console.log('quiet HUD swept — ' + stillH.compassSkips + ' dial frames skipped, ' +
+                  stillH.mapSkips + ' minimap frames skipped, ' + stillH.skips + ' card writes skipped, ' +
+                  'both rebuilt on a move');
+      window.debugSetGroundCache(true);
+    }
+
     console.log('coverage draws:', n, '— CAUGHT:', caught ? (caught.stack || caught) : 'none');
     process.exit(caught ? 1 : 0);
   } catch (e) {

@@ -2514,7 +2514,7 @@ function debugWorldSeedSet(seed) {
      HARNESS ONLY: no server side, no player state, not a world reset. */
   const was = worldSeed;
   worldSeed = Number(seed) % 2147483647;
-  tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear();
+  tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear(); groundCacheClear();
   placeLandmarks();
   buildFeatureList();
   return was;
@@ -2522,7 +2522,7 @@ function debugWorldSeedSet(seed) {
 function debugSeedLandSweep(seeds) {
   const was = worldSeed;
   const rebuild = () => {
-    tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear();
+    tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear(); groundCacheClear();
     placeLandmarks();
   };
   const out = [];
@@ -2554,7 +2554,7 @@ function debugSeedLandSweep(seeds) {
 function debugArenaSweep(seeds) {
   const was = worldSeed;
   const rebuild = () => {
-    tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear();
+    tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear(); groundCacheClear();
     placeLandmarks();
   };
   const out = [];
@@ -6959,6 +6959,327 @@ function drawGroundUnderlay() {
     ctx.fillRect(underCells[i], underCells[i + 1], UNDER_CELL, UNDER_CELL);
   }
 }
+/* ===== Performance PART A — THE GROUND CACHE ==============================
+   Measured 2026-10-12 in headless Chromium at 1280x720: 28.3 fps at Spawn,
+   17.0 at the Colosseum, 16.7 at the Bazaar, with 51.5% of the profile in
+   native canvas rasterising. The ground pass is where that goes: it redraws
+   every visible tile's diamond and cliff faces from scratch every frame,
+   ~1900 tiles at 1.1-1.7 painted shapes each.
+
+   WHAT MAKES CACHING POSSIBLE, and it is a property of the code rather than
+   a hope: `drawGroundTile(c, tx, ty)` takes no time argument. It reads
+   `biomeAt` / `heightAt` / `variedZ` / `arenaFloorAt` and nothing else, all
+   of them cached and static for a given world, and it draws only into the
+   context it is handed. So its output for a tile is the same pixels every
+   frame until the world itself is rebuilt — which is exactly a cache key.
+
+   WHAT IS NOT CACHED. The water ripple, chop, foam and lava flicker pass
+   runs AFTER the ground and stays live per frame; it was never inside
+   drawGroundTile. Interiors are untouched — the overworld ground pass does
+   not run in a cave at all (World Check Fixes PART F), so the cache is never
+   even reached there.
+
+   THE CHUNK ORDER IS THE LOAD-BEARING PART, and it is proved, not assumed.
+   A tile's cliff faces hang DOWN over its SOUTHERN and EASTERN neighbours,
+   which is why the live pass sweeps diagonally back-to-front by tx + ty.
+   Chunks are composited back-to-front by cx + cy, and that is sufficient:
+   two tiles' paint can only overlap if their centres are within one tile
+   width horizontally, i.e. |dtx - dty| <= 1 (a tile spans +/-IW2 about its
+   centre and isoX scales dtx - dty). For the later tile to need drawing
+   second we also need dtx + dty > 0. Solving both gives dtx = (s + d) / 2
+   and dty = (s - d) / 2 with s >= 1 and |d| <= 1, so EVERY overlapping pair
+   has dtx >= 0 AND dty >= 0 — which makes both of the later tile's chunk
+   indices >= the earlier tile's, hence cx + cy >= cx + cy. And two DISTINCT
+   chunks with equal cx + cy (say (0,1) and (1,0)) can hold no such pair at
+   all, because one of dtx/dty is then negative. The composite is therefore
+   identical to the diagonal sweep's, and a run4 gate enumerates the offsets
+   rather than taking this comment's word for it.
+
+   THE ONE REAL PIXEL DIFFERENCE, deliberately chosen. A baked chunk's
+   content sits at a fixed offset inside its own canvas — fixed, not integer,
+   since variedZ() gives every PEAK tile a fractional jitter and the direct
+   path carries the identical fraction — so the chunk is blitted at a ROUNDED
+   screen position: `drawImage` at a fractional offset would
+   bilinearly resample the whole ground every frame, which is precisely the
+   swimming Expansion 2a removed when it stopped blitting a pre-baked sheet.
+   Rounding instead shifts the entire ground by up to half a pixel against
+   the uncached path — the same shift for every chunk, since chunk origins
+   differ by whole pixels, so no seam can open between two chunks. The direct
+   fallback below is drawn through the same rounding residue, so a frame that
+   mixes baked and unbaked chunks has one pixel phase throughout. The spec's
+   pixel-match gate is the judge of the size of that difference: measured,
+   the worst of four camera positions is 0.0098% of the frame against a 0.5%
+   budget.
+
+   ⚠️ WHAT THAT HALF PIXEL IS ACTUALLY AGAINST, since the gate measures the
+   ground against itself and not against the world standing on it. Only the
+   ground is snapped; the foam strokes, the water ripples, the tree bases and
+   every entity still go through worldToScreen() unrounded. So the ground
+   sits up to half a pixel off everything registered to it, and because the
+   residue is a function of the camera it changes as you walk. On the things
+   it could show up on it does not: the shore foam is a 2.4px anti-aliased
+   stroke and the seam underlay is an 80px colour block, neither of which a
+   half pixel can move visibly. It is named here because it is the real cost
+   of the cache, and a gate that compares ground to ground can never see it.
+
+   MEMORY, AND WHAT HAPPENS WHEN THE SCREEN IS BIGGER THAN THE CACHE. GC_MAX
+   48 chunks at GC_W x GC_H (720 x 461 at these constants) is about 64 MB of
+   canvas. A 1280x720 viewport needs about 17 chunks and a 1920x1080 one
+   around 31, so 48 is headroom on a laptop — but a doubt pass was right that
+   it is NOT headroom above that: 2560x1440 wants roughly 49 and 4K about 95,
+   which is at or past the cap. That is a bounded, graceful case rather than
+   a cliff, and deliberately so: gcBake() declines rather than evicting
+   anything the last two frames used, so a screen too big for the cache keeps
+   whatever fits, draws the rest the direct way, and never churns a canvas.
+   It is a tunable, and the gate prints the live count — raising it to cover
+   1440p costs about 20 MB more. */
+let GROUND_CACHE = true;              // the spec's switch; debugSetGroundCache() flips it
+const GC_TILES = 16;                  // tiles per chunk side (tunable)
+let GC_MAX = 48;                      // LRU capacity in baked chunks (tunable)
+const GC_BAKE_PER_FRAME = 2;          // bakes allowed per frame, so nothing hitches (tunable)
+/* Padding. Horizontally a tile paints +/-IW2 about its centre; vertically
+   GROUND_UP / GROUND_DOWN are the file's own PROVED bounds on how far a
+   tile's paint reaches above and below its baseline (a run4 gate walks real
+   tiles against them), so a chunk padded by them cannot clip a cliff face
+   hanging over the next chunk or a snow spike standing above this one. */
+const GC_PAD_X = IW2 + 8;
+const GC_SPAN_X = (GC_TILES - 1) * 2 * IW2;   // widest isoX spread of a chunk's tile centres
+const GC_SPAN_Y = (GC_TILES - 1) * 2 * IH2;
+const GC_W = GC_SPAN_X + GC_PAD_X * 2;
+const GC_H = GC_SPAN_Y + GROUND_UP + GROUND_DOWN;
+const GC_AXIS = Math.ceil(N / GC_TILES);      // chunks per world axis, for the numeric key
+/* The LRU. A Map is insertion-ordered, so "least recently used" is its first
+   key once every use re-inserts. The key is a NUMBER (cy * GC_AXIS + cx) and
+   not a string, because this is read once per visible chunk per frame and a
+   template key would allocate ~15 strings a frame for nothing. */
+let groundChunks = new Map();
+/* Which frame each held chunk was last used on. A monotonic counter rather
+   than a timestamp, because "this frame and the one before it" is exactly the
+   window the eviction rule needs and a clock would make it approximate. */
+let gcFrameId = 0;
+let gcBakes = 0, gcBlits = 0, gcDirect = 0, gcClears = 0, gcEvicts = 0;
+let gcBakeFrameMax = 0, gcChunksFrame = 0, gcBakesFrame = 0, gcThrashFrames = 0;
+/* render()'s screen-shake translate, which the whole frame is drawn through.
+   The ground pass has to round against it — see the comment where it is set. */
+let shakeOX = 0, shakeOY = 0;
+/* A chunk's own iso origin: the minimum tile-centre isoX/isoY over its 16x16
+   block. Both are integers (IW2/IH2 are integers), which is what lets the
+   blit position round to a whole pixel without the chunk grid drifting. */
+function gcIsoX0(cx, cy) { return ((cx - cy) * GC_TILES - (GC_TILES - 1)) * IW2; }
+function gcIsoY0(cx, cy) { return ((cx + cy) * GC_TILES + 1) * IH2; }
+/* Sizing a canvas to 0 is the one portable way to ask a browser to let go of
+   its backing store now rather than whenever the collector gets to it. 48
+   chunks is ~64 MB of pixels and the target is phones, so every path that
+   drops a chunk goes through here rather than only the eviction one. */
+function gcRelease(e) {
+  if (e && e.cv) { try { e.cv.width = 0; e.cv.height = 0; } catch (err) {} }
+}
+/* Invalidation. Called beside every tileCache clear STATEMENT (the gate
+   that pairs them picks those out by the semicolon, so this sentence must
+   not spell one) — the
+   login world build, the world reset, and the three harness world hooks
+   (debugWorldSeedSet, debugSeedLandSweep, debugArenaSweep) — because a baked
+   chunk is a picture of one world and those five are where a new one appears.
+   Nothing finer-grained is needed: no gameplay action changes the ground
+   (features, nodes and base pieces are all entities, drawn after it). */
+function groundCacheClear() {
+  if (groundChunks.size) gcClears++;
+  for (const e of groundChunks.values()) gcRelease(e);
+  groundChunks.clear();
+  /* ⚠️ AND THE TWO HUD CARDS THAT ALSO PICTURE THE WORLD. Found by the doubt
+     pass: the minimap draws terrain, and its redraw signature is the player's
+     tile plus who is nearby — neither of which has to change when the world
+     underneath is replaced. A reset that left the player on the same tile
+     showed the OLD world's terrain on the card for up to MAP_REDRAW_MS. The
+     compass is the same argument one step weaker (the landmarks move, so the
+     bearings usually do), and it costs one assignment to be sure. This
+     function is called at exactly the five places a world is (re)built, which
+     is why the invalidation belongs here rather than at five more call
+     sites. */
+  mapSig = ""; compassSig = "";
+}
+/* Bake one chunk. The tiles are drawn by the existing drawGroundTile(), in
+   the live pass's own diagonal tx + ty order, into a translated context: the
+   translate cancels worldToScreen()'s camera term exactly, so what lands in
+   the canvas is the tile's position relative to the chunk origin: the camera
+   is gone to within float rounding (Skia keeps the CTM in float32, so at
+   mid-world a trace of order 1/64 px survives — far below the gate's own
+   8-level channel threshold, and not something a pixel can show). */
+/* ⚠️ THIS RESTS ON worldToScreen() READING THE *MAIN* CANVAS, and a doubt
+   pass asked for that to be written down. drawGroundTile() positions every
+   shape through worldToScreen(), which hard-codes the global `canvas.width /
+   2` rather than the width of whatever context it is drawing into. The
+   translate below cancels exactly that term, so a 720x461 chunk comes out
+   right. The obvious tidy-up of worldToScreen() — `c.canvas.width / 2` —
+   would silently shift every baked chunk by (1280 - 720) / 2 px while the
+   direct path stayed put. If that function is ever touched, this is the
+   caller that breaks. */
+function gcBake(cx, cy) {
+  /* ⚠️ THE BUDGET IS SPENT ON THE ATTEMPT, NOT ON THE SUCCESS, and the second
+     doubt pass is why. Counting only successful bakes meant that the moment a
+     phone under memory pressure started refusing canvases, the caller's
+     `gcBakesFrame < GC_BAKE_PER_FRAME` stayed true all frame and every
+     visible chunk was attempted — dozens of createElement + getContext calls
+     a frame instead of two, with the "no frame hitches" guarantee inverting
+     under exactly the condition it was written for. */
+  gcBakesFrame++;
+  /* ⚠️ ROOM IS MADE BEFORE THE INSERT, AND A CHUNK THIS FRAME OR LAST FRAME
+     NEEDS IS NEVER THE VICTIM. The first version inserted and then evicted
+     the LRU head, which has two failure modes the second doubt pass found.
+     At GC_MAX 0 the head WAS the entry just inserted, so the bake returned a
+     canvas it had itself sized to 0x0 and the next drawImage threw. And when
+     a viewport's working set straddles the cap — ~49 visible chunks at
+     2560x1440, alternating 48/49 as the camera pans — the head was a chunk
+     this same frame had not reached yet, so it was evicted and immediately
+     re-baked: a 50%-duty thrash that no "is the viewport too big" guard
+     catches, because on the 48 frames it is not.
+
+     Protecting the last TWO frames' chunks rather than only this frame's is
+     what makes that work: a chunk late in the iteration order has not been
+     stamped yet this frame, but it was stamped last frame, so it is safe.
+     When every held chunk is protected the bake is simply DECLINED — the
+     chunk draws the direct way, which costs exactly what GROUND_CACHE false
+     costs and never churns a canvas. */
+  while (groundChunks.size >= GC_MAX) {
+    let victim = null;
+    for (const k of groundChunks.keys()) {
+      const held = groundChunks.get(k);
+      if (!held || held.used < gcFrameId - 1) { victim = k; break; }
+    }
+    if (victim === null) { gcThrashFrames++; return null; }   // the whole cache is in use
+    const old = groundChunks.get(victim);
+    groundChunks.delete(victim);
+    gcRelease(old);
+    gcEvicts++;
+  }
+  let cv;
+  try {
+    cv = document.createElement("canvas");
+    cv.width = GC_W; cv.height = GC_H;
+  } catch (e) { return null; }
+  const cc = cv.getContext("2d");
+  if (!cc) { gcRelease({ cv: cv }); return null; }
+  const bx = canvas.width / 2 - isoX(cam.x, cam.y);
+  const by = canvas.height / 2 - isoY(cam.x, cam.y);
+  cc.save();
+  cc.translate(-(bx + gcIsoX0(cx, cy) - GC_PAD_X), -(by + gcIsoY0(cx, cy) - GROUND_UP));
+  const tx0 = cx * GC_TILES, ty0 = cy * GC_TILES;
+  const tx1 = Math.min(N - 1, tx0 + GC_TILES - 1), ty1 = Math.min(N - 1, ty0 + GC_TILES - 1);
+  for (let s = tx0 + ty0; s <= tx1 + ty1; s++) {
+    const lo = Math.max(tx0, s - ty1), hi = Math.min(tx1, s - ty0);
+    for (let tx = lo; tx <= hi; tx++) drawGroundTile(cc, tx, s - tx);
+  }
+  cc.restore();
+  gcBakes++;
+  const e = { cv: cv, cx: cx, cy: cy, used: gcFrameId };
+  groundChunks.set(cy * GC_AXIS + cx, e);
+  return e;
+}
+/* The composite. Walks the same tile rectangle the uncached loop walks, in
+   chunk order by cx + cy and diagonal tx + ty order inside each chunk, and
+   applies the SAME two per-tile culls character for character — so `scanned`
+   and `drawn` come out identical to the direct path's and every existing
+   groundStats gate keeps measuring the thing it was written to measure. */
+function drawGroundChunks(c, gMinX, gMaxX, gMinY, gMaxY, w, h) {
+  const camIX = isoX(cam.x, cam.y), camIY = isoY(cam.x, cam.y);
+  const bx = w / 2 - camIX, by = h / 2 - camIY;
+  /* Rounded against the SHAKE as well, so that what lands on the device is a
+     whole pixel rather than what lands in user space. With no shake these are
+     Math.round(bx) and Math.round(by); with one they carry its fraction. */
+  const sbx = Math.round(bx + shakeOX), sby = Math.round(by + shakeOY);
+  const rbx = sbx - shakeOX, rby = sby - shakeOY;
+  const dx = rbx - bx, dy = rby - by;
+  let drawn = 0, scanned = 0, chunks = 0;
+  gcBakesFrame = 0; gcFrameId++;
+  const cx0 = Math.floor(gMinX / GC_TILES), cx1 = Math.floor(gMaxX / GC_TILES);
+  const cy0 = Math.floor(gMinY / GC_TILES), cy1 = Math.floor(gMaxY / GC_TILES);
+  for (let cs = cx0 + cy0; cs <= cx1 + cy1; cs++) {
+    const cxLo = Math.max(cx0, cs - cy1), cxHi = Math.min(cx1, cs - cy0);
+    for (let cx = cxLo; cx <= cxHi; cx++) {
+      const cy = cs - cx;
+      const tx0 = Math.max(gMinX, cx * GC_TILES), tx1 = Math.min(gMaxX, cx * GC_TILES + GC_TILES - 1);
+      const ty0 = Math.max(gMinY, cy * GC_TILES), ty1 = Math.min(gMaxY, cy * GC_TILES + GC_TILES - 1);
+      /* Pass one over the chunk's tiles: the cull, and the counters. It runs
+         for every visible chunk whether or not it is baked, because these are
+         the numbers the frame reports and they must not depend on cache
+         state — it is plain arithmetic, not the rasterising this saves. */
+      let vis = 0;
+      for (let ty = ty0; ty <= ty1; ty++) {
+        for (let tx = tx0; tx <= tx1; tx++) {
+          scanned++;
+          const bcx = w / 2 + isoX(tx + 0.5, ty + 0.5) - camIX;
+          if (bcx + IW2 < 0 || bcx - IW2 > w) continue;
+          const bcy = h / 2 + isoY(tx + 0.5, ty + 0.5) - camIY;
+          if (bcy + GROUND_DOWN < 0 || bcy - GROUND_UP > h) continue;
+          vis++;
+        }
+      }
+      if (!vis) continue;                 // the diamond's bounding box, same as always
+      drawn += vis; chunks++;
+      const key = cy * GC_AXIS + cx;
+      let e = groundChunks.get(key);
+      if (e) { groundChunks.delete(key); groundChunks.set(key, e); e.used = gcFrameId; }   // LRU touch
+      /* The cache grows by at most GC_BAKE_PER_FRAME a frame. Whether there
+         is room to grow into is gcBake()'s own decision — it declines rather
+         than evicting anything this frame or last frame still needs, which is
+         what stops a viewport bigger than the cache from thrashing it. */
+      else if (gcBakesFrame < GC_BAKE_PER_FRAME) e = gcBake(cx, cy);
+      if (e) {
+        /* ⚠️ THE BLIT IS CLIPPED TO THE VIEWPORT, AND THAT IS NOT AN
+           OPTIMISATION DETAIL — IT IS MOST OF THE WIN. A chunk canvas is the
+           axis-aligned bounding box of a 16x16 block of DIAMONDS, so about
+           half of it is transparent before the padding is counted at all;
+           blitting the whole 720x461 of it for every one of ~19 visible
+           chunks is 6.3 Mpx of source-over compositing against a 0.92 Mpx
+           frame. Clipped to the part that can actually land on the canvas it
+           is a little over twice the frame, which is the chunk rectangles'
+           own unavoidable overlap. Source and destination are the same size
+           and every coordinate is a whole pixel, so this still copies rather
+           than resamples. */
+        /* The clip is computed in DEVICE space, because that is where the
+           canvas edge is and where the whole numbers have to land; the
+           destination handed to drawImage is the user-space one the translate
+           will add the shake back to. With no shake the two are the same
+           thing. `ex`/`ey` are built out of integers rather than recovered by
+           adding the shake back to a number it was just subtracted from — a
+           doubt pass pointed out the round trip is only exact to about 1e-11
+           at the world edge, which is nothing to a rasteriser but is not the
+           "whole pixel" the comment above promises. */
+        const ex = sbx + gcIsoX0(cx, cy) - GC_PAD_X, ey = sby + gcIsoY0(cx, cy) - GROUND_UP;
+        const dx0 = ex - shakeOX, dy0 = ey - shakeOY;
+        const sx = ex < 0 ? -ex : 0, sy = ey < 0 ? -ey : 0;
+        const sw = Math.min(GC_W - sx, w - (ex + sx)), sh = Math.min(GC_H - sy, h - (ey + sy));
+        if (sw > 0 && sh > 0) {
+          c.drawImage(e.cv, sx, sy, sw, sh, dx0 + sx, dy0 + sy, sw, sh);
+          gcBlits++;
+        }
+      } else {
+        /* Over the per-frame bake budget: this chunk is drawn the direct way
+           THIS frame, so nothing pops in while the cache warms. Translated by
+           the rounding residue so it lands on the same pixel phase as the
+           blits beside it and no seam opens between a warm and a cold chunk. */
+        c.save();
+        c.translate(dx, dy);
+        for (let s = tx0 + ty0; s <= tx1 + ty1; s++) {
+          const lo = Math.max(tx0, s - ty1), hi = Math.min(tx1, s - ty0);
+          for (let tx = lo; tx <= hi; tx++) {
+            const ty = s - tx;
+            const bcx = w / 2 + isoX(tx + 0.5, ty + 0.5) - camIX;
+            if (bcx + IW2 < 0 || bcx - IW2 > w) continue;
+            const bcy = h / 2 + isoY(tx + 0.5, ty + 0.5) - camIY;
+            if (bcy + GROUND_DOWN < 0 || bcy - GROUND_UP > h) continue;
+            drawGroundTile(c, tx, ty);
+            gcDirect++;
+          }
+        }
+        c.restore();
+      }
+    }
+  }
+  if (gcBakesFrame > gcBakeFrameMax) gcBakeFrameMax = gcBakesFrame;
+  gcChunksFrame = chunks;
+  return { drawn: drawn, scanned: scanned, chunks: chunks };
+}
 function drawGroundTile(c, tx, ty) {
   const b = biomeAt(tx, ty);
   const h = heightAt(tx, ty);
@@ -8241,6 +8562,7 @@ enterBtn.onclick = async () => {
     elevCache.clear();
     rawHCache.clear();
     pocketAnchorCache.clear();   // v50 PART A
+    groundCacheClear();          // Performance PART A — a new world is a new picture
     await loadMinedNodes();
     /* v39 PART C: loginPlayer() and loadPets() moved AHEAD of worldgen. The
        Unicorn Elder's luck buff is added to the rare-species presence roll,
@@ -9225,7 +9547,7 @@ async function performWorldReset() {
     activePet = null;
     if (me) { me.pet = null; me.mounted = false; }
   }
-  tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear();
+  tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear(); groundCacheClear();
   placeLandmarks();
   buildFeatureList();
   /* Mob Rarity PART A: the reset deliberately does NOT clear rare_takes. It
@@ -12615,9 +12937,38 @@ const ctx = canvas.getContext("2d");
 let lightCanvas = document.createElement("canvas");
 let lctx = lightCanvas.getContext("2d");
 
+/* ===== Performance PART C — THE PIXEL-RATIO DECISION, RECORDED ===========
+   ⚠️ THIS IS DELIBERATE AND IT IS NOT A BUG. The canvas backing store is
+   sized in CSS pixels, NOT in devicePixelRatio ones. On a phone at dpr 3
+   that is a ninth of the pixels to rasterise, and this build exists because
+   the ground pass is rasteriser-bound; a retina-sharp canvas at 17 fps is
+   the wrong trade for a flat-shaded art style whose shapes are large and
+   whose edges carry no detail. Recorded here rather than changed.
+
+   RENDER_SCALE is where that decision is WRITTEN DOWN, so the next person
+   can find it. It is 1, which is exactly today's behaviour (Math.round of an
+   integer times 1), and nothing else in the file is touched by this part.
+
+   ⚠️ IT IS A MARKER, NOT A DIAL YOU CAN JUST TURN — and the first draft of
+   this comment claimed otherwise until a doubt pass called it. Raising it
+   enlarges the BACKING STORE while `#game` stays at 100vw/100vh, and nothing
+   scales the drawing: the five `scale()` calls in this file are all inside
+   balanced save/restore in the ENTITY pass, so none of them is a global
+   render scale, and IW2/IH2/HZ,
+   every canvas font size, every lineWidth, UNDER_CELL, GROUND_UP/GROUND_DOWN
+   and every hard-coded pixel offset in this file are all in raw canvas
+   pixels. At RENDER_SCALE 2 the game would not get sharper; it would render
+   at half its apparent size with four times the world on screen. Raising it
+   for real needs, at least: a `ctx.scale(RENDER_SCALE, RENDER_SCALE)` on
+   every context the frame draws through (the main canvas, the light canvas
+   and each baked ground chunk), the pointer path — `screenToWorld(e.clientX,
+   e.clientY)` assumes one canvas pixel per CSS pixel — multiplied by it, and
+   the ground cache's chunk canvases sized by it. That is a build of its own,
+   which is the honest reason this part only records the decision. */
+const RENDER_SCALE = 1;
 function resize() {
-  canvas.width = innerWidth; canvas.height = innerHeight;
-  lightCanvas.width = innerWidth; lightCanvas.height = innerHeight;
+  canvas.width = Math.round(innerWidth * RENDER_SCALE); canvas.height = Math.round(innerHeight * RENDER_SCALE);
+  lightCanvas.width = canvas.width; lightCanvas.height = canvas.height;
 }
 addEventListener("resize", resize); resize();
 
@@ -18540,6 +18891,88 @@ function debugS2Info() {
     lavaCrackCount, lavaNightLit, lavaNightShaded, LAVA_CRUST_INSET, LAVA_CRACK_T, LAVA_NIGHT_GLOW, PLATE_HALF_W,
   };
 }
+/* ===== Performance — HARNESS HOOKS =======================================
+   Nothing in the game calls any of these. The cache's constants are `const`
+   at the top level, which `window.eval` does not put on `window`, and "how
+   many chunks are baked this frame" is not a thing a grep can check — the
+   same reason every other hook in this file exists. */
+function debugGroundCacheInfo() {
+  const keys = [];
+  for (const k of groundChunks.keys()) keys.push(k);
+  return {
+    on: GROUND_CACHE, GC_TILES, GC_MAX, GC_BAKE_PER_FRAME, GC_PAD_X,
+    GC_W, GC_H, GC_AXIS, GROUND_UP, GROUND_DOWN, IW2, IH2, HZ, N, RENDER_SCALE,
+    size: groundChunks.size, keys, frames: groundPassFrames,
+    bakes: gcBakes, blits: gcBlits, direct: gcDirect, clears: gcClears,
+    evicts: gcEvicts, bakeFrameMax: gcBakeFrameMax, chunksFrame: gcChunksFrame,
+    bakesFrame: gcBakesFrame, thrashFrames: gcThrashFrames, frameId: gcFrameId,
+    shakeOX, shakeOY,
+    /* Whether every live chunk still owns a real backing store — an evicted
+       one is sized to 0, so a chunk still in the Map must not be. */
+    liveSized: (() => { let n = 0; for (const e of groundChunks.values()) if (e.cv && e.cv.width === GC_W) n++; return n; })(),
+    /* The geometry a gate needs to recompute a blit's position itself rather
+       than trusting the function that produced it. */
+    isoX0: (cx, cy) => gcIsoX0(cx, cy), isoY0: (cx, cy) => gcIsoY0(cx, cy),
+    ground: Object.assign({}, groundStats),
+  };
+}
+/* Flip the cache and start from cold, so a gate can render the same frame
+   both ways. Returns what it was. */
+function debugSetGroundCache(on) {
+  const was = GROUND_CACHE;
+  GROUND_CACHE = !!on;
+  /* Through the same release every other drop path uses: the pixel gate
+     flips this eight times in one page, and 48 live chunks is ~64 MB each
+     time. Deliberately NOT groundCacheClear(), which also counts a world
+     change and voids the HUD signatures — neither happened here. */
+  for (const e of groundChunks.values()) gcRelease(e);
+  groundChunks.clear();
+  return was;
+}
+/* Drive the screen shake from a gate, so the blit's device-space rounding can
+   be proved under the thing that actually breaks it rather than at rest.
+   Returns what it WAS, like the other two setters, so a gate can put the real
+   one back; and it is re-armed per frame rather than trusted to last, because
+   `shakeT` opens a 220 ms WALL-CLOCK window while a harness pumps frames on
+   synthetic timestamps. */
+function debugSetShake(active) {
+  const was = shakeT;
+  shakeT = active ? performance.now() : 0;
+  return was;
+}
+/* The LRU cap, settable. The "never thrash" guard only engages when a viewport
+   needs more chunks at once than the cache can hold, which no harness viewport
+   does — so a gate lowers the cap under a normal viewport instead of claiming
+   the path is unreachable. Production never calls this; the gate puts 48 back. */
+function debugSetGroundCacheCap(n) {
+  const was = GC_MAX;
+  GC_MAX = Math.max(1, Number(n) || 1);
+  for (const e of groundChunks.values()) gcRelease(e);
+  groundChunks.clear();
+  return was;
+}
+/* Zero the counters, so a gate can measure one window of frames instead of
+   the whole run. The cache itself is left alone unless asked. */
+function debugGroundCacheReset(dropBaked) {
+  gcBakes = 0; gcBlits = 0; gcDirect = 0; gcClears = 0; gcEvicts = 0;
+  gcBakeFrameMax = 0; gcChunksFrame = 0; gcBakesFrame = 0; gcThrashFrames = 0;
+  if (dropBaked) { for (const e of groundChunks.values()) gcRelease(e); groundChunks.clear(); }
+  return groundChunks.size;
+}
+/* PART B: what the HUD actually wrote, and what it skipped. */
+function debugHudInfo() {
+  return {
+    writes: hudWrites, skips: hudSkips,
+    compassBuilds, compassSkips, compassSig,
+    mapDraws, mapSkips, mapSig, MAP_REDRAW_MS,
+    deathTimerLast,
+  };
+}
+function debugHudReset() {
+  hudWrites = 0; hudSkips = 0; compassBuilds = 0; compassSkips = 0;
+  mapDraws = 0; mapSkips = 0;
+  return true;
+}
 /* One real frame at night (or by day), then the same snapshot. */
 function debugRenderAtTime(t, night) {
   const ep = worldEpoch;
@@ -18898,6 +19331,18 @@ function render(t) {
     shX = (Math.random() - 0.5) * f;
     shY = (Math.random() - 0.5) * f;
   }
+  /* ⚠️ THE GROUND CACHE HAS TO KNOW ABOUT THE SHAKE, AND FINDING THIS COST A
+     DOUBT PASS. The whole frame below is drawn through this translate, so a
+     chunk blitted at a whole-pixel position in USER space lands at a
+     FRACTIONAL one in device space while the screen is shaking — and the
+     browser then bilinearly resamples every chunk, with a fresh random phase
+     every frame, for the 220 ms after any hit. That is the swimming,
+     softened ground Expansion 2a removed, back again, in combat, which is
+     exactly when the player is looking. The ground pass therefore rounds
+     against `shX + bx` rather than `bx`, so the SUM is the whole number.
+     Vector drawing does not care (a path at a fractional offset is just a
+     path somewhere else), which is why only the blit needs this. */
+  shakeOX = shX; shakeOY = shY;
 
   ctx.save();
   ctx.translate(shX, shY);
@@ -19010,6 +19455,21 @@ function render(t) {
     const gMinY = Math.max(0, minY - GROUND_MARGIN), gMaxY = Math.min(N - 1, maxY + GROUND_MARGIN);
     drawGroundUnderlay();                               // Gauntlet S2 R4: closes the tile seams
     let drawn = 0, scanned = 0;
+    /* Performance PART A: the same rectangle, the same two culls and the same
+       `drawn`/`scanned`, composited out of baked chunk canvases instead of
+       re-rasterised tile by tile. The loop below is the direct path, kept
+       exactly as it was — it is what GROUND_CACHE false still runs, and what
+       the pixel-match gate compares the cache against. */
+    if (GROUND_CACHE) {
+      const gcs = drawGroundChunks(ctx, gMinX, gMaxX, gMinY, gMaxY, w, h);
+      drawn = gcs.drawn; scanned = gcs.scanned;
+    } else {
+    /* ⚠️ DELIBERATELY NOT RE-INDENTED. Everything from here to the closing
+       brace is Expansion 2a's own loop, byte for byte, so that what the
+       pixel-match gate compares the cache against is the code that shipped
+       rather than a tidied copy of it. The braces are here because a doubt
+       pass pointed out that a braceless `else` governing a thirteen-line
+       loop is one appended statement away from running unconditionally. */
     for (let s = gMinX + gMinY; s <= gMaxX + gMaxY; s++) {
       const txLo = Math.max(gMinX, s - gMaxY), txHi = Math.min(gMaxX, s - gMinY);
       for (let tx = txLo; tx <= txHi; tx++) {
@@ -19022,6 +19482,7 @@ function render(t) {
         drawGroundTile(ctx, tx, ty);
         drawn++;
       }
+    }
     }
     groundStats.tiles = drawn; groundStats.scanned = scanned;
     groundStats.minX = gMinX; groundStats.maxX = gMaxX;
@@ -20098,11 +20559,71 @@ function drawTowerArrow() {
 /* =========================================================
    HUD (unchanged)
    ========================================================= */
-const hudPlayer = document.getElementById("hudPlayer");
-const hudWorld = document.getElementById("hudWorld");
+/* ===== Performance PART B — THE HUD ONLY WRITES WHEN SOMETHING CHANGED ===
+   updateHUD() runs every frame out of render(), and it rebuilt three cards'
+   text on every one of them whether or not a character in them had changed.
+   An innerHTML write is a parse plus a style and layout invalidation, and
+   `hudPlayer` is the longest string in the file's HUD — eleven conditional
+   lines of it.
+
+   THE GUARD LIVES AT THE DECLARATION, NOT AT THE CALL SITES. `hudPrompt`'s
+   text is assigned in twenty branches of one else-if chain; guarding each
+   would be twenty edits to working code for one idea. Instead these three
+   names now hold a thin wrapper whose `innerHTML` / `textContent` setters
+   compare against the last string they actually wrote and return early when
+   it matches. Every call site below is untouched, and so is what the player
+   sees: the only thing that changes is how often the DOM is told.
+
+   `style` and `classList` forward to the real element, so `.style.display`
+   and the hidden/shown logic behave exactly as before, and the element is
+   still reachable by id for anything that wants the node itself (the help
+   lift measurement, the harness gates). `hudZone` and `hpBar` stay plain
+   elements: neither carries text, and both are already guarded by being a
+   single cheap style write. */
+let hudWrites = 0, hudSkips = 0;
+function hudCard(id) {
+  const el = document.getElementById(id);
+  /* ⚠️ ONE cache for both setters, not one each, and the doubt pass is why.
+     Two independent caches never invalidate each other: write `innerHTML` =
+     "A", then `textContent` = "B" (the card now shows B), then `innerHTML` =
+     "A" again — a per-setter cache says "already written" and the card shows
+     B for the rest of the session. Remembering WHICH property was written
+     last, as well as what, makes a change of property a change. No card in
+     the file mixes the two today; this is so that the first one to try it
+     cannot be quietly broken by the guard. The getters read the ELEMENT, so
+     they can never disagree with what is on screen either. */
+  let last = null, lastProp = "";
+  const put = (prop, v) => {
+    if (prop === lastProp && v === last) { hudSkips++; return; }
+    /* The cache records what was really WRITTEN. If the element is missing,
+       nothing was, so nothing is remembered — otherwise a card whose node
+       appears later would be skipped forever on the strength of a write that
+       never happened (second doubt pass). */
+    if (!el) return;
+    el[prop] = v; lastProp = prop; last = v; hudWrites++;
+  };
+  return {
+    el: el,
+    get style() { return el ? el.style : {}; },
+    get classList() { return el ? el.classList : { add() {}, remove() {}, toggle() {} }; },
+    get innerHTML() { return el ? el.innerHTML : ""; },
+    set innerHTML(v) { put("innerHTML", v); },
+    get textContent() { return el ? el.textContent : ""; },
+    set textContent(v) { put("textContent", v); },
+  };
+}
+const hudPlayer = hudCard("hudPlayer");
+const hudWorld = hudCard("hudWorld");
 const hudZone = document.getElementById("hudZone");
-const hudPrompt = document.getElementById("hudPrompt");
+const hudPrompt = hudCard("hudPrompt");
 const hpBar = document.getElementById("hpBar");
+/* The death timer is the fourth per-frame text write in updateHUD(), and it
+   is one line rather than a card, so it carries its own last-written string
+   instead of a wrapper. */
+let deathTimerLast = null;
+/* The same, for the two per-frame writers updateHUD() calls out to: the
+   world-unmaking countdown and the boss bar. */
+let unmakingLast = null, bossNameLast = null, bossHpLast = null;
 
 /* =========================================================
    v35 PART A — MINIMAP / COMPASS
@@ -20174,6 +20695,9 @@ function boxesHit(a, b) {
    computed inside a render path and never lands anywhere a grep can see. */
 let compassLabelBoxes = [];
 let compassBlockerBoxes = [];   // ticks, dots and centre the labels must not cover (for gates)
+/* Performance PART B: the dial's last-built signature, and the two counters
+   a gate measures it with. */
+let compassSig = "", compassBuilds = 0, compassSkips = 0;
 function compassLabelLayout() {
   return compassLabelBoxes.map(b => ({ label: b.label, x: b.x, y: b.y, w: b.w, h: b.h }));
 }
@@ -20195,7 +20719,7 @@ function updateMinimap() {
      already carries it from their row, so nobody who has seen the Grounds
      once ever loses the compass again. Deliberately the same mechanism as
      inInterior() beside it: the card goes away while it would be noise. */
-  if (!me || inInterior() || !tutorialDone) { el.style.display = "none"; return; }
+  if (!me || inInterior() || !tutorialDone) { el.style.display = "none"; compassSig = ""; return; }
   const dial = document.getElementById("mmDial");
   if (dial) {
     /* hotfix: R_TICK and R_MARK used to be 46/36 — only 10px apart, which
@@ -20210,78 +20734,100 @@ function updateMinimap() {
        it is this dial's own fixed reference, consistent every time. Ticks
        placed the same way the marks are, so the two always agree. */
     const rad = d => (d - 90) * Math.PI / 180;   // -90 so 0 renders at the top
-    let inner = '<div class="mm-centre"></div>';
-    for (const [label, deg] of COMPASS_POINTS) {
-      const x = CX + R_TICK * Math.cos(rad(deg)), y = CY + R_TICK * Math.sin(rad(deg));
-      inner += `<div class="mm-tick${deg % 90 === 0 ? " major" : ""}" style="left:${x}px;top:${y}px">${label}</div>`;
-    }
-    /* ============ World Check Fixes PART D — LABELS NEVER OVERLAP =======
-       In every landmark screenshot, labels that shared a bearing were drawn
-       on top of each other and were unreadable — "ARENA", "SHRINE" and
-       "SPAWN" printed as one blob, "TOWER" over "ORACLE". Nine marks all sit
-       at one radius, so two landmarks a few degrees apart put their labels
-       in the same place; the dots were never the problem.
+    /* ===== Performance PART B — THE DIAL REBUILDS ONLY WHEN IT CHANGES ===
+       Everything below produced the same `innerHTML` on every frame the
+       player stood still, and it is the expensive half of updateHUD(): nine
+       landmark bearings, an eight-way greedy collision layout against the
+       ticks and dots, and then a full subtree parse.
 
-       Greedy, nearest landmark first, because when a label has to be dropped
-       the one worth keeping is the one for the place you are closest to.
-       Three candidate spots per label, all on the mark's OWN bearing so a
-       label never drifts away from the dot it belongs to: the normal spot,
-       then pulled in, then pushed out. If all three collide with a label
-       already placed, the dot is drawn alone.
+       The signature is what the spec names — the ordered list of label plus
+       bearing ROUNDED TO 1°, which is exactly the resolution the dial can
+       show, since a mark's left/top are computed from the bearing and a
+       fraction of a degree moves it by well under a pixel at R_MARK 42. The
+       ORDER is part of it too, deliberately: the layout is greedy nearest
+       landmark first, so two landmarks swapping places changes which label
+       gets the crowded spot even when neither bearing moved.
 
-       DOTS NEVER MOVE. Only labels shift radius or drop — a dot that moved
-       would be a lie about a bearing, which is the one thing this dial is
-       for. The box estimate is deliberately arithmetic rather than measured:
-       this runs every frame the compass is up, the font is a fixed 8px, and
-       ctx.measureText() on nine labels per frame would be a real cost for a
-       collision test that only has to be approximately right. */
-    const placed = [];
-    /* Obstacles a label may not cover (doubt pass, 2026-10-13): the eight
-       tick letters — the old outward candidate printed over "N"/"NE"/"NW",
-       the exact "TOWEN" collision v35 fixed — every landmark's own dot, and
-       the centre marker. Labels still only ever test against each other AND
-       these; dots never move. */
+       `compassLabelBoxes` / `compassBlockerBoxes` keep last build's values
+       on a skipped frame, which is correct — they describe what is on the
+       dial, and on a skipped frame that is still last build's layout. */
     const marks = minimapBearings().slice().sort((a, b) => a.d - b.d);
-    const blockers = [];
-    for (const [label, deg] of COMPASS_POINTS) {
-      const tx = CX + R_TICK * Math.cos(rad(deg)), ty = CY + R_TICK * Math.sin(rad(deg));
-      const tw = label.length * TICK_W_PER_CH + 2;
-      blockers.push({ x: tx - tw / 2, y: ty - TICK_H / 2, w: tw, h: TICK_H });
-    }
-    for (const r of marks) {
-      const mx = CX + R_MARK * Math.cos(rad(r.deg)), my = CY + R_MARK * Math.sin(rad(r.deg));
-      blockers.push({ x: mx - DOT_BOX / 2, y: my - DOT_BOX / 2, w: DOT_BOX, h: DOT_BOX });
-    }
-    blockers.push({ x: CX - 4, y: CY - 4, w: 8, h: 8 });
-    compassBlockerBoxes = blockers;
-    for (const r of marks) {
-      const x = CX + R_MARK * Math.cos(rad(r.deg)), y = CY + R_MARK * Math.sin(rad(r.deg));
-      inner += `<div class="mm-mark" style="left:${x}px;top:${y}px"></div>`;
-      /* The box the CSS actually produces: .mm-mark-label is 8px text with
-         `translate(-50%, -140%)`, so the anchor point sits at the box's
-         horizontal centre and 140% of its height below its top. */
-      const bw = r.label.length * LABEL_W_PER_CH + LABEL_W_PAD, bh = LABEL_H;
-      let put = null;
-      /* Inward only: R_MARK, then two steps toward the centre (outward is
-         the tick ring's space) — and at each radius the label may sit above
-         its anchor (the normal look) or just below it, which roughly doubles
-         the room on a crowded bearing. `ty` is the CSS top that puts the box
-         where it was tested, given the label's fixed translate(-50%,-140%). */
-      for (const rr of [R_MARK, R_MARK - 14, R_MARK - 26]) {
-        const lx = CX + rr * Math.cos(rad(r.deg)), ly = CY + rr * Math.sin(rad(r.deg));
-        for (const below of [false, true]) {
-          const y0 = below ? ly + DOT_BOX / 2 + 1 : ly - bh * LABEL_LIFT;
-          const box = { label: r.label, x: lx - bw / 2, y: y0, w: bw, h: bh, lx, ly: y0 + bh * LABEL_LIFT };
-          if (!placed.some(p => boxesHit(p, box)) && !blockers.some(p => boxesHit(p, box))) { put = box; break; }
-        }
-        if (put) break;
+    let sig = "";
+    for (const r of marks) sig += r.label + "@" + Math.round(r.deg) + "|";
+    if (sig !== compassSig) {
+      compassSig = sig; compassBuilds++;
+      let inner = '<div class="mm-centre"></div>';
+      for (const [label, deg] of COMPASS_POINTS) {
+        const x = CX + R_TICK * Math.cos(rad(deg)), y = CY + R_TICK * Math.sin(rad(deg));
+        inner += `<div class="mm-tick${deg % 90 === 0 ? " major" : ""}" style="left:${x}px;top:${y}px">${label}</div>`;
       }
-      if (!put) continue;                 // dot only — the label is dropped
-      placed.push(put);
-      inner += `<div class="mm-mark-label" style="left:${put.lx}px;top:${put.ly}px">${r.label}</div>`;
-    }
-    compassLabelBoxes = placed;
-    dial.innerHTML = inner;
+      /* ============ World Check Fixes PART D — LABELS NEVER OVERLAP =======
+         In every landmark screenshot, labels that shared a bearing were drawn
+         on top of each other and were unreadable — "ARENA", "SHRINE" and
+         "SPAWN" printed as one blob, "TOWER" over "ORACLE". Nine marks all sit
+         at one radius, so two landmarks a few degrees apart put their labels
+         in the same place; the dots were never the problem.
+
+         Greedy, nearest landmark first, because when a label has to be dropped
+         the one worth keeping is the one for the place you are closest to.
+         Three candidate spots per label, all on the mark's OWN bearing so a
+         label never drifts away from the dot it belongs to: the normal spot,
+         then pulled in, then pushed out. If all three collide with a label
+         already placed, the dot is drawn alone.
+
+         DOTS NEVER MOVE. Only labels shift radius or drop — a dot that moved
+         would be a lie about a bearing, which is the one thing this dial is
+         for. The box estimate is deliberately arithmetic rather than measured:
+         this runs every frame the compass is up, the font is a fixed 8px, and
+         ctx.measureText() on nine labels per frame would be a real cost for a
+         collision test that only has to be approximately right. */
+      const placed = [];
+      /* Obstacles a label may not cover (doubt pass, 2026-10-13): the eight
+         tick letters — the old outward candidate printed over "N"/"NE"/"NW",
+         the exact "TOWEN" collision v35 fixed — every landmark's own dot, and
+         the centre marker. Labels still only ever test against each other AND
+         these; dots never move. */
+      const blockers = [];
+      for (const [label, deg] of COMPASS_POINTS) {
+        const tx = CX + R_TICK * Math.cos(rad(deg)), ty = CY + R_TICK * Math.sin(rad(deg));
+        const tw = label.length * TICK_W_PER_CH + 2;
+        blockers.push({ x: tx - tw / 2, y: ty - TICK_H / 2, w: tw, h: TICK_H });
+      }
+      for (const r of marks) {
+        const mx = CX + R_MARK * Math.cos(rad(r.deg)), my = CY + R_MARK * Math.sin(rad(r.deg));
+        blockers.push({ x: mx - DOT_BOX / 2, y: my - DOT_BOX / 2, w: DOT_BOX, h: DOT_BOX });
+      }
+      blockers.push({ x: CX - 4, y: CY - 4, w: 8, h: 8 });
+      compassBlockerBoxes = blockers;
+      for (const r of marks) {
+        const x = CX + R_MARK * Math.cos(rad(r.deg)), y = CY + R_MARK * Math.sin(rad(r.deg));
+        inner += `<div class="mm-mark" style="left:${x}px;top:${y}px"></div>`;
+        /* The box the CSS actually produces: .mm-mark-label is 8px text with
+           `translate(-50%, -140%)`, so the anchor point sits at the box's
+           horizontal centre and 140% of its height below its top. */
+        const bw = r.label.length * LABEL_W_PER_CH + LABEL_W_PAD, bh = LABEL_H;
+        let put = null;
+        /* Inward only: R_MARK, then two steps toward the centre (outward is
+           the tick ring's space) — and at each radius the label may sit above
+           its anchor (the normal look) or just below it, which roughly doubles
+           the room on a crowded bearing. `ty` is the CSS top that puts the box
+           where it was tested, given the label's fixed translate(-50%,-140%). */
+        for (const rr of [R_MARK, R_MARK - 14, R_MARK - 26]) {
+          const lx = CX + rr * Math.cos(rad(r.deg)), ly = CY + rr * Math.sin(rad(r.deg));
+          for (const below of [false, true]) {
+            const y0 = below ? ly + DOT_BOX / 2 + 1 : ly - bh * LABEL_LIFT;
+            const box = { label: r.label, x: lx - bw / 2, y: y0, w: bw, h: bh, lx, ly: y0 + bh * LABEL_LIFT };
+            if (!placed.some(p => boxesHit(p, box)) && !blockers.some(p => boxesHit(p, box))) { put = box; break; }
+          }
+          if (put) break;
+        }
+        if (!put) continue;                 // dot only — the label is dropped
+        placed.push(put);
+        inner += `<div class="mm-mark-label" style="left:${put.lx}px;top:${put.ly}px">${r.label}</div>`;
+      }
+      compassLabelBoxes = placed;
+      dial.innerHTML = inner;
+    } else compassSkips++;
   }
   el.style.display = "block";
 }
@@ -20349,6 +20895,31 @@ const MAP_FLECK = 2;
 const MAP_TREE_SHADE = 0.66;
 const MAP_ROCK_FLECK = "#7d7568";
 let mapCtx = null;
+/* ===== Performance PART B — THE MINIMAP REDRAWS ON A REASON ==============
+   The card is 961 fillRects plus a fleck pass plus the dots, and it ran on
+   every frame — while the window it draws is a 31x31 patch of tiles keyed on
+   Math.floor(me.x), which cannot change until the player crosses a tile
+   boundary. So the three reasons are the spec's: the player's TILE changed,
+   the SET of other players in the window changed, or MAP_REDRAW_MS has
+   passed since the last draw.
+
+   The time floor is what carries everything the first two do not name, and a
+   doubt pass pointed out that the first draft of this comment named only half
+   of them. It carries: other players' movement inside the window, which lags
+   by up to a quarter of a second and is well inside the realtime channel's
+   own cadence; a chopped tree or a mined node leaving `featureIndex`, so its
+   fleck can linger that long; and — the one worth saying out loud — YOUR OWN
+   DOT, which mapPixel() places continuously at 4 px per tile, so it now steps
+   at 4 Hz rather than every frame. All three are bounded by MAP_REDRAW_MS,
+   which is a tunable: if the stutter on your own marker reads badly, lower
+   it. A world reset is NOT left to that floor — groundCacheClear() voids
+   `mapSig`, so the card cannot show the old world's terrain for a quarter of
+   a second after a reset.
+
+   `mapFleckStats` keeps last draw's values on a skipped frame for the same
+   reason the compass's boxes do: it is a record of what is on the card. */
+const MAP_REDRAW_MS = 250;              // tunable, the spec's own number
+let mapSig = "", mapDrawnAt = -1e9, mapDraws = 0, mapSkips = 0;
 /* v51 PART B: what the texture pass ACTUALLY painted on the last frame —
    recorded at the draw, not recomputed afterwards, so a gate compares the
    real marks against the real feature index instead of comparing two copies
@@ -20367,13 +20938,28 @@ function updateWorldMap() {
   /* v56 PART C: the compass's twin condition, for the same reason and in the
      same place. The two cards appear together the moment the Grounds are
      done — see updateMinimap() above for why the flag is the right one. */
-  if (!me || inInterior() || !tutorialDone) { el.style.display = "none"; return; }
+  if (!me || inInterior() || !tutorialDone) { el.style.display = "none"; mapSig = ""; return; }
   const cv = document.getElementById("mapCanvas");
   if (!cv) { el.style.display = "none"; return; }
   if (!mapCtx) mapCtx = cv.getContext("2d");
   const c = mapCtx;
   if (!c) { el.style.display = "none"; return; }
   const px = Math.floor(me.x), py = Math.floor(me.y);
+  /* Performance PART B: the three reasons to redraw, tested before the 961
+     fills. The signature is the player's tile plus the names in the window,
+     built in `others`' own stable iteration order. */
+  let sig = px + "," + py;
+  for (const [n, o] of others) {
+    if (o.dead) continue;
+    if ((o.space || "main") !== (me.space || "main")) continue;
+    if (Math.abs(o.x - me.x) > MAP_R + 0.5 || Math.abs(o.y - me.y) > MAP_R + 0.5) continue;
+    sig += "|" + n;
+  }
+  const nowMap = performance.now();
+  if (sig === mapSig && nowMap - mapDrawnAt < MAP_REDRAW_MS) {
+    mapSkips++; el.style.display = "block"; return;
+  }
+  mapSig = sig; mapDrawnAt = nowMap; mapDraws++;
   c.clearRect(0, 0, MAP_PX, MAP_PX);
   mapFleckStats = { cells: 0, trees: 0, rocks: 0, marks: [] };
   for (let dy = -MAP_R; dy <= MAP_R; dy++) {
@@ -20478,8 +21064,15 @@ function updateUnmakingHud() {
   if (!el) return;
   if (!worldResetAt) { el.style.display = "none"; return; }
   const left = Math.max(0, Math.ceil((worldResetAt - Date.now()) / 1000));
-  el.innerHTML = `<div class="un-head">THE WORLD IS UNMAKING</div>` +
-                 `<div class="un-count">${left}</div>`;
+  /* Performance PART B: this ran every frame for the whole ten seconds, and
+     those are the ten most frame-rate-sensitive seconds in the game. `left`
+     is whole seconds, so ~600 frames produced ten distinct strings and ~590
+     pointless innerHTML parses. Found by the doubt pass: the spec's "every
+     other write inside updateHUD()" reaches the writers it CALLS too. */
+  const un = `<div class="un-head">THE WORLD IS UNMAKING</div>` +
+             `<div class="un-count">${left}</div>`;
+  if (un !== unmakingLast) { unmakingLast = un; hudWrites++; el.innerHTML = un; }
+  else hudSkips++;
   el.style.display = "block";
 }
 
@@ -20654,7 +21247,11 @@ function updateHUD(dayT) {
     const left = Math.max(0, me.deadUntil - Date.now());
     const mm = String(Math.floor(left / 60000)).padStart(2, "0");
     const ss = String(Math.floor((left % 60000) / 1000)).padStart(2, "0");
-    document.getElementById("deathTimer").textContent = `${mm}:${ss}`;
+    const dt = `${mm}:${ss}`;                       // Performance PART B
+    if (dt !== deathTimerLast) {
+      deathTimerLast = dt; hudWrites++;
+      document.getElementById("deathTimer").textContent = dt;
+    } else hudSkips++;
   }
 }
 
@@ -21080,9 +21677,24 @@ function updateBossHud() {
   const nameEl = document.getElementById("bossName");
   const barEl = document.getElementById("bossBar");
   const hpEl = document.getElementById("bossHp");
-  if (nameEl) nameEl.textContent = (def && def.name) || "Elder Drake";
+  /* Performance PART B, found by the doubt pass: the name is a CONSTANT that
+     was rewritten on every frame of a boss fight, and the HP line changes
+     only when the number does. Same rule as the three cards. */
+  /* A MISSING element is not a skipped write, and the counters have to be
+     able to tell the two apart — a gate reading the write/skip ratio would
+     otherwise be handed two free "skips" on every frame of a boss fight in a
+     page where the nodes do not exist (second doubt pass). */
+  const bn = (def && def.name) || "Elder Drake";
+  if (nameEl) {
+    if (bn !== bossNameLast) { bossNameLast = bn; hudWrites++; nameEl.textContent = bn; }
+    else hudSkips++;
+  }
   if (barEl) barEl.style.width = (pct * 100).toFixed(1) + "%";
-  if (hpEl) hpEl.textContent = `${Math.max(0, Math.ceil(m.hp))} / ${max}`;
+  const bh = `${Math.max(0, Math.ceil(m.hp))} / ${max}`;
+  if (hpEl) {
+    if (bh !== bossHpLast) { bossHpLast = bh; hudWrites++; hpEl.textContent = bh; }
+    else hudSkips++;
+  }
   uiReveal(el, true);
 }
 /* Harness hook — every value above is a top-level `let` or a DOM read, and
