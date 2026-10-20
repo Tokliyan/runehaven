@@ -22,10 +22,10 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
 - **Round 1 SHIPPED** (2026-10-14, 6a2585c): nameplates drawn last + see-through player behind cover; Colosseum floor/columns/lintels; Ancient Forge furnace house; Shrine gate; leaves, butterflies, landmark smoke, flocks, crows, rabbits. 2.97 -> 3.28.
 - **Rounds 2-4 SHIPPED** (2026-10-16): Volcano cone with lava moat and crack network, lava as its own night light, plated labels and mob tags, compass/minimap caption plates; Shrine braziers, Forge roof, foam off the land; team-colour ground discs under every actor, enemy tags kept off the player's body, continuous surf; tile seams closed by a cheap ground underlay (the round 3 pad cost 9-13% fps and was removed).
   - Score 3.28 -> 3.54 (r2) -> 3.57 (r3) -> **3.67** (r4). Weakest now: Readability 3.24, Transitions 3.27, Landmark 3.50. **The "every category >= 4" target was not met**; the stage stopped on its four-round cap.
-  - run4 1840 -> **1865 PASS / 0 FAIL**; run3 clean; run5 CAUGHT none.
-  - Frame rate vs S1 (interleaved, 9-20 samples): Colosseum -8.2%, Bazaar -3%, Forge -1.2%, Spawn -8.0% — inside the 10% budget.
+  - run4 1840 -> **1870 PASS / 0 FAIL**; run3 clean; run5 CAUGHT none.
+  - Frame rate vs S1 (interleaved, final build): Colosseum -4.5%, Bazaar -2.6%, Forge -1.7%, Spawn -1.2% — inside the 10% budget.
   - **Flagged:** LAVA_CRUST_SHARE moved 45% -> 66% for the Volcano's scored problem; README PART G calls it tunable but its gate text still says 45%.
-  - Adversarial (Opus) review of the S2 diff could not run in round 1 (rate limit) and was not re-run; the gates and screenshot checks are the evidence.
+  - Independent Opus review of the rounds 2-4 diff: 9 defects (none throw), 7 fixed with new gates (rim glow, cone sawtooth, foam on grass, stacked labels, per-frame allocations, underlay past the world edge, foam strings). Open: tag plate dims the "!" warning; riders get no disc. Report: `.temp/delegate/s2-r234-review.md`.
 
 ## Owner decisions (2026-10-15)
 - **S3 Mobile & Touch: dropped for now.** **S5 Account Security: dropped for now** (no `supabase_s5.sql`). The iPhone test and App Store wrapper are not targets for a long time. Recorded in GAUNTLET.md and as DEFERRED notes in README (insert-only; specs untouched).

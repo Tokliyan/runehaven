@@ -112,20 +112,37 @@ Volcano need proximity; cave interiors are ~55% void; the floating HP bar
 and phone HUD; no rim light; the forge/volcano pools are paler than the
 locked water pair; south/east shores carry no foam.
 
-**Frame rate** (headless 1280x720, interleaved runs against S1 — the start
-of S2 — 9 samples each, Bazaar 20): Colosseum 27.4 -> 25.2 (-8.2%),
-Bazaar 22.2 -> 21.5 (-3%), Ancient Forge -1.2%, Spawn -8.0%. Inside the
-stage's 10% budget. (Against S0 the Forge and Colosseum views are not
-comparable: S1 moved both on this seed.)
+- **Independent review (fresh Opus reviewer, after round 4)** found nine
+  defects, none that throw; seven fixed before shipping: night lava no longer
+  punches through the higher rim in front of edge tiles (only interior lava
+  glows); the cone is cut out of the night punch-out by a pixel clip (no lit
+  sawtooth, no closure per tile); foam stops at FOAM_FRONT_T 0.27 of an edge
+  where land stands in front of it (measured on the projection — it was being
+  drawn on the grass of vertical shores); several lifted labels stack 15 px
+  apart instead of printing on each other; crack edges are a bit mask (no
+  array per crusted tile per frame); the underlay paints nothing past the
+  world edge; foam builds no colour strings over open water. Left open: a
+  mob tag plate can dim the top of the "!" attack warning; riders get no
+  disc (the gate now says "on foot").
 
-**Gate integrity:** run4 1840 -> 1865 PASS, 0 FAIL (run3 clean, run5 CAUGHT
+**Frame rate** (headless 1280x720, interleaved against S1 — the start of
+S2 — final build, 6 samples each): Colosseum 35.0 -> 33.4 (-4.5%), Bazaar
+26.3 -> 25.6 (-2.6%), Ancient Forge -1.7%, Spawn -1.2%. Inside the stage's
+10% budget. (Against S0 the Forge and Colosseum views are not comparable:
+S1 moved both on this seed.)
+
+**Gate integrity:** run4 1840 -> 1870 PASS, 0 FAIL (run3 clean, run5 CAUGHT
 none; parse floor intact). Gates UPDATED, not relaxed, each with its reason
 in run4.js: "WCF G: crust share" now quotes the tunable instead of a literal
 45 and still allows +/-8 points; "WCF G: crust forms plates" bar raised to
 share + 0.15 (stronger); "WCF G: no plate or vent in front of higher ground"
 pins the new `&& !inConeMoat(tx, ty)` line (it only removes crust; the height
 loop still counts every crust tile); "ANIM C: chop and foam survive" pins the
-new foam pulse line; the R3 seam gate now MEASURES the underlay (every cell
+new foam pulse line; "the lava light is hard-edged" now expects two batched
+fills (the crater glow is drawn after the cone clip) plus the clip and no
+per-tile closure; the R3 foam gate now checks the four STROKES (north/west
+starts only) instead of forbidding any read of the front neighbours, which
+the fix needs; the R3 seam gate now MEASURES the underlay (every cell
 recomputed from the tile under it, every tile its own PAL pair) instead of
 matching a constant. Tunables changed: LAVA_CRUST_SHARE 0.45 -> 0.66 (with
 LAVA_CRUST_T, LAVA_CRUST_INSET) — README PART G names it "(tunable)", changed

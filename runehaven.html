@@ -18514,6 +18514,8 @@ function flushOverlayPass(t) {
   plateQueue.length = 0;
 }
 
+/* ⚠️ HARNESS ONLY (S2 doubt pass): put the camera somewhere for a gate. */
+function debugSetCam(x, y) { cam.x = x; cam.y = y; }
 /* ⚠️ HARNESS ONLY (Gauntlet S2): read-only views of the polish pass, so
    run4 can measure it instead of trusting a screenshot. Nothing in the game
    calls any of these. */
@@ -18534,7 +18536,7 @@ function debugS2Info() {
     gate: shrineGatePos(), flocks: flocks.length, flockBirdsDrawn, particleKinds: kinds,
     LEAF_CHANCE, BUTTERFLY_PLAINS, RABBIT_CELL, RABBIT_P, COLO_CROWS, SMOKE_NEAR,
     // S2 R2
-    cone: volcanoConeSite(), VCONE_R, coneDrawn: vconeSil !== null, underBuilds, underCells: underCells.slice(), UNDER_CELL, cam: { x: cam.x, y: cam.y }, PAL, SPAWN: { x: SPAWN.x, y: SPAWN.y },
+    cone: volcanoConeSite(), VCONE_R, coneDrawn: vconeSil !== null, underBuilds, underCells: underCells.slice(), UNDER_CELL, FOAM_FRONT_T, LABEL_STACK_PX, HZ, cam: { x: cam.x, y: cam.y }, PAL, SPAWN: { x: SPAWN.x, y: SPAWN.y },
     lavaCrackCount, lavaNightLit, lavaNightShaded, LAVA_CRUST_INSET, LAVA_CRACK_T, LAVA_NIGHT_GLOW, PLATE_HALF_W,
   };
 }

@@ -11346,13 +11346,24 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         const nightOn = window.debugRenderAtTime(700016, true);
         results.push([`S2 R2: at night the lava is its own light — ${nightOn.lavaNightLit} open tiles cut through the dark, ${nightOn.lavaNightShaded} behind the cone left dark`,
           nightOn.lavaNightLit > 50 && nightOn.lavaNightShaded > 0 && nightOn.LAVA_NIGHT_GLOW > 0.4]);
-        results.push(['S2 R2: and that light is hard-edged — one flat batched fill and one stroke, no gradient added',
+        /* Doubt pass (S2 close): the crater glow became its own fill, drawn
+           AFTER the cone clip is released (inside the clip it would be cut
+           away). Still batched, still flat: exactly two fills, one stroke, and
+           now also no per-tile closure and a real silhouette clip. */
+        results.push(['S2 R2: and that light is hard-edged — flat batched fills (lava under a cone clip, then the crater) and one stroke, no gradient added',
           (() => {
             const at = gameScript.indexOf('/* S2 R2: lava is its own light.');
             const body = gameScript.slice(at, gameScript.indexOf('lctx.globalCompositeOperation = "source-over";', at));
             return at > 0 && body.indexOf('createRadialGradient') < 0 && body.indexOf('createLinearGradient') < 0 &&
-                   (body.match(/lctx\.fill\(\)/g) || []).length === 1;
+                   (body.match(/lctx\.fill\(\)/g) || []).length === 2 && (body.match(/lctx\.stroke\(\)/g) || []).length === 1 &&
+                   body.indexOf('lctx.clip("evenodd")') > 0 && body.indexOf('.some(') < 0 &&
+                   body.indexOf('lctx.restore();') < body.indexOf('if (vconeGlow && vconeGlow.length)');
           })()]);
+        results.push(['S2 doubt: only INTERIOR lava punches through the night — an edge tile has the higher rim in front of it',
+          gameScript.indexOf('} else if (interiorLava) lavaOpenPts.push(sx, sy);') > 0 &&
+          gameScript.indexOf('} else lavaOpenPts.push(sx, sy);') < 0]);
+        results.push(['S2 doubt: the crack edges are a 4-bit mask, not an array built per crusted tile per frame',
+          gameScript.indexOf('const lek = [') < 0 && gameScript.indexOf('if (!(lek & (1 << k))) continue;') > 0]);
         const lf = window.debugLifeAt(VO.x + 0.5, VO.y + 0.5, 8);
         results.push([`S2 R2: the Volcano's smoke rises out of the crater (${lf.byKind.smoke || 0} puffs)`,
           (lf.byKind.smoke || 0) > 0 && gameScript.indexOf('const VC = volcanoConeSite() || VOLCANO;') > 0]);
@@ -11417,9 +11428,21 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         }
         const foamAt = gameScript.indexOf('// Foam where shallow water laps against land (2026-07-11)');
         const foam = gameScript.slice(foamAt, gameScript.indexOf('} else if (b === B.LAVA) {', foamAt));
-        results.push(['S2 R3: no foam is drawn on the land in front of the water — only on the north and west shores the viewer sees',
-          foamAt > 0 && foam.indexOf('heightAt(tx, ty + 1) >= 0') < 0 && foam.indexOf('heightAt(tx + 1, ty) >= 0') < 0 &&
-          (foam.match(/heightAt\(tx, ty - 1\) >= 0/g) || []).length === 2 && (foam.match(/heightAt\(tx - 1, ty\) >= 0/g) || []).length === 2]);
+        /* Doubt pass (S2 close): the front neighbours (east, south) are now READ
+           — to stop a stroke where the front tile hides it — so "never mentions
+           heightAt(tx + 1, ty)" no longer means anything. The claim is about
+           STROKES: every one starts on the north or west edge (y = ty + .08/.26
+           or x = tx + .08/.26), none runs along the south (ty + .92 / ty + 1 as
+           a start) or east edge, and they are drawn only when that side is land. */
+        {
+          const starts = [...foam.matchAll(/const \[ax, ay\] = worldToScreen\(([^)]*)\);/g)].map(m => m[1]);
+          results.push([`S2 R3: no foam is drawn on the land in front of the water — only on the north and west shores the viewer sees (${starts.length} strokes)`,
+            foamAt > 0 && starts.length === 4 &&
+            starts.every(a => ['tx, ty + 0.08, zw', 'tx + 0.08, ty, zw', 'tx, ty + 0.26, zw', 'tx + 0.26, ty, zw'].includes(a)) &&
+            foam.indexOf('const landN = heightAt(tx, ty - 1) >= 0, landW = heightAt(tx - 1, ty) >= 0;') > 0 &&
+            (foam.match(/if \(landN\) \{/g) || []).length === 2 && (foam.match(/if \(landW\) \{/g) || []).length === 2 &&
+            foam.indexOf('ty + 0.92') < 0 && foam.indexOf('tx + 0.92') < 0]);
+        }
         const R3 = window.debugS2Info();
         const VC3 = R3.cone;
         results.push(['S2 R3: the cone is five tiers and 96px to the crater, its whole base still on lava',
@@ -11457,7 +11480,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       /* ---- F: round 4 — actors you can find, surf that reads ---------- */
       {
-        results.push(['S2 R4: every actor stands on a flat team-colour disc — you gold, players blue, mobs red — on the ground, not bobbing',
+        results.push(['S2 R4: every actor on foot stands on a flat team-colour disc — you gold, players blue, mobs red — on the ground, not bobbing (a rider gets none: the mount is under them)',
           gameScript.indexOf('if (!mountedNow) drawActorDisc(sx, sy, isMe ? "me" : "friend", 1);') > 0 &&
           gameScript.indexOf('drawActorDisc(gx, gy, "foe", Math.min(Math.max(mk, 0.8), 2.4));') > 0 &&
           gameScript.indexOf('const [gx, gy] = worldToScreen(m.x, m.y, groundZ(m.x, m.y));') > 0 &&
@@ -11475,10 +11498,47 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           window.labelClearOfPlate(600, 415, 40, me4) === 415 && window.labelClearOfPlate(600, 377, 40, me4) === 324]);
         const foamAt4 = gameScript.indexOf('// Foam where shallow water laps against land (2026-07-11)');
         const foam4 = gameScript.slice(foamAt4, gameScript.indexOf('} else if (b === B.LAVA) {', foamAt4));
-        results.push(['S2 R4: the surf is one continuous band — each stroke spans its full tile edge and runs of tiles pulse together',
-          foam4.indexOf('worldToScreen(tx, ty + 0.08, zw)') > 0 && foam4.indexOf('worldToScreen(tx + 1, ty + 0.08, zw)') > 0 &&
-          foam4.indexOf('worldToScreen(tx + 0.08, ty, zw)') > 0 && foam4.indexOf('worldToScreen(tx + 0.08, ty + 1, zw)') > 0 &&
+        /* Doubt pass (S2 close): a stroke still spans its FULL edge in the open
+           (end = 1); where land stands in front it stops at FOAM_FRONT_T, and
+           that number is MEASURED here on the real projection, not trusted. */
+        results.push(['S2 R4: the surf is one continuous band — each stroke spans its full tile edge in the open and runs of tiles pulse together',
+          foam4.indexOf('worldToScreen(tx, ty + 0.08, zw)') > 0 && foam4.indexOf('worldToScreen(tx + nEnd, ty + 0.08, zw)') > 0 &&
+          foam4.indexOf('worldToScreen(tx + 0.08, ty, zw)') > 0 && foam4.indexOf('worldToScreen(tx + 0.08, ty + wEnd, zw)') > 0 &&
+          foam4.indexOf('const nEnd = heightAt(tx + 1, ty) >= 0 ? FOAM_FRONT_T : 1;') > 0 &&
+          foam4.indexOf('const wEnd = heightAt(tx, ty + 1) >= 0 ? FOAM_FRONT_T : 1;') > 0 &&
           foam4.indexOf('Math.floor((tx + ty) / FOAM_RUN)') > 0 && /const FOAM_RUN = [3-5];/.test(gameScript)]);
+        {
+          const Q = window.debugS2Info(), T = Q.FOAM_FRONT_T, tx = 100, ty = 100;
+          // is screen point p on the TOP FACE of land tile (tx+1, ty) at z = 0?
+          const [cx, cy] = window.worldToScreen(tx + 1.5, ty + 0.5, 0), [ex] = window.worldToScreen(tx + 2.5, ty + 0.5, 0);
+          const iw = (ex - cx) / 2 * 2, ih = iw / 2;            // half-width / half-height of a tile diamond on screen
+          const onFront = p => Math.abs(p[0] - cx) / iw + Math.abs(p[1] - cy) / ih < 1;
+          const along = (k, off) => window.worldToScreen(tx + k, ty + off, -Q.HZ);
+          let firstHidden = 1;
+          for (let k = 0; k <= 1.0001; k += 0.005) if (onFront(along(k, 0.08))) { firstHidden = k; break; }
+          results.push([`S2 doubt: where land stands in front, the surf stops where that land starts to cover it — measured ${firstHidden.toFixed(3)} of the edge, FOAM_FRONT_T ${T}`,
+            T > 0 && T < 0.5 && Math.abs(firstHidden - T) <= 0.03 && !onFront(along(T - 0.03, 0.08)) && onFront(along(0.6, 0.08))]);
+        }
+        /* Doubt pass: lifted labels stack, one row each. */
+        results.push(['S2 doubt: several labels lifted off the plate stack one above another instead of printing on each other',
+          gameScript.indexOf('if (L.y !== y0) L.y -= LABEL_STACK_PX * lifted++;') > 0 &&
+          window.debugS2Info().LABEL_STACK_PX >= 13]);
+        /* Doubt pass: past the world edge the underlay paints nothing (the sky shows). */
+        {
+          const saved = window.debugS2Info().cam;
+          window.debugSetCam && window.debugSetCam(2.5, 2.5);
+          window.drawGroundUnderlay();
+          const Uc = window.debugS2Info();
+          let outside = 0;
+          for (let i = 0; i < Uc.underCells.length; i += 3) {
+            const [wx, wy] = window.screenToWorld(Uc.underCells[i] + Uc.UNDER_CELL / 2, Uc.underCells[i + 1] + Uc.UNDER_CELL / 2);
+            if (wx < 0 || wy < 0 || wx >= WI2.N || wy >= WI2.N) outside++;
+          }
+          window.debugSetCam && window.debugSetCam(saved.x, saved.y);
+          results.push([`S2 doubt: the seam underlay paints no cell past the world edge (camera at the corner: ${Uc.underCells.length / 3} cells, ${outside} outside)`,
+            !!window.debugSetCam && Math.abs(Uc.cam.x - 2.5) < 0.01 && outside === 0 && Uc.underCells.length > 0 &&
+            gameScript.indexOf('if (wx < 0 || wy < 0 || wx >= N || wy >= N) continue;') > 0]);
+        }
       }
       window.debugWorldSeedSet(seedBeforeS2);
     } else {
