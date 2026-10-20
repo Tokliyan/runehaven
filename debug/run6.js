@@ -5,7 +5,9 @@
       no entity, particle, HUD or clock is in it), and count pixels whose
       largest channel difference is > 8. Each must be <= 0.5% of the frame.
    2. FRAME RATE: in one session, at the Colosseum and the Bazaar, frames per
-      second with the cache ON must be >= 1.4x the frames with it OFF.
+      second with the cache ON must be >= 1.2x the frames with it OFF (owner
+      decision 2026-10-21; README has the measurements). The no-ground
+      ceiling is printed beside it.
    Like shot.js, a machine without Playwright or Chromium prints "skipped"
    and exits 0 — every jsdom gate in run3/run4/run5 still runs. Stubbed
    Supabase; never touches the network or the live database. */
@@ -105,18 +107,25 @@ const STUB = `
       const P = eval(expr);
       me.x = P.x + 0.5; me.y = P.y + (expr === 'COLOSSEUM' ? 9.5 : 0.5); cam.x = me.x; cam.y = me.y;
       const count = ms => new Promise(res => { let n = 0; const t0 = performance.now(); const f = () => { n++; if (performance.now() - t0 < ms) requestAnimationFrame(f); else res(n * 1000 / (performance.now() - t0)); }; requestAnimationFrame(f); });
-      const out = { on: [], off: [] };
+      const out = { on: [], off: [], none: [] };
       debugSetGroundCache(true); await new Promise(z => setTimeout(z, 2500));   // let every visible chunk bake
-      for (let rep = 0; rep < 3; rep++) for (const mode of ['off', 'on']) {
-        debugSetGroundCache(mode === 'on'); await new Promise(z => setTimeout(z, 300));
-        out[mode].push(await count(2500));
+      const pass = window.drawGroundPass;
+      for (let rep = 0; rep < 5; rep++) for (const mode of ['off', 'on', 'none']) {
+        // 'none' draws no ground at all: the ceiling any ground cache could reach (printed, not gated)
+        window.drawGroundPass = mode === 'none' ? () => {} : pass;
+        debugSetGroundCache(mode !== 'off'); await new Promise(z => setTimeout(z, 300));
+        out[mode].push(await count(2000));
       }
+      window.drawGroundPass = pass;
       debugSetGroundCache(true);
       const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
-      return { on: avg(out.on), off: avg(out.off), onAll: out.on, offAll: out.off };
+      return { on: avg(out.on), off: avg(out.off), none: avg(out.none), onAll: out.on, offAll: out.off };
     }, expr);
-    console.log(`frame rate ${name}: cache on ${r.on.toFixed(1)} fps, off ${r.off.toFixed(1)} fps (x${(r.on / r.off).toFixed(2)}) — on ${r.onAll.map(v => v.toFixed(1))}, off ${r.offAll.map(v => v.toFixed(1))}`);
-    results.push([`S4 frame rate at ${name}: cache on ${r.on.toFixed(1)} fps >= 1.4x cache off ${r.off.toFixed(1)} fps`, r.on >= 1.4 * r.off]);
+    console.log(`frame rate ${name}: cache on ${r.on.toFixed(1)} fps, off ${r.off.toFixed(1)} fps (x${(r.on / r.off).toFixed(2)}); no ground at all ${r.none.toFixed(1)} fps (ceiling x${(r.none / r.off).toFixed(2)}) — on ${r.onAll.map(v => v.toFixed(1))}, off ${r.offAll.map(v => v.toFixed(1))}`);
+    /* Owner decision 2026-10-21 (README, Performance spec, frame-rate gate):
+       the bar is 1.2x. At build time drawing NO ground reached only 1.39x at
+       the Colosseum, so 1.4x was out of reach for any ground cache there. */
+    results.push([`S4 frame rate at ${name}: cache on ${r.on.toFixed(1)} fps >= 1.2x cache off ${r.off.toFixed(1)} fps (ceiling x${(r.none / r.off).toFixed(2)})`, r.on >= 1.2 * r.off]);
   }
 
   if (errs.length) results.push(['S4 run6: no page errors (' + errs.slice(0, 3).join(' | ') + ')', false]);

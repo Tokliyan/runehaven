@@ -99,6 +99,9 @@ Run any harness with: `node debug/runN.js runehaven.html` (or just
    - `node debug/run3.js runehaven.html` — must show `CAUGHT ERROR: none`
    - `node debug/run4.js runehaven.html` — all `PASS`, zero `FAIL`
    - `node debug/run5.js runehaven.html` — must show `CAUGHT: none`
+   - `node debug/run6.js runehaven.html` — browser gates (ground-cache pixel
+     match and frame rate): all `PASS`; prints `skipped` and passes when
+     Playwright/Chromium is not installed (added with the Performance spec)
 5. **When something is unclear or unspecified, classify it before deciding
    what to do — RED always stops, YELLOW ships with a flagged note.**
 
@@ -1231,6 +1234,14 @@ reads, so it can be raised later.
   at the Colosseum and Bazaar spots, fps with the cache on must be at
   least 1.4× fps with it off. Print both. If Playwright is missing, say
   "skipped" and still run every jsdom gate.
+  **Owner decision 2026-10-21: the bar is 1.2×, not 1.4×.** Measured at
+  build time (headless, same session): cache on 1.22–1.31× cache off, while
+  drawing NO ground at all reaches only 1.39× at the Colosseum (1.48× Bazaar,
+  1.46× Spawn) — since this spec was written, the Colosseum's stone pieces
+  (Gauntlet S2) became most of that frame, so 1.4× is out of reach for any
+  ground cache there. Against the previous build the frame rate rose +25% to
+  +142% at the four tour views. run6 prints the no-ground ceiling beside each
+  ratio so the gap stays visible.
 - **jsdom:**
   - The LRU never holds more than `GC_MAX` chunks.
   - At most `GC_BAKE_PER_FRAME` bakes happen per frame.
@@ -1382,6 +1393,8 @@ comments, numbered, plain English):**
 ---
 
 ## QUEUED, AFTER ACCOUNT SECURITY — do not build until every spec above ships.
+**Owner decision 2026-10-15:** Mobile & Touch and Account Security above are
+deferred, so they do not hold this queue — the spec below is next.
 ## Confirmed, locked spec for a future version (World Encounters — Roaming Boss & Bounty Board)
 
 **Confirmed live: deterministic idle-wander logic already exists,

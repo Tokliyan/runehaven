@@ -53,6 +53,56 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-21 (Gauntlet S4 — Performance: ground cache, whole-pixel camera, quiet HUD)
+
+README spec "Performance — Ground Cache & Quiet HUD". Rendering-scope changes,
+none of them visible by design (the pixel gate proves the ground is identical):
+
+- **The ground is baked.** 16x16-tile chunks (GC_TILES), each an offscreen
+  canvas painted once by the SAME drawGroundTile in the live diagonal order,
+  kept in an LRU of GC_MAX 48, at most GC_BAKE_PER_FRAME 2 bakes a frame; a
+  visible unbaked chunk is drawn by the direct path in its slot, so nothing
+  pops in. Chunks are blitted back to front by cx + cy in 8 trimmed bands.
+  Hooked onto tileCache.clear(), so every world build/reset empties it.
+  Interiors, the S2 seam underlay and everything animated stay live.
+- **The camera lands on whole pixels.** worldToScreen / screenToWorld round
+  the world's screen offset once per camera (camOffset). Without it a baked
+  chunk was up to half a pixel off the direct path on every high-contrast
+  edge (1–2.6% of the frame); with it the two are pixel-identical, and
+  characters stay locked to the ground instead of drifting against it.
+- The ground pass moved unchanged into drawGroundPass(); the water/lava
+  animation loop now walks only tiles whose drawing can reach the screen
+  (the world-aligned bounds rectangle's corners are always off-screen).
+- **HUD** writes are skipped when the string is unchanged; the compass dial is
+  rebuilt only when rounded bearings or labels change; the minimap redraws on
+  a tile change, a change in the players on it, or every 250 ms.
+- RENDER_SCALE = 1 records the CSS-pixel canvas decision (no devicePixelRatio).
+
+**Measured** (headless 1280x720, interleaved against main, 6 samples):
+Colosseum 31.5 -> 43.4 fps (+38%), Bazaar 23.0 -> 32.8 (+43%), Ancient Forge
+21.6 -> 52.4 (+142%), Spawn 33.1 -> 41.4 (+25%). Pixel match, cache on vs off:
+0.000% of the frame differs at Spawn, a coast, the volcano rim and a forest edge.
+
+**Owner decision (2026-10-21):** the run6 frame-rate bar is cache on >= 1.2x
+cache off, not 1.4x. Measured on/off 1.22–1.32x; drawing NO ground at all
+reaches only 1.39–1.50x (the Colosseum's S2 stone pieces now dominate that
+frame), so 1.4x was out of reach for any ground cache. run6 prints that
+ceiling every run. Tried and rejected: baking the seam underlay into chunks
+(broke the pixel match, no measurable gain).
+
+**Gate integrity:** run4 1870 -> 1886 PASS, 0 FAIL; new debug/run6.js (Playwright,
+prints "skipped" without it): 4 pixel-match + 2 frame-rate gates. Gates UPDATED,
+not relaxed: the Expansion 2a cull proofs and v55 GATE 4 measure the DIRECT
+path and run with GROUND_CACHE false (the spec says so); the cull proof's
+screen model now uses the snapped projection (it reported 1944 vs 1968 tiles
+from the half-pixel disagreement, not a missed tile); "v52 B: the sand goes
+UNDER" follows the pass into drawGroundPass and also checks the bake path;
+the S2 underlay position gate looks after the underlay call (drawGroundTile
+now also appears earlier, in the cache's direct fallback). The only lowered
+threshold is the run6 frame-rate bar, by recorded owner decision. Tunables
+added (GC_*, MAP_REDRAW_MS, RENDER_SCALE) are the spec's own; no README-listed
+tunable changed; parse floor intact; no service_role key.
+
 ### 2026-10-16 (Gauntlet S2 rounds 2–4 — the Volcano, actors you can find, seams, surf)
 
 Showcase polish loop, rounds 2, 3 and 4 (the last the stage allows). Each
