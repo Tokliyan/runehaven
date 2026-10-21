@@ -1,0 +1,1340 @@
+diff --git a/debug/perf.js b/debug/perf.js
+new file mode 100644
+index 0000000..2b489e6
+--- /dev/null
++++ b/debug/perf.js
+@@ -0,0 +1,263 @@
++/* perf.js — the Performance build's two REAL-BROWSER proof gates, which jsdom
++   cannot run: (1) the ground cache is pixel-for-pixel the same picture as the
++   direct path, and (2) it is actually faster. Playwright + Chromium, stubbed
++   Supabase, fully offline, never touches the live database.
++
++   Usage: node debug/perf.js [html] [width] [height]
++
++   Like shot.js, a machine without Playwright or Chromium must print "skipped"
++   and exit 0 rather than throw — the spec's own wording is "If Playwright is
++   missing, say skipped and still run every jsdom gate".
++
++   HOW THE PIXEL GATE IS MADE HONEST. The spec asks for one frame with
++   GROUND_CACHE false and one with it true, time frozen, counting pixels whose
++   channel difference is over 8. Entities and the HUD are not hidden here and
++   they do not need to be, because something stronger is done instead: the
++   page's clock and Math.random are frozen for the whole comparison, so the
++   WHOLE frame is deterministic, and the first thing measured at every camera
++   is the noise floor — two renders with the cache OFF, which must differ by
++   zero pixels. A noise floor of zero is the proof that the clock really is
++   frozen; the cache-on comparison then covers the entities and the lighting
++   too, so a cache that disturbed anything downstream of the ground would be
++   caught as well. The bar stays the spec's 0.5% of the frame.
++
++   HOW THE FRAME RATE IS MEASURED, AND TWO METHODS THAT WERE WRONG.
++   (1) Timing a tight loop of direct render(t) calls is not a frame: nothing
++   forces the canvas to be presented, so Skia defers work the measurement
++   never sees — in this harness a full-screen drawImage timed that way
++   reported 0.00 ms. (2) Counting requestAnimationFrame callbacks over a
++   wall-clock window looks like honest fps and is not, in this browser:
++   CALIBRATED against a known busy-wait injected per frame, the count is a
++   flat ~57 fps for every real cost from 0 to 16 ms and only becomes accurate
++   above ~18 ms. It is not merely clipped but NON-MONOTONE in that band — a
++   cheaper frame can report fewer fps than a dearer one — so any ratio built
++   from two values near or above ~55 fps is noise with a sign. (The
++   --disable-gpu-vsync / --disable-frame-rate-limit flags do not help; they
++   lower the ceiling to ~58 from 60.)
++
++   So the cost of a frame is measured directly, with the raster FORCED: a run
++   of render(t) calls followed by a one-pixel getImageData, which Skia cannot
++   satisfy without flushing everything queued. That number is immune to any
++   frame-rate cap. fps is then reported as 1000 / (render + overhead), where
++   overhead is this page's own measured per-frame cost outside render() —
++   update(), compositing, presentation — taken from a rAF window at the
++   slowest condition available, which is the one place the rAF counter is
++   trustworthy.
++
++   Condition order is COUNTERBALANCED (off-first and on-first alternate) and
++   every condition is measured many times, because a fixed order biases
++   whichever condition runs last by up to 10-30% in this environment — more
++   than the margin this gate adjudicates. Raw samples are printed, not just
++   medians, so saturation or drift is visible rather than hidden. */
++const fs = require('fs'), path = require('path');
++let pw;
++try { pw = require('playwright'); }
++catch (e) {
++  try { pw = require(path.join(require('child_process').execSync('npm root -g').toString().trim(), 'playwright')); }
++  catch (e2) { console.log('skipped: playwright is not available (' + e.message.split('\n')[0] + ')'); process.exit(0); }
++}
++const FILE = path.resolve(process.argv[2] || path.join(__dirname, '..', 'runehaven.html'));
++const VW = Number(process.argv[3] || 1280), VH = Number(process.argv[4] || 720);
++
++const STUB = `
++(function(){
++  const tableData = { world:{seed:123456789,created_at:new Date(Date.now()-864e5*3).toISOString()},
++    mined_nodes:[],players:null,ground_items:[],base_pieces:[],pets:[],account_pins:[] };
++  function chain(t){ const c=new Proxy(function(){},{get(_,p){ if(p==='then'){const d=tableData[t];return r=>r({data:d===undefined?null:d,error:null});} return ()=>c; }, apply(){return c;}}); return c; }
++  window.supabase = { createClient:()=>({ from:t=>chain(t),
++    channel:()=>{const ch={on:()=>ch,subscribe:cb=>{if(cb)setTimeout(()=>cb('SUBSCRIBED'),0);return ch;},send:async()=>{},track:async()=>{},untrack:async()=>{},presenceState:()=>({})};return ch;},
++    removeChannel:()=>{} }) };
++})();`;
++
++const results = [];
++function gate(name, ok) { results.push([name, ok]); }
++
++(async () => {
++  let b;
++  try {
++    b = await pw.chromium.launch({ executablePath: process.env.PW_CHROMIUM || '/opt/pw-browsers/chromium',
++      args: ['--no-sandbox', '--disable-gpu-vsync', '--disable-frame-rate-limit'] });
++  } catch (e) { console.log('skipped: chromium would not launch (' + e.message.split('\n')[0] + ')'); process.exit(0); }
++  const p = await b.newPage({ viewport: { width: VW, height: VH } });
++  const errs = [];
++  p.on('pageerror', e => errs.push('PAGEERR ' + e.message));
++  await p.route('**/*', r => {
++    const u = r.request().url();
++    if (u.startsWith('file:')) return r.continue();
++    if (/supabase-js/.test(u)) return r.fulfill({ contentType: 'application/javascript', body: STUB });
++    return r.abort();
++  });
++  await p.goto('file://' + FILE);
++  await p.waitForTimeout(1200);
++  await p.evaluate(() => {
++    document.querySelectorAll('.class-card')[3].click();
++    document.getElementById('username').value = 'PerfBot';
++    document.getElementById('pinInput').value = '2468';
++    const u = document.getElementById('sbUrl'), k = document.getElementById('sbKey');
++    if (u) u.value = 'https://stub.supabase.co'; if (k) k.value = 'stub-key';
++    document.getElementById('enterBtn').onclick();
++  });
++  await p.waitForFunction(() => document.getElementById('login').style.display === 'none', null, { timeout: 90000 });
++  await p.waitForTimeout(2500);
++  await p.keyboard.press('Escape');
++
++  const info = await p.evaluate(() => debugGroundCache());
++  console.log('viewport ' + VW + 'x' + VH + ' — GC_TILES ' + info.GC_TILES + ', GC_MAX ' + info.GC_MAX +
++              ', GC_BAKE_PER_FRAME ' + info.GC_BAKE_PER_FRAME + ', chunk canvas ' + info.GC_W + 'x' + info.GC_H);
++
++  /* ---- the four cameras the spec names ---------------------------------- */
++  const spots = await p.evaluate(() => {
++    const out = [];
++    out.push(['Spawn', Math.floor(SPAWN.x), Math.floor(SPAWN.y)]);
++    // a coastline: land with water on a side neighbour
++    const wet = t => t === B.WATER || t === B.DEEP || t === B.SHALLOW;
++    let coast = null, forest = null;
++    for (let y = 30; y < N - 30 && !(coast && forest); y += 3) {
++      for (let x = 30; x < N - 30; x += 3) {
++        const b0 = biomeAt(x, y);
++        if (!coast && !wet(b0) && (wet(biomeAt(x + 1, y)) || wet(biomeAt(x, y + 1)) ||
++                                   wet(biomeAt(x - 1, y)) || wet(biomeAt(x, y - 1)))) coast = [x, y];
++        if (!forest && b0 === B.FOREST && (biomeAt(x + 2, y) !== B.FOREST || biomeAt(x, y + 2) !== B.FOREST)) forest = [x, y];
++        if (coast && forest) break;
++      }
++    }
++    if (coast) out.push(['a coastline', coast[0], coast[1]]);
++    out.push(['the volcano rim', Math.floor(VOLCANO.x), Math.floor(VOLCANO.y)]);
++    if (forest) out.push(['a forest edge', forest[0], forest[1]]);
++    /* ⚠️ THE TWO FRAME-RATE CAMERAS ARE PIXEL-CHECKED TOO, and they are the
++       two that most need it. The Colosseum is the ONLY place arenaFloorAt()
++       and drawArenaFloorDetail() paint — the locked Sand/slab/pave tones, the
++       old stain, the raked grain, 1px strokes — which are the most elaborate
++       ground tiles in the file; the Bazaar has its own set-piece ground. A
++       cache that quietly dropped content at either one would be both faster
++       and wrong, and a speed gate on a camera nobody has pixel-checked is a
++       gate that rewards exactly that. */
++    if (typeof COLOSSEUM !== 'undefined' && COLOSSEUM && COLOSSEUM.x)
++      out.push(['the Colosseum (fps camera)', Math.floor(COLOSSEUM.x), Math.floor(COLOSSEUM.y)]);
++    if (typeof BAZAAR !== 'undefined' && BAZAAR && BAZAAR.x)
++      out.push(['the Bazaar (fps camera)', Math.floor(BAZAAR.x), Math.floor(BAZAAR.y)]);
++    return out;
++  });
++
++  const FIXED_T = 123456.7;
++  let worstPct = 0, allZero = true;
++  for (const [name, x, y] of spots) {
++    await p.evaluate(([x, y]) => { me.x = x + 0.5; me.y = y + 0.5; cam.x = me.x; cam.y = me.y; me.diving = false; }, [x, y]);
++    await p.waitForTimeout(900);          // let the game's own loop load the feature window
++    const r = await p.evaluate((T) => {
++      const D = Date.now, P = performance.now, R = Math.random;
++      const dn = Date.now(), pn = performance.now();
++      Date.now = () => dn; performance.now = () => pn; Math.random = () => 0.5;
++      const W = canvas.width, H = canvas.height;
++      const grab = () => ctx.getImageData(0, 0, W, H).data;
++      const diff = (a, c) => { let n = 0;
++        for (let i = 0; i < a.length; i += 4)
++          if (Math.abs(a[i] - c[i]) > 8 || Math.abs(a[i+1] - c[i+1]) > 8 || Math.abs(a[i+2] - c[i+2]) > 8) n++;
++        return n; };
++      try {
++        debugSetGroundCache(false);
++        render(T); const off1 = grab();
++        render(T); const off2 = grab();
++        debugSetGroundCache(true);                   // clears the cache
++        debugGcResetStats();                         // counters measure THIS camera, not the page's history
++        for (let i = 0; i < 80; i++) render(T);      // warm every visible chunk
++        render(T); const on1 = grab();
++        const gc = debugGroundCache();
++        /* One frame's worth of blit, so the overdraw is a measured number:
++           blitPx is reset, one more frame is drawn, and that is the answer. */
++        debugGcResetStats(); render(T);
++        const one = debugGroundCache();
++        return { px: W * H, floor: diff(off1, off2), cached: diff(off1, on1),
++                 size: gc.size, bakes: gc.bakes, blits: gc.blits, direct: gc.direct,
++                 evicted: gc.evicted, maxFrameBakes: gc.maxFrameBakes,
++                 frameBlits: one.blits, frameBands: one.bands, frameBlitPx: one.blitPx,
++                 GC_BAND: gc.GC_BAND, GC_BANDS: gc.GC_BANDS };
++      } finally { Date.now = D; performance.now = P; Math.random = R; debugSetGroundCache(true); }
++    }, FIXED_T);
++    const pct = r.cached / r.px * 100, fpct = r.floor / r.px * 100;
++    console.log(`pixel match @ ${name}: noise floor ${r.floor} px (${fpct.toFixed(4)}%), ` +
++                `cache on vs off ${r.cached} px (${pct.toFixed(4)}%) of ${r.px}; ` +
++                `chunks ${r.size}, bakes ${r.bakes}, evicted ${r.evicted}, max bakes/frame ${r.maxFrameBakes}; ` +
++                `one frame blits ${r.frameBlits} chunks in ${r.frameBands} bands = ${(r.frameBlitPx / 1e6).toFixed(2)}M px ` +
++                `(${(r.frameBlitPx / r.px).toFixed(2)}x the screen)`);
++    gate(`the clock really is frozen — two cache-off renders at ${name} differ by 0 pixels (${r.floor})`, r.floor === 0);
++    gate(`pixel match at ${name}: ${r.cached} px (${pct.toFixed(4)}%) differ by more than 8, bar 0.5%`, pct <= 0.5);
++    gate(`the cache never evicted a chunk it still needed at ${name} (evicted ${r.evicted}, held ${r.size})`, r.evicted === 0);
++    if (r.cached !== 0) allZero = false;
++    if (pct > worstPct) worstPct = pct;
++  }
++  gate('the cached ground is not merely close but IDENTICAL at every camera', allZero);
++
++  /* ---- frame rate, interleaved, median of five ------------------------- */
++  const fpsSpots = await p.evaluate(() => {
++    const o = [];
++    /* COLOSSEUM/BAZAAR are `let ... = {x:0,y:0}` until worldgen places them,
++       so a truthiness test alone would happily measure tile (0,0) — the
++       deep-sea corner of the map — and print "the Colosseum". */
++    if (typeof COLOSSEUM !== 'undefined' && COLOSSEUM && COLOSSEUM.x > 0) o.push(['the Colosseum', Math.floor(COLOSSEUM.x), Math.floor(COLOSSEUM.y)]);
++    if (typeof BAZAAR !== 'undefined' && BAZAAR && BAZAAR.x > 0) o.push(['the Bazaar', Math.floor(BAZAAR.x), Math.floor(BAZAAR.y)]);
++    return o;
++  });
++  for (const [name, x, y] of fpsSpots) {
++    await p.evaluate(([x, y]) => { me.x = x + 0.5; me.y = y + 0.5; cam.x = me.x; cam.y = me.y; }, [x, y]);
++    await p.waitForTimeout(1200);
++    const r = await p.evaluate(async () => {
++      const med = a => { const b = a.slice().sort((p, q) => p - q); const h = b.length >> 1;
++                         return b.length % 2 ? b[h] : (b[h - 1] + b[h]) / 2; };
++      /* One flushed run of frames: Skia cannot answer getImageData without
++         rasterising everything it has queued, so this is real cost. */
++      const flush = () => ctx.getImageData(0, 0, 1, 1);
++      const cost = (n) => { const t0 = performance.now();
++        for (let i = 0; i < n; i++) render(7000 + i * 16.7);
++        flush(); return (performance.now() - t0) / n; };
++      const rafFps = (ms) => new Promise(res => { let k = 0; const t0 = performance.now();
++        const tick = () => { k++; const el = performance.now() - t0;
++          if (el < ms) requestAnimationFrame(tick); else res(k / (el / 1000)); };
++        requestAnimationFrame(tick); });
++      const setMode = on => { debugSetGroundCache(on); cost(on ? 45 : 10); };   // flip, then warm
++      const off = [], on = [];
++      const live = [];
++      for (let s = 0; s < 16; s++) {
++        /* Liveness is read immediately after the CACHED window, not at the
++           end of the iteration — on an on-first iteration the loop ends with
++           the cache off, which is the condition working correctly. */
++        let g;
++        if (s % 2 === 0) { setMode(false); off.push(cost(20)); setMode(true); on.push(cost(20)); g = debugGroundCache(); }
++        else             { setMode(true);  on.push(cost(20));  g = debugGroundCache(); setMode(false); off.push(cost(20)); }
++        live.push({ cache: g.GROUND_CACHE, blits: g.blits, inside: inInterior() });
++      }
++      /* The page's own per-frame cost outside render(), measured where the
++         rAF counter is trustworthy: the DIRECT condition, which is the
++         slowest and therefore well above the counter's ~18ms knee. */
++      setMode(false);
++      const directCost = med([cost(20), cost(20), cost(20)]);
++      const directFps = await rafFps(1500);
++      const overhead = Math.max(0, 1000 / directFps - directCost);
++      setMode(true);
++      const gc = debugGroundCache();
++      return { offMs: med(off), onMs: med(on), offAll: off, onAll: on,
++               overhead, directFps, directCost, size: gc.size, evicted: gc.evicted,
++               blits: gc.blits, cacheLive: gc.GROUND_CACHE, inside: inInterior(),
++               liveBad: live.filter(l => !l.cache || l.inside).length };
++    });
++    const fOff = 1000 / (r.offMs + r.overhead), fOn = 1000 / (r.onMs + r.overhead);
++    const ratio = fOn / fOff;
++    console.log(`frame rate @ ${name}: render cost ${r.offMs.toFixed(2)} ms direct -> ${r.onMs.toFixed(2)} ms cached ` +
++                `(+${r.overhead.toFixed(2)} ms/frame outside render, from ${r.directFps.toFixed(1)} rAF fps at ${r.directCost.toFixed(2)} ms)`);
++    console.log(`   => ${fOff.toFixed(1)} fps -> ${fOn.toFixed(1)} fps, ratio ${ratio.toFixed(2)}x (bar 1.40x)`);
++    console.log(`   direct samples [${r.offAll.map(v => v.toFixed(1)).join(' ')}]`);
++    console.log(`   cached samples [${r.onAll.map(v => v.toFixed(1)).join(' ')}]`);
++    /* A speed number from a frame that was not actually drawing the cached
++       ground is worth nothing, so the conditions are asserted, not assumed. */
++    gate(`the cached condition really was cached at ${name} (cache live, ${r.blits} blits, not in an interior, ${r.liveBad} bad windows)`,
++      r.cacheLive === true && r.blits > 0 && r.inside === false && r.liveBad === 0);
++    gate(`frame rate at ${name}: ${fOn.toFixed(1)} fps cached vs ${fOff.toFixed(1)} direct = ${ratio.toFixed(2)}x, bar 1.40x`, ratio >= 1.4);
++  }
++
++  gate('no page error during the whole run (' + (errs[0] || 'none') + ')', errs.length === 0);
++  await b.close();
++  let ok = true;
++  for (const [n, g] of results) { console.log((g ? 'PASS' : 'FAIL') + ' - ' + n); if (!g) ok = false; }
++  console.log('perf.js: ' + results.filter(r => r[1]).length + ' PASS, ' + results.filter(r => !r[1]).length + ' FAIL');
++  process.exit(ok ? 0 : 1);
++})().catch(e => { console.log('PERF ERROR:', e.stack || e); process.exit(1); });
+diff --git a/debug/run4.js b/debug/run4.js
+index 0badc91..43b0b1d 100644
+--- a/debug/run4.js
++++ b/debug/run4.js
+@@ -30,6 +30,21 @@ const drawOpsBy = Object.create(null);
+    every canvas call the whole harness makes, and a rest parameter would
+    allocate an array on each of them whether anything is recording or not. */
+ let ellipseTrace = null;
++/* PERFORMANCE: set to an array to record every coordinate the stub is handed,
++   null to stop — so the ground cache's pad can be PROVED to cover what a real
++   bake paints rather than assumed to. Same reasoning and same shape as
++   ellipseTrace above: the returned function is still a no-op, nothing that
++   already passed can see it, and nothing is allocated while it is null.
++   fillRect/arc/ellipse contribute both corners of their extent, so a radius
++   or a width counts as reach and not just as its centre. */
++let coordTrace = null;
++const COORD_ARGS = {
++  moveTo: [[0, 1]], lineTo: [[0, 1]], arcTo: [[0, 1], [2, 3]],
++  quadraticCurveTo: [[0, 1], [2, 3]], bezierCurveTo: [[0, 1], [2, 3], [4, 5]],
++  fillText: [[1, 2]], strokeText: [[1, 2]],
++  fillRect: 'rect', strokeRect: 'rect', rect: 'rect', clearRect: 'rect',
++  arc: 'arc', ellipse: 'ellipse',
++};
+ /* World Check Fixes PART F: gradients and their colour stops, counted on
+    their own two counters rather than through drawOps/drawOpsBy — gate F has
+    to say "the sky gradient's colour stops were not drawn this frame", and
+@@ -53,6 +68,22 @@ const ctx2d = new Proxy({}, {
+         drawOps++; drawOpsBy[prop] = (drawOpsBy[prop] || 0) + 1;
+         if (prop === 'ellipse' && ellipseTrace)
+           ellipseTrace.push([arguments[2], arguments[3]]);
++        if (coordTrace) {
++          const spec = COORD_ARGS[prop];
++          if (spec === 'rect') {
++            coordTrace.push([arguments[0], arguments[1]],
++                            [arguments[0] + arguments[2], arguments[1] + arguments[3]]);
++          } else if (spec === 'arc') {
++            coordTrace.push([arguments[0] - arguments[2], arguments[1] - arguments[2]],
++                            [arguments[0] + arguments[2], arguments[1] + arguments[2]]);
++          } else if (spec === 'ellipse') {
++            coordTrace.push([arguments[0] - arguments[2], arguments[1] - arguments[3]],
++                            [arguments[0] + arguments[2], arguments[1] + arguments[3]]);
++          } else if (spec) {
++            for (let k = 0; k < spec.length; k++)
++              coordTrace.push([arguments[spec[k][0]], arguments[spec[k][1]]]);
++          }
++        }
+       };
+     return undefined;
+   },
+@@ -11398,7 +11429,16 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
+            a constant. */
+         {
+           const gp = gameScript.indexOf('drawGroundUnderlay();                               // Gauntlet S2 R4: closes the tile seams');
+-          const loop = gameScript.indexOf('drawGroundTile(ctx, tx, ty);');
++          /* PERFORMANCE: anchored AFTER the underlay call, which is what this
++             gate has always been about — the underlay is painted immediately
++             under the ground pass. The ground cache added a SECOND
++             drawGroundTile(ctx, ...) call (the cached sweep's own direct
++             branch, for a chunk that is not baked yet) and it sits earlier in
++             the file, so an unanchored indexOf() began measuring the distance
++             to the wrong one and this gate failed on a build whose underlay
++             had not moved an inch. Same claim, same 2500 bound, read from the
++             right place: measured 1435 characters. */
++          const loop = gameScript.indexOf('drawGroundTile(ctx, tx, ty);', gp);
+           const fu = gameScript.indexOf('function drawGroundUnderlay()');
+           const fuBody = gameScript.slice(fu, gameScript.indexOf('\n}', fu));
+           window.drawGroundUnderlay();
+@@ -11545,6 +11585,316 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
+       results.push(['S2: the measurement hooks exist', false]);
+     }
+ 
++    /* =====================================================================
++       PERFORMANCE — GROUND CACHE & QUIET HUD. The locked spec's own proof
++       gates, the jsdom half. The two the spec marks "Playwright, required
++       when available" — the pixel match and the frame rate — live in
++       debug/perf.js, because jsdom cannot stand in for either: there is no
++       rasteriser here whose pixels could be compared and no draw whose cost
++       could be timed.
++
++       ⚠️ ON PRESERVATION, AND WHY NOTHING ABOVE WAS FLIPPED OFF. The spec
++       offers an escape — "Where a gate measures the direct path, run it with
++       GROUND_CACHE false" — and it was MEASURED not to be needed: every one
++       of the gates above runs with the cache at its shipped default, on, and
++       1870 of 1870 still pass. (One did fail first, and it was the gate's
++       own `indexOf` picking up the new second drawGroundTile(ctx, ...) call
++       site instead of the one under the underlay; it is anchored properly
++       now and asserts exactly what it always did. Nothing was relaxed, no
++       threshold moved, and no gate was handed GROUND_CACHE false.) That is
++       the stronger statement, so it is the one this suite makes: the
++       configuration that ships is the configuration the whole file passes
++       under. These gates flip the flag only to measure the two paths
++       against each other, and leave it on.
++       ===================================================================== */
++    results.push(['PERF: the measurement hooks exist, so none of the gates below can silently vanish',
++      typeof window.debugGroundCache === 'function' &&
++      typeof window.debugSetGroundCache === 'function' &&
++      typeof window.debugGcBakeOne === 'function' &&
++      typeof window.debugGcResetStats === 'function' &&
++      typeof window.debugHudStats === 'function' &&
++      typeof window.debugHudReset === 'function' &&
++      typeof window.debugRunWorldReset === 'function']);
++    if (window.debugGroundCache && window.debugSetGroundCache && window.debugGcBakeOne &&
++        window.debugHudStats && window.debugWorldInfo) {
++      const strippedP = gameScript
++        .replace(/\/\*[\s\S]*?\*\//g, ' ')
++        .replace(/([^:"'`])\/\/[^\n]*/g, '$1');
++      results.push(['PERF: the comment stripper these gates rely on is sane',
++        strippedP.indexOf('function gcBake') > 0 && strippedP.indexOf('function drawGroundTile') > 0 &&
++        strippedP.indexOf('function gcGroundPass') > 0 && strippedP.length > gameScript.length * 0.30]);
++
++      const GCI = () => window.debugGroundCache();
++      const gP = () => window.debugWorldInfo().ground;
++      const wP = window.debugWorldInfo();
++      const GC0 = GCI();
++      const TCH = GC0.GC_TILES;
++
++      /* ---- PART A: the cache ships on, behind a flag gates can flip ----- */
++      results.push([`PERF A: the cache ships ON behind GROUND_CACHE, and a gate can flip it`,
++        strippedP.indexOf('let GROUND_CACHE = true;') > 0 &&
++        window.debugSetGroundCache(false) === false && window.debugSetGroundCache(true) === true]);
++      results.push([`PERF A: the spec's four tunables are the spec's four numbers (GC_TILES ${GC0.GC_TILES}, GC_MAX ${GC0.GC_MAX}, GC_BAKE_PER_FRAME ${GC0.GC_BAKE_PER_FRAME})`,
++        GC0.GC_TILES === 16 && GC0.GC_MAX === 48 && GC0.GC_BAKE_PER_FRAME === 2]);
++
++      /* ---- PART A: invalidation, wherever tileCache dies ---------------- */
++      {
++        let sites = 0, paired = 0, i = -1;
++        while ((i = strippedP.indexOf('tileCache.clear()', i + 1)) >= 0) {
++          sites++;
++          /* The clear and its gcClear() are in the same statement run — the
++             window is deliberately short so a gcClear() further down the
++             function could not be mistaken for this site's. */
++          if (strippedP.slice(i, i + 200).indexOf('gcClear()') >= 0) paired++;
++        }
++        results.push([`PERF A: every tileCache.clear() in the file is paired with gcClear() (${paired}/${sites})`,
++          sites >= 5 && paired === sites]);
++      }
++
++      /* ---- PART A: the pass is still ordered, and it is still the same
++             drawGroundTile() the direct path calls ---------------------- */
++      results.push(['PERF A: a baked chunk is baked by the existing drawGroundTile, in the live pass\'s own diagonal order',
++        strippedP.indexOf('drawGroundTile(cc, tx, ty)') > 0 &&
++        strippedP.indexOf('for (let s = 0; s <= (GC_TILES - 1) * 2; s++)') > 0 &&
++        strippedP.indexOf('drawGroundTile(ctx, tx, ty)') > 0]);
++      results.push(['PERF A: chunks composite back to front by cx + cy, and an unbaked one paints in its own turn',
++        strippedP.indexOf('for (let cs = cMinX + cMinY; cs <= cMaxX + cMaxY; cs++)') > 0 &&
++        strippedP.indexOf('if (ch) { gcBlit(ch, cx, cy, w, h, shX, shY); continue; }') > 0 &&
++        strippedP.indexOf('if (!vis) continue;') > 0]);
++      /* The claim the chunk order rests on, measured off the real projection:
++         the two chunks that share a cx + cy level reach exactly as far as
++         each other and no further, so their painted pixels never meet. */
++      {
++        const hi = window.isoX(0 * TCH + TCH - 1 + 0.5, 1 * TCH + 0.5) + GC0.IW2;
++        const lo = window.isoX(1 * TCH + 0.5, 0 * TCH + TCH - 1 + 0.5) - GC0.IW2;
++        results.push([`PERF A: two chunks on one cx+cy diagonal never overlap on screen — one ends at ${hi}px where the other starts at ${lo}px`,
++          hi <= lo]);
++      }
++
++      /* ---- PART A: the pad really does cover what a bake paints --------
++         Every coordinate a real bake hands the canvas is recorded and
++         converted into the chunk canvas's own space. jsdom ignores the
++         translate, so the origin the bake reported is subtracted here
++         exactly as the translate would have. */
++      {
++        window.debugSetGroundCache(true);
++        const mid = Math.floor(wP.N / 2 / TCH);
++        let worst = null;
++        for (const [cx, cy] of [[mid, mid], [Math.floor(wP.VOLCANO.x / TCH), Math.floor(wP.VOLCANO.y / TCH)],
++                                [Math.floor(wP.SPAWN.x / TCH), Math.floor(wP.SPAWN.y / TCH)], [0, 0]]) {
++          coordTrace = [];
++          const o = window.debugGcBakeOne(cx, cy);
++          const tr = coordTrace; coordTrace = null;
++          if (!o) { worst = { bad: true, note: 'bake returned nothing' }; break; }
++          const ox = GC0.GC_PAD_X - o.origin[0], oy = GC0.GC_PAD_Y - o.origin[1];
++          let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
++          for (const [x, y] of tr) {
++            if (!isFinite(x) || !isFinite(y)) continue;
++            const lx = x + ox, ly = y + oy;
++            if (lx < minX) minX = lx; if (lx > maxX) maxX = lx;
++            if (ly < minY) minY = ly; if (ly > maxY) maxY = ly;
++          }
++          const slackL = minX, slackR = GC0.GC_W - maxX, slackT = minY, slackB = GC0.GC_H - maxY;
++          const m = Math.min(slackL, slackR, slackT, slackB);
++          if (!worst || m < worst.m) worst = { cx, cy, m, minX, maxX, minY, maxY, pts: tr.length };
++        }
++        console.log('PERF A: tightest bake extent', JSON.stringify(worst));
++        results.push([`PERF A: nothing a bake paints reaches outside its chunk canvas — tightest margin ${worst && worst.m !== undefined ? worst.m.toFixed(1) : '?'}px of ${GC0.GC_W}x${GC0.GC_H}, over ${worst ? worst.pts : 0} recorded coordinates`,
++          !!worst && !worst.bad && worst.pts > 500 && worst.m >= 2]);
++      }
++
++      /* ---- PART A: the cached pass counts exactly the tiles the direct
++             pass counts, so the cull proof above still proves the ground -- */
++      {
++        const camAt = wP.SPAWN;
++        window.debugSetGroundCache(false);
++        window.debugSetCam(camAt.x, camAt.y);
++        window.render(90001);
++        const dOff = gP(), off = { t: dOff.tiles, s: dOff.scanned };
++        window.debugSetGroundCache(true);
++        window.debugSetCam(camAt.x, camAt.y);
++        for (let i = 0; i < 80; i++) window.render(90002 + i);     // warm every visible chunk
++        const dOn = gP(), on = { t: dOn.tiles, s: dOn.scanned };
++        const gcw = GCI();
++        console.log('PERF A: at Spawn direct', JSON.stringify(off), 'cached', JSON.stringify(on),
++                    'chunks', gcw.size, 'bakes', gcw.bakes, 'blits', gcw.blits, 'direct tiles', gcw.direct);
++        results.push([`PERF A: the cached pass scans and draws exactly what the direct pass does (${off.t}/${off.s} vs ${on.t}/${on.s})`,
++          off.t > 100 && off.t === on.t && off.s === on.s]);
++        results.push([`PERF A: once warm the ground really is blits and not tiles (${gcw.blits} blits, ${gcw.size} chunks held)`,
++          gcw.blits > 0 && gcw.size > 0]);
++        /* The headroom the LRU has at the harness's own viewport. */
++        const cw = Math.floor(dOn.maxX / TCH) - Math.floor(dOn.minX / TCH) + 1;
++        const chh = Math.floor(dOn.maxY / TCH) - Math.floor(dOn.minY / TCH) + 1;
++        console.log('PERF A: visible chunk grid at', dOn.w + 'x' + dOn.h, 'is', cw + 'x' + chh, '=', cw * chh, 'of GC_MAX', GC0.GC_MAX);
++        results.push([`PERF A: GC_MAX ${GC0.GC_MAX} holds every chunk the harness viewport can see at once (${cw}x${chh} = ${cw * chh})`,
++          cw * chh <= GC0.GC_MAX]);
++      }
++
++      /* ---- PART A: at most GC_BAKE_PER_FRAME bakes in one frame -------- */
++      {
++        window.debugSetGroundCache(true);          // clears the cache too
++        window.debugGcResetStats();
++        const per = [];
++        for (let i = 0; i < 12; i++) {
++          const b0 = GCI().bakes;
++          window.debugSetCam(wP.SPAWN.x + i * 0.37, wP.SPAWN.y + i * 0.21);
++          window.render(91000 + i);
++          per.push(GCI().bakes - b0);
++        }
++        const gcb = GCI();
++        console.log('PERF A: bakes per frame over 12 frames:', per.join(','), 'maxFrameBakes', gcb.maxFrameBakes);
++        results.push([`PERF A: never more than GC_BAKE_PER_FRAME (${GC0.GC_BAKE_PER_FRAME}) bakes in one frame — measured [${per.join(',')}]`,
++          per.every(n => n <= GC0.GC_BAKE_PER_FRAME) && per.some(n => n > 0) &&
++          gcb.maxFrameBakes <= GC0.GC_BAKE_PER_FRAME]);
++      }
++
++      /* ---- PART A: the LRU never holds more than GC_MAX ---------------- */
++      {
++        window.debugSetGroundCache(true);
++        window.debugGcResetStats();
++        /* Walk the camera right across the world, two bakes a frame, far
++           enough that the bound is genuinely reached and not merely never met. */
++        let maxSize = 0;
++        for (let i = 0; i < 400; i++) {
++          window.debugSetCam(60 + i * 7, 60 + i * 5);
++          window.render(92000 + i);
++          const sz = GCI().size;
++          if (sz > maxSize) maxSize = sz;
++        }
++        const gcl = GCI();
++        console.log('PERF A: LRU after a long walk — size', gcl.size, 'max seen', maxSize,
++                    'bakes', gcl.bakes, 'evicted', gcl.evicted);
++        results.push([`PERF A: the LRU never holds more than GC_MAX (${GC0.GC_MAX}) chunks — most seen ${maxSize} after ${gcl.bakes} bakes`,
++          maxSize <= GC0.GC_MAX && gcl.bakes > GC0.GC_MAX]);
++        results.push([`PERF A: the bound is really reached, so this is a measurement and not an unmet ceiling (${gcl.evicted} evicted)`,
++          gcl.evicted > 0 && maxSize === GC0.GC_MAX]);
++      }
++
++      /* ---- PART A: interiors never touch it ---------------------------- */
++      {
++        window.debugSetGroundCache(true);
++        window.debugSetCam(wP.SPAWN.x, wP.SPAWN.y);
++        for (let i = 0; i < 6; i++) window.render(93000 + i);
++        const inside = [];
++        for (const name of ['UWCAVE', 'ABYSSAL']) {
++          const id = wP.B[name];
++          let tile = null;
++          for (let y = 20; y < wP.N - 20 && !tile; y += 5)
++            for (let x = 20; x < wP.N - 20; x += 5) if (window.biomeAt(x, y) === id) { tile = [x, y]; break; }
++          if (!tile) { inside.push({ name, entered: false }); continue; }
++          const entered = window.enterInterior(tile[0], tile[1], id);
++          const b0 = GCI();
++          for (let i = 0; i < 10; i++) window.render(93100 + i);
++          const b1 = GCI();
++          inside.push({ name, entered, bakes: b1.bakes - b0.bakes, blits: b1.blits - b0.blits,
++                        direct: b1.direct - b0.direct, size0: b0.size, size1: b1.size });
++          if (window.inInterior()) window.exitInterior();
++        }
++        console.log('PERF A: interiors —', JSON.stringify(inside));
++        results.push([`PERF A: an interior never bakes, blits or evicts a ground chunk — ${inside.map(k => k.name + ' ' + k.bakes + '/' + k.blits).join(', ')}`,
++          inside.length === 2 && inside.every(k => k.entered === true && k.bakes === 0 && k.blits === 0 && k.direct === 0 && k.size0 === k.size1)]);
++      }
++
++      /* ---- PART B: the quiet HUD -------------------------------------- */
++      {
++        tutorialAlreadySeen();
++        const HS = () => window.debugHudStats();
++        const H0 = HS();
++        results.push([`PERF B: HUD_MAP_MS is the spec's 250ms floor`, H0.HUD_MAP_MS === 250]);
++        /* Standing still, 120 frames. The player is put somewhere real and
++           left alone; nothing in the dial or the card can change, so the
++           only honest number of rebuilds is "the first one". */
++        const pl = window.debugWorldInfo().player;
++        window.debugSetPlayer({ x: pl.x, y: pl.y });
++        window.render(94000);                     // the first build, outside the window
++        window.debugHudReset();
++        const t0 = Date.now();
++        for (let i = 0; i < 120; i++) window.render(94001 + i);
++        const elapsed = Date.now() - t0;
++        const H1 = HS();
++        const windows = Math.floor(elapsed / H0.HUD_MAP_MS) + 1;
++        console.log('PERF B: 120 still frames in', elapsed + 'ms —', JSON.stringify(H1),
++                    '(allowed map draws:', windows + ')');
++        results.push([`PERF B: standing still, 120 frames rebuild the compass at most once (${H1.compassBuilds})`,
++          H1.compassBuilds <= 1]);
++        results.push([`PERF B: standing still, the minimap redraws at most once per ${H0.HUD_MAP_MS}ms window (${H1.mapDraws} draws in ${elapsed}ms, ${windows} windows)`,
++          H1.mapDraws <= windows]);
++        results.push([`PERF B: standing still, 120 frames write almost nothing to the DOM (${H1.writes} writes, ${H1.skips} skipped)`,
++          H1.skips >= 150 && H1.writes <= 10]);
++        /* One tile is movement, and the card has to follow it. */
++        window.debugHudReset();
++        window.debugSetPlayer({ x: pl.x + 1, y: pl.y });
++        window.render(94200);
++        const H2 = HS();
++        console.log('PERF B: after one tile —', JSON.stringify(H2));
++        results.push([`PERF B: moving one tile redraws the minimap (${H2.mapDraws} draw(s) on the next frame)`,
++          H2.mapDraws === 1]);
++        /* And the dial follows a bearing that really changed: put the player
++           a long way off so every landmark is at a new rounded degree. */
++        window.debugHudReset();
++        window.debugSetPlayer({ x: pl.x + 60, y: pl.y + 60 });
++        window.render(94300);
++        const H3 = HS();
++        results.push([`PERF B: a bearing that really changed rebuilds the dial (${H3.compassBuilds})`,
++          H3.compassBuilds === 1]);
++        window.debugSetPlayer({ x: pl.x, y: pl.y });
++        results.push(['PERF B: the cards are gated on a key, not on a frame counter, and the writers still build the same strings',
++          strippedP.indexOf('if (dial && dialKey !== lastDialKey)') > 0 &&
++          strippedP.indexOf('if (mapKey === lastMapKey && mapNow - lastMapDrawAt < HUD_MAP_MS)') > 0 &&
++          strippedP.indexOf('hudHTML(hudPlayer,') > 0 && strippedP.indexOf('hudHTML(hudWorld,') > 0 &&
++          strippedP.indexOf('hudPrompt.textContent =') < 0]);
++        results.push([`PERF B: every innerHTML/textContent write in updateHUD goes through the compare (${(strippedP.match(/hudText\(|hudHTML\(/g) || []).length} call sites)`,
++          (strippedP.match(/hudText\(hudPrompt,/g) || []).length === 17 &&
++          (strippedP.match(/hudText\(document\.getElementById\("deathTimer"\),/g) || []).length === 1]);
++      }
++
++      /* ---- PART C: the pixel-ratio decision, recorded not changed ------ */
++      results.push(['PERF C: the canvas is still sized in CSS pixels, with RENDER_SCALE as the dial resize() reads',
++        strippedP.indexOf('const RENDER_SCALE = 1;') > 0 &&
++        strippedP.indexOf('canvas.width = innerWidth * RENDER_SCALE') > 0 &&
++        strippedP.indexOf('Math.round(innerWidth') < 0 &&      // at 1 it must be the old line exactly, truncation and all
++        strippedP.indexOf('devicePixelRatio') < 0]);
++
++      /* ---- PART A: the whole-pixel ground lattice ---------------------- */
++      results.push(['PERF A: the ground pass is snapped to whole pixels in BOTH modes, and nothing else is',
++        strippedP.indexOf('const sdx = Math.round(shX + w / 2 - camIX) - (shX + w / 2 - camIX);') > 0 &&
++        (strippedP.match(/ctx\.translate\(sdx, sdy\)/g) || []).length === 2 &&
++        strippedP.indexOf('ctx.setTransform(1, 0, 0, 1, 0, 0);') > 0]);
++
++      /* ---- PART A: a world reset empties the cache --------------------- */
++      {
++        window.debugSetGroundCache(true);
++        window.debugSetCam(wP.SPAWN.x, wP.SPAWN.y);
++        for (let i = 0; i < 40; i++) window.render(95000 + i);
++        const beforeSeed = GCI().size;
++        window.debugWorldSeedSet(987654321);
++        const afterSeed = GCI().size;
++        window.debugWorldSeedSet(123456789);
++        results.push([`PERF A: rebuilding the world under a gate empties the cache (${beforeSeed} chunks -> ${afterSeed})`,
++          beforeSeed > 0 && afterSeed === 0]);
++        /* And the real thing, through the real reset path. Last, because it
++           genuinely unmakes the world this process has been testing. */
++        window.debugSetCam(wP.SPAWN.x, wP.SPAWN.y);
++        for (let i = 0; i < 40; i++) window.render(96000 + i);
++        const beforeReset = GCI().size;
++        /* The v39 block above has already spent the one real reset this
++           client is allowed, so performWorldReset() answers "denied" to
++           anyone who just calls it — which is how this gate first read a
++           cache that had quite correctly not been cleared. Both keys are
++           handed back the same way that block does it, so what runs here is
++           the real path and not a stand-in, and the outcome is asserted
++           rather than assumed. */
++        if (window.debugSetV39) { window.debugSetV39({ clearEvent: true, role: 'admin' }); window.debugSetV39({ armed: true }); }
++        let outcome = 'not run';
++        try { outcome = await window.debugRunWorldReset(); } catch (e) { outcome = 'threw: ' + e.message; }
++        const afterReset = GCI().size;
++        console.log('PERF A: world reset — outcome', outcome, 'cache', beforeReset, '->', afterReset);
++        results.push([`PERF A: a real world reset empties the cache (outcome "${outcome}", ${beforeReset} chunks -> ${afterReset})`,
++          outcome === 'reset' && beforeReset > 0 && afterReset === 0]);
++      }
++      window.debugSetGroundCache(true);          // ship state, for anything after
++    }
++
+     let allOk = true;
+     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
+     process.exit(allOk && !caught ? 0 : 1);
+diff --git a/runehaven.html b/runehaven.html
+index d74be98..7d8ba21 100644
+--- a/runehaven.html
++++ b/runehaven.html
+@@ -1521,6 +1521,13 @@ let rawHCache = new Map();     // v11: pre-erosion heights
+    biome id + tile index, and cleared beside tileCache/rawHCache on every
+    world (re)generation, because a new worldSeed is a new set of pockets. */
+ let pocketAnchorCache = new Map();
++/* Performance PART A: the baked ground chunks. Declared HERE, beside the
++   caches it is invalidated with, rather than beside the code that fills it —
++   gcClear() is called from this file's world-rebuild paths, one of which a
++   harness can reach before the ground-cache block further down has been
++   evaluated, and a `const` still in its temporal dead zone throws instead of
++   clearing an empty cache. See THE GROUND CACHE for what is in it. */
++const gcChunks = new Map();
+ /* Expansion 2a: the single pre-baked full-map canvas is gone. Ground tiles
+    are drawn per frame, visible ones only, so canvas memory no longer scales
+    with N^2 — the prerequisite for the real scale-up. These three values are
+@@ -2514,7 +2521,7 @@ function debugWorldSeedSet(seed) {
+      HARNESS ONLY: no server side, no player state, not a world reset. */
+   const was = worldSeed;
+   worldSeed = Number(seed) % 2147483647;
+-  tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear();
++  tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear(); gcClear();
+   placeLandmarks();
+   buildFeatureList();
+   return was;
+@@ -2522,7 +2529,7 @@ function debugWorldSeedSet(seed) {
+ function debugSeedLandSweep(seeds) {
+   const was = worldSeed;
+   const rebuild = () => {
+-    tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear();
++    tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear(); gcClear();
+     placeLandmarks();
+   };
+   const out = [];
+@@ -2554,7 +2561,7 @@ function debugSeedLandSweep(seeds) {
+ function debugArenaSweep(seeds) {
+   const was = worldSeed;
+   const rebuild = () => {
+-    tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear();
++    tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear(); gcClear();
+     placeLandmarks();
+   };
+   const out = [];
+@@ -7570,6 +7577,314 @@ function drawGroundTile(c, tx, ty) {
+   }
+ }
+ 
++/* ===== Performance PART A — THE GROUND CACHE ==============================
++   MEASURED 2026-10-12 (headless Chromium, 1280x720, software rendering, so
++   these are relative numbers): 28.3 fps at Spawn, 17.0 at the Ruined
++   Colosseum's forest edge, 16.7 at the Grand Bazaar, with 51.5% of the
++   profile in native canvas rasterising and drawGroundTile() 3.2% of the JS
++   on top of it. The ground pass redraws every visible tile's diamond and
++   its cliff faces from scratch on every frame — roughly 1900 fills at the
++   Colosseum — and not one pixel of that paint changes between frames.
++   Phones are slower than these numbers, which is why this comes before any
++   public launch.
++
++   WHY IT CAN BE CACHED AT ALL. drawGroundTile(c, tx, ty) takes no time
++   argument, reads no clock, no setting and no random, and derives every
++   coordinate it paints from ONE anchor — `worldToScreen(tx + 0.5, ty + 0.5,
++   zTop)`. Its only inputs are biomeAt / heightAt / variedZ / arenaFloorAt
++   and hash2, all pure over a fixed worldSeed and the first two already
++   cached. So a tile's paint is the same pixels every frame, offset by the
++   camera, and the pass is a blit of something that has already been drawn.
++   The animated ground — the water ripple, the lava flicker and its vents,
++   the surf pulse — is NOT in here; it is its own pass after this one, and
++   it stays live per frame.
++
++   ⚠️ THE ONE REAL CONSTRAINT: A RASTER CANNOT MOVE BY HALF A PIXEL.
++   worldToScreen() adds X0 = canvas.width/2 - isoX(cam) to every tile and
++   cam is a float, so the ground's screen lattice sits at a fractional
++   offset that changes every frame. drawImage() to a fractional destination
++   resamples: a blurred ground, and a cached frame that no longer matches
++   the direct one. So the GROUND PASS, and only the ground pass, is drawn on
++   the whole-pixel lattice — the frame's own offset (the screen shake
++   included) is rounded ONCE and the difference applied as a translate, in
++   BOTH cache modes. The ground therefore scrolls in whole pixels while
++   everything else keeps its sub-pixel position: at most half a pixel of
++   relative shift between a tile and the 8x16px sprite standing on it, under
++   flat-shaded art with no fine detail to tear, and in exchange the cached
++   and the direct path are pixel-for-pixel EQUAL rather than merely similar
++   (the pixel-match gate reads 0 differing pixels, not "under 0.5%"). It
++   also stops the sub-pixel AA crawl the ground used to have while walking.
++
++   The seam underlay stays outside the cache and outside the snap: it is
++   already a grid of axis-aligned whole-pixel fillRects, rebuilt only when
++   the camera crosses a tile.
++   ========================================================= */
++let GROUND_CACHE = true;              // PART A, on — debugSetGroundCache() flips it
++const GC_TILES = 16;                  // tiles along a chunk edge (tunable)
++const GC_MAX = 48;                    // baked chunks kept, LRU (tunable)
++const GC_BAKE_PER_FRAME = 2;          // bakes allowed in one frame (tunable)
++/* The pad is what keeps a cliff face from being clipped at its own chunk's
++   edge: GROUND_UP above the top tile's baseline and GROUND_DOWN below the
++   bottom one's — the same two bounds the viewport cull already trusts and a
++   run4 gate already proves — plus a tile half-width and GC_PAD_SLACK
++   sideways. A run4 gate records every coordinate a real bake paints and
++   fails if any of them lands outside the canvas, so the pad is measured
++   rather than assumed. */
++const GC_PAD_SLACK = 24;
++const GC_PAD_X = (GC_TILES - 1) * IW2 + IW2 + GC_PAD_SLACK;
++const GC_PAD_Y = GROUND_UP;
++const GC_W = GC_PAD_X * 2;
++const GC_H = GROUND_UP + (GC_TILES - 1) * 2 * IH2 + GROUND_DOWN;
++/* ⚠️ WHY A CHUNK IS BLITTED IN BANDS AND NOT AS ONE RECTANGLE. MEASURED, on
++   the build that did it in one: 17 visible chunks at 1280x720 blitted 4.2
++   MILLION pixels to fill a 0.92 million pixel screen — 4.6x overdraw — and
++   the whole ground pass came out only 1.3x faster than drawing every tile,
++   against the spec's 1.4x bar. The cause is geometry, not code: a chunk's
++   tiles form a DIAMOND, its canvas is the diamond's bounding box plus the
++   cliff-face pad, so the rectangle is nearly three times the area the chunk
++   actually paints — and all that empty rectangle lands on the neighbouring
++   chunks, which have already been blitted.
++
++   So each chunk records, at bake time, how far left and right it paints in
++   each horizontal band of its canvas, and the blit copies those bands
++   instead of the whole rectangle. The pixels are identical — same raster,
++   same whole-pixel destination, cut into strips — and the painted diamonds
++   TILE the plane, so the overdraw collapses to the band quantisation alone.
++   Bands a chunk paints nothing in (the corners above and below its diamond)
++   are not copied at all.
++
++   The reach a band records is the same arithmetic GROUND_UP is built from,
++   tile by tile instead of worst-case: GROUND_UP is the tallest possible zTop
++   (a height-4 PEAK carrying full jitter) plus the tallest snow spike plus
++   slack, so GC_UP_PAD is what it adds OVER that zTop, and a tile's own
++   variedZ supplies the rest. A flat tile therefore reaches 23px above its
++   baseline instead of 96. A run4 gate records every coordinate a real bake
++   paints and fails if any of them falls outside the band that claims it. */
++const GC_BAND = 32;                   // px per blit band (tunable)
++const GC_BANDS = Math.ceil(GC_H / GC_BAND);
++const GC_UP_PAD = GROUND_UP - (4 * HZ + 9);
++/* Insertion order IS the LRU order: a hit deletes and re-sets its key, so
++   the first key the iterator hands back is always the oldest live chunk.
++
++   ⚠️ AND THE OLDEST LIVE CHUNK CAN STILL BE ON SCREEN. A chunk's footprint is
++   a 704x352 diamond, so the number of chunks a viewport touches grows with
++   its area: ~20 at 1280x720 and ~34 at 1920x1080 (both measured), but ~51 at
++   2560x1440 and more above that. Past GC_MAX a plain LRU does not degrade, it
++   INVERTS: every frame it would evict the chunk it visited first — one that is
++   on screen — re-bake it two frames later, and pay both the bake and the blit
++   forever, which is strictly slower than never having cached at all. So an
++   eviction is refused when the oldest chunk was used on this frame, and the
++   chunk that wanted the slot simply paints itself directly instead. The cache
++   stays at GC_MAX, the ground stays correct, and a too-small GC_MAX costs a
++   little rather than going backwards. */
++let gcFrame = 0;
++let gcStats = { bakes: 0, blits: 0, bands: 0, blitPx: 0, direct: 0, evicted: 0, frameBakes: 0, maxFrameBakes: 0, frames: 0 };
++let gcFails = 0;                      // real-browser canvas allocation failures
++function gcKey(cx, cy) { return cx + "," + cy; }
++/* Invalidation: every baked chunk is terrain, so the cache dies wherever
++   tileCache does — the login world build, a world reset, and the harness
++   seed hooks that rebuild the world under a gate. */
++function gcClear() { gcChunks.clear(); }
++function gcBake(cx, cy) {
++  const rx = cx * GC_TILES, ry = cy * GC_TILES;
++  /* Make room FIRST, so a refused eviction costs a Map lookup rather than a
++     1.4MB canvas that is then thrown away. See the LRU note above. */
++  while (gcChunks.size >= GC_MAX) {
++    const oldest = gcChunks.keys().next().value;
++    if (gcChunks.get(oldest).used === gcFrame) return null;   // everything held is in view
++    gcChunks.delete(oldest); gcStats.evicted++;
++  }
++  let cv, cc;
++  /* The attempt is counted before it can fail, so a browser that refuses
++     canvases is asked twice this frame and not once per visible chunk. */
++  gcStats.frameBakes++;
++  try {
++    cv = document.createElement("canvas");
++    cv.width = GC_W; cv.height = GC_H;
++    cc = cv.getContext("2d");
++  } catch (e) { cc = null; }
++  /* A browser that cannot give us another canvas must not be asked again
++     every frame: after a few refusals the cache turns itself off and the
++     direct path carries the game, which is exactly what it did before. The
++     chunks already held are dropped with it — keeping 48 canvases nothing
++     will ever blit again is the worst possible answer to a low-memory
++     event. Refusals must also be consecutive: a handful of transient ones
++     spread across a long session should not disable the cache for good. */
++  if (!cc) { if (++gcFails > 8) { GROUND_CACHE = false; gcClear(); } return null; }
++  /* The translate cancels the live camera EXACTLY. worldToScreen() adds the
++     same X0/Y0 to every tile, so subtracting the reference (northmost) tile's
++     whole screen position and adding a fixed whole-pixel origin leaves
++     GC_PAD_X + (dtx - dty) * IW2 and GC_PAD_Y + (dtx + dty) * IH2 - zTop:
++     camera-free, whole-pixel on the x axis, and the same pixels whatever the
++     camera happened to be doing on the frame that baked it. */
++  const [rcx, rcy] = worldToScreen(rx + 0.5, ry + 0.5, 0);
++  cc.save();
++  cc.translate(GC_PAD_X - rcx, GC_PAD_Y - rcy);
++  /* The bake's own diagonal sweep, which is the live pass's order — a cliff
++     face hangs over its southern and eastern neighbours, so row-major would
++     put those faces UNDER tiles that have to paint over them. */
++  let painted = 0;
++  const bx0 = new Int32Array(GC_BANDS).fill(GC_W), bx1 = new Int32Array(GC_BANDS).fill(0);
++  for (let s = 0; s <= (GC_TILES - 1) * 2; s++) {
++    for (let dtx = Math.max(0, s - (GC_TILES - 1)); dtx <= Math.min(GC_TILES - 1, s); dtx++) {
++      const dty = s - dtx;
++      const tx = rx + dtx, ty = ry + dty;
++      if (tx >= N || ty >= N) continue;
++      drawGroundTile(cc, tx, ty);
++      painted++;
++      /* This tile's reach, in the chunk canvas's own space — see the band
++         comment above. The x bound is the tile's own half-width plus the
++         same sideways slack the canvas is padded by; the y bounds are its
++         real variedZ above and the proven GROUND_DOWN below. */
++      const lcx = GC_PAD_X + (dtx - dty) * IW2, base = GC_PAD_Y + (dtx + dty) * IH2;
++      const tx0 = Math.max(0, Math.floor(lcx - IW2 - GC_PAD_SLACK));
++      const tx1 = Math.min(GC_W, Math.ceil(lcx + IW2 + GC_PAD_SLACK));
++      const b0 = Math.max(0, Math.floor((base - variedZ(tx, ty) - GC_UP_PAD) / GC_BAND));
++      const b1 = Math.min(GC_BANDS - 1, Math.floor((base + GROUND_DOWN) / GC_BAND));
++      for (let bi = b0; bi <= b1; bi++) {
++        if (tx0 < bx0[bi]) bx0[bi] = tx0;
++        if (tx1 > bx1[bi]) bx1[bi] = tx1;
++      }
++    }
++  }
++  cc.restore();
++  gcStats.bakes++; gcFails = 0;          // a success clears the refusal run
++  const ch = { cv, tiles: painted, bx0, bx1, used: gcFrame };
++  gcChunks.set(gcKey(cx, cy), ch);
++  return ch;
++}
++function gcGet(cx, cy) {
++  const k = gcKey(cx, cy);
++  const hit = gcChunks.get(k);
++  if (hit) { hit.used = gcFrame; gcChunks.delete(k); gcChunks.set(k, hit); return hit; }   // LRU touch
++  if (gcStats.frameBakes >= GC_BAKE_PER_FRAME) return null;           // no frame hitches
++  return gcBake(cx, cy);
++}
++/* The blit runs on the IDENTITY transform, not under the frame's shake
++   translate, so the destination really is the whole pixel it says it is and
++   nothing resamples. frac(rcx) === frac(X0) because a tile centre's isoX is
++   a whole number of pixels, which is why rounding here and rounding the
++   direct path's translate give the same lattice. Only the part of the chunk
++   that is on screen is copied: the padded canvases overlap each other and
++   the viewport, and a blit costs what it covers. */
++function gcBlit(ch, cx, cy, w, h, shX, shY) {
++  const rx = cx * GC_TILES, ry = cy * GC_TILES;
++  const [rcx, rcy] = worldToScreen(rx + 0.5, ry + 0.5, 0);
++  const dx = Math.round(shX + rcx) - GC_PAD_X, dy = Math.round(shY + rcy) - GC_PAD_Y;
++  let bands = 0, px = 0;
++  ctx.save();
++  ctx.setTransform(1, 0, 0, 1, 0, 0);
++  for (let bi = 0; bi < GC_BANDS; bi++) {
++    if (ch.bx1[bi] <= ch.bx0[bi]) continue;            // this band was never painted
++    let sx = ch.bx0[bi], sw = ch.bx1[bi] - sx;
++    let sy = bi * GC_BAND, sh = Math.min(GC_BAND, GC_H - sy);
++    if (dx + sx < 0) { const d = -(dx + sx); sx += d; sw -= d; }
++    if (dx + sx + sw > w) sw = w - (dx + sx);
++    if (dy + sy < 0) { const d = -(dy + sy); sy += d; sh -= d; }
++    if (dy + sy + sh > h) sh = h - (dy + sy);
++    if (sw <= 0 || sh <= 0) continue;
++    ctx.drawImage(ch.cv, sx, sy, sw, sh, dx + sx, dy + sy, sw, sh);
++    bands++; px += sw * sh;
++  }
++  ctx.restore();
++  if (!bands) return false;
++  gcStats.blits++; gcStats.bands += bands; gcStats.blitPx += px;
++  return true;
++}
++/* The cached ground pass. Chunks go back to front by cx + cy, and inside a
++   chunk the tiles keep the diagonal tx + ty order, so the cliff-face overlap
++   is the same relation it has always been. A chunk that is not baked yet
++   paints its own tiles the direct way in its own turn, THIS frame, which is
++   why nothing pops in and why a half-warm cache is still drawn in order.
++   Two chunks on the same cx + cy diagonal never overlap on screen — their
++   nearest tiles meet at a single diamond vertex, which a run4 gate measures
++   — so the level they share needs no order of its own.
++
++   Every visible tile is still scanned and counted by the SAME two culls the
++   direct pass uses, blitted or painted, so groundStats stays the honest
++   number the cull proof recomputes. */
++function gcGroundPass(gMinX, gMaxX, gMinY, gMaxY, camIX, camIY, w, h, shX, shY, sdx, sdy) {
++  let drawn = 0, scanned = 0;
++  gcStats.frameBakes = 0; gcStats.frames++; gcFrame++;
++  const cMinX = Math.floor(gMinX / GC_TILES), cMaxX = Math.floor(gMaxX / GC_TILES);
++  const cMinY = Math.floor(gMinY / GC_TILES), cMaxY = Math.floor(gMaxY / GC_TILES);
++  for (let cs = cMinX + cMinY; cs <= cMaxX + cMaxY; cs++) {
++    for (let cx = Math.max(cMinX, cs - cMaxY); cx <= Math.min(cMaxX, cs - cMinY); cx++) {
++      const cy = cs - cx;
++      const tx0 = Math.max(gMinX, cx * GC_TILES), tx1 = Math.min(gMaxX, cx * GC_TILES + GC_TILES - 1);
++      const ty0 = Math.max(gMinY, cy * GC_TILES), ty1 = Math.min(gMaxY, cy * GC_TILES + GC_TILES - 1);
++      if (tx0 > tx1 || ty0 > ty1) continue;
++      /* The chunk's tile rectangle is the bounding box of a diamond, so over
++         half of the chunk grid is off screen at any zoom — and a chunk's
++         padded canvas is nearly three times the area of the diamond it
++         carries, so blitting one whose tiles are ALL culled would be the
++         most expensive way in the file to draw nothing. The same two culls
++         the direct pass uses are therefore run first, and a chunk with
++         nothing on screen is neither baked nor blitted. The count they
++         produce is the count groundStats reports, once, whichever way the
++         chunk is then painted. */
++      let vis = 0;
++      for (let s = tx0 + ty0; s <= tx1 + ty1; s++) {
++        const txLo = Math.max(tx0, s - ty1), txHi = Math.min(tx1, s - ty0);
++        for (let tx = txLo; tx <= txHi; tx++) {
++          const ty = s - tx;
++          scanned++;
++          const bcx = w / 2 + isoX(tx + 0.5, ty + 0.5) - camIX;
++          if (bcx + IW2 < 0 || bcx - IW2 > w) continue;
++          const bcy = h / 2 + isoY(tx + 0.5, ty + 0.5) - camIY;
++          if (bcy + GROUND_DOWN < 0 || bcy - GROUND_UP > h) continue;
++          vis++;
++        }
++      }
++      if (!vis) continue;
++      drawn += vis;
++      const ch = gcGet(cx, cy);
++      if (ch) { gcBlit(ch, cx, cy, w, h, shX, shY); continue; }
++      /* Not baked yet: this chunk paints its own visible tiles in place,
++         this frame, in the same diagonal order and through the same culls. */
++      ctx.save();
++      ctx.translate(sdx, sdy);
++      for (let s = tx0 + ty0; s <= tx1 + ty1; s++) {
++        const txLo = Math.max(tx0, s - ty1), txHi = Math.min(tx1, s - ty0);
++        for (let tx = txLo; tx <= txHi; tx++) {
++          const ty = s - tx;
++          const bcx = w / 2 + isoX(tx + 0.5, ty + 0.5) - camIX;
++          if (bcx + IW2 < 0 || bcx - IW2 > w) continue;
++          const bcy = h / 2 + isoY(tx + 0.5, ty + 0.5) - camIY;
++          if (bcy + GROUND_DOWN < 0 || bcy - GROUND_UP > h) continue;
++          drawGroundTile(ctx, tx, ty); gcStats.direct++;
++        }
++      }
++      ctx.restore();
++    }
++  }
++  if (gcStats.frameBakes > gcStats.maxFrameBakes) gcStats.maxFrameBakes = gcStats.frameBakes;
++  return { drawn, scanned };
++}
++/* ⚠️ HARNESS ONLY (Performance PART A): the cache's own numbers, a flip, and
++   a bake on demand so a gate can record exactly what one paints. Nothing in
++   the game calls any of these. */
++function debugGroundCache() {
++  return { GROUND_CACHE, GC_TILES, GC_MAX, GC_BAKE_PER_FRAME, GC_PAD_SLACK,
++           GC_W, GC_H, GC_PAD_X, GC_PAD_Y, GROUND_UP, GROUND_DOWN, IW2, IH2,
++           size: gcChunks.size, keys: [...gcChunks.keys()],
++           GC_BAND, GC_BANDS, GC_UP_PAD,
++           bakes: gcStats.bakes, blits: gcStats.blits, bands: gcStats.bands,
++           blitPx: gcStats.blitPx, direct: gcStats.direct,
++           evicted: gcStats.evicted, frames: gcStats.frames,
++           lastFrameBakes: gcStats.frameBakes, maxFrameBakes: gcStats.maxFrameBakes };
++}
++function debugSetGroundCache(on) { GROUND_CACHE = !!on; gcClear(); gcFails = 0; return GROUND_CACHE; }
++function debugGcResetStats() { gcStats = { bakes: 0, blits: 0, bands: 0, blitPx: 0, direct: 0, evicted: 0, frameBakes: 0, maxFrameBakes: 0, frames: 0 }; }
++function debugGcBakeOne(cx, cy) {
++  gcChunks.delete(gcKey(cx, cy));
++  const was = gcStats.frameBakes; gcStats.frameBakes = 0;
++  const ch = gcBake(cx, cy);
++  gcStats.frameBakes = was;
++  return ch ? { tiles: ch.tiles, origin: worldToScreen(cx * GC_TILES + 0.5, cy * GC_TILES + 0.5, 0),
++                bx0: [...ch.bx0], bx1: [...ch.bx1] } : null;
++}
++
+ /* =========================================================
+    LOGIN UI
+    ========================================================= */
+@@ -8240,7 +8555,7 @@ enterBtn.onclick = async () => {
+     tileCache.clear();
+     elevCache.clear();
+     rawHCache.clear();
+-    pocketAnchorCache.clear();   // v50 PART A
++    pocketAnchorCache.clear(); gcClear();   // v50 PART A
+     await loadMinedNodes();
+     /* v39 PART C: loginPlayer() and loadPets() moved AHEAD of worldgen. The
+        Unicorn Elder's luck buff is added to the rare-species presence roll,
+@@ -9225,7 +9540,7 @@ async function performWorldReset() {
+     activePet = null;
+     if (me) { me.pet = null; me.mounted = false; }
+   }
+-  tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear();
++  tileCache.clear(); elevCache.clear(); rawHCache.clear(); pocketAnchorCache.clear(); gcClear();
+   placeLandmarks();
+   buildFeatureList();
+   /* Mob Rarity PART A: the reset deliberately does NOT clear rare_takes. It
+@@ -12615,9 +12930,30 @@ const ctx = canvas.getContext("2d");
+ let lightCanvas = document.createElement("canvas");
+ let lctx = lightCanvas.getContext("2d");
+ 
++/* ===== Performance PART C — THE PIXEL RATIO, RECORDED =====================
++   RECORDED, NOT CHANGED. The canvas is sized in CSS pixels, not in
++   devicePixelRatio pixels, and that is deliberate rather than an oversight:
++   on a 3x phone a devicePixelRatio backing store is nine times the pixels to
++   rasterise, and this art has no fine detail to resolve — flat faces, hard
++   shadows, no textures and no gradients on the ground — so the whole cost
++   would buy sharper 8px nameplate text and nothing else. This pass exists
++   because phones are slower than the desktop numbers in PART A, so the
++   cheaper choice is the right one and it stays.
++
++   RENDER_SCALE is where that decision is written down, and resize() is the
++   one place that reads the canvas size. At 1 it is arithmetically the old
++   line (canvas.width is an unsigned long, so it truncates exactly as the
++   bare assignment did). ⚠️ It is a RECORD, not a working dial: raising it
++   would also need the input path fixed, because onclick does
++   screenToWorld(e.clientX, e.clientY) with clientX in CSS pixels against a
++   canvas.width in device ones, so every click would resolve off by half a
++   screen — and applyHelpLift() compares getBoundingClientRect() in CSS
++   pixels against canvas-pixel layout. Raising it is a build of its own.
++   ========================================================= */
++const RENDER_SCALE = 1;                  // tunable: 1 = CSS pixels, the deliberate choice
+ function resize() {
+-  canvas.width = innerWidth; canvas.height = innerHeight;
+-  lightCanvas.width = innerWidth; lightCanvas.height = innerHeight;
++  canvas.width = innerWidth * RENDER_SCALE; canvas.height = innerHeight * RENDER_SCALE;
++  lightCanvas.width = canvas.width; lightCanvas.height = canvas.height;
+ }
+ addEventListener("resize", resize); resize();
+ 
+@@ -19010,6 +19346,20 @@ function render(t) {
+     const gMinY = Math.max(0, minY - GROUND_MARGIN), gMaxY = Math.min(N - 1, maxY + GROUND_MARGIN);
+     drawGroundUnderlay();                               // Gauntlet S2 R4: closes the tile seams
+     let drawn = 0, scanned = 0;
++    /* Performance PART A: the whole-pixel ground lattice. Rounded ONCE here,
++       shake included, and applied to the direct path as a translate — so a
++       tile painted directly and a tile arriving inside a baked chunk's blit
++       land on exactly the same pixel. See THE GROUND CACHE for why a raster
++       cannot move by half a pixel. The culls below stay on the true
++       sub-pixel arithmetic: they decide what is drawn, not where. */
++    const sdx = Math.round(shX + w / 2 - camIX) - (shX + w / 2 - camIX);
++    const sdy = Math.round(shY + h / 2 - camIY) - (shY + h / 2 - camIY);
++    if (GROUND_CACHE) {
++      const gcr = gcGroundPass(gMinX, gMaxX, gMinY, gMaxY, camIX, camIY, w, h, shX, shY, sdx, sdy);
++      drawn = gcr.drawn; scanned = gcr.scanned;
++    } else {
++    ctx.save();
++    ctx.translate(sdx, sdy);
+     for (let s = gMinX + gMinY; s <= gMaxX + gMaxY; s++) {
+       const txLo = Math.max(gMinX, s - gMaxY), txHi = Math.min(gMaxX, s - gMinY);
+       for (let tx = txLo; tx <= txHi; tx++) {
+@@ -19023,6 +19373,8 @@ function render(t) {
+         drawn++;
+       }
+     }
++    ctx.restore();
++    }
+     groundStats.tiles = drawn; groundStats.scanned = scanned;
+     groundStats.minX = gMinX; groundStats.maxX = gMaxX;
+     groundStats.minY = gMinY; groundStats.maxY = gMaxY;
+@@ -20180,6 +20532,44 @@ function compassLabelLayout() {
+ function compassBlockerLayout() {
+   return compassBlockerBoxes.map(b => ({ x: b.x, y: b.y, w: b.w, h: b.h }));
+ }
++/* ===== Performance PART B — THE HUD ONLY WRITES WHEN SOMETHING CHANGED ===
++   MEASURED with PART A's profile: updateHUD() runs from render(), every
++   frame, and almost everything it wrote was the string it had already
++   written. innerHTML is a parse and a subtree rebuild, not an assignment —
++   the compass dial alone is nine marks, eight ticks and a centre, rebuilt
++   sixty times a second to say the same thing — and updateWorldMap() redrew
++   961 tiles plus their feature flecks on a frame where the player had not
++   left the tile they were standing on.
++
++   Nothing here changes what the HUD SAYS. Each writer keeps building its
++   string exactly as it did; the string is then compared with the last one
++   that actually reached the DOM, and an identical one is dropped. The two
++   expensive cards get a cheap key of their own instead, because for them the
++   string IS the work: the dial's key is the set of landmark bearings rounded
++   to the degree it can draw, and the map's is the player's tile plus the set
++   of players on it, with HUD_MAP_MS as a floor so a moving dot still moves.
++   ========================================================= */
++const HUD_MAP_MS = 250;                  // minimap redraw floor, ms (tunable)
++/* element -> the last string this pass actually wrote to it. Keyed by the
++   node itself, so the three cards and the death timer cannot collide, and
++   deliberately only ever read back by the writer that owns it: every element
++   in here is written in updateHUD() and nowhere else in the file. */
++const hudLastWrite = new Map();
++let hudStats = { writes: 0, skips: 0, compassBuilds: 0, mapDraws: 0 };
++let lastDialKey = null, lastMapKey = null, lastMapDrawAt = -1e9;
++function hudHTML(el, s) {
++  if (!el) return;
++  if (hudLastWrite.get(el) === s) { hudStats.skips++; return; }
++  hudLastWrite.set(el, s); el.innerHTML = s; hudStats.writes++;
++}
++function hudText(el, s) {
++  if (!el) return;
++  if (hudLastWrite.get(el) === s) { hudStats.skips++; return; }
++  hudLastWrite.set(el, s); el.textContent = s; hudStats.writes++;
++}
++/* ⚠️ HARNESS ONLY (Performance PART B). Nothing in the game calls these. */
++function debugHudStats() { return Object.assign({ HUD_MAP_MS, tracked: hudLastWrite.size }, hudStats); }
++function debugHudReset() { hudStats = { writes: 0, skips: 0, compassBuilds: 0, mapDraws: 0 }; }
+ function updateMinimap() {
+   const el = document.getElementById("hudMinimap");
+   if (!el) return;
+@@ -20197,7 +20587,18 @@ function updateMinimap() {
+      inInterior() beside it: the card goes away while it would be noise. */
+   if (!me || inInterior() || !tutorialDone) { el.style.display = "none"; return; }
+   const dial = document.getElementById("mmDial");
+-  if (dial) {
++  /* Performance PART B: the dial's whole cost is one innerHTML parse, and
++     nothing in it depends on the clock — only on which bearings the nine
++     landmarks sit at, rounded to the degree this dial can actually draw, and
++     on the ORDER their distances put them in, because the layout is greedy
++     nearest-first and that order is part of the answer. Standing still, the
++     dial is built once and never again; one step does not rebuild it either,
++     which is the point. The boxes the help-overlap check reads keep
++     describing the dial that is on screen, because it has not changed. */
++  const marks0 = minimapBearings().slice().sort((a, b) => a.d - b.d);
++  const dialKey = marks0.map(r => r.label + "@" + Math.round(r.deg)).join(",");
++  if (dial && dialKey !== lastDialKey) {
++    lastDialKey = dialKey; hudStats.compassBuilds++;
+     /* hotfix: R_TICK and R_MARK used to be 46/36 — only 10px apart, which
+        is why a landmark near the same bearing as a tick (Tower sitting
+        close to due north) collided with it and read as "TOWEN". Ticks
+@@ -20241,7 +20642,7 @@ function updateMinimap() {
+        the exact "TOWEN" collision v35 fixed — every landmark's own dot, and
+        the centre marker. Labels still only ever test against each other AND
+        these; dots never move. */
+-    const marks = minimapBearings().slice().sort((a, b) => a.d - b.d);
++    const marks = marks0;
+     const blockers = [];
+     for (const [label, deg] of COMPASS_POINTS) {
+       const tx = CX + R_TICK * Math.cos(rad(deg)), ty = CY + R_TICK * Math.sin(rad(deg));
+@@ -20374,6 +20775,23 @@ function updateWorldMap() {
+   const c = mapCtx;
+   if (!c) { el.style.display = "none"; return; }
+   const px = Math.floor(me.x), py = Math.floor(me.y);
++  /* Performance PART B: 961 tiles and their feature flecks, redrawn sixty
++     times a second to show the same window. The card only changes when the
++     tile under the player changes or when the set of players on it does —
++     everything else it draws is a function of those two — so that pair is
++     the key, with HUD_MAP_MS as a floor underneath it so a dot crossing a
++     cell still slides rather than jumping a tile at a time. The dots read
++     real positions when the redraw happens, exactly as before. */
++  let mapKey = worldSeed + ":" + px + "," + py;
++  for (const [n0, o0] of others) {
++    if (o0.dead) continue;
++    if ((o0.space || "main") !== (me.space || "main")) continue;
++    if (Math.abs(o0.x - me.x) > MAP_R + 0.5 || Math.abs(o0.y - me.y) > MAP_R + 0.5) continue;
++    mapKey += "|" + n0;
++  }
++  const mapNow = performance.now();
++  if (mapKey === lastMapKey && mapNow - lastMapDrawAt < HUD_MAP_MS) { el.style.display = "block"; return; }
++  lastMapKey = mapKey; lastMapDrawAt = mapNow; hudStats.mapDraws++;
+   c.clearRect(0, 0, MAP_PX, MAP_PX);
+   mapFleckStats = { cells: 0, trees: 0, rocks: 0, marks: [] };
+   for (let dy = -MAP_R; dy <= MAP_R; dy++) {
+@@ -20478,8 +20896,10 @@ function updateUnmakingHud() {
+   if (!el) return;
+   if (!worldResetAt) { el.style.display = "none"; return; }
+   const left = Math.max(0, Math.ceil((worldResetAt - Date.now()) / 1000));
+-  el.innerHTML = `<div class="un-head">THE WORLD IS UNMAKING</div>` +
+-                 `<div class="un-count">${left}</div>`;
++  /* Performance PART B: updateHUD() reaches this every frame of the ten
++     seconds, and the string changes once a second. */
++  hudHTML(el, `<div class="un-head">THE WORLD IS UNMAKING</div>` +
++              `<div class="un-count">${left}</div>`);
+   el.style.display = "block";
+ }
+ 
+@@ -20487,8 +20907,7 @@ function updateHUD(dayT) {
+   const w = equippedWeapon();
+   const mtier = matchedGearTier();        // Matched-Tier Gear Bonus, once
+   const hpPct = Math.round(me.hp);
+-  hudPlayer.innerHTML =
+-    `<span class="gold">${me.username}</span> — ${me.cls}<br>` +
++  hudHTML(hudPlayer, `<span class="gold">${me.username}</span> — ${me.cls}<br>` +
+     `<span class="dim">Level ${me.level} &nbsp;•&nbsp; ${w.name} (${w.dmg})</span><br>` +
+     `<span class="hpnum ${hpPct < 35 ? "low" : ""}">HP ${hpPct}/${me.maxHp}</span>` +
+     (Date.now() < tameBuffUntil
+@@ -20532,13 +20951,12 @@ function updateHUD(dayT) {
+        no new card, no new CSS: this is the Shrine blessing's line again. */
+     (mtier
+       ? `<br><span style="color:${tierColor(mtier)}">Matched ${mtier} gear — −${Math.round(armorReduceNow() * 100)}% dmg taken</span>` : "") +
+-    petHudLine();
++    petHudLine());
+ 
+   const phase = dayT < 0.25 ? "Morning" : dayT < 0.5 ? "Afternoon" : dayT < 0.62 ? "Dusk" : "Night";
+   const dayNum = worldDayNum();   // v25 PART B: one counter, shared with the Krakenling gate
+-  hudWorld.innerHTML =
+-    `Day <span class="gold">${dayNum}</span> — ${phase}<br>` +
+-    `<span class="dim">${others.size + 1} online</span>`;
++  hudHTML(hudWorld, `Day <span class="gold">${dayNum}</span> — ${phase}<br>` +
++    `<span class="dim">${others.size + 1} online</span>`);
+ 
+   hudZone.style.display = inSafeZone(me.x, me.y) ? "block" : "none";
+   if (helpExpanded && performance.now() - helpLiftCheckedAt > HELP_LIFT_RECHECK_MS) applyHelpLift();
+@@ -20557,54 +20975,54 @@ function updateHUD(dayT) {
+   const wldNear = nearestWild();
+   if (wdMob) {
+     const wpct = Math.round(tameChanceFor({ id: wdMob.id, species: wdMob.kind }, (me.inv.trail_bait || 0) > 0) * 100);
+-    hudPrompt.textContent = `[Hold E] Tame weakened ${MOBS[wdMob.kind].name} (${wpct}%)`;
++    hudText(hudPrompt, `[Hold E] Tame weakened ${MOBS[wdMob.kind].name} (${wpct}%)`);
+     hudPrompt.style.display = "block";
+   }
+   else if (wldNear) {
+     const pct = Math.round(tameChanceFor(wldNear, (me.inv.trail_bait || 0) > 0) * 100);
+-    hudPrompt.textContent = `[Hold E] Tame ${WILD_SPECIES[wldNear.species].name} (${pct}%)`;
++    hudText(hudPrompt, `[Hold E] Tame ${WILD_SPECIES[wldNear.species].name} (${pct}%)`);
+     hudPrompt.style.display = "block";
+   }
+-  else if (nearShrine()) { hudPrompt.textContent = "[E] Beastmaster Shrine — 3 Runic Stone for a taming blessing"; hudPrompt.style.display = "block"; }
++  else if (nearShrine()) { hudText(hudPrompt, "[E] Beastmaster Shrine — 3 Runic Stone for a taming blessing"); hudPrompt.style.display = "block"; }
+   /* v35 PART E: the Oracle says what it is, like every other landmark. */
+-  else if (nearOracle()) { hudPrompt.textContent = "[E] The Oracle — ask where a rare companion may be found"; hudPrompt.style.display = "block"; }
++  else if (nearOracle()) { hudText(hudPrompt, "[E] The Oracle — ask where a rare companion may be found"); hudPrompt.style.display = "block"; }
+   /* v37: the three new landmarks announce what they are. The Bazaar and
+      Colosseum are informational (their mechanic is the zone you stand in,
+      not a keypress); the Ancient Forge tells you what it unlocks. */
+-  else if (nearAncient()) { hudPrompt.textContent = "The Ancient Forge — dragonsteel can be smelted here, and nowhere else"; hudPrompt.style.display = "block"; }
+-  else if (Math.hypot(me.x - BAZAAR.x, me.y - BAZAAR.y) < BAZAAR_R) { hudPrompt.textContent = "The Grand Bazaar — protected ground. Trade item-for-item, at your own risk"; hudPrompt.style.display = "block"; }
++  else if (nearAncient()) { hudText(hudPrompt, "The Ancient Forge — dragonsteel can be smelted here, and nowhere else"); hudPrompt.style.display = "block"; }
++  else if (Math.hypot(me.x - BAZAAR.x, me.y - BAZAAR.y) < BAZAAR_R) { hudText(hudPrompt, "The Grand Bazaar — protected ground. Trade item-for-item, at your own risk"); hudPrompt.style.display = "block"; }
+   /* v52+53 PART B: the arena's own three states, ahead of the plain ring line
+      so the more specific thing always wins. The last of the three is v37's
+      original line, unchanged — everywhere inside the ring that is not a podium
+      behaves exactly as it always has. */
+-  else if (duel.state === "active") { hudPrompt.textContent = `DUEL — ${me.username} against ${duel.opponent}`; hudPrompt.style.display = "block"; }
++  else if (duel.state === "active") { hudText(hudPrompt, `DUEL — ${me.username} against ${duel.opponent}`); hudPrompt.style.display = "block"; }
+   else if (duelCandidate()) {
+     const other = duelCandidate();
+-    hudPrompt.textContent = duel.mine
++    hudText(hudPrompt, duel.mine
+       ? `Waiting for ${other} to accept the duel…`
+-      : `[${(KEYBINDS.interact || "e").toUpperCase()}] Accept a duel with ${other} — victor takes ${DUEL_REWARD_RUNIC} Runic Stone`;
++      : `[${(KEYBINDS.interact || "e").toUpperCase()}] Accept a duel with ${other} — victor takes ${DUEL_REWARD_RUNIC} Runic Stone`);
+     hudPrompt.style.display = "block";
+   }
+-  else if (me && podiumAt(me.x, me.y) !== null) { hudPrompt.textContent = `${PODIUMS[podiumAt(me.x, me.y)].name} — a duel needs a challenger on the other podium`; hudPrompt.style.display = "block"; }
+-  else if (inColosseum(me.x, me.y)) { hudPrompt.textContent = "The Ruined Colosseum — PvP is live inside the ring"; hudPrompt.style.display = "block"; }
++  else if (me && podiumAt(me.x, me.y) !== null) { hudText(hudPrompt, `${PODIUMS[podiumAt(me.x, me.y)].name} — a duel needs a challenger on the other podium`); hudPrompt.style.display = "block"; }
++  else if (inColosseum(me.x, me.y)) { hudText(hudPrompt, "The Ruined Colosseum — PvP is live inside the ring"); hudPrompt.style.display = "block"; }
+   /* Dungeons PART E: in the same position in this chain as the branch it
+      mirrors in doInteract(), so the prompt can never advertise something a
+      keypress would not actually do. It says which of the two states the
+      door is in, because "sealed" with no reason given is the one thing a
+      player standing in front of it cannot work out on their own. */
+   else if (me && nearVaultDoor()) {
+-    hudPrompt.textContent = haveVaultKey(me.space)
++    hudText(hudPrompt, haveVaultKey(me.space)
+       ? `[${(KEYBINDS.interact || "e").toUpperCase()}] Unlock the vault`
+-      : "The vault is sealed — its Demon Knight carries the key";
++      : "The vault is sealed — its Demon Knight carries the key");
+     hudPrompt.style.display = "block";
+   }
+-  else if (nearChest()) { hudPrompt.textContent = "[E] Dev Supply Chest — stock all materials"; hudPrompt.style.display = "block"; }
+-  else if (nearBaseChest()) { hudPrompt.textContent = "[E] Storage Chest — open"; hudPrompt.style.display = "block"; }
+-  else if (item) { hudPrompt.textContent = `[E] Pick up ${ITEM_META[item.type]?.name || item.type}`; hudPrompt.style.display = "block"; }
++  else if (nearChest()) { hudText(hudPrompt, "[E] Dev Supply Chest — stock all materials"); hudPrompt.style.display = "block"; }
++  else if (nearBaseChest()) { hudText(hudPrompt, "[E] Storage Chest — open"); hudPrompt.style.display = "block"; }
++  else if (item) { hudText(hudPrompt, `[E] Pick up ${ITEM_META[item.type]?.name || item.type}`); hudPrompt.style.display = "block"; }
+   /* v47 PART F: in the same position in this chain as the branch it mirrors
+      in doInteract() — after the ground item, before the gatherable — so the
+      prompt can never advertise something a keypress would not actually do. */
+-  else if (giveNear) { hudPrompt.textContent = `[E] Give an item to ${giveNear}`; hudPrompt.style.display = "block"; }
++  else if (giveNear) { hudText(hudPrompt, `[E] Give an item to ${giveNear}`); hudPrompt.style.display = "block"; }
+   else if (g) {
+     const verb = (FINITE.has(g.type) && !PICKED.has(g.type)) ? "Mine" : "Gather";
+     /* Caves & Enchanted Forest Expansion PART A, found by this build's new
+@@ -20619,12 +21037,12 @@ function updateHUD(dayT) {
+        PART A tripled the nodes in a cave, which is what finally made it
+        reproducible. */
+     const gives = g._node ? (g._node.type || "aquatic_essence") : FEATURE_GIVES[g.type];
+-    hudPrompt.textContent = `[E] ${verb} ${(ITEM_META[gives] || {}).name || g.type}`;
++    hudText(hudPrompt, `[E] ${verb} ${(ITEM_META[gives] || {}).name || g.type}`);
+     hudPrompt.style.display = "block";
+   }
+   else if (nearForge()) {
+-    hudPrompt.textContent = nearPlacedForge()
+-      ? "[C] Your Forge — craft & smelt" : "[C] Spawn Forge — craft & smelt";
++    hudText(hudPrompt, nearPlacedForge()
++      ? "[C] Your Forge — craft & smelt" : "[C] Spawn Forge — craft & smelt");
+     hudPrompt.style.display = "block";
+   }
+   else hudPrompt.style.display = "none";
+@@ -20654,7 +21072,7 @@ function updateHUD(dayT) {
+     const left = Math.max(0, me.deadUntil - Date.now());
+     const mm = String(Math.floor(left / 60000)).padStart(2, "0");
+     const ss = String(Math.floor((left % 60000) / 1000)).padStart(2, "0");
+-    document.getElementById("deathTimer").textContent = `${mm}:${ss}`;
++    hudText(document.getElementById("deathTimer"), `${mm}:${ss}`);
+   }
+ }
+ 
+@@ -21080,7 +21498,9 @@ function updateBossHud() {
+   const nameEl = document.getElementById("bossName");
+   const barEl = document.getElementById("bossBar");
+   const hpEl = document.getElementById("bossHp");
+-  if (nameEl) nameEl.textContent = (def && def.name) || "Elder Drake";
++  /* Performance PART B: a constant string, written sixty times a second for
++     the length of an Elder fight before this. */
++  if (nameEl) hudText(nameEl, (def && def.name) || "Elder Drake");
+   if (barEl) barEl.style.width = (pct * 100).toFixed(1) + "%";
+   if (hpEl) hpEl.textContent = `${Math.max(0, Math.ceil(m.hp))} / ${max}`;
+   uiReveal(el, true);
