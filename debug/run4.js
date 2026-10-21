@@ -9375,11 +9375,17 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
               const eligibleNow = () => {
                 const g = window.debugWorldInfo().ground;
                 let n2 = 0;
-                for (let ty = g.minY; ty <= g.maxY; ty++)
-                  for (let tx = g.minX; tx <= g.maxX; tx++) {
+                /* S4 (review): the ripple pass now walks only the tiles whose
+                   drawing can reach the screen (animRowRange); eligibility is
+                   counted over exactly those tiles, so rings are still held
+                   against the tiles that can produce them, like for like. */
+                for (let ty = g.minY; ty <= g.maxY; ty++) {
+                  const rr = window.animRowRange(ty, g.minX, g.maxX, g.w, g.h), rlo = rr[0], rhi = rr[1];
+                  for (let tx = rlo; tx <= rhi; tx++) {
                     const b2 = window.biomeAt(tx, ty);
                     if (b2 === BC.SHALLOW || b2 === BC.WATER) n2++;
                   }
+                }
                 return n2;
               };
               const ringsOver = (x, y) => {
@@ -11599,8 +11605,36 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         Math.max(...sizes) <= G1.GC_MAX && G1.maxSize <= G1.GC_MAX && G1.evictions > 0]);
       results.push([`S4 A: at most GC_BAKE_PER_FRAME bakes a frame — peak ${G1.maxBakesPerFrame}, ${G1.bakes - bakesBefore} bakes in all`,
         G1.maxBakesPerFrame <= G1.GC_BAKE_PER_FRAME && G1.maxBakesPerFrame >= 1 && G1.bakes - bakesBefore > 10]);
-      results.push(['S4 A: an unbaked visible chunk is drawn by the direct path that frame, so nothing pops in',
-        G1.directChunks > 0 && G1.blits > 0]);
+      /* Review (S4): not just "some of each" — on a frame right after a jump,
+         every visible chunk is drawn exactly once, baked or direct. */
+      {
+        window.debugSetPlayer({ x: 777.5, y: 1888.5, diving: false, hp: 100 });
+        window.debugSetCam(777.5, 1888.5);
+        window.render(4000);
+        const J = window.debugGroundCache();
+        results.push([`S4 A: an unbaked visible chunk is drawn by the direct path that frame, so nothing pops in — ${J.frameVisible} visible = ${J.frameBlits} blitted + ${J.frameDirect} direct`,
+          G1.directChunks > 0 && G1.blits > 0 && J.frameVisible > 0 && J.frameDirect > 0 &&
+          J.frameBlits + J.frameDirect === J.frameVisible]);
+      }
+      /* Review (S4): a screen that shows MORE than GC_MAX chunks (2560x1440
+         shows ~55) must settle too: no chunk used this frame is evicted, the
+         overflow is drawn directly, and after it settles nothing is baked or
+         evicted frame after frame. */
+      {
+        const iw = window.innerWidth, ih = window.innerHeight;
+        window.innerWidth = 2560; window.innerHeight = 1440; window.resize();
+        const sp = window.debugS2Info().SPAWN;
+        window.debugSetPlayer({ x: sp.x + 0.5, y: sp.y + 0.5, diving: false, hp: 100 });
+        window.debugSetCam(sp.x + 0.5, sp.y + 0.5);
+        for (let f = 0; f < 80; f++) window.render(30000 + f * 16);
+        const L0 = window.debugGroundCache();
+        for (let f = 0; f < 20; f++) window.render(32000 + f * 16);
+        const L1 = window.debugGroundCache();
+        window.innerWidth = iw; window.innerHeight = ih; window.resize();
+        results.push([`S4 A (review): at 2560x1440 (${L1.frameVisible} visible chunks, GC_MAX ${L1.GC_MAX}) the cache settles — ${L1.bakes - L0.bakes} bakes and ${L1.evictions - L0.evictions} evictions over 20 more frames, ${L1.frameBlits} blitted + ${L1.frameDirect} drawn directly`,
+          L1.frameVisible > L1.GC_MAX && L1.bakes === L0.bakes && L1.evictions === L0.evictions &&
+          L1.frameBlits === L1.GC_MAX && L1.frameBlits + L1.frameDirect === L1.frameVisible && L1.overflow > L0.overflow - 1]);
+      }
       // Standing still, every visible chunk ends up baked and nothing is drawn directly.
       {
         const sp = window.debugS2Info().SPAWN;
@@ -11677,19 +11711,63 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           h1.mapDraws - h0.mapDraws <= windows]);
         results.push([`S4 B: an unchanged HUD string is not rewritten — ${h1.hudWritesSkipped - h0.hudWritesSkipped} writes skipped, ${h1.hudWritesDone - h0.hudWritesDone} done over those frames`,
           h1.hudWritesSkipped - h0.hudWritesSkipped >= 120 && h1.hudWritesDone - h0.hudWritesDone <= 6]);
+        /* Review (S4): with the 250 ms window freshly restarted, a still frame
+           must NOT redraw (the control) and the one-tile move MUST — so the
+           move is what triggers it, not the timer. */
+        window.debugMarkMapDrawn();
+        window.render(21900);
+        const hc = window.debugHudStats();
         window.debugSetPlayer({ x: sp.x + 1.5, y: sp.y + 0.5, diving: false, hp: 100 });
         window.debugSetCam(sp.x + 1.5, sp.y + 0.5);
         window.render(22000);
         const h2 = window.debugHudStats();
-        results.push([`S4 B: moving one tile triggers a minimap redraw (${h2.mapDraws - h1.mapDraws})`, h2.mapDraws - h1.mapDraws === 1]);
+        results.push([`S4 B: moving one tile triggers a minimap redraw (${h2.mapDraws - hc.mapDraws}), where a still frame in the same fresh window draws ${hc.mapDraws - h1.mapDraws}`,
+          hc.mapDraws === h1.mapDraws && h2.mapDraws - hc.mapDraws === 1 && h2.mapAge < h2.MAP_REDRAW_MS]);
+        // and the compass does rebuild when the bearings really change
+        window.debugSetPlayer({ x: sp.x + 300.5, y: sp.y + 200.5, diving: false, hp: 100 });
+        window.debugSetCam(sp.x + 300.5, sp.y + 200.5);
+        window.render(22100);
+        const h3 = window.debugHudStats();
+        results.push([`S4 B: and the compass rebuilds when the bearings change (${h3.compassBuilds - h2.compassBuilds} after a 360-tile move)`,
+          h3.compassBuilds - h2.compassBuilds === 1]);
       }
       results.push(['S4 C: the canvas stays at CSS pixels — resize() reads RENDER_SCALE, which is 1',
         window.debugHudStats().RENDER_SCALE === 1 &&
         gameScript.indexOf('canvas.width = Math.round(innerWidth * RENDER_SCALE); canvas.height = Math.round(innerHeight * RENDER_SCALE);') > 0 &&
         /THE PIXEL-RATIO DECISION, RECORDED/.test(gameScript)]);
-      results.push(['S4: the water/lava animation loop walks only the tiles whose drawing can reach the screen',
-        gameScript.indexOf('const ANIM_MX = 2 * IW2, ANIM_UP = GROUND_UP, ANIM_DOWN = GROUND_DOWN;') > 0 &&
-        gameScript.indexOf('for (let tx = axLo; tx <= axHi; tx++) {') > 0]);
+      /* Review (S4): proved on the geometry, not the source. For every tile in
+         the bounds rectangle, its REACH is worked out from what the pass
+         draws: a ripple ring (origin up to 0.32 of a tile off centre in each
+         axis, radius IW2 * RIPPLE_R, at water level -HZ), the chop stroke, a
+         lava diamond raised by its own height, foam on its edges. Any tile
+         whose reach meets the canvas must be inside animRowRange; and the
+         range must really be smaller than the rectangle. */
+      {
+        const RR = window.debugAnimInfo().RIPPLE_R, IW2 = 22, IH2 = 11, HZ = 16;
+        let missed = 0, walked = 0, rect = 0, firstMiss = null;
+        for (const [px, py] of [[500.37, 900.61], [1666.2, 2357.9], [2589.5, 757.5], [3000.1, 1500.8]]) {
+          window.debugSetPlayer({ x: px, y: py, diving: false, hp: 100 });
+          window.debugSetCam(px, py);
+          window.render(40000);
+          const g = window.debugWorldInfo().ground;
+          for (let ty = g.minY; ty <= g.maxY; ty++) {
+            const r = window.animRowRange(ty, g.minX, g.maxX, g.w, g.h), lo = r[0], hi = r[1];
+            walked += Math.max(0, hi - lo + 1);
+            for (let tx = g.minX; tx <= g.maxX; tx++) {
+              rect++;
+              const [cx, cy] = window.worldToScreen(tx + 0.5, ty + 0.5, 0);
+              const hgt = Math.max(0, window.heightAt(tx, ty));
+              const xr = Math.max(IW2, IW2 * (0.64 + RR) + 2);
+              const top = cy - hgt * HZ - IH2 - 2, bot = cy + HZ + 0.64 * IH2 + RR * IW2 * 0.5 + 2;
+              const reaches = cx + xr >= 0 && cx - xr <= g.w && bot >= 0 && top <= g.h;
+              if (reaches && (tx < lo || tx > hi)) { missed++; if (!firstMiss) firstMiss = tx + ',' + ty; }
+            }
+          }
+        }
+        results.push([`S4: the water/lava animation loop walks only the tiles whose drawing can reach the screen — ${missed} reaching tiles skipped${firstMiss ? ' (first ' + firstMiss + ')' : ''}; it walks ${walked} of ${rect} rectangle tiles`,
+          missed === 0 && walked > 0 && walked < rect * 0.75 &&
+          gameScript.indexOf('for (let tx = axLo; tx <= axHi; tx++) {') > 0]);
+      }
     } else {
       results.push(['S4: the ground-cache and HUD hooks exist', false]);
     }

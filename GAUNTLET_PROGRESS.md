@@ -31,11 +31,12 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
 - **S3 Mobile & Touch: dropped for now.** **S5 Account Security: dropped for now** (no `supabase_s5.sql`). The iPhone test and App Store wrapper are not targets for a long time. Recorded in GAUNTLET.md and as DEFERRED notes in README (insert-only; specs untouched).
 - `NEXT_BUILD.md` now points at **Performance — Ground Cache & Quiet HUD** (S4), the next unbuilt spec. Its ground cache should also make the seam underlay unnecessary.
 
-## S4 — Performance (Ground Cache & Quiet HUD): BUILT, pending review
+## S4 — Performance (Ground Cache & Quiet HUD): SHIPPED to `main`
 - Ground baked into 16x16 chunk canvases (LRU 48, 2 bakes/frame, direct fallback, cleared with tileCache); camera offset snapped to whole pixels so cached and direct ground are pixel-identical; HUD writes only on change; RENDER_SCALE 1 recorded; water/lava loop walks on-screen tiles only.
 - Frame rate vs main: Colosseum +38%, Bazaar +43%, Ancient Forge +142%, Spawn +25%.
-- run4 1870 -> **1886 PASS / 0 FAIL**; run3 clean; run5 CAUGHT none; new **run6** (Playwright): pixel match 0.000% at 4 views, frame rate on/off 1.32x / 1.25x.
-- **Owner decision (2026-10-21):** frame-rate bar 1.2x, not 1.4x — even no ground at all reaches only 1.39-1.50x (S2's Colosseum pieces now dominate that frame). Recorded in README.
+- run4 1870 -> **1888 PASS / 0 FAIL**; run3 clean; run5 CAUGHT none; new **run6** (Playwright): pixel match 0.000% at 4 views, frame rate on/off 1.34x / 1.30x.
+- Independent Opus review: no correctness defects; fixed the >48-visible-chunk thrash (1440p/4K) and canvas-failure storm, and strengthened five gates. Open: at 1440p 7 of 55 chunks still draw directly (raise GC_MAX if big screens matter).
+- **Owner decision (2026-10-21):** frame-rate bar 1.2x, not 1.4x — drawing no ground at all measured 1.39-1.69x across runs, so 1.4x is at or past the ceiling on some runs; the rest of the gap is chunk blits + the seam underlay. Recorded in README.
 - `NEXT_BUILD.md` -> World Encounters (S6).
 
 ## Remaining stages

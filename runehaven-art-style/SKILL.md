@@ -84,13 +84,26 @@ Colosseum 31.5 -> 43.4 fps (+38%), Bazaar 23.0 -> 32.8 (+43%), Ancient Forge
 0.000% of the frame differs at Spawn, a coast, the volcano rim and a forest edge.
 
 **Owner decision (2026-10-21):** the run6 frame-rate bar is cache on >= 1.2x
-cache off, not 1.4x. Measured on/off 1.22–1.32x; drawing NO ground at all
-reaches only 1.39–1.50x (the Colosseum's S2 stone pieces now dominate that
-frame), so 1.4x was out of reach for any ground cache. run6 prints that
-ceiling every run. Tried and rejected: baking the seam underlay into chunks
-(broke the pixel match, no measurable gain).
+cache off, not 1.4x. Measured on/off 1.22–1.34x; drawing NO ground at all
+measured 1.39–1.69x across runs (the Colosseum's S2 stone pieces carry much
+of that frame), so 1.4x sits at or past the ceiling on some runs; the rest of
+the gap is the cost of the chunk blits and the S2 seam underlay. run6 prints
+that ceiling every run. Tried and rejected: baking the seam underlay into
+chunks (broke the pixel match, no measurable gain).
 
-**Gate integrity:** run4 1870 -> 1886 PASS, 0 FAIL; new debug/run6.js (Playwright,
+**Independent review (fresh Opus):** no correctness defects in the cache, the
+camera snap or the HUD. Fixed: past GC_MAX visible chunks (1440p/4K) the LRU
+evicted chunks the same frame still needed and re-baked forever — a chunk
+used this frame is never evicted now, the overflow is drawn directly (at
+2560x1440: 48 blitted + 7 direct, 0 bakes once settled; raise GC_MAX for big
+screens); a failed canvas context counts against the bake budget and turns
+the cache off instead of re-allocating every frame. Gates made real: the
+minimap move test has a control (a still frame in a fresh window draws 0);
+the compass has a positive case; the direct-chunk gate checks every visible
+chunk is drawn exactly once; the water/lava cull is proved on the geometry;
+the ANIM C ripple gate counts the tiles the pass actually walks.
+
+**Gate integrity:** run4 1870 -> 1888 PASS, 0 FAIL; new debug/run6.js (Playwright,
 prints "skipped" without it): 4 pixel-match + 2 frame-rate gates. Gates UPDATED,
 not relaxed: the Expansion 2a cull proofs and v55 GATE 4 measure the DIRECT
 path and run with GROUND_CACHE false (the spec says so); the cull proof's

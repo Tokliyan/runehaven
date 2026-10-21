@@ -1613,7 +1613,9 @@ const gcBands = (() => {
 })();
 const gcChunks = new Map(), gcPool = [];
 const gcStats = { bakes: 0, bakesThisFrame: 0, maxBakesPerFrame: 0, blits: 0, directChunks: 0,
-                  resets: 0, evictions: 0, maxSize: 0, interiorTouches: 0 };
+                  resets: 0, evictions: 0, maxSize: 0, interiorTouches: 0, overflow: 0, bakeFailures: 0,
+                  frameVisible: 0, frameBlits: 0, frameDirect: 0 };
+let gcFrameNo = 0;
 function groundCacheReset() {
   for (const ch of gcChunks.values()) gcPool.push(ch);
   gcChunks.clear();
@@ -1627,7 +1629,14 @@ function gcBake(cx, cy) {
   const cv = gcPool.pop() || document.createElement("canvas");
   if (cv.width !== GC_W || cv.height !== GC_H) { cv.width = GC_W; cv.height = GC_H; }
   const c = cv.getContext("2d");
-  if (!c) return null;
+  if (!c) {
+    /* Review (S4): a browser that refuses another canvas context (iPhone
+       Safari past its canvas memory cap returns null) would otherwise be asked
+       again for a fresh canvas every frame. Keep the canvas, and stop caching:
+       the direct path draws the same pixels. */
+    gcPool.push(cv); gcStats.bakeFailures++; GROUND_CACHE = false;
+    return null;
+  }
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.clearRect(0, 0, GC_W, GC_H);
   const [ox, oy] = worldToScreen(cx * GC_TILES, cy * GC_TILES, 0);
@@ -1647,7 +1656,8 @@ function gcBake(cx, cy) {
    many it scanned, for groundStats. */
 function drawGroundCached(gMinX, gMaxX, gMinY, gMaxY, w, h, camIX, camIY) {
   if (inInterior()) { gcStats.interiorTouches++; return { drawn: 0, scanned: 0 }; }
-  let drawn = 0, scanned = 0, bakes = 0;
+  let drawn = 0, scanned = 0, bakes = 0, vis = 0, blitN = 0, directN = 0;
+  const frame = ++gcFrameNo;
   const c0x = Math.floor(gMinX / GC_TILES), c1x = Math.floor(gMaxX / GC_TILES);
   const c0y = Math.floor(gMinY / GC_TILES), c1y = Math.floor(gMaxY / GC_TILES);
   for (let s = c0x + c0y; s <= c1x + c1y; s++) {
@@ -1657,19 +1667,31 @@ function drawGroundCached(gMinX, gMaxX, gMinY, gMaxY, w, h, camIX, camIY) {
       const left = w / 2 + isoX(cx * GC_TILES, cy * GC_TILES) - camIX - GC_PADX;
       const top = h / 2 + isoY(cx * GC_TILES, cy * GC_TILES) - camIY - GC_PADY;
       if (left + GC_W < 0 || left > w || top + GC_H < 0 || top > h) continue;
+      vis++;
       const key = cx * 65536 + cy;
       let cv = gcChunks.get(key);
-      if (cv) { gcChunks.delete(key); gcChunks.set(key, cv); }
-      else if (bakes < GC_BAKE_PER_FRAME) {
-        cv = gcBake(cx, cy);
-        if (cv) {
-          bakes++;
-          gcChunks.set(key, cv);
-          while (gcChunks.size > GC_MAX) {
-            const old = gcChunks.keys().next().value;
-            gcPool.push(gcChunks.get(old)); gcChunks.delete(old); gcStats.evictions++;
+      if (cv) { gcChunks.delete(key); gcChunks.set(key, cv); cv.__gcUsed = frame; }
+      else if (bakes < GC_BAKE_PER_FRAME && GROUND_CACHE) {
+        /* Review (S4): when more than GC_MAX chunks are visible (a 1440p or 4K
+           screen, a zoomed-out browser), evicting the least recently used
+           chunk would throw away one this very frame still needs, and the
+           cache would bake two chunks every frame forever. Chunks used this
+           frame sit at the back of the LRU, so if the FRONT one was used this
+           frame, every chunk is in use: draw this one directly instead. */
+        const front = gcChunks.size >= GC_MAX ? gcChunks.get(gcChunks.keys().next().value) : null;
+        if (front && front.__gcUsed === frame) gcStats.overflow++;
+        else {
+          bakes++;                                  // an attempt counts against the budget, success or not
+          cv = gcBake(cx, cy);
+          if (cv) {
+            cv.__gcUsed = frame;
+            gcChunks.set(key, cv);
+            while (gcChunks.size > GC_MAX) {
+              const old = gcChunks.keys().next().value;
+              gcPool.push(gcChunks.get(old)); gcChunks.delete(old); gcStats.evictions++;
+            }
+            if (gcChunks.size > gcStats.maxSize) gcStats.maxSize = gcChunks.size;
           }
-          if (gcChunks.size > gcStats.maxSize) gcStats.maxSize = gcChunks.size;
         }
       }
       if (cv) {                                   // whole pixels: the camera offset is snapped
@@ -1679,10 +1701,10 @@ function drawGroundCached(gMinX, gMaxX, gMinY, gMaxY, w, h, camIX, camIY) {
           if (dy + B4[3] < 0 || dy > h) continue;
           ctx.drawImage(cv, B4[0], B4[1], B4[2], B4[3], left + B4[0], dy, B4[2], B4[3]);
         }
-        gcStats.blits++; continue;
+        gcStats.blits++; blitN++; continue;
       }
       // not baked yet: the direct path, in this chunk's slot, with the live cull
-      gcStats.directChunks++;
+      gcStats.directChunks++; directN++;
       const x0 = Math.max(gMinX, cx * GC_TILES), y0 = Math.max(gMinY, cy * GC_TILES);
       const x1 = Math.min(gMaxX, cx * GC_TILES + GC_TILES - 1), y1 = Math.min(gMaxY, cy * GC_TILES + GC_TILES - 1);
       for (let s2 = x0 + y0; s2 <= x1 + y1; s2++) {
@@ -1701,6 +1723,7 @@ function drawGroundCached(gMinX, gMaxX, gMinY, gMaxY, w, h, camIX, camIY) {
     }
   }
   gcStats.bakesThisFrame = bakes;
+  gcStats.frameVisible = vis; gcStats.frameBlits = blitN; gcStats.frameDirect = directN;
   if (bakes > gcStats.maxBakesPerFrame) gcStats.maxBakesPerFrame = bakes;
   return { drawn, scanned };
 }
@@ -18718,8 +18741,9 @@ function debugGroundFrame(on) {
   GROUND_CACHE = was;
   return { passes, tiles: groundStats.tiles, size: gcChunks.size };
 }
+function debugMarkMapDrawn() { lastMapDraw = performance.now(); }   // ⚠️ HARNESS ONLY: restart the 250 ms window
 function debugHudStats() {
-  return { compassBuilds, mapDraws, hudWritesSkipped, hudWritesDone, MAP_REDRAW_MS, RENDER_SCALE };
+  return { compassBuilds, mapDraws, hudWritesSkipped, hudWritesDone, MAP_REDRAW_MS, RENDER_SCALE, mapAge: performance.now() - lastMapDraw };
 }
 /* ⚠️ HARNESS ONLY (S2 doubt pass): put the camera somewhere for a gate. */
 function debugSetCam(x, y) { cam.x = x; cam.y = y; }
@@ -19089,6 +19113,20 @@ function renderInteriorGround(t) {
   }
 }
 
+/* S4: the on-screen span of one row for the water/lava animation pass (see
+   the comment there). Writes [lo, hi] into _animRange — no allocation per row.
+   A tile's centre sits at camOX + (tx - ty) * IW2, camOY + (tx + ty + 1) * IH2;
+   ANIM_MX / ANIM_UP / ANIM_DOWN are wider than anything that pass draws. */
+const ANIM_MX = 2 * IW2, ANIM_UP = GROUND_UP, ANIM_DOWN = GROUND_DOWN;
+const _animRange = [0, -1];
+function animRowRange(ty, minX, maxX, w, h) {
+  camOffset();
+  _animRange[0] = Math.max(minX, ty + Math.ceil((-ANIM_MX - camOX) / IW2),
+                           Math.ceil((-ANIM_DOWN - camOY) / IH2) - 1 - ty);
+  _animRange[1] = Math.min(maxX, ty + Math.floor((w + ANIM_MX - camOX) / IW2),
+                           Math.floor((h + ANIM_UP - camOY) / IH2) - 1 - ty);
+  return _animRange;
+}
 /* S4: the ground pass itself, moved out of render() unchanged so the pixel
    gate (debug/run6.js) can draw exactly this — underlay and ground, cached or
    direct — at a fixed camera with nothing else on top. render() calls it
@@ -19291,13 +19329,9 @@ function render(t) {
      camOX + (tx - ty) * IW2, camOY + (tx + ty + 1) * IH2; the margins cover the
      widest thing drawn here (a ripple ring, a lava diamond raised by its
      height), so nothing that would have touched the canvas is skipped. */
-  camOffset();
-  const ANIM_MX = 2 * IW2, ANIM_UP = GROUND_UP, ANIM_DOWN = GROUND_DOWN;
   if (!inInterior()) for (let ty = minY; ty <= maxY; ty++) {
-    const axLo = Math.max(minX, ty + Math.ceil((-ANIM_MX - camOX) / IW2),
-                          Math.ceil((-ANIM_DOWN - camOY) / IH2) - 1 - ty);
-    const axHi = Math.min(maxX, ty + Math.floor((w + ANIM_MX - camOX) / IW2),
-                          Math.floor((h + ANIM_UP - camOY) / IH2) - 1 - ty);
+    animRowRange(ty, minX, maxX, w, h);
+    const axLo = _animRange[0], axHi = _animRange[1];
     for (let tx = axLo; tx <= axHi; tx++) {
       const b = biomeAt(tx, ty);
       if (b === B.WATER || b === B.DEEP || b === B.SHALLOW) {

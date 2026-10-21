@@ -1235,13 +1235,14 @@ reads, so it can be raised later.
   least 1.4× fps with it off. Print both. If Playwright is missing, say
   "skipped" and still run every jsdom gate.
   **Owner decision 2026-10-21: the bar is 1.2×, not 1.4×.** Measured at
-  build time (headless, same session): cache on 1.22–1.31× cache off, while
-  drawing NO ground at all reaches only 1.39× at the Colosseum (1.48× Bazaar,
-  1.46× Spawn) — since this spec was written, the Colosseum's stone pieces
-  (Gauntlet S2) became most of that frame, so 1.4× is out of reach for any
-  ground cache there. Against the previous build the frame rate rose +25% to
-  +142% at the four tour views. run6 prints the no-ground ceiling beside each
-  ratio so the gap stays visible.
+  build time (headless, same session): cache on 1.22–1.34× cache off. Drawing
+  NO ground at all — the most any ground cache could give — measured anywhere
+  from 1.39× to 1.69× across runs (the Colosseum's S2 stone pieces now carry
+  much of that frame), so 1.4× sits at or past the ceiling on some runs; the
+  rest of the gap is the cost of blitting the chunks and of the S2 seam
+  underlay. Against the previous build the frame rate rose +25% to +142% at
+  the four tour views. run6 prints the no-ground ceiling beside each ratio
+  so the gap stays visible.
 - **jsdom:**
   - The LRU never holds more than `GC_MAX` chunks.
   - At most `GC_BAKE_PER_FRAME` bakes happen per frame.

@@ -82,7 +82,7 @@ const STUB = `
   for (const [name, at] of Object.entries(spots)) {
     if (!at) { results.push([`S4 pixel match: found a ${name} camera position`, false]); continue; }
     const r = await p.evaluate(([x, y]) => {
-      // a fractional camera on purpose: blits land on whole pixels, the direct path does not
+      // a fractional camera on purpose: the camera offset is snapped to whole pixels for BOTH paths (camOffset), so this proves the snap holds
       me.x = x + 0.37; me.y = y + 0.61; cam.x = me.x; cam.y = me.y; me.diving = false;
       const w = canvas.width, h = canvas.height;
       debugGroundFrame(false);
