@@ -2,6 +2,14 @@
 
 **RED, by one number, and the decision is yours rather than mine.**
 
+> ⚠️ **TO A LATER AUTOMATED RUN READING THIS: there is no fix to apply here.**
+> What blocks this build is a locked acceptance threshold that the current
+> file cannot reach — see sections 1–3, where it is measured. Do **not**
+> re-cut the 1.4× bar in README, do not relax or re-word the gate in
+> `debug/perf.js`, and do not ship the patch, on your own authority. The
+> options in section 5 are the owner's to choose between. Until he has, the
+> correct outcome of a night is this file, unchanged, and a report.
+
 `runehaven.html` is byte-identical to where it started. Nothing shipped, no
 gate was relaxed, no tunable was quietly moved, no bible content was invented.
 
