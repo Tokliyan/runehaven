@@ -69,5 +69,8 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
 - Independent Opus review: 4 bugs fixed (unready ENTER clickable; Esc didn't close Settings; Enter during the intro pressed Play; the setItem count) + risks fixed.
 - The 5am "RuneHaven Version Build" task: NEXT_BUILD says nothing to build (it could not be paused from this session).
 
+## S9 — Final report: DONE (2026-10-23)
+- `GAUNTLET_REPORT.md` + `docs/gauntlet-after.jpg`. Gauntlet results reused from the final front-page verification on the same game code (run4 2039/0, run3/5 clean, run6 pass); frame rate re-measured before vs after, interleaved.
+
 ## Remaining stages
-S9 Final report.
+None — the gauntlet is complete.
