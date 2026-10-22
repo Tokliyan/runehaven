@@ -1,1 +1,1 @@
-Nothing to build tonight — report a "nothing to build" night (README step 9). The owner asked (2026-10-22, 22:19) for the Front Page Rework to be built in the evening session instead of this morning's run; it is in progress there. The owner will point this file at the next spec.
+Nothing to build — report a "nothing to build" night (README step 9). The Front Page Rework ("The Reforging Update") shipped in the owner-run evening session on 2026-10-22 together with S8; every locked README spec has now shipped. The owner will point this file at the next spec.
