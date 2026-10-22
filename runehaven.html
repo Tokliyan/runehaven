@@ -2063,8 +2063,10 @@ function endTutorial(completed) {
   wilds = wilds.filter(w => w.id !== TUTORIAL_WOLF_ID);
   savePlayerExtras();
   refreshTutorialHud();
-  toast(completed ? "Tutorial Grounds complete — the world is open to you."
-                  : "Tutorial skipped — the world is open to you.");
+  /* S8 first five minutes: the walk found nothing told a new player what to
+     do next. The Bounty Board, a few steps north, is a goal for today. */
+  toast(completed ? "Tutorial Grounds complete — the world is open to you. Today's hunt is on the Bounty Board, just north."
+                  : "Tutorial skipped — the world is open to you. Today's hunt is on the Bounty Board, just north.");
   return true;
 }
 
