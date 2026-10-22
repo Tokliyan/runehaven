@@ -14163,6 +14163,440 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     }
 
 
+    /* ===================== RT pass — Readability, Transitions, Landmarks =====================
+       biome seams (drawBiomeSeams / seamColour / SEAM_*), the two-layer actor disc and the bigger
+       player, ringed + glinting loot, the Bazaar tents and banner pole, the Ancient Forge yard, the
+       volcano's second flow and plume, the Colosseum banners + statue + ring line, and the four new
+       night lights. The functions are `function` declarations and so live on window; the constants are
+       top-level `const`s no harness can reach, so they are read back out of the source text and
+       evaluated. Everything behavioural is measured on the pinned harness seed (123456789 — run4 resets
+       the world to a random seed part-way through), and the seed, the player and every spy this block
+       installs are put back at the end. Draw cost is measured on the real ctx2d counters (drawOpsBy /
+       gradCalls); the seam geometry on a recording ctx of its own, so nothing here can move a counter an
+       earlier gate reads. */
+    {
+      const rtConst = (name) => {
+        /* `const A = 1, B = 2;` declares two names on one line: take this name's initialiser and cut anything a later name adds */
+        const m = gameScript.match(new RegExp('(?:\\bconst |,\\s*)' + name + '\\s*=\\s*([^;]+);'));
+        if (!m) return undefined;
+        try { return (new Function('return (' + m[1].replace(/,\s*[A-Z_][A-Z0-9_]*\s*=[\s\S]*$/, '') + ');'))(); } catch (e) { return undefined; }
+      };
+      const rtFnSrc = (name) => {
+        const i = gameScript.indexOf('function ' + name + '(');
+        if (i < 0) return '';
+        const j = gameScript.indexOf('\n}\n', i);
+        return j > i ? gameScript.slice(i, j + 3) : '';
+      };
+      const rtHooks = ['drawBiomeSeams', 'seamColour', 'drawActorDisc', 'drawItemEntity', 'drawFlag', 'drawBunting', 'drawBazaarEntity',
+        'drawAncientEntity', 'drawVolcanoCone', 'colosseumBanners', 'drawColosseumBanner', 'drawColosseumStatue', 'drawArenaFloorDetail',
+        'drawGroundTile', 'collectLights', 'volcanoConeSite', 'arenaFloorAt', 'biomeAt', 'heightAt', 'render', 'debugWorldSeedSet', 'debugV37Info',
+        'debugWorldInfo', 'debugSetPlayer', 'debugSetSpace', 'debugSpaceInfo'];
+      const rtMissing = rtHooks.filter(k => typeof window[k] !== 'function');
+      if (rtMissing.length) {
+        results.push([`RT pass: the hooks exist (missing: ${rtMissing.join(', ')})`, false]);
+      } else {
+        const wiR = window.debugWorldInfo(), BR = wiR.B, IW2R = 22, IH2R = 11;
+        const rqR = rafQ.length;
+        const player0 = Object.assign({}, wiR.player), seed0 = window.debugWorldSeedSet(123456789);
+        const spies = [];                                        // [name, original] — every one restored below
+        const spy = (name, fn) => { spies.push([name, window[name]]); window[name] = fn; };
+        const unspy = () => { for (const [n, f] of spies.splice(0).reverse()) window[n] = f; };
+        const V = window.debugV37Info();
+        try {
+          /* ---- the constants and their sane values ---- */
+          const K = {};
+          for (const n of ['SEAM_TEETH', 'SEAM_DEPTH_LO', 'SEAM_DEPTH_HI', 'SEAM_CORNER', 'SEAM_FOOT_A', 'SEAM_FOOT_W', 'ACTOR_DISC', 'ACTOR_DISC_R', 'ACTOR_DISC_RIM',
+            'ITEM_GEM', 'ITEM_GLINT_EVERY', 'BAZAAR_STALL_K', 'BAZAAR_STALLS', 'VOLC_PLUME_PUFFS', 'COLO_BANNERS', 'COLO_BANNER_RING', 'COLO_STATUE_K', 'ANCIENT_HOUSE_OFF'])
+            K[n] = rtConst(n);
+          const alphaOf = s => { const m = /rgba\([^)]*,\s*([\d.]+)\)/.exec(String(s)); return m ? parseFloat(m[1]) : NaN; };
+          const lumaOf = s => { const m = /rgba\((\d+),\s*(\d+),\s*(\d+)/.exec(String(s)); return m ? 0.299 * m[1] + 0.587 * m[2] + 0.114 * m[3] : NaN; };
+
+          results.push([`RT pass 1: the seam tuning is sane — ${K.SEAM_TEETH} teeth per edge, depth ${K.SEAM_DEPTH_LO}..${K.SEAM_DEPTH_HI} of the edge-to-centre distance, corner cut ${K.SEAM_CORNER}, foot shadow alpha ${K.SEAM_FOOT_A} width ${K.SEAM_FOOT_W}; seamColour and drawBiomeSeams are functions`,
+            Number.isInteger(K.SEAM_TEETH) && K.SEAM_TEETH >= 3 && K.SEAM_TEETH <= 6 &&
+            K.SEAM_DEPTH_LO > 0 && K.SEAM_DEPTH_LO < K.SEAM_DEPTH_HI && K.SEAM_DEPTH_HI <= 1 &&
+            K.SEAM_CORNER > 0.2 && K.SEAM_CORNER < 0.8 && K.SEAM_FOOT_A > 0 && K.SEAM_FOOT_A <= 0.3 && K.SEAM_FOOT_W > 0 && K.SEAM_FOOT_W < 0.6]);
+
+          const rim = K.ACTOR_DISC_RIM, kinds = K.ACTOR_DISC ? Object.keys(K.ACTOR_DISC) : [];
+          results.push([`RT pass 2: ACTOR_DISC has me/friend/foe (${kinds.join(', ')}), each a strong flat fill (alphas ${kinds.map(k => alphaOf(K.ACTOR_DISC[k])).join('/')} all >= 0.7), over a dark rim (${rim}, luma ${lumaOf(rim).toFixed(0)}); ACTOR_DISC_R = ${K.ACTOR_DISC_R}`,
+            ['me', 'friend', 'foe'].every(k => kinds.indexOf(k) >= 0) && kinds.every(k => alphaOf(K.ACTOR_DISC[k]) >= 0.7) &&
+            lumaOf(rim) < 40 && alphaOf(rim) >= 0.3 && alphaOf(rim) <= 0.7 && K.ACTOR_DISC_R >= 12 && K.ACTOR_DISC_R <= 18]);
+          const playerSrc = rtFnSrc('drawPlayerEntity'), Sm = /\bconst S = ([\d.]+);/.exec(playerSrc);
+          results.push([`RT pass 3: the player is drawn at scale S = ${Sm && Sm[1]} (2.4, up from 2.1) and the actor disc is still put under the player (${/drawActorDisc\(/.test(playerSrc)})`,
+            !!Sm && parseFloat(Sm[1]) === 2.4 && /drawActorDisc\(/.test(playerSrc)]);
+
+          /* ---- the disc: two layers, rim wider than the disc, no gradient ---- */
+          {
+            const one = (kind, k) => { const e0 = drawOpsBy.ellipse || 0, f0 = drawOpsBy.fill || 0, g0 = gradCalls; ellipseTrace = [];
+              window.drawActorDisc(100, 100, kind, k); const tr = ellipseTrace; ellipseTrace = null;
+              return { e: (drawOpsBy.ellipse || 0) - e0, f: (drawOpsBy.fill || 0) - f0, g: gradCalls - g0, tr }; };
+            const fr = one('friend', 1), fo = one('foe', 1.5), me = one('me', 2.4);
+            const layered = d => d.tr.length >= 2 && d.tr[0][0] > d.tr[1][0] && d.tr[0][1] > d.tr[1][1];
+            results.push([`RT pass 4: drawActorDisc paints TWO layers under an actor — friend ${fr.e} ellipses/${fr.f} fills, foe ${fo.e}/${fo.f} (exactly rim + disc), me ${me.e}/${me.f} (at least rim + disc); the rim ${me.tr[0] && me.tr[0][0].toFixed(1)}px wide over a ${me.tr[1] && me.tr[1][0].toFixed(1)}px disc at k 2.4 (ACTOR_DISC_R * k = ${(K.ACTOR_DISC_R * 2.4).toFixed(1)}); all flat (${fr.g + fo.g + me.g} gradients)`,
+              fr.e === 2 && fr.f === 2 && fo.e === 2 && fo.f === 2 && me.e >= 2 && me.f >= 2 && fr.g + fo.g + me.g === 0 && layered(fr) && layered(fo) && layered(me) &&
+              Math.abs(me.tr[1][0] - K.ACTOR_DISC_R * 2.4) < 1e-9 && Math.abs(me.tr[0][0] - K.ACTOR_DISC_R * 2.4 * 1.2) < 1e-9 &&
+              Math.abs(fo.tr[1][0] - K.ACTOR_DISC_R * 1.5) < 1e-9]);
+          }
+
+          /* ---- loot: ringed, bigger gem, glint on a timer ---- */
+          {
+            const it = { x: 0, y: 0, type: 'wood' };            // far from the player: no label, and gp = (t/1000) % ITEM_GLINT_EVERY
+            const measure = (t) => { const e0 = drawOpsBy.ellipse || 0, r0 = drawOpsBy.fillRect || 0, g0 = gradCalls; ellipseTrace = [];
+              window.drawItemEntity(it, t); const tr = ellipseTrace; ellipseTrace = null;
+              return { e: (drawOpsBy.ellipse || 0) - e0, r: (drawOpsBy.fillRect || 0) - r0, g: gradCalls - g0, tr }; };
+            const glint = measure(100), plain = measure(1500), wrap = measure(100 + K.ITEM_GLINT_EVERY * 1000);
+            results.push([`RT pass 5: loot — ITEM_GEM ${K.ITEM_GEM} (> the old 5), ITEM_GLINT_EVERY ${K.ITEM_GLINT_EVERY}s; each item draws a rim + colour ring + shadow (${plain.e} ellipses, the widest ${plain.tr[0] && plain.tr[0][0]}px) and no gradient (${glint.g + plain.g})`,
+              K.ITEM_GEM > 5 && K.ITEM_GEM <= 12 && K.ITEM_GLINT_EVERY >= 1.5 && K.ITEM_GLINT_EVERY <= 5 && plain.e === 3 && glint.e === 3 &&
+              plain.tr[0][0] === 11 && plain.tr[1][0] === 8.5 && glint.g === 0 && plain.g === 0]);
+            results.push([`RT pass 6: the glint is a timed cross — a frame inside the sweep draws ${glint.r - plain.r} more rects than one outside it, and the same phase one period later draws the same ${wrap.r} as the first (${glint.r})`,
+              glint.r - plain.r === 2 && wrap.r === glint.r && glint.r > plain.r]);
+          }
+
+          /* ---- no new gradients in any RT-pass drawing code (the global gradient-count gate is untouched) ---- */
+          {
+            const fns = ['drawBiomeSeams', 'seamColour', 'drawActorDisc', 'drawItemEntity', 'drawFlag', 'drawBunting', 'drawBazaarEntity', 'drawColosseumBanner',
+              'drawColosseumStatue', 'colosseumBanners'];
+            const withGrad = fns.filter(n => /create(Linear|Radial)Gradient/.test(rtFnSrc(n)));
+            const g0 = gradCalls, s0 = colourStops;
+            window.drawBazaarEntity(5000); window.drawAncientEntity(5000); window.drawVolcanoCone(5000);
+            window.drawColosseumStatue(5000); for (const bn of window.colosseumBanners()) window.drawColosseumBanner(bn, 5000);
+            const dg = gradCalls - g0, ds = colourStops - s0;
+            results.push([`RT pass 7: no gradients in the RT drawing code — none of ${fns.length} new/rewritten functions mention one (${withGrad.length ? 'FOUND in ' + withGrad.join(', ') : 'none'}), and drawing the Bazaar, forge, volcano cone, statue and ${window.colosseumBanners().length} banners makes ${dg} gradients / ${ds} colour stops`,
+              withGrad.length === 0 && fns.every(n => rtFnSrc(n).length > 40) && dg === 0 && ds === 0]);
+          }
+
+          /* ---- Bazaar: tents, flags, bunting, banner pole (measured through render(), so it does not care whether the stalls are drawn inside the
+                  Bazaar entity or as entities of their own) ---- */
+          const Bz0 = V.BAZAAR;
+          {
+            const calls = { flag: 0, bunt: 0 }, farCalls = { flag: 0, bunt: 0 };
+            let cur = calls;
+            spy('drawFlag', () => { cur.flag++; });
+            spy('drawBunting', () => { cur.bunt++; });
+            window.debugSetPlayer({ x: Bz0.x, y: Bz0.y + 2 }); const o0 = drawOps; window.render(5000); const ops = drawOps - o0;
+            cur = farCalls; window.debugSetPlayer({ x: V.SPAWN.x, y: V.SPAWN.y }); window.render(5016);
+            unspy(); window.debugSetPlayer({ x: player0.x, y: player0.y });
+            const S = K.BAZAAR_STALLS;
+            results.push([`RT pass 8: the Bazaar — BAZAAR_STALL_K ${K.BAZAAR_STALL_K} makes ${S} stalls into tents; one frame at the Bazaar draws ${calls.flag} flags (>= one pennant per stall + the two great banners = ${S + 2}) and ${calls.bunt} bunting strings (stall to the pole, at least 3, at most one per stall), ${ops} canvas ops; at the spawn, far away, it draws ${farCalls.flag} flags / ${farCalls.bunt} strings`,
+              K.BAZAAR_STALL_K >= 1.3 && K.BAZAAR_STALL_K <= 1.8 && S >= 8 && S <= 10 && calls.flag >= S + 2 && calls.bunt >= 3 && calls.bunt <= S && ops > 500 &&
+              farCalls.flag === 0 && farCalls.bunt === 0]);
+          }
+
+          /* ---- Ancient Forge yard ---- */
+          {
+            const af = rtFnSrc('drawAncientEntity'), o0 = drawOps, g0 = gradCalls;
+            window.drawAncientEntity(5000);
+            const ops = drawOps - o0;
+            // the yard's code: a molten channel + pool pulse (rgba(255,122,60..) over the dark bed #2a1a14), steam off the pool, and braziers
+            const beds = (af.match(/"#2a1a14"/g) || []).length, pulsing = /rgba\(255,122,60,\$\{pulse/.test(af) && /Math\.sin\(t \/ 330\)/.test(af);
+            const steam = /rgba\(220,220,226/.test(af), braziers = (af.match(/drawBox\(bx2, by2/g) || []).length;
+            results.push([`RT pass 9: the Ancient Forge yard — drawAncientEntity holds the molten channel and the quench pool (${beds} dark beds, pulsing glow ${pulsing}), the steam off the pool (${steam}) and its brazier boxes (${braziers} drawBox sites); it draws ${ops} ops with ${gradCalls - g0} gradients and without throwing`,
+              beds >= 2 && pulsing && steam && braziers >= 2 && ops > 250 && gradCalls === g0 && !caught]);
+          }
+
+          /* ---- Volcano cone: second flow, crater halo, plume ---- */
+          {
+            const vsrc = rtFnSrc('drawVolcanoCone');
+            const e0 = drawOpsBy.ellipse || 0, g0 = gradCalls;
+            ellipseTrace = []; window.drawVolcanoCone(5000); const tr = ellipseTrace; ellipseTrace = null;
+            const P = K.VOLC_PLUME_PUFFS, under = Math.ceil(0.45 * (P - 1));
+            const nE = (drawOpsBy.ellipse || 0) - e0;
+            const plume = tr.filter(r => r[1] > 0 && Math.abs(r[1] / r[0] - 0.62) < 1e-6 && r[0] >= 12).length;
+            results.push([`RT pass 10: the volcano — VOLC_PLUME_PUFFS ${P}: the cone draws ${plume} plume puffs (ratio 0.62 ellipses) and ${nE} ellipses in all (>= ${P} puffs + ${under} lit undersides + the crater halo), the second SE-face flow and the halo are in the source, no gradient (${gradCalls - g0})`,
+              Number.isInteger(P) && P >= 6 && P <= 14 && plume === P && nE >= P + under + 1 && gradCalls === g0 &&
+              /mirrored onto the SE/.test(vsrc) && /ellipse\(kx, ky, 46, 22/.test(vsrc)]);
+          }
+
+          /* ---- Bazaar stalls are entities of their own (sorted against the people walking round them) ---- */
+          {
+            const hasFn = typeof window.bazaarStalls === 'function' && typeof window.drawBazaarStall === 'function';
+            const st = hasFn ? window.bazaarStalls() : [], Bz1 = V.BAZAAR;
+            const dists = st.map(q => Math.hypot(q.x - Bz1.x, q.y - Bz1.y));
+            const seen = [];
+            let nNear = 0, farSeen = 0;
+            if (hasFn) {
+              spy('drawBazaarStall', (q, t) => { seen.push(q.i); });
+              window.debugSetPlayer({ x: Bz1.x, y: Bz1.y + 2 }); window.render(5000); nNear = new Set(seen).size; seen.length = 0;
+              window.debugSetPlayer({ x: V.SPAWN.x, y: V.SPAWN.y }); window.render(5016); farSeen = seen.length;
+              unspy(); window.debugSetPlayer({ x: player0.x, y: player0.y });
+            }
+            results.push([`RT pass 11: bazaarStalls() returns ${st.length} stalls (BAZAAR_STALLS = ${K.BAZAAR_STALLS}), every one on the BAZAAR_RING of ${V.BAZAAR_RING} (${dists.length ? Math.min(...dists).toFixed(3) + '..' + Math.max(...dists).toFixed(3) : '?'}) and inside BAZAAR_R ${V.BAZAAR_R}, one hue each with shaded goods/pennant variants, and cached (the same array again: ${hasFn && window.bazaarStalls() === st})`,
+              hasFn && st.length === K.BAZAAR_STALLS && dists.every(d => Math.abs(d - V.BAZAAR_RING) < 1e-6 && d < V.BAZAAR_R) &&
+              new Set(st.map(q => q.col)).size === st.length && st.every((q, i) => q.i === i && typeof q.goods === 'string' && typeof q.pennant === 'string') && window.bazaarStalls() === st]);
+            results.push([`RT pass 12: render() puts every Bazaar stall in the sorted list as a "bazstall" entity near the Bazaar (one frame: drawBazaarStall ran for ${nNear} of ${K.BAZAAR_STALLS} stalls) and none far away (${farSeen})`,
+              hasFn && /kind: "bazstall"/.test(gameScript) && /e\.kind === "bazstall"\) drawBazaarStall/.test(gameScript) && nNear === K.BAZAAR_STALLS && farSeen === 0]);
+          }
+          {
+            const occ = (gameScript.match(/const OCCLUDER_KINDS = new Set\(\[([^\]]*)\]\)/) || [, ''])[1];
+            const names = ['colobanner', 'colostatue', 'bazstall'].filter(k => occ.indexOf('"' + k + '"') >= 0);
+            results.push([`RT pass 13: the tall new set pieces occlude the player's ghost like the other landmarks — OCCLUDER_KINDS has ${names.join(', ')} (and still bazaar, ancient, colopiece, volcanocone)`,
+              names.length === 3 && ['bazaar', 'ancient', 'colopiece', 'volcanocone'].every(k => occ.indexOf('"' + k + '"') >= 0)]);
+          }
+
+          /* ---- Colosseum banners ---- */
+          const C = V.COLOSSEUM, CR = V.COLOSSEUM_R;
+          {
+            const bns = window.colosseumBanners();
+            const dists = bns.map(b => Math.hypot(b.x - C.x, b.y - C.y));
+            const angs = bns.map(b => (Math.atan2(b.y - C.y, b.x - C.x) + Math.PI * 2) % (Math.PI * 2)).sort((a, b) => a - b);
+            const gaps = angs.map((a, i) => ((angs[(i + 1) % angs.length] - a) + Math.PI * 2) % (Math.PI * 2));
+            const uniq = new Set(bns.map(b => b.x.toFixed(4) + ',' + b.y.toFixed(4))).size;
+            results.push([`RT pass 14: colosseumBanners() returns ${bns.length} points (COLO_BANNERS = ${K.COLO_BANNERS}), all inside COLOSSEUM_R ${CR} of (${C.x}, ${C.y}) — distances ${Math.min(...dists).toFixed(2)}..${Math.max(...dists).toFixed(2)}, i.e. ${K.COLO_BANNER_RING} of the radius (${(CR * K.COLO_BANNER_RING).toFixed(2)}); ${uniq} distinct, spaced evenly (max gap ${Math.max(...gaps).toFixed(3)} rad vs ${(Math.PI * 2 / K.COLO_BANNERS).toFixed(3)})`,
+              K.COLO_BANNERS === 8 && bns.length === K.COLO_BANNERS && dists.every(d => d < CR && Math.abs(d - CR * K.COLO_BANNER_RING) < 1e-6) &&
+              K.COLO_BANNER_RING > 0.7 && K.COLO_BANNER_RING < 1 && uniq === bns.length && gaps.every(g => Math.abs(g - Math.PI * 2 / K.COLO_BANNERS) < 1e-6) &&
+              bns.every((b, i) => b.i === i)]);
+            const again = window.colosseumBanners();
+            // the cache follows the centre: a different seed moves the Colosseum, and the banners go with it
+            const seamBefore = JSON.stringify(V.COLOSSEUM);
+            window.debugWorldSeedSet(987654321);
+            const V2 = window.debugV37Info(), moved = JSON.stringify(V2.COLOSSEUM) !== seamBefore;
+            const bns2 = window.colosseumBanners();
+            const follows = bns2.length === K.COLO_BANNERS && bns2.every(b => Math.hypot(b.x - V2.COLOSSEUM.x, b.y - V2.COLOSSEUM.y) < V2.COLOSSEUM_R);
+            window.debugWorldSeedSet(123456789);
+            const back = window.colosseumBanners();
+            results.push([`RT pass 15: the banner list is cached per centre — a second call returns the same array (${again === bns}); another seed moves the Colosseum (${moved}) and the banners move with it (${follows}); the harness seed puts them back (${back.length === bns.length && back.every((b, i) => Math.abs(b.x - bns[i].x) < 1e-9 && Math.abs(b.y - bns[i].y) < 1e-9)})`,
+              again === bns && moved && follows && back.length === bns.length && back.every((b, i) => Math.abs(b.x - bns[i].x) < 1e-9 && Math.abs(b.y - bns[i].y) < 1e-9)]);
+            results.push([`RT pass 16: the statue is scaled COLO_STATUE_K = ${K.COLO_STATUE_K} (a champion about twice a player's height), and banner + statue draw cleanly with a waving banner changing with time`,
+              K.COLO_STATUE_K >= 1.5 && K.COLO_STATUE_K <= 2.5 && (() => { const a = drawOps; window.drawColosseumStatue(1000); window.drawColosseumBanner(bns[0], 1000);
+                return drawOps - a > 40 && !caught; })()]);
+          }
+
+          /* ---- the render loop gets the two new entity kinds near the Colosseum, and only there ---- */
+          {
+            const seen = { banner: 0, statue: 0 };
+            spy('drawColosseumBanner', (bn, t) => { seen.banner++; });
+            spy('drawColosseumStatue', (t) => { seen.statue++; });
+            const near = { x: C.x, y: C.y + 4 };
+            window.debugSetPlayer(near); for (let f = 0; f < 3; f++) window.render(1000 + f * 16);
+            const atArena = { banner: seen.banner, statue: seen.statue };
+            seen.banner = 0; seen.statue = 0;
+            window.debugSetPlayer({ x: V.SPAWN.x, y: V.SPAWN.y }); for (let f = 0; f < 3; f++) window.render(2000 + f * 16);
+            const atSpawn = { banner: seen.banner, statue: seen.statue };
+            unspy();
+            window.debugSetPlayer({ x: player0.x, y: player0.y });
+            results.push([`RT pass 17: render() sorts the "colobanner" and "colostatue" entities in near the Colosseum (3 frames: ${atArena.banner} banner draws = ${atArena.banner / 3}/frame of ${K.COLO_BANNERS}, ${atArena.statue} statue draws) and leaves them out at the spawn, 1000 tiles away (${atSpawn.banner}/${atSpawn.statue}); the dispatch lines are in the source`,
+              atArena.banner >= 3 * 3 && atArena.banner <= 3 * K.COLO_BANNERS && atArena.statue === 3 && atSpawn.banner === 0 && atSpawn.statue === 0 &&
+              /kind: "colobanner"/.test(gameScript) && /kind: "colostatue"/.test(gameScript) &&
+              /e\.kind === "colobanner"\) drawColosseumBanner/.test(gameScript) && /e\.kind === "colostatue"\) drawColosseumStatue/.test(gameScript)]);
+          }
+
+          /* ---- the four new lights ---- */
+          {
+            const L = window.collectLights(), near = (l, p, tol = 1e-6) => Math.abs(l.x - p.x) < tol && Math.abs(l.y - p.y) < tol;
+            const VC = window.volcanoConeSite(), off = K.ANCIENT_HOUSE_OFF, A = V.ANCIENT, Bz = V.BAZAAR;
+            const find = (p, r) => L.filter(l => near(l, p) && l.r === r);
+            const lz = find(Bz, 190), la = find({ x: A.x - off, y: A.y - off }, 170), lc = find(C, 120);
+            // the crater: lit by a warm light of r >= 240 standing on the volcano (the older VOLCANO light, or one on the cone site)
+            const lv = L.filter(l => l.r >= 240 && (near(l, V.VOLCANO, 2) || (VC && near(l, VC, 2))) && /^rgba\(255,1\d\d,[5-9]\d,A\)$/.test(l.col));
+            results.push([`RT pass 18: collectLights() in the open world carries the landmark lights — Bazaar r190 (${lz.length}), Ancient Forge r170 at the furnace (${la.length}), Colosseum r120 (${lc.length}), each exactly once, warm-coloured and strong (a ${[lz, la, lc].map(x => x[0] && x[0].a).join('/')}); the volcano crater has a warm light of r >= 240 on it (${lv.length}${lv[0] ? ', r' + lv[0].r : ''})`,
+              lz.length === 1 && la.length === 1 && lc.length === 1 && lv.length >= 1 && !!VC &&
+              [lz, la, lc].every(x => /^rgba\(255,/.test(x[0].col) && x[0].a >= 0.7)]);
+            const guarded = (gameScript.match(/if \(!inInterior\(\) && (?:BAZAAR|ANCIENT|COLOSSEUM)\) lights\.push/g) || []).length;
+            // and the same four are NOT lights inside a cave (found a UWCAVE tile by the harness seed's own map)
+            let inCave = null;
+            {
+              const newOnes = (LL) => [[Bz, 190], [{ x: A.x - off, y: A.y - off }, 170], [C, 120]].filter(([p, r]) => LL.some(l => near(l, p) && l.r === r)).length;
+              let tile = null;
+              for (let y = 1690; y < 1700 && !tile; y++) for (let x = 2360; x < 2370; x++) if (window.biomeAt(x, y) === BR.UWCAVE) { tile = [x, y]; break; }
+              if (tile) {
+                window.debugSetSpace({ clearCache: true });
+                window.debugSetSpace({ enterAt: tile, biome: BR.UWCAVE });
+                if (window.debugSpaceInfo().inInterior === true) { const Li = window.collectLights(); inCave = { n: Li.length, rt: newOnes(Li) }; }
+                window.debugSetSpace({ exit: true }); window.debugSetSpace({ clearCache: true });
+              }
+            }
+            results.push([`RT pass 19: the landmark lights are surface-only — ${guarded} of the 3 pushes are behind !inInterior() in the source, and with the player in a cave collectLights() returns ${inCave ? inCave.n : '?'} lights of which ${inCave ? inCave.rt : '?'} are those landmark lights`,
+              guarded === 3 && !!inCave && inCave.rt === 0 && window.debugSpaceInfo().inInterior === false]);
+          }
+
+          /* ---- biome seams: geometry on a recording ctx ---- */
+          {
+            const rec = () => {
+              const o = { polys: [], rects: [], ells: [], fills: 0, cur: [], style: null, grads: 0 };
+              const c = new Proxy({}, {
+                get(t, p) {
+                  if (p === '__o') return o;
+                  if (p === 'beginPath') return () => { o.cur = []; };
+                  if (p === 'moveTo' || p === 'lineTo') return (x, y) => { o.cur.push([x, y]); };
+                  if (p === 'closePath') return () => {};
+                  if (p === 'fill') return () => { o.fills++; o.polys.push({ pts: o.cur.slice(), style: o.style }); };
+                  if (p === 'fillRect') return (x, y, w, h) => { o.fills++; o.rects.push({ x, y, w, h, style: o.style }); };
+                  if (p === 'ellipse') return (x, y, rx, ry) => { o.ells.push({ x, y, rx, ry, style: o.style }); };
+                  if (p === 'createLinearGradient' || p === 'createRadialGradient') return () => { o.grads++; return { addColorStop() {} }; };
+                  if (p === 'fillStyle') return o.style;
+                  return () => {};
+                },
+                set(t, p, v) { if (p === 'fillStyle') o.style = v; return true; }
+              });
+              return c;
+            };
+            const opsOf = c => c.__o.fills + c.__o.ells.length;
+            // scan one window of the harness seed's map for every kind of tile the gates need
+            const X0 = 2230, X1 = 2330, Y0 = 1600, Y1 = 1700, W = X1 - X0 + 2;
+            const bio = new Int16Array(W * (Y1 - Y0 + 2)), hgt = new Float64Array(W * (Y1 - Y0 + 2));
+            for (let y = Y0 - 1; y <= Y1; y++) for (let x = X0 - 1; x <= X1; x++) { const i = (y - Y0 + 1) * W + (x - X0 + 1); bio[i] = window.biomeAt(x, y); hgt[i] = window.heightAt(x, y); }
+            const at = (x, y) => (y - Y0 + 1) * W + (x - X0 + 1);
+            const SKIP = new Set([BR.DEEP, BR.LAVA, BR.CALDERA, BR.PEAK, BR.UNDERCAVE, BR.UWCAVE, BR.ABYSSAL]);
+            const interior = [], seamTiles = [], skipTiles = [], straight = [];
+            const D4 = [[0, -1], [-1, 0], [0, 1], [1, 0]];
+            for (let y = Y0; y < Y1; y++) for (let x = X0; x < X1; x++) {
+              const b = bio[at(x, y)], h = hgt[at(x, y)];
+              if (SKIP.has(b)) { if (skipTiles.length < 40) skipTiles.push([x, y]); continue; }
+              let differs = 0, flat = true, other = [];
+              for (const [dx, dy] of D4) {
+                const nb = bio[at(x + dx, y + dy)], hn = hgt[at(x + dx, y + dy)];
+                if (hn !== h) flat = false;
+                if (nb !== b) { differs++; other.push([nb, hn]); }
+              }
+              if (differs === 0 && flat) { if (interior.length < 150) interior.push([x, y]); }
+              else if (flat && other.some(o => !SKIP.has(o[0]) && o[1] === h) && window.arenaFloorAt(x, y, b) === 0) { if (seamTiles.length < 80) seamTiles.push([x, y]); }
+            }
+            // straight border pairs: A|B side by side, same height, every OTHER neighbour of each tile the tile's own biome and height
+            for (let y = Y0 + 1; y < Y1 - 1 && straight.length < 6; y++) for (let x = X0 + 1; x < X1 - 1 && straight.length < 6; x++) {
+              const a = at(x, y), e = at(x + 1, y);
+              if (bio[a] === bio[e] || hgt[a] !== hgt[e] || SKIP.has(bio[a]) || SKIP.has(bio[e])) continue;
+              const ok = (px, py, skipDx) => D4.every(([dx, dy]) => (dx === skipDx && dy === 0) || (bio[at(px + dx, py + dy)] === bio[at(px, py)] && hgt[at(px + dx, py + dy)] === hgt[at(px, py)]));
+              if (ok(x, y, 1) && ok(x + 1, y, -1) && window.arenaFloorAt(x, y, bio[a]) === 0 && window.arenaFloorAt(x + 1, y, bio[e]) === 0) straight.push([x, y]);
+            }
+            const bnames = Object.fromEntries(Object.entries(BR).map(([k, v]) => [v, k]));
+            const cx = 640, cy = 360;
+
+            // 1. nothing to draw for same-biome, same-height neighbours
+            let drewOnInterior = 0;
+            for (const [x, y] of interior) { const c = rec(); window.drawBiomeSeams(c, x, y, bio[at(x, y)], hgt[at(x, y)], cx, cy); drewOnInterior += opsOf(c); }
+            results.push([`RT pass 20: drawBiomeSeams draws NOTHING between same-biome neighbours — ${interior.length} tiles whose four neighbours share biome and height made ${drewOnInterior} draw ops`,
+              interior.length >= 100 && drewOnInterior === 0]);
+
+            // 2. skip biomes (DEEP, LAVA, CALDERA, PEAK, caves, abyss) never get a seam
+            let drewOnSkip = 0; const skipSeen = new Set();
+            for (const [x, y] of skipTiles) { const c = rec(); window.drawBiomeSeams(c, x, y, bio[at(x, y)], hgt[at(x, y)], cx, cy); drewOnSkip += opsOf(c); skipSeen.add(bnames[bio[at(x, y)]]); }
+            results.push([`RT pass 21: the SEAM_SKIP biomes are left alone — ${skipTiles.length} tiles (${[...skipSeen].join(', ')}) made ${drewOnSkip} draw ops`,
+              skipTiles.length >= 10 && drewOnSkip === 0]);
+
+            // 3. a real forest/plains-style border draws something, flat, deterministic
+            let drewOnSeam = 0, zero = 0, grads = 0; const stable = [];
+            for (const [x, y] of seamTiles) {
+              const c = rec(); window.drawBiomeSeams(c, x, y, bio[at(x, y)], hgt[at(x, y)], cx, cy);
+              const c2 = rec(); window.drawBiomeSeams(c2, x, y, bio[at(x, y)], hgt[at(x, y)], cx, cy);
+              const n = opsOf(c); drewOnSeam += n; if (n === 0) zero++; grads += c.__o.grads;
+              stable.push(JSON.stringify(c.__o.polys) === JSON.stringify(c2.__o.polys) && JSON.stringify(c.__o.rects) === JSON.stringify(c2.__o.rects));
+            }
+            const pairNames = [...new Set(seamTiles.map(([x, y]) => bnames[bio[at(x, y)]]))].join('/');
+            results.push([`RT pass 22: ${seamTiles.length} real border tiles (${pairNames}) draw seams — ${drewOnSeam} ops in total, only ${zero} drew nothing (a tile can own none of its edge's teeth: the neighbour paints them), ${grads} gradients, and a second call is identical (${stable.every(Boolean)})`,
+              seamTiles.length >= 40 && zero <= seamTiles.length * 0.1 && drewOnSeam > seamTiles.length * 2 && grads === 0 && stable.every(Boolean)]);
+
+            // 4. everything stays inside the tile's own diamond (plus a hair for the 1px props)
+            let worst = { over: -1e9, tile: null }, bad = 0, tested = 0;
+            const diamondOver = (px, py) => Math.abs(px - cx) / IW2R + Math.abs(py - cy) / IH2R - 1;     // > 0 means outside the diamond
+            for (const [x, y] of seamTiles) {
+              const c = rec(); window.drawBiomeSeams(c, x, y, bio[at(x, y)], hgt[at(x, y)], cx, cy); const o = c.__o;
+              let xs = [], ys = [], polyOver = -1e9;
+              for (const p of o.polys) for (const [px, py] of p.pts) { xs.push(px); ys.push(py); polyOver = Math.max(polyOver, diamondOver(px, py)); }
+              for (const r of o.rects) { xs.push(r.x, r.x + r.w); ys.push(r.y, r.y + r.h); }
+              tested++;
+              const inBox = Math.min(...xs) >= cx - IW2R - 1 && Math.max(...xs) <= cx + IW2R + 1 && Math.min(...ys) >= cy - IH2R - 1 && Math.max(...ys) <= cy + IH2R + 1;
+              if (!inBox || polyOver > 0.02) { bad++; }
+              if (polyOver > worst.over) worst = { over: polyOver, tile: [x, y] };
+            }
+            results.push([`RT pass 23: seam drawing stays inside the tile's diamond — over ${tested} border tiles the bounding box of every path point and rect stays within cx+/-${IW2R}(+1) and cy-${IH2R}..+${IH2R} (+1px of tolerance each way), the polygons (teeth, corner cuts, foot shadows) never leave the diamond itself (worst overshoot ${worst.over.toFixed(4)} of an edge); ${bad} tiles broke out`,
+              tested >= 40 && bad === 0]);
+
+            // 5. the teeth alternate: across one straight border the two tiles draw complementary halves
+            let pairDetail = [], pairsOk = straight.length >= 1;
+            for (const [x, y] of straight) {
+              const cA = rec(), cB = rec();
+              window.drawBiomeSeams(cA, x, y, bio[at(x, y)], hgt[at(x, y)], cx, cy);
+              window.drawBiomeSeams(cB, x + 1, y, bio[at(x + 1, y)], hgt[at(x + 1, y)], cx, cy);
+              const teeth = c => c.__o.polys.filter(p => p.pts.length === 5);
+              const tA = teeth(cA), tB = teeth(cB);
+              const colA = window.seamColour(bio[at(x + 1, y)], x + 1, y), colB = window.seamColour(bio[at(x, y)], x, y);
+              const colsOk = tA.every(p => p.style === colA) && tB.every(p => p.style === colB);
+              pairDetail.push(`${bnames[bio[at(x, y)]]}|${bnames[bio[at(x + 1, y)]]} ${tA.length}+${tB.length}`);
+              if (tA.length + tB.length !== K.SEAM_TEETH || !colsOk) pairsOk = false;
+            }
+            results.push([`RT pass 24: the teeth interlock — across ${straight.length} straight biome borders (${pairDetail.join('; ')}) the two tiles together paint exactly SEAM_TEETH = ${K.SEAM_TEETH} teeth, each side in the OTHER biome's seamColour`,
+              pairsOk && straight.length >= 3]);
+
+            // 6. a corner cut where two edges meet the same other biome; a cliff foot where a higher neighbour drops onto the tile
+            let corner = null;
+            for (let y = Y0 + 1; y < Y1 - 1 && !corner; y++) for (let x = X0 + 1; x < X1 - 1 && !corner; x++) {
+              const b = bio[at(x, y)], h = hgt[at(x, y)];
+              if (SKIP.has(b) || window.arenaFloorAt(x, y, b) !== 0) continue;
+              const nb = D4.map(([dx, dy]) => bio[at(x + dx, y + dy)]), nh = D4.map(([dx, dy]) => hgt[at(x + dx, y + dy)]);
+              if (!nh.every(v => v === h)) continue;
+              // N(0)&W(1) -> T, N(0)&E(3) -> R, S(2)&E(3) -> Bo, W(1)&S(2) -> L
+              for (const [ea, eb] of [[0, 1], [0, 3], [2, 3], [1, 2]]) if (nb[ea] !== b && nb[ea] === nb[eb] && !SKIP.has(nb[ea])) { corner = { x, y, ea, eb }; break; }
+            }
+            let cornerOk = false, cornerInfo = 'no tile found';
+            if (corner) {
+              const c = rec(); window.drawBiomeSeams(c, corner.x, corner.y, bio[at(corner.x, corner.y)], hgt[at(corner.x, corner.y)], cx, cy);
+              const diamond = [[cx, cy - IH2R], [cx + IW2R, cy], [cx, cy + IH2R], [cx - IW2R, cy]];
+              const cuts = c.__o.polys.filter(p => p.pts.length === 4 && diamond.some(d => Math.abs(d[0] - p.pts[0][0]) < 1e-9 && Math.abs(d[1] - p.pts[0][1]) < 1e-9));
+              cornerOk = cuts.length >= 1; cornerInfo = `tile (${corner.x}, ${corner.y}) ${bnames[bio[at(corner.x, corner.y)]]} with edges ${corner.ea}+${corner.eb} on ${bnames[bio[at(corner.x + D4[corner.ea][0], corner.y + D4[corner.ea][1])]]}: ${cuts.length} corner cut(s), ${c.__o.polys.length} polygons`;
+            }
+            results.push([`RT pass 25: corner cuts — where two adjacent edges meet the same other biome the staircase gets a diagonal: ${cornerInfo}`, cornerOk]);
+
+            // cliff foot
+            let foot = null;
+            for (let y = Y0 + 1; y < Y1 && !foot; y++) for (let x = X0 + 1; x < X1 && !foot; x++) {
+              const b = bio[at(x, y)], h = hgt[at(x, y)];
+              if (SKIP.has(b)) continue;
+              if (hgt[at(x, y - 1)] > h || hgt[at(x - 1, y)] > h) foot = [x, y];
+            }
+            let footOk = false, footInfo = 'no tile found';
+            if (foot) {
+              const c = rec(); window.drawBiomeSeams(c, foot[0], foot[1], bio[at(foot[0], foot[1])], hgt[at(foot[0], foot[1])], cx, cy);
+              const want = `rgba(28,20,12,${K.SEAM_FOOT_A})`, shadows = c.__o.polys.filter(p => p.style === want);
+              footOk = shadows.length >= 2 && shadows.length % 2 === 0 && shadows.every(p => p.pts.length === 4);
+              footInfo = `tile (${foot[0]}, ${foot[1]}) with a higher N/W neighbour paints ${shadows.length} two-step shadow quads in ${want}`;
+            }
+            results.push([`RT pass 26: cliff feet — ${footInfo}`, footOk]);
+
+            // 7. wired into drawGroundTile: called for ordinary tiles, not for arena floor
+            {
+              const calls = [];
+              spy('drawBiomeSeams', (c, tx, ty, b, h, ccx, ccy) => { calls.push({ tx, ty, b, h, ccx, ccy }); });
+              const [sx, sy] = seamTiles[0];
+              window.drawGroundTile(rec(), sx, sy);
+              const ordinary = calls.length === 1 && calls[0].tx === sx && calls[0].ty === sy && calls[0].b === bio[at(sx, sy)] && calls[0].h === hgt[at(sx, sy)];
+              // an arena-floor tile: sand inside the Colosseum's ring
+              calls.length = 0;
+              let arenaTile = null;
+              for (let dy = -8; dy <= 8 && !arenaTile; dy++) for (let dx = -8; dx <= 8; dx++) {
+                const tx = Math.floor(C.x) + dx, ty = Math.floor(C.y) + dy, b = window.biomeAt(tx, ty);
+                if (window.arenaFloorAt(tx, ty, b) === 1) { arenaTile = [tx, ty]; break; }
+              }
+              if (arenaTile) window.drawGroundTile(rec(), arenaTile[0], arenaTile[1]);
+              unspy();
+              results.push([`RT pass 27: drawGroundTile hands an ordinary tile to drawBiomeSeams exactly once with its own biome, height and the tile's centre (${ordinary}), and an arena-floor tile (${arenaTile ? arenaTile.join(',') : 'none found'}) never (${calls.length} calls) — the ring line is drawn by drawArenaFloorDetail instead`,
+                ordinary && !!arenaTile && calls.length === 0 && /else drawBiomeSeams\(c, tx, ty, b, h, cx, cy\)/.test(gameScript)]);
+            }
+
+            // 8. the Colosseum sand: dark ring band + stone centre, flat fills inside the diamond
+            {
+              const run = (tx, ty) => { const c = rec(); window.drawArenaFloorDetail(c, 1, tx, ty, cx, cy); return c.__o; };
+              const Cx = Math.floor(C.x), Cy = Math.floor(C.y);
+              // choose tiles by distance exactly as the source does: d = hypot(tx+.5-C.x, ty+.5-C.y)
+              const pick = (lo, hi) => { for (let dy = -10; dy <= 10; dy++) for (let dx = -10; dx <= 10; dx++) { const d = Math.hypot(Cx + dx + 0.5 - C.x, Cy + dy + 0.5 - C.y); if (d > lo && d < hi) return [Cx + dx, Cy + dy]; } return null; };
+              const ringT = pick(5.5, 6.1), midT = pick(1.95, 3.5), ctrT = pick(-1, 1.8);
+              const ring = ringT && run(...ringT), centre = ctrT && run(...ctrT);
+              const bands = o => o.polys.filter(p => p.pts.length === 4 && /^rgba\(70,(52|58),(34|42),0\.(32|28)\)$/.test(String(p.style)));
+              const inside = o => bands(o).every(p => p.pts.every(([px, py]) => diamondOver(px, py) < 1e-9));
+              results.push([`RT pass 28: the arena sand reads as an arena — the ring tile ${ringT ? ringT.join(',') : '?'} (d 5.4..6.2) and the centre tile ${ctrT ? ctrT.join(',') : '?'} (d < 1.9) each get a flat dark diamond (${ring ? bands(ring).length : '?'}/${centre ? bands(centre).length : '?'} band fills, inside the tile: ${ring && centre && inside(ring) && inside(centre)}), an ordinary sand tile ${midT ? midT.join(',') : '?'} between them gets none (${midT ? bands(run(...midT)).length : '?'})`,
+                !!ring && !!centre && !!midT && bands(ring).length === 1 && bands(centre).length === 1 && bands(run(...midT)).length === 0 && inside(ring) && inside(centre)]);
+            }
+          }
+        } catch (e) {
+          results.push([`RT pass: the gates threw — ${String(e && e.stack || e).split('\n').slice(0, 3).join(' | ')}`, false]);
+        } finally {
+          unspy();
+          window.debugWorldSeedSet(seed0);
+          window.debugSetPlayer({ x: player0.x, y: player0.y });
+          rafQ.splice(rqR);
+        }
+      }
+    }
+
+
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
     process.exit(allOk && !caught ? 0 : 1);

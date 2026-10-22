@@ -72,5 +72,27 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
 ## S9 — Final report: DONE (2026-10-23)
 - `GAUNTLET_REPORT.md` + `docs/gauntlet-after.jpg`. Gauntlet results reused from the final front-page verification on the same game code (run4 2039/0, run3/5 clean, run6 pass); frame rate re-measured before vs after, interleaved.
 
+## Owner add-on: RT pass (Readability, Transitions, Landmarks): SHIPPED to `main` (2026-10-23)
+- **Transitions:** interlocking biome seams, foot shadows and edge props, all inside the cached tile diamond.
+- **Readability:** a value-jump actor disc, a pulsing "me" ring and backlight, player scale 2.4, and glinting loot.
+- **Landmarks:**
+  - Bazaar tents and a banner pole, with each stall sorting on its own.
+  - Colosseum banners and a statue.
+  - A Volcano plume and second flow.
+  - The Forge yard.
+  - Night lights.
+- **Scores** (Sonnet, before → after): Readability 2.6 → 2.9, Transitions 2.7 → 3.0, Landmark 3.1 → 3.5, Overall 3.1 → 3.3.
+- **Tests:** run4 2039 → **2067 PASS / 0 FAIL**, with 28 gates and 11 mutations caught. run3 and run5 are clean. run6 pixel match is 0.000%, and the cache is 1.43x/1.52x.
+- **Opus review:** 8 findings. Fixed:
+  - Stall sorting.
+  - View cull.
+  - Occluders.
+  - Seam props poking outside the diamond.
+  - A duplicate crater light.
+  - Brazier placement, and a decoy anvil.
+  - Bunting on the front stalls.
+  
+  The statue has no collision; that's by design.
+
 ## Remaining stages
 None — the gauntlet is complete.

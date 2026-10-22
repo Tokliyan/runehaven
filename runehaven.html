@@ -2429,6 +2429,7 @@ let BAZAAR = { x: 0, y: 0 }, ANCIENT = { x: 0, y: 0 }, COLOSSEUM = { x: 0, y: 0 
 const BAZAAR_R = 10;     // its own safe radius — the bible puts it INSIDE a safe zone
 const BAZAAR_RING = 5.5; // tiles from centre to the stall ring
 const BAZAAR_STALLS = 9; // the spec's 8-10, taken at the middle
+const BAZAAR_STALL_K = 1.45; // RT pass: stall scale, so each reads as a tent, not a token
 const ANCIENT_R = 4;     // crafting proximity, matching SPAWN_FORGE's own 4
 /* ============ v52+53 PART B — THE RUINED COLOSSEUM, REBUILT ==============
    Confirmed live before a line was written: this was `COLOSSEUM_R = 9` and one
@@ -2599,12 +2600,36 @@ const FOAM_FRONT_T = 0.27;     // share of a shore edge left visible when land s
    sprite. Scored problem: an 8x16 brown sprite measured 1.2-2.3:1 against
    forest, forge and lava ground and was found only by its nameplate. A flat
    fill (no outline, no gradient), the same move Thronefall makes. */
-const ACTOR_DISC = { me: "rgba(255,211,77,0.62)", friend: "rgba(111,208,255,0.5)", foe: "rgba(224,75,75,0.55)" };
-const ACTOR_DISC_R = 10;       // px half-width at scale 1 (TUNABLE)
+const ACTOR_DISC = { me: "rgba(255,214,90,0.88)", friend: "rgba(120,212,255,0.78)", foe: "rgba(236,78,66,0.82)" };
+const ACTOR_DISC_R = 13;       // px half-width at scale 1 (TUNABLE) — RT pass: 10 -> 13
+/* RT pass (Readability): the disc is now a VALUE JUMP on any ground — a dark
+   rim (reads on pale grass and sand) around a bright core (reads on dark
+   forest, basalt and night). Still flat fills: no outline, no gradient. */
+const ACTOR_DISC_RIM = "rgba(10,12,18,0.5)";
 function drawActorDisc(sx, sy, kind, k) {
   const r = ACTOR_DISC_R * k;
+  ctx.fillStyle = ACTOR_DISC_RIM;
+  ctx.beginPath(); ctx.ellipse(sx, sy + 1, r * 1.2, r * 1.2 * 0.46, 0, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = ACTOR_DISC[kind];
   ctx.beginPath(); ctx.ellipse(sx, sy + 1, r, r * 0.46, 0, 0, Math.PI * 2); ctx.fill();
+  if (kind === "me") {                    // RT pass: YOUR disc breathes — a pulsing gold ring (an even-odd annulus, still a flat fill)
+    const ph = (performance.now() % ME_PULSE_MS) / ME_PULSE_MS;
+    const R1 = r * (1.35 + ph * 0.6), R0 = R1 - 2.5;
+    ctx.fillStyle = `rgba(255,214,90,${(0.7 * (1 - ph)).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy + 1, R1, R1 * 0.46, 0, 0, Math.PI * 2);
+    ctx.ellipse(sx, sy + 1, R0, R0 * 0.46, 0, 0, Math.PI * 2);
+    ctx.fill("evenodd");
+  }
+}
+const ME_PULSE_MS = 1600;      // RT pass: the local player's ring pulse period (TUNABLE)
+/* RT pass (Readability): a pale backlight behind YOUR body — a flat, faint
+   cream oval at torso height, so the brown sprite has a light value behind it
+   on forest, basalt and forge walls. Drawn before the sprite. */
+const ME_BACKLIGHT = "rgba(255,244,214,0.34)";
+function drawMeBacklight(sx, sy) {
+  ctx.fillStyle = ME_BACKLIGHT;
+  ctx.beginPath(); ctx.ellipse(sx, sy - 17, 13, 21, 0, 0, Math.PI * 2); ctx.fill();
 }
 
 /* =========================================================
@@ -7687,6 +7712,135 @@ function drawGroundUnderlay() {
     ctx.fillRect(underCells[i], underCells[i + 1], UNDER_CELL, UNDER_CELL);
   }
 }
+/* ============ RT PASS — BIOME SEAMS (the Transitions score) ============
+   Every biome edge was a hard PAL step on the tile grid, so two biomes met in
+   a square staircase. Each tile now dresses its own diamond along any edge it
+   shares, AT THE SAME HEIGHT (cliffs stay crisp), with a different biome:
+   - interlocking teeth: the neighbour's colour bites into this tile along
+     that edge; WHICH side paints each tooth comes from a hash of the edge's
+     two tiles, so the two tiles' teeth alternate into one ragged seam;
+   - corner cuts: where both edges meeting at a corner share the same other
+     biome, a rounded cut in that colour — the staircase becomes a diagonal;
+   - seam props: grass tufts where grass meets sand, pebbles where it meets
+     rock, little shrubs where meadow meets forest;
+   - cliff feet: a flat contact shadow where a higher tile's face drops onto
+     this one.
+   Everything is flat fills inside this tile's own diamond (so the S4 cache
+   and the direct path stay pixel-identical, and nothing crosses a chunk
+   border), the start colour is unchanged (the underlay still mirrors it), and
+   it is all baked once into the ground cache — free per frame. */
+const SEAM_SKIP = new Set([B.DEEP, B.LAVA, B.CALDERA, B.PEAK, B.UNDERCAVE, B.UWCAVE, B.ABYSSAL]);
+const SEAM_TEETH = 4;                 // TUNABLE: teeth per shared edge
+const SEAM_DEPTH_LO = 0.22, SEAM_DEPTH_HI = 0.9;   // TUNABLE: tooth depth, share of the edge-to-centre distance
+const SEAM_CORNER = 0.55;             // TUNABLE: how far a corner cut runs along each edge
+const SEAM_FOOT_A = 0.17, SEAM_FOOT_W = 0.3;      // TUNABLE: cliff-foot shadow strength and width
+const SEAM_GRASSY = new Set([B.PLAINS, B.MEADOW, B.FOREST, B.ENCHFOREST, B.SACMEADOW]);
+const SEAM_STONY = new Set([B.ROCK, B.RUINB, B.VOLROCK]);
+const SEAM_WOODS = new Set([B.FOREST, B.DARKFOREST, B.ENCHFOREST]);
+const SEAM_OPEN = new Set([B.PLAINS, B.MEADOW, B.SACMEADOW]);
+function seamColour(nb, nx, ny) { return PAL[nb][((nx + ny) % 2 === 0) ? 0 : 1]; }
+function drawBiomeSeams(c, tx, ty, b, h, cx, cy) {
+  if (SEAM_SKIP.has(b)) return;
+  const T = [cx, cy - IH2], R = [cx + IW2, cy], Bo = [cx, cy + IH2], L = [cx - IW2, cy];
+  // edges: N shares T-R, W shares T-L, S shares L-Bo, E shares R-Bo
+  const EDGES = [[0, -1, T, R], [-1, 0, T, L], [0, 1, L, Bo], [1, 0, R, Bo]];
+  const seam = [-1, -1, -1, -1];
+  let any = false;
+  for (let k = 0; k < 4; k++) {
+    const nx = tx + EDGES[k][0], ny = ty + EDGES[k][1];
+    if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+    const nb = biomeAt(nx, ny);
+    const hn = heightAt(nx, ny);
+    // cliff foot: a higher N or W neighbour's face lands on this edge
+    if (k < 2 && hn > h) {
+      const [P0, P1] = [EDGES[k][2], EDGES[k][3]];
+      const mx = (P0[0] + P1[0]) / 2, my = (P0[1] + P1[1]) / 2;
+      const ix = (cx - mx) * SEAM_FOOT_W * 2, iy = (cy - my) * SEAM_FOOT_W * 2;
+      c.fillStyle = `rgba(28,20,12,${SEAM_FOOT_A})`;
+      c.beginPath(); c.moveTo(P0[0], P0[1]); c.lineTo(P1[0], P1[1]);
+      c.lineTo(P1[0] + ix * 0.5, P1[1] + iy * 0.5); c.lineTo(P0[0] + ix * 0.5, P0[1] + iy * 0.5); c.closePath(); c.fill();
+      c.beginPath(); c.moveTo(P0[0], P0[1]); c.lineTo(P1[0], P1[1]);
+      c.lineTo(P1[0] + ix, P1[1] + iy); c.lineTo(P0[0] + ix, P0[1] + iy); c.closePath(); c.fill();
+    }
+    if (nb === b || SEAM_SKIP.has(nb) || hn !== h || arenaFloorAt(nx, ny, nb)) continue;
+    seam[k] = nb; any = true;
+  }
+  if (!any) return;
+  // corner cuts first: T = N&W, R = N&E, Bo = S&E, L = W&S
+  const CORN = [[T, 0, 1, R, L], [R, 0, 3, T, Bo], [Bo, 2, 3, L, R], [L, 1, 2, T, Bo]];
+  for (const [P, ea, eb, Qa, Qb] of CORN) {
+    if (seam[ea] < 0 || seam[ea] !== seam[eb]) continue;
+    const nb = seam[ea];
+    const s = SEAM_CORNER * (0.85 + 0.3 * hash2(tx, ty, 4300 + ea));
+    c.fillStyle = seamColour(nb, tx + EDGES[ea][0], ty + EDGES[ea][1]);
+    c.beginPath();
+    c.moveTo(P[0], P[1]);
+    c.lineTo(P[0] + (Qa[0] - P[0]) * s, P[1] + (Qa[1] - P[1]) * s);
+    c.lineTo(P[0] + (cx - P[0]) * s * 0.95, P[1] + (cy - P[1]) * s * 0.95);
+    c.lineTo(P[0] + (Qb[0] - P[0]) * s, P[1] + (Qb[1] - P[1]) * s);
+    c.closePath(); c.fill();
+  }
+  // interlocking teeth along each seam edge
+  const me0 = ty * N + tx;
+  for (let k = 0; k < 4; k++) {
+    if (seam[k] < 0) continue;
+    const nx = tx + EDGES[k][0], ny = ty + EDGES[k][1], other = ny * N + nx;
+    const lo = Math.min(me0, other), hi = Math.max(me0, other), iAmLo = me0 === lo;
+    const [P0, P1] = [EDGES[k][2], EDGES[k][3]];
+    const mx = (P0[0] + P1[0]) / 2, my = (P0[1] + P1[1]) / 2;
+    const vx = cx - mx, vy = cy - my;
+    c.fillStyle = seamColour(seam[k], nx, ny);
+    for (let j = 0; j < SEAM_TEETH; j++) {
+      if ((hash2(lo, hi, 4000 + j) < 0.5) !== iAmLo) continue;
+      const t0 = j / SEAM_TEETH, t1 = (j + 1) / SEAM_TEETH;
+      const tm = (t0 + t1) / 2 + (hash2(lo, hi, 4050 + j) - 0.5) * 0.12;
+      const d = SEAM_DEPTH_LO + hash2(lo, hi, 4100 + j) * (SEAM_DEPTH_HI - SEAM_DEPTH_LO);
+      const E = t => [P0[0] + (P1[0] - P0[0]) * t, P0[1] + (P1[1] - P0[1]) * t];
+      const a = E(t0), z = E(t1), m = E(tm), q1 = E(t0 + (t1 - t0) * 0.28), q2 = E(t1 - (t1 - t0) * 0.28);
+      c.beginPath();
+      c.moveTo(a[0], a[1]);
+      c.lineTo(q1[0] + vx * d * 0.6, q1[1] + vy * d * 0.6);
+      c.lineTo(m[0] + vx * d, m[1] + vy * d);
+      c.lineTo(q2[0] + vx * d * 0.6, q2[1] + vy * d * 0.6);
+      c.lineTo(z[0], z[1]);
+      c.closePath(); c.fill();
+    }
+  }
+  // seam props: small, flat, inside the diamond, near the seam they belong to
+  for (let k = 0; k < 4; k++) {
+    const nb = seam[k];
+    if (nb < 0) continue;
+    const r0 = hash2(tx, ty, 4400 + k);
+    if (r0 > 0.62) continue;
+    const [P0, P1] = [EDGES[k][2], EDGES[k][3]];
+    const mx = (P0[0] + P1[0]) / 2, my = (P0[1] + P1[1]) / 2;
+    const t = 0.3 + 0.4 * hash2(tx, ty, 4410 + k), dep = 0.6 + 0.2 * hash2(tx, ty, 4420 + k);
+    const px = Math.round(P0[0] + (P1[0] - P0[0]) * t + (cx - mx) * dep);
+    const py = Math.round(P0[1] + (P1[1] - P0[1]) * t + (cy - my) * dep);
+    if (b === B.SAND && SEAM_GRASSY.has(nb)) {
+      // three grass tufts in the neighbour's grass, darkened a touch
+      c.fillStyle = shade(seamColour(nb, tx, ty), 0.82);
+      for (let i = 0; i < 3; i++) {
+        const ox = px + (i - 1) * 3, oy = py + (i % 2);
+        c.fillRect(ox, oy - 3, 1, 3); c.fillRect(ox - 1, oy - 2, 1, 2); c.fillRect(ox + 1, oy - 2, 1, 2);
+      }
+    } else if (SEAM_GRASSY.has(b) && SEAM_STONY.has(nb)) {
+      // two pebbles: lit top, shaded side
+      for (let i = 0; i < 2; i++) {
+        const ox = px + (i ? 3 : -2), oy = py + (i ? 1 : 0), s2 = i ? 2 : 3;
+        c.fillStyle = "#b3a993"; c.fillRect(ox, oy - s2, s2, s2);
+        c.fillStyle = shade("#b3a993", 0.62); c.fillRect(ox, oy, s2, 1);
+      }
+    } else if (SEAM_OPEN.has(b) && SEAM_WOODS.has(nb)) {
+      // a little shrub in the forest's colour: shaded body, lit crown
+      const col = seamColour(nb, tx, ty);
+      c.fillStyle = shade(col, 0.8);
+      c.beginPath(); c.moveTo(px - 4, py); c.lineTo(px - 3, py - 3); c.lineTo(px + 3, py - 3); c.lineTo(px + 4, py); c.closePath(); c.fill();
+      c.fillStyle = shade(col, 1.12);
+      c.beginPath(); c.moveTo(px - 3, py - 3); c.lineTo(px - 1, py - 5); c.lineTo(px + 2, py - 5); c.lineTo(px + 3, py - 3); c.closePath(); c.fill();
+    }
+  }
+}
 function drawGroundTile(c, tx, ty) {
   const b = biomeAt(tx, ty);
   const h = heightAt(tx, ty);
@@ -7857,6 +8011,7 @@ function drawGroundTile(c, tx, ty) {
   c.closePath();
   c.fill();
   if (arenaK) drawArenaFloorDetail(c, arenaK, tx, ty, cx, cy);   // Gauntlet S2 R1
+  else drawBiomeSeams(c, tx, ty, b, h, cx, cy);                   // RT pass: transitions
 
   // v8: sand gets texture and purpose — dunes, wet band, beach detail
   if (b === B.SAND) {
@@ -17617,27 +17772,91 @@ function drawMobOverlays(m, sx, sy, t, def) {
    Glows while ANY player's shrine blessing is running (world detail; never
    indicates who — the buff itself is private). */
 /* ============ v37: the three remaining landmarks ============ */
+/* RT pass (Landmark presence): a flat waving flag — a swallowtail polygon whose
+   free edge ripples with time. Flat fills, two tones (lit / shade). */
+function drawFlag(px, py, w, h, col, t, ph) {
+  const wv = k => Math.sin(t / 260 + ph + k * 1.7) * 1.6 * k;
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.moveTo(px, py);
+  ctx.lineTo(px + w * 0.5, py + wv(0.5));
+  ctx.lineTo(px + w, py + wv(1));
+  ctx.lineTo(px + w * 0.78, py + h * 0.5 + wv(0.85));
+  ctx.lineTo(px + w, py + h + wv(1));
+  ctx.lineTo(px + w * 0.5, py + h + wv(0.5));
+  ctx.lineTo(px, py + h);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = shade(col, 0.72);
+  ctx.beginPath();
+  ctx.moveTo(px + w * 0.5, py + wv(0.5)); ctx.lineTo(px + w, py + wv(1));
+  ctx.lineTo(px + w * 0.78, py + h * 0.5 + wv(0.85)); ctx.lineTo(px + w * 0.5, py + h * 0.5 + wv(0.5));
+  ctx.closePath(); ctx.fill();
+}
+/* A sagging string of tiny pennants between two screen points. */
+function drawBunting(x0, y0, x1, y1, cols, t, ph) {
+  const n = 9, sag = 7 + Math.sin(t / 900 + ph) * 1.2;
+  for (let i = 0; i <= n; i++) {
+    const u = i / n, x = x0 + (x1 - x0) * u, y = y0 + (y1 - y0) * u + Math.sin(u * Math.PI) * sag;
+    ctx.fillStyle = "rgba(40,30,20,0.7)"; ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
+    if (i > 0 && i < n && i % 1 === 0) {
+      ctx.fillStyle = cols[i % cols.length];
+      ctx.beginPath(); ctx.moveTo(x - 1.6, y + 0.5); ctx.lineTo(x + 1.6, y + 0.5); ctx.lineTo(x, y + 4.5); ctx.closePath(); ctx.fill();
+    }
+  }
+}
+/* RT pass (Landmark presence): the Bazaar was "nine floating coloured
+   squares" from a distance. Every stall is now a pitched TENT on poles with
+   a pennant and a lantern, bunting runs from the stalls to a tall banner pole
+   in the middle (the silhouette you find it by), and a well and crates fill
+   the trading floor. Each STALL is its own sorted entity ("bazstall", keyed on
+   its own x+y), so a player walks in front of and behind each tent correctly;
+   the floor, well, pole and bunting are the "bazaar" entity at the centre.
+   PART B: nine canvas hues, no palette entry shared with any biome, tier or
+   class. Shaded variants are worked out once, not per frame. */
+const BAZAAR_STALL_HUES = ["#c85a3c", "#3c7ac8", "#d4a03c", "#4aa85a", "#a04ac8", "#c8843c",
+                           "#3cb8a8", "#c84a7a", "#7ac83c"];
+let bazStallCache = null, bazStallKey = "";
+function bazaarStalls() {
+  const key = BAZAAR.x + "," + BAZAAR.y;
+  if (key === bazStallKey && bazStallCache) return bazStallCache;
+  const out = [];
+  for (let i = 0; i < BAZAAR_STALLS; i++) {
+    const a = (i / BAZAAR_STALLS) * Math.PI * 2 + 0.4;
+    const col = BAZAAR_STALL_HUES[i % BAZAAR_STALL_HUES.length];
+    out.push({ i, x: BAZAAR.x + Math.cos(a) * BAZAAR_RING, y: BAZAAR.y + Math.sin(a) * BAZAAR_RING,
+               col, goods: shade(col, 1.25), pennant: shade(col, 1.15) });
+  }
+  bazStallKey = key; bazStallCache = out;
+  return out;
+}
+function bazStallApex(st) {                      // screen point at the top of a tent
+  const K = BAZAAR_STALL_K;
+  const [px, py] = worldToScreen(st.x, st.y, groundZ(st.x, st.y));
+  return [px, py - 16 * K - 13 * K];
+}
+function drawBazaarStall(st, t) {
+  const K = BAZAAR_STALL_K, bx = st.x, by = st.y, col = st.col;
+  drawBox(bx, by, 0.75 * K, 0.6 * K, 4, "#6b5540");             // stall counter
+  drawBox(bx - 0.18 * K, by + 0.1 * K, 0.2 * K, 0.2 * K, 3, "#8a6a44", 4);   // goods on the counter
+  drawBox(bx + 0.16 * K, by - 0.08 * K, 0.18 * K, 0.18 * K, 2, st.goods, 4);
+  const [px, py] = worldToScreen(bx, by, groundZ(bx, by));
+  const P = 16 * K;                                              // pole height
+  ctx.fillStyle = "rgba(52,38,24,0.9)";
+  ctx.fillRect(Math.round(px - 9 * K), Math.round(py - P), 2, Math.round(P));   // poles
+  ctx.fillRect(Math.round(px + 8 * K), Math.round(py - P), 2, Math.round(P));
+  drawPyramid(bx, by, 0.95 * K, 0.8 * K, 2, 11 * K, col, P);    // the tent roof
+  const ry = py - P - 13 * K;                                    // roof apex (screen)
+  ctx.fillStyle = "rgba(255,246,226,0.55)";                       // a pale stripe down the lit roof face
+  ctx.beginPath(); ctx.moveTo(px - 2, ry); ctx.lineTo(px + 1, ry); ctx.lineTo(px - 4 * K, py - P - 2); ctx.lineTo(px - 8 * K, py - P - 2); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "rgba(52,38,24,0.9)"; ctx.fillRect(Math.round(px), Math.round(ry - 12), 1, 12);   // pennant pole
+  drawFlag(px + 1, ry - 12, 9, 5, st.pennant, t, st.i);
+  const lan = 0.55 + 0.45 * nightAlpha(getDayT());
+  ctx.fillStyle = `rgba(255,196,96,${lan.toFixed(3)})`;          // lantern
+  ctx.fillRect(Math.round(px + 7 * K), Math.round(py - P + 1), 3, 4);
+}
 function drawBazaarEntity(t) {
   const [sx, sy] = worldToScreen(BAZAAR.x, BAZAAR.y, groundZ(BAZAAR.x, BAZAAR.y));
   drawShadow(sx, sy, 96, 68);
-  /* A ring of market stalls around an open trading floor — bright canvas
-     against the world's greens, so it reads as "somewhere people gather"
-     from a distance. */
-  /* PART B: three more canvas hues, so nine stalls are nine colours rather
-     than six and a repeat. Same bright-canvas language, spaced around the
-     wheel — no palette entry is shared with any biome, tier or class. */
-  const STALL = ["#c85a3c", "#3c7ac8", "#d4a03c", "#4aa85a", "#a04ac8", "#c8843c",
-                 "#3cb8a8", "#c84a7a", "#7ac83c"];
-  for (let i = 0; i < BAZAAR_STALLS; i++) {
-    const a = (i / BAZAAR_STALLS) * Math.PI * 2 + 0.4;
-    const bx = BAZAAR.x + Math.cos(a) * BAZAAR_RING, by = BAZAAR.y + Math.sin(a) * BAZAAR_RING;
-    drawBox(bx, by, 0.75, 0.6, 4, "#6b5540");                     // stall counter
-    drawBox(bx, by, 0.85, 0.7, 2, STALL[i % STALL.length], 9);    // awning
-    const [px, py] = worldToScreen(bx, by, groundZ(bx, by));
-    ctx.fillStyle = "rgba(40,30,20,0.5)";
-    ctx.fillRect(px - 5, py - 9, 1.2, 9);                          // posts
-    ctx.fillRect(px + 4, py - 9, 1.2, 9);
-  }
   /* The trading floor grows with the ring. Left at 1.5 tiles inside a 5.5
      ring the middle of the Bazaar would have been bare grass with a circle
      of stalls around the edge of it — a wider ring on its own makes the place
@@ -17646,6 +17865,26 @@ function drawBazaarEntity(t) {
   const gl = 0.5 + 0.3 * Math.sin(t / 900);
   ctx.fillStyle = `rgba(244,207,107,${gl * 0.4})`;
   ctx.beginPath(); ctx.ellipse(sx, sy - 2, 38, 21, 0, 0, Math.PI * 2); ctx.fill();
+  // the well, two crates and a barrel on the floor
+  drawBox(BAZAAR.x + 0.7, BAZAAR.y + 0.7, 0.9, 0.9, 5, "#9a9084", 2);
+  { const [wx, wy] = worldToScreen(BAZAAR.x + 0.7, BAZAAR.y + 0.7, groundZ(BAZAAR.x, BAZAAR.y) + 7);
+    ctx.fillStyle = "#3f7f99"; ctx.beginPath(); ctx.moveTo(wx, wy - 4); ctx.lineTo(wx + 8, wy); ctx.lineTo(wx, wy + 4); ctx.lineTo(wx - 8, wy); ctx.closePath(); ctx.fill(); }
+  drawBox(BAZAAR.x - 1.0, BAZAAR.y + 0.4, 0.45, 0.45, 6, "#8a6440", 2);
+  drawBox(BAZAAR.x - 0.6, BAZAAR.y + 0.9, 0.35, 0.35, 5, "#a77c50", 2);
+  // the banner pole: the Bazaar's far-off silhouette
+  const [mx, my] = worldToScreen(BAZAAR.x - 0.4, BAZAAR.y - 0.4, groundZ(BAZAAR.x, BAZAAR.y) + 2);
+  ctx.fillStyle = "#5e4229"; ctx.fillRect(Math.round(mx - 2), Math.round(my - 118), 4, 118);
+  ctx.fillStyle = "#3f2c1b"; ctx.fillRect(Math.round(mx + 1), Math.round(my - 118), 1, 118);
+  ctx.fillStyle = "#e8b64c"; ctx.fillRect(Math.round(mx - 4), Math.round(my - 124), 8, 6);    // gold finial
+  ctx.fillRect(Math.round(mx - 1), Math.round(my - 130), 2, 6);
+  ctx.fillRect(Math.round(mx - 26), Math.round(my - 112), 52, 3);                          // cross-yard
+  drawFlag(mx - 24, my - 109, 22, 40, "#b8402e", t, 0.3);                                  // two great banners
+  drawFlag(mx + 3, my - 109, 22, 40, "#e8b64c", t, 1.9);
+  for (const st of bazaarStalls()) {                                                      // bunting, every other stall to the pole
+    if (st.i % 2) continue;
+    const [ax, ay] = bazStallApex(st);
+    drawBunting(ax, ay + 1, mx, my - 70, BAZAAR_STALL_HUES, t, st.i);
+  }
 }
 
 /* ============ Gauntlet S2 round 1 — THE ANCIENT FORGE, MONUMENTAL ======
@@ -17738,6 +17977,31 @@ function drawAncientEntity(t) {
     const ph = (t / 700 + i * 0.25) % 1;
     ctx.fillStyle = `rgba(255,190,110,${((1 - ph) * 0.7).toFixed(3)})`;
     ctx.fillRect(m[3][0] - 6 + i * 4, m[3][1] + 8 - ph * 16, 1.8, 1.8);
+  }
+  /* RT pass (Landmark presence): the forge's yard. A channel of molten metal
+     runs from the mouth into a quench pool, an anvil stands beside it, and
+     two tall braziers flank the approach — a lit, working place you can see
+     from across the basalt, not a dark box. Flat fills; the heat pulses. */
+  const yz = gz + 1;
+  const quad = (pts, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]); ctx.closePath(); ctx.fill(); };
+  const W2S = (x, y) => worldToScreen(x, y, yz);
+  const pulse = 0.75 + 0.25 * Math.sin(t / 330);
+  quad([W2S(F.x - 0.55, fy + 0.1), W2S(F.x + 0.15, fy + 0.1), W2S(F.x + 0.15, fy + 2.0), W2S(F.x - 0.55, fy + 2.0)], "#2a1a14");       // channel bed
+  quad([W2S(F.x - 0.42, fy + 0.15), W2S(F.x + 0.02, fy + 0.15), W2S(F.x + 0.02, fy + 1.95), W2S(F.x - 0.42, fy + 1.95)], `rgba(255,122,60,${pulse.toFixed(3)})`);
+  quad([W2S(F.x - 1.0, fy + 1.9), W2S(F.x + 0.6, fy + 1.9), W2S(F.x + 0.6, fy + 3.1), W2S(F.x - 1.0, fy + 3.1)], "#2a1a14");          // quench pool rim
+  quad([W2S(F.x - 0.85, fy + 2.0), W2S(F.x + 0.45, fy + 2.0), W2S(F.x + 0.45, fy + 2.95), W2S(F.x - 0.85, fy + 2.95)], `rgba(255,170,90,${(0.6 + 0.3 * pulse).toFixed(3)})`);
+  for (let i = 0; i < 3; i++) {                                    // steam off the pool
+    const ph = (t / 1100 + i / 3) % 1, [px2, py2] = W2S(F.x - 0.2 + (i - 1) * 0.35, fy + 2.5);
+    ctx.fillStyle = `rgba(220,220,226,${((1 - ph) * 0.35).toFixed(3)})`;
+    ctx.fillRect(Math.round(px2 + Math.sin(t / 400 + i) * 3), Math.round(py2 - 4 - ph * 26), 3, 3);
+  }
+  for (const [bx2, by2] of [[F.x - 1.9, fy + 1.4], [F.x + 2.7, fy + 0.2]]) {   // flanking braziers (clear of the plinth)
+    drawBox(bx2, by2, 0.42, 0.42, 22, "#3a2a26", 1);
+    drawBox(bx2, by2, 0.6, 0.6, 3, "#2e2220", 23);
+    const [fx2, fy2] = worldToScreen(bx2, by2, groundZ(bx2, by2) + 27);
+    const fl = 3 + Math.sin(t / 120 + bx2) * 1.4;
+    ctx.fillStyle = "#ff7a3c"; ctx.fillRect(Math.round(fx2 - 3), Math.round(fy2 - fl - 3), 6, Math.round(fl + 3));
+    ctx.fillStyle = "#ffd27a"; ctx.fillRect(Math.round(fx2 - 1), Math.round(fy2 - fl - 1), 2, Math.round(fl));
   }
 }
 /* ============ Gauntlet S2 round 2 — THE VOLCANO HAS A CONE ==============
@@ -17867,7 +18131,40 @@ function drawVolcanoCone(t) {
     ctx.fillStyle = `rgba(255,176,102,${((1 - ph) * 0.85).toFixed(3)})`;
     ctx.fillRect(kx - 8 + (hash2(i, 3, 41) * 16) + Math.sin(t / 340 + i * 1.7) * ph * 8, ky - 4 - ph * 60, 2.4, 2.4);
   }
+  /* RT pass (Landmark presence): the stepped cone read as "a pyramid" from a
+     distance. Three things make it a VOLCANO at a glance:
+     - a second flow down the SE face, so lava runs down both visible sides;
+     - a heat halo on the crater rim;
+     - a towering smoke plume, lit orange from below by the crater, leaning
+       with the wind — the tallest silhouette on that side of the world.
+     Flat fills only (ellipses and quads, no gradients). */
+  ctx.fillStyle = `rgba(255,122,60,${(0.7 + heat * 0.25).toFixed(3)})`;
+  for (let i = 0; i < FLOW.length; i++) {
+    const [ox, wv, fy, z0, z1] = FLOW[i];
+    const X = C.x + fy, Y = C.y - ox * 0.6;                         // the same flow, mirrored onto the SE (+x) face
+    quad(worldToScreen(X, Y - wv, gz + z0), worldToScreen(X, Y + wv, gz + z0),
+         worldToScreen(X, Y + wv, gz + z1), worldToScreen(X, Y - wv, gz + z1));
+  }
+  ctx.fillStyle = `rgba(255,120,50,${(0.12 + heat * 0.1).toFixed(3)})`;
+  ctx.beginPath(); ctx.ellipse(kx, ky, 46, 22, 0, 0, Math.PI * 2); ctx.fill();
+  const night2 = nightAlpha(getDayT());
+  for (let i = 0; i < VOLC_PLUME_PUFFS; i++) {
+    const u = i / (VOLC_PLUME_PUFFS - 1);
+    const drift = ((t / 2400) + i * 0.37) % 1;
+    const px3 = kx + u * 70 + Math.sin(t / 1700 + i) * 6;            // leans east with the wind
+    const py3 = ky - 18 - u * 170 - drift * 8;
+    const r = 12 + u * 30;
+    ctx.fillStyle = i % 2 ? "rgba(74,66,72,0.82)" : "rgba(92,84,90,0.78)";
+    ctx.globalAlpha = 1 - u * 0.55;
+    ctx.beginPath(); ctx.ellipse(px3, py3, r, r * 0.62, 0, 0, Math.PI * 2); ctx.fill();
+    if (u < 0.45) {                                                    // underside lit by the crater
+      ctx.fillStyle = `rgba(255,120,50,${((0.35 + 0.4 * night2) * (1 - u / 0.45)).toFixed(3)})`;
+      ctx.beginPath(); ctx.ellipse(px3, py3 + r * 0.28, r * 0.8, r * 0.3, 0, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
 }
+const VOLC_PLUME_PUFFS = 9;   // RT pass: smoke plume puffs (TUNABLE)
 
 /* The anvil on the forecourt, a hand's reach from the point you arrive on.
    Its own entity so it sorts against the people standing round it. */
@@ -18009,9 +18306,82 @@ function arenaFloorAt(tx, ty, b) {
 }
 /* The floor's detail, on the tile's own top face: hard-edged flat fills and
    1px strokes only, the same hash-placed wear language as the cliff faces. */
+/* ============ RT PASS — THE COLOSSEUM AS A HERO SET PIECE =============
+   Scored: a big flat sand floor with nothing to find it by from a distance.
+   - eight tall banner poles round the outer ring, crimson and gold, waving;
+   - a champion's statue on a stepped plinth in the middle of the sand, with
+     two braziers — the silhouette you find the arena by;
+   - the sand gets a dark ring line and a stone centre, so it reads as an
+     arena floor rather than a beach (ground pass, inside each tile). */
+const COLO_BANNERS = 8;          // TUNABLE
+const COLO_STATUE_K = 1.9;       // the champion figure scale
+const COLO_BANNER_RING = 0.93;   // share of COLOSSEUM_R
+let colBannerCache = null, colBannerKey = "";
+function colosseumBanners() {
+  if (!COLOSSEUM) return [];
+  const key = COLOSSEUM.x + "," + COLOSSEUM.y;
+  if (key === colBannerKey && colBannerCache) return colBannerCache;
+  const out = [];
+  for (let i = 0; i < COLO_BANNERS; i++) {
+    const a = (i / COLO_BANNERS) * Math.PI * 2 + Math.PI / COLO_BANNERS;
+    out.push({ i, x: COLOSSEUM.x + Math.cos(a) * COLOSSEUM_R * COLO_BANNER_RING, y: COLOSSEUM.y + Math.sin(a) * COLOSSEUM_R * COLO_BANNER_RING });
+  }
+  colBannerKey = key; colBannerCache = out;
+  return out;
+}
+function drawColosseumBanner(bn, t) {
+  const [px, py] = worldToScreen(bn.x, bn.y, groundZ(bn.x, bn.y));
+  drawBox(bn.x, bn.y, 0.5, 0.5, 4, "#8f8778");                      // footing
+  ctx.fillStyle = "#4a3a2a"; ctx.fillRect(Math.round(px - 1), Math.round(py - 74), 3, 70);
+  ctx.fillStyle = "#e8b64c"; ctx.fillRect(Math.round(px - 2), Math.round(py - 79), 5, 5);   // gold finial
+  ctx.fillRect(Math.round(px - 12), Math.round(py - 72), 24, 2);                           // cross-yard
+  const col = bn.i % 2 ? "#b8402e" : "#2e5f9e";
+  // a long hanging banner, waving at its foot
+  const wv = k => Math.sin(t / 380 + bn.i * 1.3 + k) * 2.2 * k;
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.moveTo(px - 10, py - 70); ctx.lineTo(px + 10, py - 70);
+  ctx.lineTo(px + 10 + wv(1), py - 34); ctx.lineTo(px + wv(1.1), py - 27); ctx.lineTo(px - 10 + wv(1), py - 34); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = shade(col, 0.7);
+  ctx.beginPath(); ctx.moveTo(px + 2, py - 70); ctx.lineTo(px + 10, py - 70); ctx.lineTo(px + 10 + wv(1), py - 34); ctx.lineTo(px + wv(1.1), py - 27); ctx.lineTo(px + 2 + wv(0.9), py - 36); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#e8b64c";                                         // a gold sigil
+  ctx.beginPath(); ctx.moveTo(px, py - 62); ctx.lineTo(px + 4, py - 56); ctx.lineTo(px, py - 50); ctx.lineTo(px - 4, py - 56); ctx.closePath(); ctx.fill();
+}
+function drawColosseumStatue(t) {
+  const X = COLOSSEUM.x, Y = COLOSSEUM.y;
+  const [sx, sy] = worldToScreen(X, Y, groundZ(X, Y));
+  drawShadow(sx, sy, 44, 22);
+  drawBox(X, Y, 1.9, 1.9, 4, "#8f8778");                             // stepped plinth
+  drawBox(X, Y, 1.4, 1.4, 5, "#a39a8a", 4);
+  drawBox(X, Y, 0.9, 0.9, 10, "#b4ac9e", 9);
+  // the champion: a flat stone figure, sword raised — twice a player's height
+  const [fx, fy] = worldToScreen(X, Y, groundZ(X, Y) + 19);
+  const st = "#c9c1b0", sd = shade("#c9c1b0", 0.72), K = COLO_STATUE_K;
+  const R = (x, y, w, h) => ctx.fillRect(Math.round(fx + x * K), Math.round(fy + y * K), Math.round(w * K), Math.round(h * K));
+  ctx.fillStyle = sd; R(-5, -14, 4, 14); R(1, -14, 4, 14);              // legs
+  ctx.fillStyle = st; R(-6, -30, 12, 17);                               // torso
+  ctx.fillStyle = sd; R(1, -30, 5, 17);
+  ctx.fillStyle = st; R(-3, -37, 6, 6);                                 // head
+  R(6, -34, 3, 10);                                                     // raised arm
+  ctx.fillStyle = "#dcd6c8"; R(7, -58, 2, 25); R(4, -35, 8, 2);         // the sword
+  ctx.fillStyle = sd; ctx.beginPath(); ctx.moveTo(fx - 6 * K, fy - 29 * K); ctx.lineTo(fx - 13 * K, fy - 6 * K); ctx.lineTo(fx - 4 * K, fy - 12 * K); ctx.closePath(); ctx.fill();   // cloak
+  for (const [dx2, dy2] of [[-1.3, 0.9], [0.9, -1.3]]) {              // two braziers on the plinth corners
+    const [bx2, by2] = worldToScreen(X + dx2, Y + dy2, groundZ(X, Y) + 9);
+    const fl = 3 + Math.sin(t / 110 + dx2 * 3) * 1.3;
+    ctx.fillStyle = "#3a2a26"; ctx.fillRect(Math.round(bx2 - 3), Math.round(by2 - 3), 6, 3);
+    ctx.fillStyle = "#ff7a3c"; ctx.fillRect(Math.round(bx2 - 2), Math.round(by2 - 3 - fl), 4, Math.round(fl));
+    ctx.fillStyle = "#ffd27a"; ctx.fillRect(Math.round(bx2 - 1), Math.round(by2 - 2 - fl * 0.6), 2, Math.round(fl * 0.6));
+  }
+}
 function drawArenaFloorDetail(c, k, tx, ty, cx, cy) {
   if (k === 1) {
     const d = Math.hypot(tx + 0.5 - COLOSSEUM.x, ty + 0.5 - COLOSSEUM.y);
+    /* RT pass: a dark ring line in the sand and a darker stone centre */
+    if ((d > 5.4 && d < 6.2) || d < 1.9) {
+      c.fillStyle = d < 1.9 ? "rgba(70,58,42,0.28)" : "rgba(70,52,34,0.32)";
+      c.beginPath();
+      c.moveTo(cx, cy - IH2); c.lineTo(cx + IW2, cy); c.lineTo(cx, cy + IH2); c.lineTo(cx - IW2, cy);
+      c.closePath(); c.fill();
+    }
     const q = d / ARENA_STAIN_R;
     if (q < 1 && hash2(tx, ty, 933) < 1.7 * (1 - q * q)) {           // solid middle, ragged edge
       const a = 0.09 + 0.07 * (1 - q);
@@ -19860,7 +20230,7 @@ function drawPlayerEntity(p, name, t, isMe) {
   const moving = isMe ? iAmMoving : (p.speed || 0) > 0.02;
   const bob = moving ? Math.abs(Math.sin(t / 110)) * 1.6 : 0;
   const face = isMe ? facing : { x: p.fx ?? 0, y: p.fy ?? 1 };
-  const S = 2.1;
+  const S = 2.4;   // RT pass (Readability): 2.1 -> 2.4, still clear of the plate at sy - 38
 
   // v10: hit stagger — quick directional recoil, fast decay
   let rx = 0, ry = 0;
@@ -19903,6 +20273,7 @@ function drawPlayerEntity(p, name, t, isMe) {
      back, so the step is held at 0 exactly as the shadow is suppressed. */
   const step = walkStep(t, moving && !mountedNow, WALK_MS);
   if (!mountedNow) drawActorDisc(sx, sy, isMe ? "me" : "friend", 1);   // S2 R4: on the ground, so no bob
+  if (isMe && !mountedNow) drawMeBacklight(sx + rx, sy - bob + ry);    // RT pass
   drawUnit(ctx, sx + rx, sy - bob + ry + seatLift, p.cls, S, tier, face, t,
            !mountedNow, wkind, atier, blocking, cosNow, step);
 
@@ -20085,7 +20456,7 @@ const PLATE_HALF_W = 48;                // S2 R2: half-width of the local plate 
 const LABEL_STACK_PX = 15;              // doubt pass: row pitch when several lifted labels stack above the plate
 const OCCLUDER_KINDS = new Set(["tree", "rock", "iron", "runic", "meteor", "ruinpiece", "decor",
   "dock", "tower", "forge", "chest", "shrine", "shrinegate", "oracle", "bazaar", "ancient", "ancientanvil",
-  "colopiece", "colobeam", "volcanocone", "altar", "basepiece", "kelp", "inode", "iore"]);
+  "colopiece", "colobeam", "colobanner", "colostatue", "bazstall", "volcanocone", "altar", "basepiece", "kelp", "inode", "iore"]);
 let plateQueue = [], labelQueue = [], meGhost = null, ghostCanvas = null, ghostCtx = null;
 let overlayStats = { ghosts: 0, plates: 0, labels: 0, occluded: false };
 /* S2 R2: a label never lands on the local player's plate stack (name, guild
@@ -20259,24 +20630,44 @@ function debugLifeAt(x, y, secs, night) {
   return out;
 }
 
+const ITEM_GEM = 7;            // RT pass: gem half-diagonal, was 5 (TUNABLE)
+const ITEM_GLINT_EVERY = 2.6;  // RT pass: seconds between glints (TUNABLE)
 function drawItemEntity(it, t) {
   const z = groundZ(it.x, it.y);
   const [ix, iy0] = worldToScreen(it.x, it.y, z);
   const bob = Math.sin(t / 300 + it.x) * 2;
-  const iy = iy0 - 6 + bob;
+  const iy = iy0 - 8 + bob;
   const col = ITEM_META[it.type]?.color || "#fff";
+  /* RT pass (Readability): loot reads from across the screen — a dark rim and
+     a bright ring of its own colour on the ground, a bigger gem, and a glint
+     that sweeps it every few seconds. Flat fills only. */
+  ctx.fillStyle = ACTOR_DISC_RIM;
+  ctx.beginPath(); ctx.ellipse(ix, iy0 + 1, 11, 5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = col; ctx.globalAlpha = 0.55;
+  ctx.beginPath(); ctx.ellipse(ix, iy0 + 1, 8.5, 3.8, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
   ctx.fillStyle = `rgba(20,32,44,${SUN.alpha * 0.8})`;
   ctx.beginPath();
   ctx.ellipse(ix, iy0 + 1, 5, 2.2, 0, 0, Math.PI * 2);
   ctx.fill();
+  const g = ITEM_GEM;
   ctx.fillStyle = col;
   ctx.beginPath();
-  ctx.moveTo(ix, iy - 5); ctx.lineTo(ix + 5, iy); ctx.lineTo(ix, iy + 5); ctx.lineTo(ix - 5, iy);
+  ctx.moveTo(ix, iy - g); ctx.lineTo(ix + g, iy); ctx.lineTo(ix, iy + g); ctx.lineTo(ix - g, iy);
   ctx.closePath(); ctx.fill();
+  ctx.fillStyle = shade(col, 1.25);   // lit upper-left facet
+  ctx.beginPath(); ctx.moveTo(ix, iy - g); ctx.lineTo(ix - g, iy); ctx.lineTo(ix, iy); ctx.closePath(); ctx.fill();
   ctx.fillStyle = shade(col, 0.7);
   ctx.beginPath();
-  ctx.moveTo(ix, iy + 5); ctx.lineTo(ix + 5, iy); ctx.lineTo(ix + 5, iy + 2); ctx.lineTo(ix, iy + 7);
+  ctx.moveTo(ix, iy + g); ctx.lineTo(ix + g, iy); ctx.lineTo(ix + g, iy + 2); ctx.lineTo(ix, iy + g + 2);
   ctx.closePath(); ctx.fill();
+  const gp = ((t / 1000) + (it.x * 0.37 + it.y * 0.61)) % ITEM_GLINT_EVERY;
+  if (gp < 0.28) {
+    const ga = 1 - gp / 0.28, ry = Math.round(3 + ga * 4);
+    ctx.fillStyle = `rgba(255,252,236,${(0.9 * ga).toFixed(3)})`;
+    ctx.fillRect(Math.round(ix - 1), Math.round(iy - g - ry), 2, ry * 2);
+    ctx.fillRect(Math.round(ix - ry), Math.round(iy - g - 1), ry * 2, 2);
+  }
   if (Math.hypot(it.x - me.x, it.y - me.y) < 3) {
     ctx.font = "11px 'Barlow', sans-serif";
     ctx.textAlign = "center";
@@ -21145,11 +21536,17 @@ function render(t) {
     ents.push({ s: TUTORIAL_DUMMY.x + TUTORIAL_DUMMY.y + 0.3, kind: "tutdummy" });
   }
   if (!inInterior()) {
-    ents.push({ s: BAZAAR.x + BAZAAR.y + 0.3, kind: "bazaar" });
+    /* RT pass: culled to the view like the Colosseum, and each stall sorts on its own */
+    if (BAZAAR.x > minX - 10 && BAZAAR.x < maxX + 10 && BAZAAR.y > minY - 10 && BAZAAR.y < maxY + 10) {
+      ents.push({ s: BAZAAR.x + BAZAAR.y + 0.3, kind: "bazaar" });
+      for (const st of bazaarStalls()) ents.push({ s: st.x + st.y, kind: "bazstall", st });
+    }
     {                                             // Gauntlet S2 R1: the house stands behind the point
       const AH = ancientHouse(), AA = ancientAnvilPos();
-      ents.push({ s: AH.x + AH.y + 0.3, kind: "ancient" });
-      ents.push({ s: AA.x + AA.y, kind: "ancientanvil" });
+      if (AH.x > minX - 8 && AH.x < maxX + 8 && AH.y > minY - 8 && AH.y < maxY + 8) {
+        ents.push({ s: AH.x + AH.y + 0.3, kind: "ancient" });
+        ents.push({ s: AA.x + AA.y, kind: "ancientanvil" });
+      }
     }
     /* v52+53 PART B: the sand goes in at the centre's own key (it is flat
        ground and must paint under everything standing on it), and every
@@ -21163,6 +21560,12 @@ function render(t) {
       if (cp.x < minX - 3 || cp.x > maxX + 4 || cp.y < minY - 3 || cp.y > maxY + 4) continue;
       ents.push({ s: cp.x + cp.y, kind: "colopiece", cp });
     }
+    for (const bn of colosseumBanners()) {          // RT pass: banner poles round the ring
+      if (bn.x < minX - 3 || bn.x > maxX + 4 || bn.y < minY - 3 || bn.y > maxY + 4) continue;
+      ents.push({ s: bn.x + bn.y, kind: "colobanner", bn });
+    }
+    if (COLOSSEUM.x > minX - 4 && COLOSSEUM.x < maxX + 4 && COLOSSEUM.y > minY - 4 && COLOSSEUM.y < maxY + 4)
+      ents.push({ s: COLOSSEUM.x + COLOSSEUM.y, kind: "colostatue" });   // RT pass: the champion
     for (const bm of colosseumBeams()) {          // Gauntlet S2 R1: the lintels
       if (Math.max(bm.x1, bm.x2) < minX - 3 || Math.min(bm.x1, bm.x2) > maxX + 4 ||
           Math.max(bm.y1, bm.y2) < minY - 3 || Math.min(bm.y1, bm.y2) > maxY + 4) continue;
@@ -21307,10 +21710,13 @@ function render(t) {
     else if (e.kind === "tutmark") drawTutorialMark(t);       // v35 PART B
     else if (e.kind === "tutdummy") drawTutorialDummy(t);     // v35 PART B
     else if (e.kind === "bazaar") drawBazaarEntity(t);
+    else if (e.kind === "bazstall") drawBazaarStall(e.st, t);         // RT pass
     else if (e.kind === "ancient") drawAncientEntity(t);
     else if (e.kind === "ancientanvil") drawAncientAnvil();           // Gauntlet S2 R1
     else if (e.kind === "colobeam") drawColosseumBeam(e.bm);          // Gauntlet S2 R1
     else if (e.kind === "colopiece") drawColosseumPiece(e.cp, t);    // v52+53 PART B
+    else if (e.kind === "colobanner") drawColosseumBanner(e.bn, t);  // RT pass
+    else if (e.kind === "colostatue") drawColosseumStatue(t);        // RT pass
     else if (e.kind === "altar") drawDragonAltarEntity(t);    // v39 PART B
     else if (e.kind === "volcanocone") drawVolcanoCone(t);     // Gauntlet S2 R2
     else if (e.kind === "voidrift") drawVoidRift(t);         // v50 PART A
@@ -21754,6 +22160,11 @@ function collectLights() {
     col: mothLit ? "rgba(244,232,160,A)" : "rgba(255,190,120,A)" });
   for (const tp of TORCHES) lights.push({ x: tp.x, y: tp.y, z: 12, r: 78, a: 0.85, col: "rgba(255,176,80,A)" });
   if (!inInterior()) for (const bz of shrineBraziers()) lights.push({ x: bz.x, y: bz.y, z: 14, r: 70, a: 0.8, col: "rgba(255,176,80,A)" });   // S2 R3
+  /* RT pass: the Bazaar's lanterns and the Ancient Forge's furnace are lights
+     at night, so both read across the dark like the Tower and the Volcano. */
+  if (!inInterior() && BAZAAR) lights.push({ x: BAZAAR.x, y: BAZAAR.y, z: 20, r: 190, a: 0.75, col: "rgba(255,196,96,A)" });
+  if (!inInterior() && ANCIENT) lights.push({ x: ANCIENT.x - ANCIENT_HOUSE_OFF, y: ANCIENT.y - ANCIENT_HOUSE_OFF, z: 30, r: 170, a: 0.8, col: "rgba(255,130,60,A)" });
+  if (!inInterior() && COLOSSEUM) lights.push({ x: COLOSSEUM.x, y: COLOSSEUM.y, z: 14, r: 120, a: 0.7, col: "rgba(255,170,80,A)" });   // RT pass: champion braziers
   /* S7 PART B: a fresh death pile's beacon is also a light at night, fading with it. */
   for (const pb of pileBeacons) {
     if (pb.space !== ((me && me.space) || "main")) continue;
