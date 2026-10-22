@@ -44,7 +44,7 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
 - **Bounty Board** at Spawn: one creature per in-game day (never twice running), slay or tame it for +2 Runic Stone once a day (claim persisted in the cosmetics jsonb, no SQL); also tells you where the Drake was last seen, in the compass dial's own directions.
 - run4 1888 -> **1924 PASS / 0 FAIL** (36 S6 gates, mutation-checked); run3 clean; run5 CAUGHT none; run6 all PASS (pixel match 0.000% x4; frame rate 1.27x Colosseum, 1.27x Bazaar).
 - Process: Opus built and decided; Haiku mapped the code; Sonnet wrote the gates; one Opus review at the end — 3 bugs + 6 risks found and fixed (stale mob_sync pinning the Drake, clients disagreeing mid-fight, bounty repeats, reload double-claim, never-spawning Salamander King in the pool, idle/leash flicker, stuck at zone edges, tame across a day rollover).
-- **Open for the owner:** (1) fights drift with the moving home (spec's "current home"); alternative is freezing the home while fighting, which needs a mob_sync change. (2) bounty reward size — 2 Runic Stone per 10-minute in-game day.
+- **Owner decisions (2026-10-22):** (1) fights move with the Drake — the home keeps flying during a fight (spec's "current home"), no freeze. (2) bounty reward stays at 2 Runic Stone per in-game day.
 - `NEXT_BUILD.md` -> Real Stakes (S7).
 
 ## Remaining stages
