@@ -1,6 +1,6 @@
 # Gauntlet report — RuneHaven (2026-10-13 → 2026-10-23)
 
-Started 2026-10-13 from v59 (`abe73f4`). All work is on `main`. The "after" contact sheet is `docs/gauntlet-after.jpg`: 23 shots from the tour plus the new title, character select and Settings.
+Started 2026-10-13 from v59 (`abe73f4`). All work is on `main`. The "after" contact sheet is `docs/gauntlet-after.jpg`: 23 shots from the tour plus the new title, character select and Settings. The RT pass (below) came after it.
 
 ## What shipped, by stage
 
@@ -15,14 +15,15 @@ Started 2026-10-13 from v59 (`abe73f4`). All work is on `main`. The "after" cont
 | S7 Real Stakes | Shared weather (rain, fog, ashfall, snow). A death recap, a PACK mark and a pile beacon. Raid alerts and a login summary. Fixed a dupe: equipped gear dropped twice. | `0f078d6` |
 | S8 Feel pass | Hit-stop. Screen shake with an off switch. WebAudio SFX. The first five minutes: new players now start at the Tutorial Grounds. | `6cc03fc` |
 | Owner add-on: Front Page Rework | "The Reforging Update": the title screen, character select cards, a Thronefall-style Settings page, and a painted backdrop. | `0682024` |
+| Owner add-on: RT pass (2026-10-23) | Readability, Transitions and Landmarks. Interlocking biome borders with foot shadows and edge props. A pulsing, backlit player disc, a bigger player, and glinting loot. A rebuilt Bazaar (tents, banner pole, bunting). Colosseum banners and a champion statue. A Volcano smoke plume and second lava flow. An Ancient Forge yard. Landmark night lights. | `gauntlet/rt-pass` merge |
 
 ## Numbers, before → after
 
 | | Before (v59) | After (`main`) |
 |---|---|---|
-| run4 gates | 1718 PASS / 0 FAIL | **2039 PASS / 0 FAIL** |
+| run4 gates | 1718 PASS / 0 FAIL | **2067 PASS / 0 FAIL** (2039 before the RT pass) |
 | run3 / run5 | clean / CAUGHT none | clean / CAUGHT none |
-| run6 (new in S4) | — | pixel match 0.000% at 4 views; ground cache 1.27–1.31x on vs off |
+| run6 (new in S4) | — | pixel match 0.000% at 4 views; ground cache 1.43–1.52x on vs off after the RT pass |
 | Visual scorecard (S2 card, 1–5) | 2.97 | **3.67** (scored at S2 round 4; later stages were not re-scored) |
 
 **Frame rate.** Measured headless at 1280×720, before and after interleaved in one run, 3 reps of 3 s each:
@@ -35,7 +36,24 @@ Started 2026-10-13 from v59 (`abe73f4`). All work is on `main`. The "after" cont
 
 ## What's left (known, not fixed)
 
-**Visual target.** "Every category ≥ 4" was not met; S2 stopped at its 4-round cap. The weakest categories are Readability 3.24, Transitions 3.27 and Landmark 3.50.
+**Visual target.** "Every category ≥ 4" was not met; S2 stopped at its 4-round cap with Readability 3.24, Transitions 3.27 and Landmark 3.50 as the weakest.
+
+The RT pass was scored separately: a fresh Sonnet scorer, the same card, 18 tour shots, before vs after (stricter than the S2 scorer, so compare within this pair only):
+
+| | Before | After |
+|---|---|---|
+| Readability | 2.6 | 2.9 |
+| Transitions | 2.7 | 3.0 |
+| Landmark | 3.1 | 3.5 |
+| Overall | 3.1 | 3.3 |
+
+The pulsing ring and backlight were added after that score. Still open, according to the scorer:
+- Volcano basalt cracks everywhere (the `VOL_CRACK` strings are pinned).
+- Cave interiors are untouched.
+- Sawtooth coasts.
+- Bazaar labels collide with the UI.
+
+**Decorative only:** the Colosseum statue has no collision (it stands where you land).
 
 **Front page.** The backdrop is painted key art, not the live world. The world is only generated inside ENTER (a flagged judgment call).
 
