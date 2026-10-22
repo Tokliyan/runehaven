@@ -2612,6 +2612,24 @@ function drawActorDisc(sx, sy, kind, k) {
   ctx.beginPath(); ctx.ellipse(sx, sy + 1, r * 1.2, r * 1.2 * 0.46, 0, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = ACTOR_DISC[kind];
   ctx.beginPath(); ctx.ellipse(sx, sy + 1, r, r * 0.46, 0, 0, Math.PI * 2); ctx.fill();
+  if (kind === "me") {                    // RT pass: YOUR disc breathes — a pulsing gold ring (an even-odd annulus, still a flat fill)
+    const ph = (performance.now() % ME_PULSE_MS) / ME_PULSE_MS;
+    const R1 = r * (1.35 + ph * 0.6), R0 = R1 - 2.5;
+    ctx.fillStyle = `rgba(255,214,90,${(0.7 * (1 - ph)).toFixed(3)})`;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy + 1, R1, R1 * 0.46, 0, 0, Math.PI * 2);
+    ctx.ellipse(sx, sy + 1, R0, R0 * 0.46, 0, 0, Math.PI * 2);
+    ctx.fill("evenodd");
+  }
+}
+const ME_PULSE_MS = 1600;      // RT pass: the local player's ring pulse period (TUNABLE)
+/* RT pass (Readability): a pale backlight behind YOUR body — a flat, faint
+   cream oval at torso height, so the brown sprite has a light value behind it
+   on forest, basalt and forge walls. Drawn before the sprite. */
+const ME_BACKLIGHT = "rgba(255,244,214,0.34)";
+function drawMeBacklight(sx, sy) {
+  ctx.fillStyle = ME_BACKLIGHT;
+  ctx.beginPath(); ctx.ellipse(sx, sy - 17, 13, 21, 0, 0, Math.PI * 2); ctx.fill();
 }
 
 /* =========================================================
@@ -7796,7 +7814,7 @@ function drawBiomeSeams(c, tx, ty, b, h, cx, cy) {
     if (r0 > 0.62) continue;
     const [P0, P1] = [EDGES[k][2], EDGES[k][3]];
     const mx = (P0[0] + P1[0]) / 2, my = (P0[1] + P1[1]) / 2;
-    const t = 0.3 + 0.4 * hash2(tx, ty, 4410 + k), dep = 0.35 + 0.25 * hash2(tx, ty, 4420 + k);
+    const t = 0.3 + 0.4 * hash2(tx, ty, 4410 + k), dep = 0.6 + 0.2 * hash2(tx, ty, 4420 + k);
     const px = Math.round(P0[0] + (P1[0] - P0[0]) * t + (cx - mx) * dep);
     const py = Math.round(P0[1] + (P1[1] - P0[1]) * t + (cy - my) * dep);
     if (b === B.SAND && SEAM_GRASSY.has(nb)) {
@@ -17786,55 +17804,59 @@ function drawBunting(x0, y0, x1, y1, cols, t, ph) {
     }
   }
 }
+/* RT pass (Landmark presence): the Bazaar was "nine floating coloured
+   squares" from a distance. Every stall is now a pitched TENT on poles with
+   a pennant and a lantern, bunting runs from the stalls to a tall banner pole
+   in the middle (the silhouette you find it by), and a well and crates fill
+   the trading floor. Each STALL is its own sorted entity ("bazstall", keyed on
+   its own x+y), so a player walks in front of and behind each tent correctly;
+   the floor, well, pole and bunting are the "bazaar" entity at the centre.
+   PART B: nine canvas hues, no palette entry shared with any biome, tier or
+   class. Shaded variants are worked out once, not per frame. */
+const BAZAAR_STALL_HUES = ["#c85a3c", "#3c7ac8", "#d4a03c", "#4aa85a", "#a04ac8", "#c8843c",
+                           "#3cb8a8", "#c84a7a", "#7ac83c"];
+let bazStallCache = null, bazStallKey = "";
+function bazaarStalls() {
+  const key = BAZAAR.x + "," + BAZAAR.y;
+  if (key === bazStallKey && bazStallCache) return bazStallCache;
+  const out = [];
+  for (let i = 0; i < BAZAAR_STALLS; i++) {
+    const a = (i / BAZAAR_STALLS) * Math.PI * 2 + 0.4;
+    const col = BAZAAR_STALL_HUES[i % BAZAAR_STALL_HUES.length];
+    out.push({ i, x: BAZAAR.x + Math.cos(a) * BAZAAR_RING, y: BAZAAR.y + Math.sin(a) * BAZAAR_RING,
+               col, goods: shade(col, 1.25), pennant: shade(col, 1.15) });
+  }
+  bazStallKey = key; bazStallCache = out;
+  return out;
+}
+function bazStallApex(st) {                      // screen point at the top of a tent
+  const K = BAZAAR_STALL_K;
+  const [px, py] = worldToScreen(st.x, st.y, groundZ(st.x, st.y));
+  return [px, py - 16 * K - 13 * K];
+}
+function drawBazaarStall(st, t) {
+  const K = BAZAAR_STALL_K, bx = st.x, by = st.y, col = st.col;
+  drawBox(bx, by, 0.75 * K, 0.6 * K, 4, "#6b5540");             // stall counter
+  drawBox(bx - 0.18 * K, by + 0.1 * K, 0.2 * K, 0.2 * K, 3, "#8a6a44", 4);   // goods on the counter
+  drawBox(bx + 0.16 * K, by - 0.08 * K, 0.18 * K, 0.18 * K, 2, st.goods, 4);
+  const [px, py] = worldToScreen(bx, by, groundZ(bx, by));
+  const P = 16 * K;                                              // pole height
+  ctx.fillStyle = "rgba(52,38,24,0.9)";
+  ctx.fillRect(Math.round(px - 9 * K), Math.round(py - P), 2, Math.round(P));   // poles
+  ctx.fillRect(Math.round(px + 8 * K), Math.round(py - P), 2, Math.round(P));
+  drawPyramid(bx, by, 0.95 * K, 0.8 * K, 2, 11 * K, col, P);    // the tent roof
+  const ry = py - P - 13 * K;                                    // roof apex (screen)
+  ctx.fillStyle = "rgba(255,246,226,0.55)";                       // a pale stripe down the lit roof face
+  ctx.beginPath(); ctx.moveTo(px - 2, ry); ctx.lineTo(px + 1, ry); ctx.lineTo(px - 4 * K, py - P - 2); ctx.lineTo(px - 8 * K, py - P - 2); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "rgba(52,38,24,0.9)"; ctx.fillRect(Math.round(px), Math.round(ry - 12), 1, 12);   // pennant pole
+  drawFlag(px + 1, ry - 12, 9, 5, st.pennant, t, st.i);
+  const lan = 0.55 + 0.45 * nightAlpha(getDayT());
+  ctx.fillStyle = `rgba(255,196,96,${lan.toFixed(3)})`;          // lantern
+  ctx.fillRect(Math.round(px + 7 * K), Math.round(py - P + 1), 3, 4);
+}
 function drawBazaarEntity(t) {
   const [sx, sy] = worldToScreen(BAZAAR.x, BAZAAR.y, groundZ(BAZAAR.x, BAZAAR.y));
   drawShadow(sx, sy, 96, 68);
-  /* A ring of market stalls around an open trading floor — bright canvas
-     against the world's greens, so it reads as "somewhere people gather"
-     from a distance. */
-  /* PART B: three more canvas hues, so nine stalls are nine colours rather
-     than six and a repeat. Same bright-canvas language, spaced around the
-     wheel — no palette entry is shared with any biome, tier or class. */
-  const STALL = ["#c85a3c", "#3c7ac8", "#d4a03c", "#4aa85a", "#a04ac8", "#c8843c",
-                 "#3cb8a8", "#c84a7a", "#7ac83c"];
-  /* RT pass (Landmark presence): the Bazaar was "nine floating coloured
-     squares" from a distance. Every stall is now a pitched TENT on four
-     poles with a pennant and a lantern, bunting strings run stall to stall,
-     a stone well and crates fill the floor, and a tall banner pole in the
-     middle is the silhouette you find it by. Back half first, then the
-     floor, then the front half, so the ring sorts against its own middle. */
-  const night = nightAlpha(getDayT());
-  const stalls = [];
-  for (let i = 0; i < BAZAAR_STALLS; i++) {
-    const a = (i / BAZAAR_STALLS) * Math.PI * 2 + 0.4;
-    const bx = BAZAAR.x + Math.cos(a) * BAZAAR_RING, by = BAZAAR.y + Math.sin(a) * BAZAAR_RING;
-    stalls.push({ i, bx, by, s: bx + by });
-  }
-  const tops = [];
-  const K = BAZAAR_STALL_K;
-  const drawStall = ({ i, bx, by }) => {
-    const col = STALL[i % STALL.length];
-    drawBox(bx, by, 0.75 * K, 0.6 * K, 4, "#6b5540");             // stall counter
-    drawBox(bx - 0.18 * K, by + 0.1 * K, 0.2 * K, 0.2 * K, 3, "#8a6a44", 4);   // goods on the counter
-    drawBox(bx + 0.16 * K, by - 0.08 * K, 0.18 * K, 0.18 * K, 2, shade(col, 1.25), 4);
-    const [px, py] = worldToScreen(bx, by, groundZ(bx, by));
-    const P = 16 * K;                                              // pole height
-    ctx.fillStyle = "rgba(52,38,24,0.9)";
-    ctx.fillRect(Math.round(px - 9 * K), Math.round(py - P), 2, Math.round(P));   // poles
-    ctx.fillRect(Math.round(px + 8 * K), Math.round(py - P), 2, Math.round(P));
-    drawPyramid(bx, by, 0.95 * K, 0.8 * K, 2, 11 * K, col, P);    // the tent roof
-    const ry = py - P - 13 * K;                                    // roof apex (screen)
-    ctx.fillStyle = "rgba(255,246,226,0.55)";                       // a pale stripe down the lit roof face
-    ctx.beginPath(); ctx.moveTo(px - 2, ry); ctx.lineTo(px + 1, ry); ctx.lineTo(px - 4 * K, py - P - 2); ctx.lineTo(px - 8 * K, py - P - 2); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = "rgba(52,38,24,0.9)"; ctx.fillRect(Math.round(px), Math.round(ry - 12), 1, 12);   // pennant pole
-    drawFlag(px + 1, ry - 12, 9, 5, shade(col, 1.15), t, i);
-    const lan = 0.55 + 0.45 * night;
-    ctx.fillStyle = `rgba(255,196,96,${lan.toFixed(3)})`;          // lantern
-    ctx.fillRect(Math.round(px + 7 * K), Math.round(py - P + 1), 3, 4);
-    tops.push([px, ry + 1]);
-  };
-  const back = stalls.filter(q => q.s <= BAZAAR.x + BAZAAR.y), front = stalls.filter(q => q.s > BAZAAR.x + BAZAAR.y);
-  back.forEach(drawStall);
   /* The trading floor grows with the ring. Left at 1.5 tiles inside a 5.5
      ring the middle of the Bazaar would have been bare grass with a circle
      of stalls around the edge of it — a wider ring on its own makes the place
@@ -17858,10 +17880,11 @@ function drawBazaarEntity(t) {
   ctx.fillRect(Math.round(mx - 26), Math.round(my - 112), 52, 3);                          // cross-yard
   drawFlag(mx - 24, my - 109, 22, 40, "#b8402e", t, 0.3);                                  // two great banners
   drawFlag(mx + 3, my - 109, 22, 40, "#e8b64c", t, 1.9);
-  for (let k = 0; k < tops.length; k++) {                                                 // bunting to the pole
-    if (k % 2 === 0) drawBunting(tops[k][0], tops[k][1], mx, my - 70, STALL, t, k);
+  for (const st of bazaarStalls()) {                                                      // bunting, every other stall to the pole
+    if (st.i % 2) continue;
+    const [ax, ay] = bazStallApex(st);
+    drawBunting(ax, ay + 1, mx, my - 70, BAZAAR_STALL_HUES, t, st.i);
   }
-  front.forEach(drawStall);
 }
 
 /* ============ Gauntlet S2 round 1 — THE ANCIENT FORGE, MONUMENTAL ======
@@ -17972,9 +17995,7 @@ function drawAncientEntity(t) {
     ctx.fillStyle = `rgba(220,220,226,${((1 - ph) * 0.35).toFixed(3)})`;
     ctx.fillRect(Math.round(px2 + Math.sin(t / 400 + i) * 3), Math.round(py2 - 4 - ph * 26), 3, 3);
   }
-  drawBox(F.x + 1.15, fy + 1.1, 0.42, 0.3, 5, "#3a3a40", 1);       // the anvil
-  drawBox(F.x + 1.15, fy + 1.1, 0.7, 0.34, 2, "#5a5a62", 6);
-  for (const [bx2, by2] of [[F.x - 1.9, fy + 1.4], [F.x + 2.1, fy + 0.2]]) {   // flanking braziers
+  for (const [bx2, by2] of [[F.x - 1.9, fy + 1.4], [F.x + 2.7, fy + 0.2]]) {   // flanking braziers (clear of the plinth)
     drawBox(bx2, by2, 0.42, 0.42, 22, "#3a2a26", 1);
     drawBox(bx2, by2, 0.6, 0.6, 3, "#2e2220", 23);
     const [fx2, fy2] = worldToScreen(bx2, by2, groundZ(bx2, by2) + 27);
@@ -20252,6 +20273,7 @@ function drawPlayerEntity(p, name, t, isMe) {
      back, so the step is held at 0 exactly as the shadow is suppressed. */
   const step = walkStep(t, moving && !mountedNow, WALK_MS);
   if (!mountedNow) drawActorDisc(sx, sy, isMe ? "me" : "friend", 1);   // S2 R4: on the ground, so no bob
+  if (isMe && !mountedNow) drawMeBacklight(sx + rx, sy - bob + ry);    // RT pass
   drawUnit(ctx, sx + rx, sy - bob + ry + seatLift, p.cls, S, tier, face, t,
            !mountedNow, wkind, atier, blocking, cosNow, step);
 
@@ -20434,7 +20456,7 @@ const PLATE_HALF_W = 48;                // S2 R2: half-width of the local plate 
 const LABEL_STACK_PX = 15;              // doubt pass: row pitch when several lifted labels stack above the plate
 const OCCLUDER_KINDS = new Set(["tree", "rock", "iron", "runic", "meteor", "ruinpiece", "decor",
   "dock", "tower", "forge", "chest", "shrine", "shrinegate", "oracle", "bazaar", "ancient", "ancientanvil",
-  "colopiece", "colobeam", "volcanocone", "altar", "basepiece", "kelp", "inode", "iore"]);
+  "colopiece", "colobeam", "colobanner", "colostatue", "bazstall", "volcanocone", "altar", "basepiece", "kelp", "inode", "iore"]);
 let plateQueue = [], labelQueue = [], meGhost = null, ghostCanvas = null, ghostCtx = null;
 let overlayStats = { ghosts: 0, plates: 0, labels: 0, occluded: false };
 /* S2 R2: a label never lands on the local player's plate stack (name, guild
@@ -21514,11 +21536,17 @@ function render(t) {
     ents.push({ s: TUTORIAL_DUMMY.x + TUTORIAL_DUMMY.y + 0.3, kind: "tutdummy" });
   }
   if (!inInterior()) {
-    ents.push({ s: BAZAAR.x + BAZAAR.y + 0.3, kind: "bazaar" });
+    /* RT pass: culled to the view like the Colosseum, and each stall sorts on its own */
+    if (BAZAAR.x > minX - 10 && BAZAAR.x < maxX + 10 && BAZAAR.y > minY - 10 && BAZAAR.y < maxY + 10) {
+      ents.push({ s: BAZAAR.x + BAZAAR.y + 0.3, kind: "bazaar" });
+      for (const st of bazaarStalls()) ents.push({ s: st.x + st.y, kind: "bazstall", st });
+    }
     {                                             // Gauntlet S2 R1: the house stands behind the point
       const AH = ancientHouse(), AA = ancientAnvilPos();
-      ents.push({ s: AH.x + AH.y + 0.3, kind: "ancient" });
-      ents.push({ s: AA.x + AA.y, kind: "ancientanvil" });
+      if (AH.x > minX - 8 && AH.x < maxX + 8 && AH.y > minY - 8 && AH.y < maxY + 8) {
+        ents.push({ s: AH.x + AH.y + 0.3, kind: "ancient" });
+        ents.push({ s: AA.x + AA.y, kind: "ancientanvil" });
+      }
     }
     /* v52+53 PART B: the sand goes in at the centre's own key (it is flat
        ground and must paint under everything standing on it), and every
@@ -21682,6 +21710,7 @@ function render(t) {
     else if (e.kind === "tutmark") drawTutorialMark(t);       // v35 PART B
     else if (e.kind === "tutdummy") drawTutorialDummy(t);     // v35 PART B
     else if (e.kind === "bazaar") drawBazaarEntity(t);
+    else if (e.kind === "bazstall") drawBazaarStall(e.st, t);         // RT pass
     else if (e.kind === "ancient") drawAncientEntity(t);
     else if (e.kind === "ancientanvil") drawAncientAnvil();           // Gauntlet S2 R1
     else if (e.kind === "colobeam") drawColosseumBeam(e.bm);          // Gauntlet S2 R1
@@ -22135,8 +22164,6 @@ function collectLights() {
      at night, so both read across the dark like the Tower and the Volcano. */
   if (!inInterior() && BAZAAR) lights.push({ x: BAZAAR.x, y: BAZAAR.y, z: 20, r: 190, a: 0.75, col: "rgba(255,196,96,A)" });
   if (!inInterior() && ANCIENT) lights.push({ x: ANCIENT.x - ANCIENT_HOUSE_OFF, y: ANCIENT.y - ANCIENT_HOUSE_OFF, z: 30, r: 170, a: 0.8, col: "rgba(255,130,60,A)" });
-  if (!inInterior()) { const VC = volcanoConeSite();                       // RT pass: the crater lights the night
-    if (VC) lights.push({ x: VC.x, y: VC.y, z: 60, r: 260, a: 0.85, col: "rgba(255,110,50,A)" }); }
   if (!inInterior() && COLOSSEUM) lights.push({ x: COLOSSEUM.x, y: COLOSSEUM.y, z: 14, r: 120, a: 0.7, col: "rgba(255,170,80,A)" });   // RT pass: champion braziers
   /* S7 PART B: a fresh death pile's beacon is also a light at night, fading with it. */
   for (const pb of pileBeacons) {
