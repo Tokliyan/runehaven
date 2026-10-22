@@ -2009,6 +2009,7 @@ const TUTORIAL_STEPS = [
 ];
 let tutorialActive = false, tutorialStep = 0, tutorialDone = false;
 let tutorialRuns = 0;            // how many times it has actually started
+let newPlayerRow = false;        // S8: this login created the row (see tutorialStartSpot)
 
 /* Pure, and the whole of the "once per player" rule. A row with the flag set
    never runs it again. PRE-MIGRATION: a row with no `tutorial_done` column at
@@ -2022,6 +2023,13 @@ function startTutorialIfNeeded() {
   tutorialActive = true;
   tutorialStep = 0;
   tutorialRuns++;
+  /* S8: a brand new row was placed before the feature index existed; now it
+     does, so step off any tree or rock — before the first frame is drawn. */
+  if (newPlayerRow && me) {
+    newPlayerRow = false;
+    const s2 = tutorialStartSpot();
+    me.x = s2.x; me.y = s2.y; cam.x = me.x; cam.y = me.y;
+  }
   if (!wilds.some(w => w.id === TUTORIAL_WOLF_ID)) {
     wilds.push({ id: TUTORIAL_WOLF_ID, species: "wolf",
                  x: TUTORIAL_WOLF.x, y: TUTORIAL_WOLF.y, ph: 0.7, tut: true });
@@ -8787,7 +8795,14 @@ async function loginPlayer(username, cls, pinCheck) {
       } catch (e) { console.warn("PIN not stored:", e); toast("Could not store that PIN — this name is still unprotected."); }
     }
   } else {
-    const s = findSpawn();
+    /* S8 first-five-minutes fix: a brand new player's tutorial starts by
+       pointing at a stone beside the Spawn centre, but findSpawn() scatters
+       anyone across the whole safe zone (radius 452 since the expansions),
+       so a new player could open the game ~200 tiles from the Tutorial
+       Grounds with "walk to the marked stone" and no stone in sight. New
+       rows start at the Grounds; returning players and respawns are as before. */
+    const s = tutorialStartSpot();
+    newPlayerRow = true;   // startTutorialIfNeeded re-picks once the feature index is built
     const { error } = await sb.from("players").insert({
       username, class: cls, x: s.x, y: s.y, level: 1, hp: 100, max_hp: 100, inventory: {},
     });
@@ -8841,6 +8856,28 @@ async function loginPlayer(username, cls, pinCheck) {
   cam.x = me.x; cam.y = me.y;
 }
 
+/* Where a brand new player opens their eyes: just south-west of the Spawn
+   centre, with the marked stone, the dummy and the wolf all on screen. */
+function tutorialStartSpot() {
+  /* The first prompt a new player sees should be the tutorial's, not
+     "[E] Gather Wood" from a tree they happen to stand beside: take the
+     nearest of a few spots by the Grounds with nothing gatherable in reach. */
+  const clear = (x, y) => {
+    if (BLOCKED.has(biomeAt(Math.floor(x), Math.floor(y)))) return false;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const f = featureIndex.get((Math.floor(x) + dx) + "," + (Math.floor(y) + dy));
+      if (f && f.type !== "pillar" && Math.hypot(f.x - x, f.y - y) < GATHER_RANGE + 0.6) return false;
+    }
+    return true;
+  };
+  const tries = [[0.5, 2.5], [-0.5, 3.5], [1.5, 3.5], [0.5, 4.5], [-1.5, 2.5], [2.5, 2.5], [0.5, 1.5], [-0.5, 5.5], [1.5, 5.5]];
+  for (const [ox, oy] of tries) {
+    const x = SPAWN.x + ox, y = SPAWN.y + oy;
+    if (clear(x, y)) return { x, y };
+  }
+  const c = { x: SPAWN.x + 0.5, y: SPAWN.y + 2.5 };
+  return BLOCKED.has(biomeAt(Math.floor(c.x), Math.floor(c.y))) ? findSpawn() : c;
+}
 function findSpawn() {
   for (let i = 0; i < 80; i++) {
     const a = Math.random() * Math.PI * 2, r = 2 + Math.random() * (SAFE_RADIUS - 4);
