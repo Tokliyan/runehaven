@@ -802,7 +802,7 @@
       <div class="set-row">
         <span class="lab">Reduce motion &amp; particles
           <br><span class="note">Turns off the ambient drifting effects &mdash; motes, embers,
-          fireflies, snow, butterflies. Combat feedback is unaffected.</span></span>
+          fireflies, snow, butterflies. Combat feedback is unaffected (screen shake has its own switch below).</span></span>
         <span class="ctl"><button class="set-btn" id="setReduceMotion">OFF</button></span>
       </div>
       <div class="set-row">
@@ -2015,7 +2015,7 @@ const TUTORIAL_STEPS = [
 ];
 let tutorialActive = false, tutorialStep = 0, tutorialDone = false;
 let tutorialRuns = 0;            // how many times it has actually started
-let newPlayerRow = false;        // S8: this login created the row (see tutorialStartSpot)
+let newPlayerRow = null;         // S8: the username whose row this login created (see tutorialStartSpot)
 
 /* Pure, and the whole of the "once per player" rule. A row with the flag set
    never runs it again. PRE-MIGRATION: a row with no `tutorial_done` column at
@@ -2031,10 +2031,11 @@ function startTutorialIfNeeded() {
   tutorialRuns++;
   /* S8: a brand new row was placed before the feature index existed; now it
      does, so step off any tree or rock — before the first frame is drawn. */
-  if (newPlayerRow && me) {
-    newPlayerRow = false;
+  if (me && newPlayerRow && newPlayerRow === me.username) {
+    newPlayerRow = null;
     const s2 = tutorialStartSpot();
     me.x = s2.x; me.y = s2.y; cam.x = me.x; cam.y = me.y;
+    if (typeof sendMove === "function" && channel) sendMove(true);   // review fix: others see the real spot at once
   }
   if (!wilds.some(w => w.id === TUTORIAL_WOLF_ID)) {
     wilds.push({ id: TUTORIAL_WOLF_ID, species: "wolf",
@@ -2084,6 +2085,7 @@ function tutorialNoteAttack() {
   if (!tutorialActive || inInterior()) return;
   if (Math.hypot(me.x - TUTORIAL_DUMMY.x, me.y - TUTORIAL_DUMMY.y) <= TUTORIAL_HIT_R) {
     burst(TUTORIAL_DUMMY.x, TUTORIAL_DUMMY.y, "#c8b090", 6, 1.8);
+    AudioEngine.playSynth("hit");   // S8: a new player's first strike should sound like one
     tutorialAdvance("fight");
   }
 }
@@ -8810,7 +8812,7 @@ async function loginPlayer(username, cls, pinCheck) {
        Grounds with "walk to the marked stone" and no stone in sight. New
        rows start at the Grounds; returning players and respawns are as before. */
     const s = tutorialStartSpot();
-    newPlayerRow = true;   // startTutorialIfNeeded re-picks once the feature index is built
+    newPlayerRow = null;
     const { error } = await sb.from("players").insert({
       username, class: cls, x: s.x, y: s.y, level: 1, hp: 100, max_hp: 100, inventory: {},
     });
@@ -8819,6 +8821,10 @@ async function loginPlayer(username, cls, pinCheck) {
       if (String(error.message || "").includes("hp")) throw new Error("Your database is missing the new columns — run the Stage 1-3 SQL.");
       throw error;
     }
+    /* S8 review fix: only a row that was really created, and only for THIS
+       name — a failed insert followed by logging into an existing account
+       must never teleport that returning player. */
+    newPlayerRow = username;
     /* Account PIN Protection: the players row and the account_pins row are
        written by the same submit, in that order — a PIN row that outlived a
        failed insert would protect a name nobody owns. Never throws: if the
@@ -8872,16 +8878,33 @@ function tutorialStartSpot() {
      nearest of a few spots by the Grounds with nothing gatherable in reach. */
   const clear = (x, y) => {
     if (BLOCKED.has(biomeAt(Math.floor(x), Math.floor(y)))) return false;
+    /* review fix: outside the Spawn Forge's prompt radius (4) and its fenced
+       yard, and not on top of another newcomer (their give prompt, and a
+       dummy swing that would pick THEM as the target) */
+    if (Math.hypot(x - SPAWN_FORGE.x, y - SPAWN_FORGE.y) < 4.3) return false;
+    for (const [, o] of others) if (Math.hypot(o.x - x, o.y - y) < 2.2) return false;
     for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
       const f = featureIndex.get((Math.floor(x) + dx) + "," + (Math.floor(y) + dy));
       if (f && f.type !== "pillar" && Math.hypot(f.x - x, f.y - y) < GATHER_RANGE + 0.6) return false;
     }
     return true;
   };
-  const tries = [[0.5, 2.5], [-0.5, 3.5], [1.5, 3.5], [0.5, 4.5], [-1.5, 2.5], [2.5, 2.5], [0.5, 1.5], [-0.5, 5.5], [1.5, 5.5]];
-  for (const [ox, oy] of tries) {
-    const x = SPAWN.x + ox, y = SPAWN.y + oy;
-    if (clear(x, y)) return { x, y };
+  const tries = [[-0.5, 3.5], [0.5, 4.5], [-1.5, 2.5], [-0.5, 5.5], [1.5, 5.5], [-1.5, 4.5], [0.5, 6.0], [-2.5, 3.5]];
+  /* any clear spot, picked at random with a little jitter, so newcomers
+     arriving together do not stand on one tile */
+  const ok = tries.map(([ox, oy]) => ({ x: SPAWN.x + ox + (Math.random() - 0.5) * 0.6, y: SPAWN.y + oy + (Math.random() - 0.5) * 0.6 }))
+                  .filter(c => clear(c.x, c.y));
+  if (ok.length) return ok[Math.floor(Math.random() * ok.length)];
+  /* None of those clear in this world (trees grow where the seed puts them):
+     search outward from the Grounds for the nearest clear spot instead of
+     falling back to one beside a tree. */
+  for (let r = 0; r <= 7; r += 0.5) {
+    for (let a = 0; a < 16; a++) {
+      const x = SPAWN.x + 0.5 + Math.cos(a / 16 * Math.PI * 2) * r;
+      const y = SPAWN.y + 4.5 + Math.sin(a / 16 * Math.PI * 2) * r;
+      if (clear(x, y)) return { x, y };
+      if (r === 0) break;
+    }
   }
   const c = { x: SPAWN.x + 0.5, y: SPAWN.y + 2.5 };
   return BLOCKED.has(biomeAt(Math.floor(c.x), Math.floor(c.y))) ? findSpawn() : c;
@@ -11058,7 +11081,7 @@ function tryAttack(aimX, aimY) {
       const kb = wk === "axe" ? 1.1 : wk === "dagger" ? 0.2 : wk === "spear" ? 0.6 : wk === "sword" ? 0.55 : 0.3;
       mobHit(bestM, mcrit ? Math.round(w.dmg * 1.6) : w.dmg, { crit: mcrit, kx: ndx, ky: ndy, kb });
       shakeT = now;
-      landHit(mcrit ? Math.round(w.dmg * 1.6) : w.dmg, mcrit, bestM.dead);   // S8: sound + hit-stop when heavy
+      landHit(mcrit ? Math.round(w.dmg * 1.6) : w.dmg, mcrit, bestM.dead, w.dmg);   // S8: sound + hit-stop when heavy
       return;
     }
     if (best) {
@@ -11071,9 +11094,9 @@ function tryAttack(aimX, aimY) {
       let dmg = crit ? Math.round(w.dmg * 1.6) : w.dmg;
       // v10: per-weapon knockback weight (axe heaviest, dagger lightest)
       const kb = wk === "axe" ? 1.1 : wk === "dagger" ? 0.2 : wk === "spear" ? 0.6 : wk === "sword" ? 0.55 : 0.3;
-      dealHit(best, dmg, { crit, kx: ndx, ky: ndy, kb, pois: me.equipped === "venomblade" });
+      const landed = dealHit(best, dmg, { crit, kx: ndx, ky: ndy, kb, pois: me.equipped === "venomblade" });
       shakeT = now;
-      landHit(dmg, crit, false);   // S8
+      if (landed) landHit(dmg, crit, false, w.dmg);   // S8: not for a blow the safe zone refused
     }
   } else {
     // v9: staff casts show a pulse at the caster; every projectile carries a shape
@@ -11091,14 +11114,14 @@ function tryAttack(aimX, aimY) {
 
 function dealHit(targetName, dmg, opts = {}) {
   const o = others.get(targetName);
-  if (!o) return;
+  if (!o) return false;   // S8: callers play the hit sound / hit-stop only for a blow that landed
   /* v37: the Colosseum overrides safe-zone protection for BOTH parties —
      the bible calls it an open duelling arena, and an arena where nobody
      can be hit is not an arena. Both must be inside it, so nobody can
      stand in the ring and swing at someone safely outside it. */
   const arena37 = inColosseum(me.x, me.y) && inColosseum(o.x, o.y);
   if (!arena37 && (inSafeZone(me.x, me.y) || inSafeZone(o.x, o.y))) {
-    toast("The safe zone protects them"); return;
+    toast("The safe zone protects them"); return false;
   }
   channel.send({ type: "broadcast", event: "hit", payload: {
     to: targetName, from: me.username, dmg,
@@ -11122,6 +11145,7 @@ function dealHit(targetName, dmg, opts = {}) {
   hitEmbers(o.x, o.y, opts.kx, opts.ky);   // v55 PART D
   // v10: crits read amber with an "!" — unmistakably not a normal hit
   addFloat(o.x, o.y, opts.crit ? `-${dmg}!` : `-${dmg}`, opts.crit ? "#ffb340" : "#ffe9b0", opts.crit);
+  return true;
 }
 
 /* v9: rising damage numbers (v10: big flag for crits) */
@@ -11166,8 +11190,10 @@ function spearThrust(w, dir, now) {
     const ndx = (o.x - me.x) / al, ndy = (o.y - me.y) / al;
     const tf = { x: o.fx ?? 0, y: o.fy ?? 1 };
     const crit = (ndx * tf.x + ndy * tf.y) > 0.4;
-    dealHit(name, crit ? Math.round(w.dmg * 1.6) : w.dmg, { crit, kx: ndx, ky: ndy, kb });
-    hits++;
+    if (dealHit(name, crit ? Math.round(w.dmg * 1.6) : w.dmg, { crit, kx: ndx, ky: ndy, kb })) {
+      hits++;
+      if (crit) heavyThrust = true;   // S8: a PvP crit is heavy too
+    }
   }
   for (const m of mobs) {
     if (m.dead) continue;
@@ -11180,7 +11206,7 @@ function spearThrust(w, dir, now) {
     if (mcrit || m.dead) heavyThrust = true;
   }
   if (hits) shakeT = now;
-  if (hits) landHit(w.dmg, heavyThrust, false);   // S8: one sound per thrust, heavy if any blow was
+  if (hits) landHit(w.dmg, heavyThrust, false, w.dmg);   // S8: one sound per thrust, heavy if any blow was
   return hits;
 }
 
@@ -11704,6 +11730,7 @@ async function doInteract() {
       const mat = GENERATOR_GIVES[gen.tier] || "wood";
       if (got > 0) {
         invAdd(mat, got);
+        AudioEngine.playSynth("pickup");   // S8
         gen.lastCollected = Date.now();
         burst(gen.x, gen.y, ITEM_META[mat].color, 8, 2);
         toast(`+${got} ${ITEM_META[mat].name}`);
@@ -11744,6 +11771,7 @@ async function doInteract() {
     const qty32 = g._node.qty || 1;
     burst(g.x, g.y, ITEM_META[got32].color, 7, 2);
     invAdd(got32, qty32);
+    AudioEngine.playSynth("pickup");   // S8
     toast("+" + qty32 + " " + ITEM_META[got32].name);
     savePlayer();
     return;
@@ -11795,6 +11823,7 @@ async function doInteract() {
       toast(`+${qty} ${ITEM_META[got].name}` + (PICKED.has(g.type) ? "" : " — the vein is spent"));
     } else {
       invAdd(got, 1);
+      AudioEngine.playSynth("pickup");   // S8 review fix: wood, the first thing a new player gathers
       toast(`+1 ${ITEM_META[got].name}`);
     }
     savePlayer();
@@ -13531,33 +13560,45 @@ addEventListener("resize", resize); resize();
 let lastT = 0;
 let loopErrCount = 0;
 /* ============ S8 Feel pass — HIT-STOP, SHAKE, SOUND ==================
-   GAUNTLET.md S8. A HEAVY hit — a crit, a killing blow, or one big enough
-   (HEAVY_HIT_DMG) that you land in melee, or a hit you take worth at least
+   GAUNTLET.md S8. A HEAVY hit — a crit, a killing blow, or one at least
+   HEAVY_HIT_MULT x your weapon's base damage that you land in melee (review
+   fix: relative, so it stays rare at every tier), or a hit you take worth at least
    HEAVY_TAKEN_FRAC of your max hp — freezes the simulation for HIT_STOP_MS
    while rendering carries on (the flash and the shake still play over the
    held frame: the classic impact frame), and shakes harder. The shake is a
    tunable span over SHAKE_MS, and Settings > Graphics > Screen shake turns
-   it off entirely. Ranged and pet hits never freeze the world. */
+   it off entirely. Your own ranged and pet hits never freeze the world
+   (hits you TAKE from anything can, when heavy). */
 const HIT_STOP_MS = 50;            // TUNABLE: the spec's 40–60 ms
-const HEAVY_HIT_DMG = 20;          // TUNABLE: a non-crit hit this big is heavy (runic weapons, crits of the axe)
-const HEAVY_TAKEN_FRAC = 0.2;      // TUNABLE: a hit taken for this share of max hp is heavy
+const HIT_STOP_MIN_GAP_MS = 350;   // TUNABLE: review fix — at least this long between freezes, so they read as impacts, never stutter
+const HEAVY_HIT_MULT = 1.5;        // TUNABLE: review fix — heavy is RELATIVE to your weapon (a crit is 1.6x), not an absolute number every runic hit passes
+const HEAVY_TAKEN_FRAC = 0.3;      // TUNABLE: a hit taken for this share of max hp is heavy (the Drake's 28 is not; its phase-3 sweep is)
 const SHAKE_MS = 220;              // TUNABLE: how long a shake lasts (the old fixed 220)
 const SHAKE_PX = 5;                // TUNABLE: shake span in px (the old fixed 5, i.e. ±2.5)
 const SHAKE_HEAVY_PX = 8;          // TUNABLE: a heavy hit's span
-let hitStopUntil = 0, hitStops = 0, shakeHeavyAt = -1;
+let hitStopUntil = 0, hitStops = 0, shakeHeavyUntil = 0;
 function hitStop(ms) {
-  const now = performance.now();
-  shakeT = now; shakeHeavyAt = now;
-  if (hitStopUntil > now) return false;          // never chain freezes into a stall
-  hitStopUntil = now + (ms || HIT_STOP_MS);
+  const now = performance.now(), len = ms || HIT_STOP_MS;
+  shakeT = now; shakeHeavyUntil = now + SHAKE_MS;   // review fix: heavy is a window, so a later light shake cannot downgrade it
+  /* never chain freezes, and leave a gap after one so a fast weapon never stutters */
+  if (hitStopUntil > now || now - hitStopUntil < HIT_STOP_MIN_GAP_MS) return false;
+  hitStopUntil = now + len;
   hitStops++;
+  /* Review fix: update() is held, but these clocks are wall-clock — push them
+     on by the freeze so it never eats a mob's telegraph (your dodge window),
+     its next swing, or a taming channel. */
+  for (const m of mobs) {
+    if (m.winding) m.windupStart += len;
+    if (m.atkAt > now) m.atkAt += len;
+  }
+  if (taming && taming.start) taming.start += len;
   return true;
 }
 function hitStopActive() { return performance.now() < hitStopUntil; }
 /* Every melee hit you land comes through here: the sound, and the freeze
    when it is heavy. `killed` is read AFTER the damage went in. */
-function landHit(dmg, crit, killed) {
-  const heavy = !!crit || !!killed || dmg >= HEAVY_HIT_DMG;
+function landHit(dmg, crit, killed, base) {
+  const heavy = !!crit || !!killed || dmg >= HEAVY_HIT_MULT * (base || dmg + 1);
   AudioEngine.playSynth(heavy ? "heavy" : "hit");
   if (heavy) hitStop();
   return heavy;
@@ -13572,7 +13613,7 @@ function shakeOffset(nowMs) {
   if (!SETTINGS.screenShake) return [0, 0];
   const since = nowMs - shakeT;
   if (!(since < SHAKE_MS)) return [0, 0];
-  const f = (1 - since / SHAKE_MS) * (shakeT === shakeHeavyAt ? SHAKE_HEAVY_PX : SHAKE_PX);
+  const f = (1 - since / SHAKE_MS) * (nowMs < shakeHeavyUntil ? SHAKE_HEAVY_PX : SHAKE_PX);
   return [(Math.random() - 0.5) * f, (Math.random() - 0.5) * f];
 }
 let sfxPlays = 0, sfxLastName = "";
@@ -13584,8 +13625,8 @@ document.addEventListener("click", (e) => {
   if (b) AudioEngine.playSynth("click");
 }, true);
 function debugFeelInfo() {
-  return { HIT_STOP_MS, HEAVY_HIT_DMG, HEAVY_TAKEN_FRAC, SHAKE_MS, SHAKE_PX, SHAKE_HEAVY_PX,
-           hitStopUntil, hitStops, frozen: hitStopActive(), shakeT, shakeHeavyAt,
+  return { HIT_STOP_MS, HIT_STOP_MIN_GAP_MS, HEAVY_HIT_MULT, HEAVY_TAKEN_FRAC, SHAKE_MS, SHAKE_PX, SHAKE_HEAVY_PX,
+           hitStopUntil, hitStops, frozen: hitStopActive(), shakeT, shakeHeavyUntil,
            screenShake: SETTINGS.screenShake, sfxPlays, sfxLastName };
 }
 function debugSetFeel(patch) {
@@ -13593,6 +13634,7 @@ function debugSetFeel(patch) {
   if ("hitStopUntil" in patch) hitStopUntil = patch.hitStopUntil;
   if ("hitStops" in patch) hitStops = patch.hitStops;
   if ("shakeT" in patch) shakeT = patch.shakeT;
+  if ("shakeHeavyUntil" in patch) shakeHeavyUntil = patch.shakeHeavyUntil;
   if ("sfxPlays" in patch) sfxPlays = patch.sfxPlays;
   return debugFeelInfo();
 }
@@ -22092,6 +22134,13 @@ const AudioEngine = {
   playSynth(name) {
     const c = this.ctx;
     if (!c || !this.sfxGain || typeof c.createOscillator !== "function") return false;
+    /* Review fix: a suspended context (iOS after backgrounding, a device
+       change) has a frozen clock — sounds would pile up and fire at once on
+       resume. Ask it to resume (we are usually inside a gesture) and skip. */
+    if (c.state && c.state !== "running") {
+      try { const pr = c.resume && c.resume(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) { /* not resumable now */ }
+      return false;
+    }
     const nowMs = performance.now();
     if (nowMs - (this._sfxLast[name] || -1e9) < SFX_MIN_GAP_MS) return false;
     try {
