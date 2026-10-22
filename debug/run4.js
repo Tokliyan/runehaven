@@ -6421,8 +6421,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           /* S7 Real Stakes PART C adds a sixth setItem, ordered by its spec: the
              count of base pieces you owned, under rh_base_count_<username> —
              a number, never a PIN or credential (the S7 block pins its key). */
-          (gameScript.match(/localStorage\.setItem\(/g) || []).length === 6 &&
-          gameScript.indexOf('localStorage.setItem(baseCountKey(), JSON.stringify({ count: mine.length, hp }))') > 0]);
+          /* Front Page Rework adds a seventh, ordered by its spec: What's new is
+             shown once per device per update, keyed rh_news_seen = the update's
+             name — never a PIN or credential (pinned below). */
+          (gameScript.match(/localStorage\.setItem\(/g) || []).length === 7 &&
+          gameScript.indexOf('localStorage.setItem(baseCountKey(), JSON.stringify({ count: mine.length, hp }))') > 0 &&
+          gameScript.indexOf('localStorage.setItem(FP_NEWS_KEY, UPDATE_NAME)') > 0]);
         enterEl46.onclick = realClick;
         nameEl46.value = 'BootTest';
         try { window.localStorage.removeItem('rh_last_user'); } catch (e) {}

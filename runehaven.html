@@ -613,6 +613,9 @@
     --menu-card: #16171b;
     --menu-edge: rgba(233,220,192,0.10);
     --menu-shade: rgba(5,6,8,0.62);
+    --menu-shadow: rgba(0,0,0,0.55);
+    --menu-gold-line: rgba(232,182,76,0.45);
+    --menu-page: #0a0a0c;
     --menu-radius: 14px;
     --menu-display: 'Grenze Gotisch', 'Almendra Display', serif;
     --menu-serif: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
@@ -635,7 +638,7 @@
     position: absolute; left: 8vw; top: 9vh; margin: 0;
     font-family: var(--menu-display); font-weight: 800; color: var(--menu-ink);
     font-size: clamp(64px, 7.4vw, 112px); letter-spacing: 1px; line-height: 0.95;
-    text-shadow: 0 3px 0 rgba(0,0,0,0.55), 0 10px 28px rgba(0,0,0,0.55);
+    text-shadow: 0 4px 0 var(--menu-shadow);
     transition: font-size 400ms cubic-bezier(.22,.68,.28,1), top 400ms cubic-bezier(.22,.68,.28,1);
   }
   #login.fp .tagline {
@@ -682,7 +685,7 @@
   .menu-card {
     background: var(--menu-card); border: 1px solid var(--menu-edge); border-radius: var(--menu-radius);
     padding: 20px 22px; color: var(--menu-ink); font-family: var(--menu-serif);
-    box-shadow: 0 18px 50px rgba(0,0,0,0.5);
+    box-shadow: 0 18px 50px var(--menu-shadow);
   }
   .menu-card .mc-title { font-family: var(--menu-display); font-weight: 700; font-size: 30px; line-height: 1.05; }
   .menu-card .mc-sub { color: var(--menu-ink); font-size: 13px; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase; margin: 8px 0 10px; }
@@ -692,7 +695,7 @@
     color: var(--menu-dim); font-family: var(--menu-serif); font-size: 18px; line-height: 1; padding: 4px;
   }
   .menu-card .mc-x:hover, .menu-card .mc-x:focus-visible { color: var(--menu-gold); outline: none; }
-  .badges { display: flex; gap: 10px; justify-content: center; margin-top: 10px; }
+  .badges { display: flex; gap: 10px; justify-content: center; margin-top: auto; padding-top: 10px; }
   .badge {
     width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid var(--menu-ink);
     display: inline-flex; align-items: center; justify-content: center; color: var(--menu-ink); opacity: 0.85;
@@ -700,20 +703,24 @@
   .badge svg { width: 18px; height: 18px; }
   .badge.lead { background: var(--menu-ink); color: var(--menu-card); opacity: 1; }
   /* what's new */
-  #login.fp #fpNews { position: absolute; right: 5vw; bottom: calc(5vh + 46px); width: 380px; max-width: 42vw; }
+  #login.fp #fpNews { position: absolute; right: 5vw; bottom: calc(5vh + 46px); width: 380px; max-width: 42vw; max-height: 52vh; overflow-y: auto; }
   #login.fp #fpNews ul { list-style: none; margin: 0; padding: 0; }
   #login.fp #fpNews li { padding: 5px 0 5px 18px; position: relative; font-size: 16px; line-height: 1.3; }
   #login.fp #fpNews li::before { content: ""; position: absolute; left: 2px; top: 12px; width: 6px; height: 6px; background: var(--menu-gold); transform: rotate(45deg); }
   /* --- states: title shows the menu; select shows the character screen --- */
-  #login.fp .fp-sel, #login.fp .fp-sub { visibility: hidden; opacity: 0; pointer-events: none; transition: opacity 300ms ease; }
-  #login.fp.fp-title .fp-ttl { visibility: visible; opacity: 1; pointer-events: auto; transition: opacity 300ms ease; }
-  #login.fp:not(.fp-title) .fp-ttl { visibility: hidden; opacity: 0; pointer-events: none; }
-  #login.fp.fp-select .fp-sel { visibility: visible; opacity: 1; pointer-events: auto; }
-  #login.fp.fp-redeem #redeemRow, #login.fp.fp-redeem #redeemMsg, #login.fp.fp-redeem #fpRedeemCard,
-  #login.fp.fp-connect #connectBox, #login.fp.fp-connect #fpConnectCard { visibility: visible; opacity: 1; pointer-events: auto; }
-  #login.fp.fp-select.fp-needconn #connectBox { visibility: visible; opacity: 1; pointer-events: auto; }
-  #login.fp.fp-redeem #fpBack, #login.fp.fp-connect #fpBack { visibility: visible; opacity: 1; pointer-events: auto; }
-  #login.fp.fp-sub-open .fp-item, #login.fp.fp-sub-open #fpNews, #login.fp.fp-sub-open #fpNewsLink { visibility: hidden; opacity: 0; pointer-events: none; }
+  /* Review fix: these rules only ever HIDE a control in the states it does
+     not belong to. Nothing here forces opacity or pointer-events back ON, so
+     #enterBtn's own .ready gating (and intro-lock) keep working untouched. */
+  #login.fp .fp-sel, #login.fp .fp-sub, #login.fp .fp-ttl, #login.fp #fpBack { transition: opacity 300ms ease; }
+  #login.fp:not(.fp-title) .fp-ttl,
+  #login.fp.fp-sub-open .fp-item, #login.fp.fp-sub-open #fpNews, #login.fp.fp-sub-open #fpNewsLink,
+  #login.fp:not(.fp-select) .fp-sel,
+  #login.fp:not(.fp-redeem) #redeemRow, #login.fp:not(.fp-redeem) #redeemMsg, #login.fp:not(.fp-redeem) #fpRedeemCard,
+  #login.fp:not(.fp-connect):not(.fp-select) #connectBox, #login.fp.fp-select:not(.fp-needconn) #connectBox,
+  #login.fp.fp-title:not(.fp-sub-open) #fpBack { visibility: hidden; opacity: 0; pointer-events: none; }
+  /* Redeem needs a name ("a code is claimed by a name"): the name field joins the redeem card */
+  #login.fp.fp-redeem #username { visibility: visible; opacity: 1; pointer-events: auto; position: absolute;
+    left: calc(8vw + 22px); top: calc(44vh + 112px); width: 376px; font-size: 22px; text-align: left; }
   /* the logo steps back to the corner on the inner screens */
   #login.fp:not(.fp-title) h1 { font-size: 46px; top: 4vh; }
   #login.fp:not(.fp-title) .tagline { visibility: hidden; opacity: 0; }
@@ -764,13 +771,14 @@
   /* the class cards = the tooltip card */
   #login.fp .class-row { gap: 16px; max-width: 1180px; }
   #login.fp .class-card {
-    width: clamp(150px, 16.6vw, 198px); padding: 10px 12px 14px; text-align: center; border-radius: var(--menu-radius);
+    width: calc(min(198px, (94vw - 64px) / 5) / var(--ui-scale)); padding: 10px 12px 14px; text-align: center; border-radius: var(--menu-radius);
+    display: flex; flex-direction: column; align-items: center;
     background: var(--menu-card); border: 1px solid var(--menu-edge); opacity: 0.78;
     transition: transform 160ms ease, opacity 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
   }
   #login.fp .class-card:hover { opacity: 0.95; transform: translateY(-3px); }
-  #login.fp .class-card.selected { opacity: 1; transform: translateY(-6px); border-color: var(--menu-gold); box-shadow: 0 16px 40px rgba(0,0,0,0.55); }
-  #login.fp .class-card canvas { width: 84px; height: 84px; image-rendering: pixelated; }
+  #login.fp .class-card.selected { opacity: 1; transform: translateY(-6px); border-color: var(--menu-gold); box-shadow: 0 16px 40px var(--menu-shadow); }
+  #login.fp .class-card canvas { width: 84px; height: 84px; }
   #login.fp .class-card .cname { font-family: var(--menu-display); font-weight: 700; color: var(--menu-ink); font-size: 27px; letter-spacing: 0.5px; margin-top: 0; line-height: 1.05; }
   #login.fp .class-card .crole { font-size: 12px; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase; color: var(--menu-ink); margin: 4px 0 8px; }
   #login.fp .class-card .cdesc { font-family: var(--menu-serif); color: var(--menu-ink); opacity: 0.86; font-size: 15px; line-height: 1.25; min-height: 38px; }
@@ -787,8 +795,8 @@
   #login.fp #sbUrl:focus, #login.fp #sbKey:focus, #login.fp #redeemInput:focus { border-bottom-color: var(--menu-gold); }
   #login.fp.fp-connect #connectBox, #login.fp.fp-redeem #fpRedeemCard { position: absolute; left: 8vw; top: 44vh; }
   #login.fp #fpRedeemCard { width: 420px; max-width: 90vw; }
-  #login.fp.fp-redeem #redeemRow { position: absolute; left: calc(8vw + 22px); top: calc(44vh + 112px); }
-  #login.fp.fp-redeem #redeemMsg { position: absolute; left: calc(8vw + 22px); top: calc(44vh + 160px); text-align: left; font-family: var(--menu-serif); font-size: 15px; color: var(--menu-dim); }
+  #login.fp.fp-redeem #redeemRow { position: absolute; left: calc(8vw + 22px); top: calc(44vh + 168px); }
+  #login.fp.fp-redeem #redeemMsg { position: absolute; left: calc(8vw + 22px); top: calc(44vh + 214px); max-width: 376px; text-align: left; font-family: var(--menu-serif); font-size: 15px; color: var(--menu-dim); }
   /* the one big action */
   #login.fp #enterBtn {
     background: none; color: var(--menu-ink); border: none; border-radius: 0; box-shadow: none;
@@ -797,7 +805,7 @@
   }
   #login.fp #enterBtn::before { content: "– "; color: var(--menu-gold); letter-spacing: 0; }
   #login.fp #enterBtn::after { content: " –"; color: var(--menu-gold); letter-spacing: 0; }
-  #login.fp #enterBtn { border-bottom: 2px solid rgba(232,182,76,0.45); }
+  #login.fp #enterBtn { border-bottom: 2px solid var(--menu-gold-line); }
   #login.fp #enterBtn.ready { box-shadow: none; }
   #login.fp #enterBtn.ready:hover, #login.fp #enterBtn.ready:focus-visible { color: var(--menu-gold); outline: none; box-shadow: none; }
   #login.fp #enterBtn.ready:hover { border-bottom-color: var(--menu-gold); }
@@ -806,14 +814,14 @@
      SETTINGS — a full-screen page in the reference's look. Scoped to
      #settingsOverlay so the in-game panels that reuse .set-tab are untouched.
      ===================================================================== */
-  #settingsOverlay { background: rgba(10,10,12,0.97); padding: 7vh 6vw; }
+  #settingsOverlay { background: var(--menu-page); padding: 7vh 6vw; }
   #settingsOverlay #settingsCard {
     width: 860px; max-width: 100%; margin: 0 auto; background: none; border: none; padding: 0;
     backdrop-filter: none; font-family: var(--menu-serif); color: var(--menu-ink);
   }
   #settingsOverlay #settingsCard h3 {
     font-family: var(--menu-display); font-weight: 800; color: var(--menu-ink); font-size: 60px;
-    letter-spacing: 0.04em; text-transform: lowercase; margin: 0 0 24px; text-shadow: 0 3px 0 rgba(0,0,0,0.55);
+    letter-spacing: 0.04em; text-transform: lowercase; margin: 0 0 24px; text-shadow: 0 3px 0 var(--menu-shadow);
   }
   #settingsOverlay #settingsCard h3::first-letter { text-transform: uppercase; }
   #settingsOverlay #settingsCard h4 { font-family: var(--menu-display); color: var(--menu-ink); font-size: 22px; letter-spacing: 0.04em; }
@@ -839,14 +847,14 @@
   /* ON/OFF toggles drawn as the reference's square checkboxes; the ON/OFF
      text stays in the button (gates and screen readers read it) */
   #settingsOverlay .set-btn.set-toggle {
-    width: 16px; height: 16px; min-width: 0; padding: 0; border: 1.5px solid var(--menu-ink); border-radius: 1px;
+    width: 14px; height: 14px; min-width: 0; padding: 0; border: 1.5px solid var(--menu-ink); border-radius: 1px;
     font-size: 0; letter-spacing: 0; position: relative; opacity: 0.85;
   }
   #settingsOverlay .set-btn.set-toggle.on::after {
     content: ""; position: absolute; left: 2px; top: 2px; right: 2px; bottom: 2px; background: var(--menu-ink);
   }
   #settingsOverlay .set-btn.set-toggle:hover, #settingsOverlay .set-btn.set-toggle:focus-visible { opacity: 1; border-color: var(--menu-gold); }
-  #settingsOverlay .set-row input[type=range] { accent-color: #e9dcc0; width: 180px; }
+  #settingsOverlay .set-row input[type=range] { accent-color: var(--menu-ink); width: 180px; }
   #settingsOverlay #settingsClose {
     background: none; color: var(--menu-ink); border: none; border-radius: 0; margin-top: 28px; padding: 4px 0;
     font-family: var(--menu-serif); font-style: italic; font-weight: 600; font-size: 18px; letter-spacing: 0.24em;
@@ -894,12 +902,12 @@
     <div class="mc-sub" id="fpNewsSub"></div>
     <ul id="fpNewsList"></ul>
   </div>
-  <button id="fpBack" class="fp-sel">&larr; Back</button>
+  <button id="fpBack">&larr; Back</button>
   <div id="fpRedeemCard" class="menu-card fp-sub">
     <div class="mc-title">Redeem a Code</div>
     <div class="mc-sub">Gifts from the makers</div>
-    <div class="mc-body">Type the code you were given and press Redeem.</div>
-    <div style="height:72px"></div>
+    <div class="mc-body">Your name, then the code you were given.</div>
+    <div style="height:150px"></div>
   </div>
   <div id="fpSelHead" class="fp-sel">Your name &nbsp;·&nbsp; your calling</div>
   <input id="username" maxlength="16" placeholder="Your name" autocomplete="off" spellcheck="false">
@@ -8385,6 +8393,15 @@ function fpGo(st) {
   const el = document.getElementById(focusTo);
   if (el && typeof el.focus === "function") { try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); } }
   if (st === "connect") { const cb = document.getElementById("connectBox"); if (cb) cb.open = true; }
+  /* Review fix: whether the character screen needs the Connect card is
+     decided as you arrive, not live — typing into it must not hide it. */
+  if (st === "select") { const dot = document.getElementById("connDot"); loginEl.classList.toggle("fp-needconn", !(dot && dot.classList.contains("connected"))); }
+  /* Review fix: stepping back to the title during the returning-player
+     resume pause cancels that auto-enter through its own cancel button. */
+  const rnEl = document.getElementById("resumeNotice");
+  if (st === "title" && rnEl && rnEl.style.display && rnEl.style.display !== "none") {
+    const rc = document.getElementById("resumeCancel"); if (rc) rc.click();
+  }
   return fpState;
 }
 function fpTitleItems() {
@@ -8395,8 +8412,10 @@ function fpShowNews(show) {
   const n = document.getElementById("fpNews");
   if (n) n.style.display = show ? "block" : "none";
 }
-function fpDismissNews() {
-  fpShowNews(false);
+function fpDismissNews() { fpShowNews(false); }
+/* Review fix: "shows once per device per UPDATE_NAME" — it is marked seen
+   the moment it is shown; the What's new link brings it back any time. */
+function fpMarkNewsSeen() {
   try { localStorage.setItem(FP_NEWS_KEY, UPDATE_NAME); } catch (e) { /* private window: shown again next time */ }
 }
 function fpSyncStatus() {
@@ -8404,7 +8423,6 @@ function fpSyncStatus() {
   const ok = !!dot && dot.classList.contains("connected");
   if (st) st.classList.toggle("ok", ok);
   if (tx) tx.textContent = ok ? "World connected" : "Connect your world";
-  if (loginEl) loginEl.classList.toggle("fp-needconn", !ok);
 }
 (function fpWire() {
   const $id = id => document.getElementById(id);
@@ -8418,11 +8436,12 @@ function fpSyncStatus() {
   const sub = $id("fpNewsSub"), list = $id("fpNewsList");
   if (sub) sub.textContent = UPDATE_NAME;
   if (list) list.innerHTML = FP_NEWS.map(t => `<li>${t}</li>`).join("");
-  fpShowNews(!fpNewsSeen());
+  if (!fpNewsSeen()) { fpShowNews(true); fpMarkNewsSeen(); }
   const on = (id, fn) => { const el = $id(id); if (el) el.addEventListener("click", fn); };
   on("fpPlay", () => fpGo("select"));
   on("fpRedeem", () => fpGo("redeem"));
-  on("fpCredits", () => { if (typeof openSettings === "function") openSettings("credits"); });
+  on("fpCredits", () => { if (typeof openSettings === "function") openSettings("credits"); const t = $id("tabCredits"); if (t) t.focus(); });
+  on("settingsBtn", () => { requestAnimationFrame(() => { const t = document.querySelector("#settingsOverlay .set-tab.selected"); if (t) t.focus(); }); });
   on("fpBack", () => fpGo("title"));
   on("fpStatus", () => fpGo("connect"));
   on("fpNewsLink", () => fpShowNews(true));
@@ -8454,7 +8473,15 @@ function fpSyncStatus() {
     if (!loginEl || loginEl.style.display === "none") return;
     if (document.body.classList.contains("intro-lock")) return;
     const ov = $id("settingsOverlay");
-    if (ov && ov.classList.contains("open")) return;
+    if (ov && ov.classList.contains("open")) {
+      /* Review fix: Esc closes Settings (spec PART E) — unless a key is being rebound */
+      if (e.key === "Escape" && !kbCapture && typeof closeSettings === "function") {
+        e.preventDefault(); closeSettings();
+        const back = $id("settingsBtn"); if (back && fpState === "title") back.focus();
+      }
+      return;
+    }
+    if (e.key === "Escape" && fpState === "title") { const n = $id("fpNews"); if (n && n.style.display !== "none") fpDismissNews(); return; }
     const typing = document.activeElement && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
     if (e.key === "Escape" && fpState !== "title") { e.preventDefault(); fpGo("title"); return; }
     if (fpState === "title" && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
@@ -8473,7 +8500,13 @@ function fpSyncStatus() {
       cards[j].click();
     }
   });
-  requestAnimationFrame(() => { if (fpState === "title") { const p0 = $id("fpPlay"); if (p0) p0.focus(); } });
+  /* Review fix: no focus until the intro has handed over, or Enter/Space
+     meant to skip the intro would press Play. */
+  const focusWhenReady = () => {
+    if (document.body.classList.contains("intro-lock") || document.body.classList.contains("intro-hide")) { requestAnimationFrame(focusWhenReady); return; }
+    if (fpState === "title" && loginEl.style.display !== "none") { const p0 = $id("fpPlay"); if (p0) p0.focus(); }
+  };
+  requestAnimationFrame(focusWhenReady);
 })();
 
 /* PART C — the backdrop. The live-world option was weighed and NOT taken:
