@@ -5,3 +5,6 @@
 node_modules/
 shots/
 .temp/
+
+# gauntlet workers: temporary fast-iteration harness copies
+debug/_*fast.js
