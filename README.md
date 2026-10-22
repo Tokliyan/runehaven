@@ -1557,3 +1557,245 @@ only triggers for the currently-active bounty species specifically.
 - **Preservation:** every respawn timer gate (`RESPAWN_SECONDS`, the
   Hollow Choir 0 s) is unchanged. The existing `dropAllItems` and raid
   gates still pass.
+
+---
+
+## QUEUED, AFTER REAL STAKES — the next build.
+## Confirmed, locked spec for the next build (Front Page Rework — Title Screen, Character Select & Settings)
+
+**Owner request (2026-10-22):** rework the front page entirely, in a
+AAA-game style. The two reference images the owner gave were Thronefall's
+Settings screen and its upgrade tooltip:
+- the Settings screen has a large blackletter title, a tab row in widely
+  spaced italic small caps with the active tab shown as "-GAMEPLAY-",
+  italic serif option labels with small square checkboxes on the right,
+  and a faint destructive action at the bottom;
+- the tooltip is a dark rounded card with a blackletter heading, a
+  small-caps subheading, serif body text, and a row of round icon badges.
+
+This ships as a **major update for all players**. It is front-end only:
+no gameplay, network, database or HUD-in-world change of any kind.
+
+**What exists now (checked 2026-10-22):** after the intro card
+(`#introCard`, "Hashbrown Studios … presents RuneHaven"), `#login` is one
+centred column:
+- the "RUNEHAVEN" heading, the tagline and `#settingsBtn`;
+- the `#username` box (plus `#pinInput`, `#pinNotice`, `#pinProtect`);
+- `#classRow` with 5 `.class-card` boxes;
+- the `#connectBox` details;
+- `#resumeNotice`, `#loginError` and `#enterBtn`;
+- `#redeemRow` and `#redeemMsg`.
+
+Fonts come from one Google Fonts `@import` (Almendra Display and Barlow).
+The Settings overlay (`#settingsOverlay`) is a generic dark dialog with
+boxed ON/OFF buttons.
+
+**Rules for this run:**
+- **Behaviour is untouched.** Every existing element id keeps its id, its
+  element type and its handler. That covers `#login`, `#username`,
+  `#pinInput`, `#pinNotice`, `#pinNoticeX`, `#pinProtect`, `#classRow`,
+  `.class-card` (same 5, same order, Beastmaster 4th), `#connectBox`,
+  `#sbUrl`, `#sbKey`, `#connDot`, `#resumeNotice`, `#resumeCancel`,
+  `#loginError`, `#enterBtn`, `#redeemInput`, `#redeemBtn`, `#redeemMsg`,
+  `#settingsBtn` (still a child of `#login`), `#settingsOverlay`, every
+  `#sec*` section, every `#set*`/`#sld*`/`#val*`/`#btnMute*` control, and
+  `#introCard`.
+- The settings toggle buttons keep their `ON`/`OFF` text content, because
+  gates read it. They may be *drawn* as checkboxes with CSS.
+- The ENTER flow, the PIN gate order, the resume pause, the redeem path, the
+  one `AudioEngine.init()` call site and the intro rules
+  `body.intro-hide #login { opacity: 0; }` /
+  `body.intro-exit #login { transition: opacity 700ms` stay byte-identical.
+- Re-parenting elements into new wrappers is fine. Changing what they do is
+  not.
+- No new files. The game stays one HTML file.
+- **Fonts:** extend the existing `@import` with **Grenze Gotisch**
+  (700–800; display/blackletter) and **Cormorant Garamond** (500, 600, 600
+  italic; menu and body). The in-game HUD keeps Barlow. Nothing
+  in-world changes font.
+- Read `runehaven-art-style/SKILL.md` first. The in-world art direction is
+  locked. This pass is the menu layer only.
+- Desktop widths 1024–2560 must look right. Phones are not a target (S3
+  dropped), but nothing may overflow or become unreachable at 1024×640.
+
+**PART A — Design tokens.** Add one CSS block of `--menu-*` custom
+properties, and use them for everything in this pass:
+- ink `#e9dcc0` (parchment text), dim `#9b917d`, faint `#5e574b`;
+- gold `#e8b64c` (the game's existing gold: active, hover and focus only);
+- panel `rgba(18,19,23,0.94)`, card `#16171b`, card edge
+  `rgba(233,220,192,0.10)`, radius 14px;
+- `--menu-display: 'Grenze Gotisch', 'Almendra Display', serif` and
+  `--menu-serif: 'Cormorant Garamond', Georgia, serif`;
+- small caps style: `font-variant: small-caps` or uppercase with
+  `letter-spacing: 0.32em` at 12–14px.
+
+There are no new colours outside these tokens. Fallback fonts must still
+read well if Google Fonts is blocked.
+
+**PART B — The title screen (the first thing after the intro card).**
+- **Layout:** full-bleed. The logo **"RuneHaven"** is in `--menu-display`
+  at ~96px (clamp 64–112px), parchment ink with one soft dark drop shadow
+  (no gold glow), set top-left with generous margins (≈8vw left, ≈10vh
+  top). The tagline sits beneath it in spaced small caps, dim: "ONE WORLD
+  · ONE HISTORY · SHARED BY ALL".
+- **A vertical menu at the left, under the logo:** **Play**, **Settings**
+  (this IS `#settingsBtn`), **Redeem a Code**, **Credits** (opens the
+  Settings overlay on its Credits tab).
+  - Items are `--menu-serif` italic ~26px, dim.
+  - Hover and keyboard focus turn an item gold and frame it with dashes:
+    "– Play –".
+  - ↑/↓ move the focus, Enter or Space activates, and Esc steps back.
+  - The first item has focus on arrival.
+  - Every item is a real `<button>`, so S8's click sound covers it once
+    audio exists.
+- **Bottom-left:** the update banner, small caps, dim. Its text is
+  `UPDATE_NAME` (TUNABLE const, default "THE REFORGING UPDATE") plus the
+  version.
+- **Bottom-right:** the world status. It reuses `#connDot`'s state as
+  "World connected" or "Connect your world", and clicking it opens the
+  Connect panel (PART D).
+- **"What's new":** a small card (PART E style) shows the 5 headline
+  changes of this update:
+  - the roaming Elder Drake and Bounty Board;
+  - weather;
+  - death and raid stakes;
+  - combat feel and sound;
+  - the new front page.
+
+  It shows once per device per `UPDATE_NAME` (localStorage key, in a
+  try/catch). It can be dismissed with ✕ and reopened from a small "What's
+  new" link.
+
+**PART C — The backdrop (live world, with a safe fallback).**
+- **Goal:** behind the title screen, the real world drawn by the game's own
+  renderer, with the camera drifting slowly (≈2 tiles/s) along a fixed
+  scenic path near Spawn and the Eternal Tower. On top of it go a flat dark
+  vignette (left 70% darker, so the menu reads) and a flat
+  `rgba(10,10,12,0.35)` wash.
+- **Constraints:**
+  - nothing is sent or saved;
+  - no `players` row, no channel and no Supabase call happen before ENTER,
+    exactly as now;
+  - any stand-in camera/spectator object exists only on the title screen
+    and is gone before `loginPlayer` runs;
+  - no HUD card shows over the menu;
+  - the menu loop stops the instant ENTER starts, and the game loop starts
+    exactly as today;
+  - it runs at least 30 fps headless at 1280×720 (measure, the run6 way).
+- **Fallback:** if the renderer can't run safely before login (it reads `me`
+  in many places; that is the build's call after reading it), ship a
+  **static fallback** instead. That is a flat dark field with the same
+  vignette, and slow drifting gold motes drawn on a small canvas, capped at
+  40, off under Reduce motion. Report the fallback as YELLOW with the
+  reason. Never ship a backdrop that can break login.
+
+**PART D — Character select (after Play).** A second state of the same
+screen. The logo shrinks to the top-left, a "← Back" text button returns to
+the title, and Esc does the same. Contents:
+- **Name:** `#username` as a borderless underlined field, `--menu-serif`
+  italic ~28px, with the placeholder "Your name". `#pinInput`,
+  `#pinNotice` and `#pinProtect` sit directly beneath it in the same
+  style, with all their logic unchanged.
+- **Class cards:** the 5 `.class-card`s are restyled as PART E cards:
+  - the class portrait (the existing drawn sprite, scaled up crisply with
+    `image-rendering: pixelated` where it is a canvas or image);
+  - the class name in `--menu-display`;
+  - the role line in spaced small caps;
+  - the description in serif;
+  - "Best with …" in dim italic;
+  - a row of three round badges for that class's strengths (simple flat
+    glyphs in CSS or inline SVG, no image files).
+
+  The selected card lifts 6px with a gold edge. The others stay dim.
+  ←/→ change the selection when the name field isn't focused.
+- **Connect your world:** `#connectBox` shows here only while the world
+  isn't configured (`#connDot` not green), or when it is opened from the
+  title's status link. Restyle it as a card and keep its fields and hint.
+- **The big action:** `#enterBtn` reads "– Enter the World –" in
+  `--menu-display` ~30px with a gold underline bar. `#resumeNotice` and
+  `#loginError` sit directly above it, restyled in the card language.
+- **Redeem:** `#redeemRow`/`#redeemMsg` move behind the title screen's
+  "Redeem a Code" item, shown as a small card on this screen. Redeeming
+  keeps working before login exactly as now; the input and button keep
+  their ids.
+
+**PART E — The card and the Settings overlay (the reference look).**
+- **One card component** (`.menu-card`) styles the What's new card, the
+  class cards, Connect, Redeem and the in-overlay notes: `--menu-card`
+  fill, 14px radius, 1px card-edge border, 18–22px padding, a
+  `--menu-display` heading, a spaced small-caps subheading and a serif body.
+  Round badge row: 40px circles with a 1.5px ink ring, and the active one
+  is filled ink with a dark glyph, as in the reference.
+- **`#settingsOverlay` becomes a full-screen page in the reference's
+  style:**
+  - a near-black panel;
+  - a "Settings" title in `--menu-display` ~56px, ink;
+  - the existing tabs restyled as a row of widely spaced italic small caps
+    (dim), with the active tab gold-free ink and bold, framed with dashes:
+    "-GRAPHICS-";
+  - option rows as italic serif labels (~17px, ink) with notes beneath in
+    dim serif;
+  - the ON/OFF toggles drawn as 14px squares, with an empty outline for
+    OFF and an inner filled square for ON (text kept, visually hidden);
+  - sliders as a thin ink line with a small square thumb;
+  - "Reset" actions faint until hovered;
+  - Close as an "– Close –" text button, plus Esc.
+- Keyboard: Tab order is sane, the focus ring is a visible 1px gold
+  outline, and nothing is reachable only by mouse.
+
+**PART F — The intro card.** Keep its timing, its skip (Escape or click)
+and its two lines ("Hashbrown Studios", "in collaboration with STG Records
+presents"). Set "RuneHaven" in `--menu-display`. The intro then hands off
+to the title screen with the existing fade. The title screen fades in, and
+does not pop.
+
+**Proof gates** (standard gauntlet, plus):
+- **Preservation:**
+  - every id listed above exists exactly once, with the same element type;
+  - `#settingsBtn` is still a child of `#login`;
+  - `.class-card` count is 5, with Beastmaster 4th;
+  - the harness login (`.class-card`[3] click → `#username` →
+    `#enterBtn.onclick()`) still enters the world;
+  - every existing run4 gate passes unmodified, unless the change is a
+    pure text-pin rename, which must be listed with its reason;
+  - `AudioEngine.init()` is still at exactly one site.
+- **States:**
+  - title → Play → character select → Back → title, and Esc, all work;
+  - ↑/↓/Enter drives the title menu;
+  - Credits opens the overlay on `#secCredits`;
+  - Redeem shows the redeem card;
+  - the status link opens Connect;
+  - What's new shows once per `UPDATE_NAME`, then stays dismissed after a
+    reload, and reopens from its link.
+- **Settings:**
+  - every toggle still reads `ON`/`OFF` and flips its setting;
+  - each square shows checked exactly when its setting is on (computed
+    style or class);
+  - the active tab shows the dashes;
+  - Esc closes.
+- **Backdrop:**
+  - before ENTER: no `players` request, no channel and no `sb` call
+    (stubbed and counted);
+  - `me` is null again (or never set) when `loginPlayer` starts;
+  - no `.hud` card is visible over the title;
+  - the menu loop stops at ENTER;
+  - fps ≥ 30 headless, or the static fallback is shipped and reported
+    YELLOW;
+  - motes stay at 40 or under, and at 0 under Reduce motion.
+- **Fonts:** the `@import` names Grenze Gotisch and Cormorant Garamond, and
+  menu text uses the `--menu-*` font tokens. No new colour literal is used
+  outside the token block in the new CSS. Count hex/rgba literals in the
+  added CSS against the token list.
+- **Visual:**
+  - screenshots at 1280×720 and 1920×1080 of the title, What's new,
+    character select with a class picked, Connect open, Redeem open, and
+    Settings on each tab;
+  - the same at 1024×640: nothing overlaps or clips (bounding-box check of
+    every visible menu element against every other);
+  - score the shots against GAUNTLET.md's "UI is one cohesive style, never
+    overlapping".
+- **Release:** a "What's new" entry list exists, and its 5 lines match the
+  shipped features above.
+
+**After this version ships successfully, do not start any further version
+automatically** — wait for `NEXT_BUILD.md` to be updated.

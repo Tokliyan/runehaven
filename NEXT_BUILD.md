@@ -1,1 +1,1 @@
-Nothing to build tonight — report a "nothing to build" night (README step 9). Every locked README spec has shipped through Real Stakes; the remaining gauntlet stages (S8 Feel pass, S9 Final report in GAUNTLET.md) are being built in an owner-run session, and a nightly build of them would clash. The owner will point this file at the next spec.
+Build exactly per "Confirmed, locked spec for the next build (Front Page Rework — Title Screen, Character Select & Settings)" in README.md.
