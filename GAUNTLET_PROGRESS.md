@@ -56,5 +56,11 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
 - Independent Opus review: 2 bugs fixed (false "damaged" for Architect/braced pieces; a failed base read reported the whole base destroyed) + 7 risks fixed. Known limit: the PACK mark does not survive a page reload.
 - `NEXT_BUILD.md` -> nothing to build (every locked README spec has shipped; S8/S9 are gauntlet-session work).
 
+## S8 — Feel pass: SHIPPED to `main`
+- **Hit-stop** 50 ms on heavy hits (crit, kill blow, >= 1.5x weapon damage, or a hit taken >= 30% max hp), >= 350 ms apart, wall-clock mob wind-ups/taming pushed by the freeze; **screen shake** tunable with a Settings off switch; **WebAudio-synthesised SFX** (swing, hit, heavy, hurt, pickup, level-up, UI click) through the sfx gain, no files.
+- **First five minutes** walked as a new account with real key presses: fixed new players spawning up to ~450 tiles from the Tutorial Grounds, a start spot next to trees / the forge prompt, no next goal after the tutorial (now points at the Bounty Board), silent first gather and dummy strike. Listed (not fixed): signpost text under the Spawn Forge label, inventory panel over the day card's last line, toasts overwriting each other, worldgen trees on the Grounds.
+- run4 1987 -> **2015 PASS** (28 S8 gates, 22 mutations each caught); one v58 gate made deterministic (S7 weather held clear during its one-tick speed measurement).
+- Independent Opus review: 2 bugs + 8 risks fixed (see the changelog).
+
 ## Remaining stages
-S8 Feel pass, S9 Final report.
+S9 Final report. (Owner add-on 2026-10-22: Front Page Rework — built in the evening session, see README.)
