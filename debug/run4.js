@@ -4295,7 +4295,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           sentBroadcasts.slice(sentBefore)
             .filter(m => m && m.event === 'world_reset_pending').length === 1]);
       }
-      results.push(['and starts a countdown of exactly ten seconds',
+      results.push([`and starts a countdown of exactly ten seconds (deadline - now - 10000 = ${Math.round(fired.worldResetAt - Date.now() - 10000)} ms)`,
         fired.worldResetAt > 0 &&
         Math.abs(fired.worldResetAt - Date.now() - 10000) < 1500]);
       // the countdown is actually on screen, and it is the only thing that is
