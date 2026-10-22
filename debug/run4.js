@@ -6428,8 +6428,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           /* S7 Real Stakes PART C adds a sixth setItem, ordered by its spec: the
              count of base pieces you owned, under rh_base_count_<username> —
              a number, never a PIN or credential (the S7 block pins its key). */
-          (gameScript.match(/localStorage\.setItem\(/g) || []).length === 6 &&
-          gameScript.indexOf('localStorage.setItem(baseCountKey(), JSON.stringify({ count: mine.length, hp }))') > 0]);
+          /* Front Page Rework adds a seventh, ordered by its spec: What's new is
+             shown once per device per update, keyed rh_news_seen = the update's
+             name — never a PIN or credential (pinned below). */
+          (gameScript.match(/localStorage\.setItem\(/g) || []).length === 7 &&
+          gameScript.indexOf('localStorage.setItem(baseCountKey(), JSON.stringify({ count: mine.length, hp }))') > 0 &&
+          gameScript.indexOf('localStorage.setItem(FP_NEWS_KEY, UPDATE_NAME)') > 0]);
         enterEl46.onclick = realClick;
         nameEl46.value = 'BootTest';
         try { window.localStorage.removeItem('rh_last_user'); } catch (e) {}
@@ -13794,6 +13798,368 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       calm8();
     } else {
       results.push(['S8: the feel-pass hooks exist (debugFeelInfo, debugSetFeel, hitStop, landHit, noteHurt, shakeOffset, loop, tutorialStartSpot)', false]);
+    }
+
+
+    /* ===================== Front Page Rework — title screen, character select, Settings =====
+       README "Confirmed, locked spec for the next build (Front Page Rework ...)" — its "Proof gates"
+       list is this block's checklist. 1 preservation (ids, tags, the intro rules, one AudioEngine
+       init site); 2 the four states and the keyboard; 3 the state rules only HIDE (ENTER keeps its
+       .ready gate); 4 stepping back to the title cancels a resume pause; 5 What's new (once per
+       UPDATE_NAME, five entries, dismiss and reopen); 6 Settings (set-toggle squares, the dashes,
+       the old .set-tab rules untouched); 7 the class cards; 8 the backdrop (PART C shipped the
+       STATIC painted fallback, so the fallback's rules are what is gated: no Supabase from the
+       front-page code, motes <= FP_MOTES and 0 under Reduce motion, the loop stops once #login is
+       hidden); 9 fonts and tokens. jsdom has no layout, so these are DOM, class, computed-style
+       and CSS-text facts, never pixels.
+       The harness login already happened, so #login is display:none and the backdrop loop is
+       off; the state/keyboard gates show it for a moment (style.display = '') and put 'none'
+       back. The pre-login facts (motes, Supabase, news after a reload) are measured on FRESH jsdom
+       boots that never log in. Everything this block moves is put back at the end. */
+    if (window.debugFrontInfo && window.fpGo && window.fpTitleItems && window.fpNewsSeen && window.fpShowNews &&
+        window.fpMarkNewsSeen && window.fpDismissNews && window.fpSyncStatus && window.fpBackdropTick &&
+        window.debugSetResume && window.resumePause && window.openSettings && window.closeSettings) {
+      const docF = window.document, $F = id => docF.getElementById(id);
+      const loginF = $F('login');
+      const infoF = () => window.debugFrontInfo();
+      const tickF = (ms = 8) => new Promise(r => setTimeout(r, ms));
+      const keyF = (k) => { docF.dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+                            docF.dispatchEvent(new window.KeyboardEvent('keyup', { key: k, bubbles: true, cancelable: true })); };
+      const rqF = rafQ.length;
+      const stripCss = s => s.replace(/\/\*[\s\S]*?\*\//g, '');
+      /* every `selector { body }` leaf rule of a stylesheet slice (a @media wrapper has no body of its own) */
+      const rulesOf = css => { const out = []; const re = /([^{}]+)\{([^{}]*)\}/g; let m; while ((m = re.exec(stripCss(css)))) out.push({ sel: m[1].trim(), body: m[2] }); return out; };
+
+      // ---- the CSS slices every gate below reads ----
+      const cssStart = html.indexOf('FRONT PAGE REWORK (README');
+      const cssEnd = html.indexOf('/* PART F', cssStart);
+      const cssFP = (cssStart > 0 && cssEnd > cssStart) ? html.slice(cssStart, cssEnd) : '';
+      const rootAt = cssFP.indexOf(':root {'), rootEnd = cssFP.indexOf('}', rootAt);
+      const cssTok = rootAt >= 0 ? cssFP.slice(rootAt, rootEnd + 1) : '';
+      const cssBody = rootAt >= 0 ? cssFP.slice(0, rootAt) + cssFP.slice(rootEnd + 1) : cssFP;
+      const rulesFP = rulesOf(cssBody);
+      const rulesAll = rulesOf(html.slice(html.indexOf('<style'), html.indexOf('</style>')));
+
+      // ---- snapshot of everything this block moves ----
+      const st0 = {
+        fpState: infoF().state, display: loginF.style.display, cls: loginF.className, body: docF.body.className,
+        active: docF.activeElement, connOpen: $F('connectBox').open, newsDisp: $F('fpNews').style.display,
+        resumeDisp: $F('resumeNotice').style.display, ready: $F('enterBtn').classList.contains('ready'),
+        ovOpen: $F('settingsOverlay').classList.contains('open'), pauseMs: window.debugSessionInfo().pauseMs,
+        ls: window.localStorage, sets: Object.assign({}, window.debugSettingsInfo().SETTINGS),
+        back: infoF().backdropOn, frames: infoF().backdropFrames,
+      };
+      const restoreLogin = () => { window.closeSettings(); window.fpGo(st0.fpState); loginF.style.display = st0.display; loginF.className = st0.cls; $F('connectBox').open = st0.connOpen;
+        $F('resumeNotice').style.display = st0.resumeDisp; if (st0.body !== docF.body.className) docF.body.className = st0.body; };
+
+      /* ---- 1. preservation ---- */
+      {
+        /* the 44 ids the spec lists (login card, redeem, the settings overlay and every #sec* / #set* / #sld* / #val* / #btnMute*, #introCard),
+           with the element type each had before the rework (read off the pre-rework file, 77fa60d) */
+        const TAGS = { login:'DIV', username:'INPUT', pinInput:'INPUT', pinNotice:'DIV', pinNoticeX:'BUTTON', pinProtect:'BUTTON', classRow:'DIV', connectBox:'DETAILS', sbUrl:'INPUT', sbKey:'INPUT', connDot:'SPAN',
+          resumeNotice:'DIV', resumeCancel:'BUTTON', loginError:'DIV', enterBtn:'BUTTON', redeemInput:'INPUT', redeemBtn:'BUTTON', redeemMsg:'DIV', settingsBtn:'BUTTON', settingsOverlay:'DIV', introCard:'DIV',
+          settingsCard:'DIV', secGraphics:'DIV', setFullscreen:'BUTTON', setReduceMotion:'BUTTON', setScreenShake:'BUTTON', secAccess:'DIV', setTextSmall:'BUTTON', setTextMedium:'BUTTON', setTextLarge:'BUTTON',
+          setColorblind:'BUTTON', secAudio:'DIV', sldMaster:'INPUT', valMaster:'SPAN', btnMuteMaster:'BUTTON', sldMusic:'INPUT', valMusic:'SPAN', btnMuteMusic:'BUTTON', sldSfx:'INPUT', valSfx:'SPAN', btnMuteSfx:'BUTTON',
+          secControls:'DIV', secCredits:'DIV', settingsClose:'BUTTON' };
+        const bad = [];
+        for (const [id, tag] of Object.entries(TAGS)) {
+          const n = docF.querySelectorAll('[id="' + id + '"]').length, el = $F(id);
+          if (n !== 1 || !el || el.tagName !== tag) bad.push(id + ':' + n + (el ? '/' + el.tagName : '/missing'));
+        }
+        results.push([`Front Page 1: preservation — all ${Object.keys(TAGS).length} spec ids exist exactly once with the element type they had before the rework (${bad.length ? 'WRONG: ' + bad.join(', ') : 'none wrong'}); #settingsBtn's parent is #login (${$F('settingsBtn') && $F('settingsBtn').parentNode === loginF})`,
+          bad.length === 0 && !!$F('settingsBtn') && $F('settingsBtn').parentNode === loginF]);
+        const cards = [...docF.querySelectorAll('.class-card')], names = cards.map(c => (c.querySelector('.cname') || {}).textContent);
+        results.push([`Front Page 1: ${cards.length} .class-card in order [${names.join(', ')}], the 4th is ${names[3]}; the harness login (.class-card[3] click -> #username -> #enterBtn.onclick()) entered the world — #login was display:'${st0.display}' when this block started`,
+          cards.length === 5 && names[3] === 'Beastmaster' && st0.display === 'none']);
+        const pins = ['<button id="enterBtn">ENTER THE WORLD</button>', '<div id="resumeNotice"', '<input id="redeemInput"', 'body.intro-hide #login { opacity: 0; }', 'body.intro-exit #login { transition: opacity 700ms'];
+        const have = pins.map(p => html.indexOf(p) > 0);
+        const initSites = gameScript.split('AudioEngine.init()').length - 1;
+        results.push([`Front Page 1: the byte-pinned markup and intro rules are present [${pins.map((p, i) => (have[i] ? 'yes' : 'NO') + ' ' + p.slice(0, 40)).join(' | ')}]; AudioEngine.init() appears ${initSites}x (one call site)`,
+          have.every(Boolean) && initSites === 1 && gameScript.split('AudioEngine.init()').length === 2]);
+      }
+
+      /* ---- 2. the states and the keyboard ---- */
+      {
+        const rqBefore = rafQ.length;
+        loginF.style.display = '';
+        const bodyHad = docF.body.classList.contains('intro-lock'); docF.body.classList.remove('intro-lock');
+        const has = c => loginF.classList.contains(c);
+        const out = {};
+        try {
+          window.fpGo('select'); out.selSel = has('fp-select'); out.selTitle = has('fp-title'); out.selState = infoF().state; out.selFocus = docF.activeElement && docF.activeElement.id;
+          window.fpGo('title');  out.titSel = has('fp-select'); out.titTitle = has('fp-title'); out.titState = infoF().state; out.titFocus = docF.activeElement && docF.activeElement.id;
+          window.fpGo('redeem'); out.redRed = has('fp-redeem'); out.redSub = has('fp-sub-open'); out.redFocus = docF.activeElement && docF.activeElement.id;
+          window.fpGo('connect'); out.conCon = has('fp-connect'); out.conOpen = $F('connectBox').open === true; out.conSub = has('fp-sub-open');
+          window.fpGo('title'); out.leaveSub = has('fp-sub-open') || has('fp-connect') || has('fp-redeem');
+          // the same transitions through the real clicks: Play -> select, Back -> title, Redeem -> redeem, status -> connect
+          $F('fpPlay').click(); out.cPlay = infoF().state; $F('fpBack').click(); out.cBack = infoF().state;
+          $F('fpRedeem').click(); out.cRed = infoF().state; $F('fpBack').click(); out.cBack2 = infoF().state;
+          $F('fpStatus').click(); out.cStat = infoF().state + '/' + $F('connectBox').open; $F('fpBack').click(); out.cBack3 = infoF().state;
+          // Esc from every non-title state goes back to the title (a real keydown on document)
+          window.fpGo('select'); keyF('Escape'); out.escSel = infoF().state;
+          window.fpGo('redeem'); keyF('Escape'); out.escRed = infoF().state;
+          window.fpGo('connect'); keyF('Escape'); out.escCon = infoF().state;
+          // ArrowDown / ArrowUp on the title menu
+          window.fpGo('title'); $F('fpPlay').focus();
+          const order = window.fpTitleItems().map(e => e.id);
+          keyF('ArrowDown'); out.down1 = docF.activeElement && docF.activeElement.id;
+          keyF('ArrowDown'); out.down2 = docF.activeElement && docF.activeElement.id;
+          keyF('ArrowDown'); out.down3 = docF.activeElement && docF.activeElement.id;
+          keyF('ArrowDown'); out.down4 = docF.activeElement && docF.activeElement.id;
+          $F('fpPlay').focus(); keyF('ArrowUp'); out.up1 = docF.activeElement && docF.activeElement.id;
+          out.order = order.join('>');
+          // Credits opens the Settings overlay on the Credits section; Esc closes it
+          window.closeSettings();
+          $F('fpCredits').click();
+          out.crOpen = $F('settingsOverlay').classList.contains('open'); out.crShown = $F('secCredits').classList.contains('shown'); out.crGfx = $F('secGraphics').classList.contains('shown'); out.crTab = $F('tabCredits') ? $F('tabCredits').classList.contains('selected') : null;
+          keyF('Escape'); out.crEsc = $F('settingsOverlay').classList.contains('open');
+          // the Settings item opens Graphics; Esc closes that too
+          $F('settingsBtn').click(); out.sbOpen = $F('settingsOverlay').classList.contains('open'); out.sbGfx = $F('secGraphics').classList.contains('shown'); keyF('Escape'); out.sbEsc = $F('settingsOverlay').classList.contains('open');
+        } finally { restoreLogin(); }
+        const noRestart = !rafQ.slice(rqBefore).some(cb => cb === window.fpBackdropTick);
+        rafQ.splice(rqBefore);
+        out.after = infoF().backdropOn; out.dispAfter = loginF.style.display;
+        results.push([`Front Page 2: the four states — fpGo('select'): fp-select ${out.selSel}, fp-title ${out.selTitle}, state ${out.selState}, focus #${out.selFocus}; fpGo('title'): fp-select ${out.titSel}, fp-title ${out.titTitle}, state ${out.titState}, focus #${out.titFocus}; 'redeem': fp-redeem ${out.redRed} + fp-sub-open ${out.redSub} (focus #${out.redFocus}); 'connect': fp-connect ${out.conCon}, #connectBox.open ${out.conOpen}, fp-sub-open ${out.conSub}; leaving them clears the sub classes (${!out.leaveSub})`,
+          out.selSel === true && out.selTitle === false && out.selState === 'select' && out.selFocus === 'username' && out.titSel === false && out.titTitle === true && out.titState === 'title' && out.titFocus === 'fpPlay' &&
+          out.redRed === true && out.redSub === true && out.conCon === true && out.conOpen === true && out.conSub === true && out.leaveSub === false]);
+        results.push([`Front Page 2: the real clicks — Play -> ${out.cPlay}, Back -> ${out.cBack}, Redeem -> ${out.cRed}, Back -> ${out.cBack2}, the status link -> ${out.cStat}, Back -> ${out.cBack3}; a real Escape keydown on document from select -> ${out.escSel}, from redeem -> ${out.escRed}, from connect -> ${out.escCon} (shown with #login display:'' for the keypresses, '${out.dispAfter}' again afterwards)`,
+          out.cPlay === 'select' && out.cBack === 'title' && out.cRed === 'redeem' && out.cBack2 === 'title' && out.cStat === 'connect/true' && out.cBack3 === 'title' && out.escSel === 'title' && out.escRed === 'title' && out.escCon === 'title' && out.dispAfter === st0.display]);
+        results.push([`Front Page 2: the title menu is ${out.order}; ArrowDown from #fpPlay -> #${out.down1}, then #${out.down2}, #${out.down3}, and the fourth wraps to #${out.down4}; ArrowUp from #fpPlay wraps to #${out.up1}`,
+          out.order === 'fpPlay>settingsBtn>fpRedeem>fpCredits' && out.down1 === 'settingsBtn' && out.down2 === 'fpRedeem' && out.down3 === 'fpCredits' && out.down4 === 'fpPlay' && out.up1 === 'fpCredits']);
+        results.push([`Front Page 2: #fpCredits click opens the Settings overlay (open ${out.crOpen}) on the Credits section (#secCredits shown ${out.crShown}, #secGraphics shown ${out.crGfx}, #tabCredits selected ${out.crTab}); Esc closes it (open ${out.crEsc}); #settingsBtn opens Graphics (open ${out.sbOpen}, #secGraphics shown ${out.sbGfx}) and Esc closes that too (open ${out.sbEsc})`,
+          out.crOpen === true && out.crShown === true && out.crGfx === false && out.crEsc === false && out.sbOpen === true && out.sbGfx === true && out.sbEsc === false]);
+        results.push([`Front Page 2: the harness is put back — the backdrop loop did not restart (no fpBackdropTick queued: ${noRestart}; debugFrontInfo().backdropOn ${out.after}), the overlay is closed, state ${infoF().state}, #login display '${loginF.style.display}', body classes '${docF.body.className}' (was '${st0.body}')`,
+          noRestart && out.after === false && !$F('settingsOverlay').classList.contains('open') && infoF().state === st0.fpState && loginF.style.display === st0.display && docF.body.className === st0.body]);
+      }
+
+      /* ---- 3. the state rules only HIDE: #enterBtn keeps its own .ready gate ---- */
+      {
+        const enter = $F('enterBtn'), cs = () => window.getComputedStyle(enter);
+        const out = {};
+        try {
+          loginF.style.display = '';
+          window.fpGo('select'); enter.classList.remove('ready');
+          out.pe = cs().pointerEvents; out.op = cs().opacity;
+          enter.classList.add('ready'); out.peReady = cs().pointerEvents; out.opReady = cs().opacity;
+          enter.classList.remove('ready');
+          window.fpGo('title'); out.vTitle = cs().visibility;
+          window.fpGo('select'); out.vSelect = cs().visibility;
+        } finally { enter.classList.toggle('ready', st0.ready); restoreLogin(); }
+        const peRules = rulesFP.filter(r => /pointer-events:\s*auto/.test(r.body));
+        const stateRules = rulesFP.filter(r => /visibility:\s*hidden/.test(r.body));
+        const enterOld = rulesAll.find(r => r.sel === '#enterBtn'), enterReady = rulesAll.find(r => r.sel === '#enterBtn.ready');
+        /* any rule in the FRONT PAGE block that forces pointer-events: auto must be about #username alone — never a group class #enterBtn carries (.fp-sel) */
+        const peSafe = peRules.every(r => r.sel.split(',').every(s => /#username/.test(s) && !/enterBtn|\.fp-sel|\.ready/.test(s)));
+        const hideOnly = stateRules.every(r => /opacity:\s*0/.test(r.body) && (!/\.fp-sel/.test(r.sel) || /pointer-events:\s*none/.test(r.body)));
+        results.push([`Front Page 3: hide-only rule — #login.fp-select with #enterBtn NOT .ready: computed pointer-events '${out.pe}' (needs 'none'), opacity '${out.op}'; with .ready: pointer-events '${out.peReady}' (needs 'auto'), opacity '${out.opReady}'; computed visibility is '${out.vTitle}' on the title and '${out.vSelect}' on select`,
+          out.pe === 'none' && out.peReady === 'auto' && out.vTitle === 'hidden' && out.vSelect !== 'hidden']);
+        results.push([`Front Page 3: CSS text — the old "#enterBtn {" rule still has pointer-events: none (${!!enterOld && /pointer-events:\s*none/.test(enterOld.body)}) and opacity .35 (${!!enterOld && /opacity:\s*\.35/.test(enterOld.body)}), "#enterBtn.ready" still has pointer-events: auto (${!!enterReady && /pointer-events:\s*auto/.test(enterReady.body)}); the FRONT PAGE block has ${peRules.length} rule(s) setting pointer-events: auto [${peRules.map(r => r.sel.replace(/\s+/g, ' ')).join(' | ')}], none of them reach #enterBtn or .fp-sel (${peSafe}); its ${stateRules.length} visibility:hidden state rule(s) all pair it with opacity:0, and the one that covers .fp-sel (so #enterBtn) with pointer-events:none (${hideOnly})`,
+          !!enterOld && /pointer-events:\s*none/.test(enterOld.body) && /opacity:\s*\.35/.test(enterOld.body) && !!enterReady && /pointer-events:\s*auto/.test(enterReady.body) && peSafe && stateRules.length > 0 && hideOnly]);
+      }
+
+      /* ---- 4. resume safety: Back to the title cancels the resume pause ---- */
+      {
+        const out = {}, rc = $F('resumeCancel'), rn = $F('resumeNotice');
+        let clicks = 0; const spy = () => { clicks++; };
+        try {
+          loginF.style.display = '';
+          // (a) a spy on #resumeCancel with the notice shown by hand, on the select screen
+          rc.addEventListener('click', spy);
+          window.fpGo('select'); rn.style.display = 'flex'; await tickF();
+          out.stateWhileShown = infoF().state;
+          window.fpGo('title'); out.spyClicks = clicks;
+          rn.style.display = st0.resumeDisp; clicks = 0; await tickF();   // let the observer see it go
+          // (b) no notice: stepping back clicks nothing
+          window.fpGo('select'); window.fpGo('title'); out.idleClicks = clicks;
+          rc.removeEventListener('click', spy);
+          // (c) the real pause: resumePause() shows the notice and waits; fpGo('title') presses its cancel for real
+          window.debugSetResume({ pauseMs: 60000 });
+          window.fpGo('title');
+          const pr = window.resumePause('FpGate'); await tickF();
+          out.shown = rn.style.display; out.shownState = infoF().state;
+          window.fpGo('title');
+          out.go = await pr; out.after = rn.style.display; out.cancelled = window.debugSessionInfo().cancelled; out.visible = window.debugSessionInfo().noticeVisible;
+        } finally { rc.removeEventListener('click', spy); window.debugSetResume({ pauseMs: st0.pauseMs }); restoreLogin(); }
+        results.push([`Front Page 4: resume safety — with #resumeNotice shown on the select screen (it pulled the screen to '${out.stateWhileShown}' itself), fpGo('title') clicked #resumeCancel ${out.spyClicks}x (spy); with no notice up a round trip clicked it ${out.idleClicks}x; through the real resumePause(): notice '${out.shown}' (state '${out.shownState}'), after fpGo('title') the pause resolved ${out.go} (false = cancelled), the notice is '${out.after}', debugSessionInfo cancelled ${out.cancelled}, noticeVisible ${out.visible}`,
+          out.stateWhileShown === 'select' && out.spyClicks === 1 && out.idleClicks === 0 && out.shown === 'flex' && out.shownState === 'select' && out.go === false && out.after === 'none' && out.cancelled === true && out.visible === false]);
+      }
+
+      /* ---- 5. What's new ---- */
+      {
+        const out = {}, news = $F('fpNews'), KEY = 'rh_news_seen';
+        /* `window.localStorage = {...}` at the top of this file is a silent no-op (jsdom's is a getter), so the game is
+           using jsdom's REAL Storage — the key is read and written for real, and put back below */
+        const LS = window.localStorage, prior = LS.getItem(KEY);
+        const store = { get [KEY]() { return LS.getItem(KEY); }, set [KEY](v) { if (v === undefined || v === null) LS.removeItem(KEY); else LS.setItem(KEY, v); } };
+        const ownStore = false;
+        try {
+          const U = infoF().UPDATE_NAME;
+          LS.removeItem(KEY);
+          out.seen0 = window.fpNewsSeen();
+          // the show logic fpWire runs on boot
+          if (!window.fpNewsSeen()) { window.fpShowNews(true); window.fpMarkNewsSeen(); }
+          out.stored = LS.getItem(KEY); out.seen1 = window.fpNewsSeen(); out.disp1 = news.style.display; out.shownInfo = infoF().newsShown;
+          window.fpDismissNews(); out.disp2 = news.style.display; out.infoHidden = infoF().newsShown;
+          $F('fpNewsLink').click(); out.disp3 = news.style.display;
+          $F('fpNewsX').click(); out.disp4 = news.style.display;
+          // another update's name in the store is NOT seen
+          LS.setItem(KEY, 'THE OLD UPDATE'); out.seenOld = window.fpNewsSeen(); LS.removeItem(KEY);
+          out.U = U;
+        } finally { if (prior === null) LS.removeItem(KEY); else LS.setItem(KEY, prior); news.style.display = st0.newsDisp; }
+        const info = infoF(), n = info.news;
+        const pats = [/drake/i, /bounty/i, /weather/i, /stakes|raid/i, /combat|sound/i, /front page/i];
+        const hit = pats.map(p => n.some(t => p.test(t)));
+        const order = [[/drake/i, /bounty/i], [/weather/i], [/stakes/i, /raid/i], [/combat/i, /sound/i], [/front page/i]].map((ps, i) => !!n[i] && ps.every(p => p.test(n[i])));
+        results.push([`Front Page 5: show-once — with ${KEY} cleared fpNewsSeen() is ${out.seen0}; the boot logic (show, then mark seen) leaves ${KEY} === "${out.stored}" (UPDATE_NAME "${out.U}": ${out.stored === out.U}), fpNewsSeen() ${out.seen1}, #fpNews display '${out.disp1}'; a different update's name in the store is not "seen" (${out.seenOld}); the source writes it with localStorage.setItem(FP_NEWS_KEY, UPDATE_NAME) (${gameScript.indexOf('localStorage.setItem(FP_NEWS_KEY, UPDATE_NAME)') > 0}); jsdom's real localStorage, key put back to ${prior === null ? 'absent' : '"' + prior + '"'}`,
+          out.seen0 === false && out.stored === out.U && out.seen1 === true && out.disp1 === 'block' && out.shownInfo === true && out.seenOld === false && gameScript.indexOf('localStorage.setItem(FP_NEWS_KEY, UPDATE_NAME)') > 0 && gameScript.indexOf('const FP_NEWS_KEY = "rh_news_seen"') > 0]);
+        results.push([`Front Page 5: the list — FP_NEWS has ${n.length} entries; Drake+Bounty ${order[0]}, weather ${order[1]}, stakes+raid ${order[2]}, combat+sound ${order[3]}, front page ${order[4]} (each in its own line, in that order; any-line matches ${hit.join('/')}); #fpNewsList renders ${$F('fpNewsList').children.length} <li>, #fpNewsSub reads "${$F('fpNewsSub').textContent}", #fpBanner reads "${$F('fpBanner').textContent.replace(/\s+/g, ' ')}" (UPDATE_NAME and ${info.UPDATE_VERSION} both in it: ${$F('fpBanner').textContent.indexOf(info.UPDATE_NAME) >= 0 && $F('fpBanner').textContent.toUpperCase().indexOf(info.UPDATE_VERSION.toUpperCase()) >= 0})`,
+          n.length === 5 && order.every(Boolean) && hit.every(Boolean) && $F('fpNewsList').children.length === 5 && $F('fpNewsSub').textContent === info.UPDATE_NAME &&
+          $F('fpBanner').textContent.indexOf(info.UPDATE_NAME) >= 0 && $F('fpBanner').textContent.toUpperCase().indexOf(info.UPDATE_VERSION.toUpperCase()) >= 0]);
+        results.push([`Front Page 5: dismiss and reopen — fpShowNews(true) -> '${out.disp1}', fpDismissNews() -> '${out.disp2}' (debugFrontInfo().newsShown ${out.infoHidden}), the #fpNewsLink click -> '${out.disp3}', the ✕ (#fpNewsX) click -> '${out.disp4}'; #fpNewsLink and #fpNewsX are real <button>s (${$F('fpNewsLink').tagName}/${$F('fpNewsX').tagName})`,
+          out.disp1 === 'block' && out.disp2 === 'none' && out.infoHidden === false && out.disp3 === 'block' && out.disp4 === 'none' && $F('fpNewsLink').tagName === 'BUTTON' && $F('fpNewsX').tagName === 'BUTTON']);
+      }
+
+      /* ---- 6. Settings ---- */
+      {
+        const rows = [['setFullscreen', 'fullscreen'], ['setReduceMotion', 'reduceMotion'], ['setScreenShake', 'screenShake'], ['setColorblind', 'colorblind']];
+        const S = () => window.debugSettingsInfo().SETTINGS, per = [];
+        let allGood = true;
+        try {
+          for (const [id, key] of rows) {
+            const el = $F(id), v0 = S()[key];
+            const a = { cls: el.classList.contains('set-toggle'), t0: el.textContent, on0: el.classList.contains('on'), v0 };
+            el.click();
+            a.t1 = el.textContent; a.on1 = el.classList.contains('on'); a.v1 = S()[key];
+            el.click();
+            a.t2 = el.textContent; a.v2 = S()[key];
+            const good = a.cls && a.t0 === (v0 ? 'ON' : 'OFF') && a.on0 === v0 && a.v1 === !v0 && a.t1 === (!v0 ? 'ON' : 'OFF') && a.on1 === !v0 && a.v2 === v0 && a.t2 === a.t0;
+            if (!good) allGood = false;
+            per.push(`${id} set-toggle ${a.cls}: "${a.t0}" (${key} ${a.v0}) -> click -> "${a.t1}" (${a.v1}, checked class ${a.on1}) -> click -> "${a.t2}" (${a.v2})`);
+          }
+        } finally { for (const [, key] of rows) if (S()[key] !== st0.sets[key]) window.setSetting(key, st0.sets[key]); }
+        results.push([`Front Page 6: every ON/OFF toggle is a square — ${per.join('; ')}; settings put back (${rows.every(([, k]) => S()[k] === st0.sets[k])})`,
+          allGood && rows.every(([, k]) => S()[k] === st0.sets[k])]);
+        const setRules = rulesFP.filter(r => /\.set-(tab|tabs|row|btn|sec)\b/.test(r.sel));
+        const unscoped = setRules.filter(r => r.sel.split(',').some(s => /\.set-(tab|tabs|row|btn|sec)\b/.test(s) && !/^\s*#settingsOverlay\b/.test(s)));
+        const oldTab = rulesAll.filter(r => r.sel === '.set-tab'), oldSel = rulesAll.filter(r => r.sel === '.set-tab.selected');
+        const oldTabOk = oldTab.length === 1 && /rgba\(8,10,16,0\.7\)/.test(oldTab[0].body) && /padding:\s*5px 12px/.test(oldTab[0].body) && /border-radius:\s*3px/.test(oldTab[0].body);
+        const oldSelOk = oldSel.length === 1 && /color:\s*var\(--gold\)/.test(oldSel[0].body) && /border-color:\s*var\(--gold-dim\)/.test(oldSel[0].body);
+        const dashB = html.indexOf('#settingsOverlay .set-tab.selected::before { content: "-"; }') > 0, dashA = html.indexOf('#settingsOverlay .set-tab.selected::after { content: "-"; }') > 0;
+        results.push([`Front Page 6: the active tab shows the dashes — '#settingsOverlay .set-tab.selected::before { content: "-"; }' ${dashB} and its ::after ${dashA}; the in-game panels' .set-tab rules are untouched — the old ".set-tab {" rule appears ${oldTab.length}x (background rgba(8,10,16,0.7), padding 5px 12px, radius 3px: ${oldTabOk}) and ".set-tab.selected {" ${oldSel.length}x (gold, gold-dim: ${oldSelOk}); the FRONT PAGE block has ${setRules.length} rules on .set-tab/.set-tabs/.set-row/.set-btn/.set-sec and ${unscoped.length} that are not scoped under #settingsOverlay${unscoped.length ? ' [' + unscoped.map(r => r.sel).join(' | ') + ']' : ''}`,
+          dashB && dashA && oldTabOk && oldSelOk && setRules.length > 0 && unscoped.length === 0]);
+      }
+
+      /* ---- 7. the class cards ---- */
+      {
+        const cards = [...docF.querySelectorAll('.class-card')], per = [];
+        let ok = cards.length === 5;
+        for (const c of cards) {
+          const nm = (c.querySelector('.cname') || {}).textContent, role = ((c.querySelector('.crole') || {}).textContent || '').trim();
+          const bs = c.querySelectorAll('.badges'), badges = c.querySelectorAll('.badges .badge'), leads = c.querySelectorAll('.badges .badge.lead');
+          const first = badges[0] && badges[0].classList.contains('lead');
+          const good = role.length > 0 && bs.length === 1 && badges.length === 3 && !!first && leads.length === 1;
+          if (!good) ok = false;
+          per.push(`${nm}: role "${role}", ${bs.length} row, ${badges.length} badges, lead on first ${!!first}, ${leads.length} lead`);
+        }
+        results.push([`Front Page 7: every class card has a non-empty .crole and one .badges row of exactly 3 .badge with the first .lead — ${per.join('; ')}`, ok]);
+      }
+
+      /* ---- 8. the backdrop: PART C shipped the static painted fallback; gate its rules ---- */
+      {
+        const a = gameScript.indexOf('FRONT PAGE REWORK — the title screen'), b = gameScript.indexOf('function debugFrontInfo', a);
+        const fpSrc = (a > 0 && b > a) ? gameScript.slice(a, b) : '';
+        const sbHits = fpSrc.split('sb.').length - 1, fromHits = fpSrc.split('from(').length - 1, chHits = fpSrc.split('channel(').length - 1, cliHits = fpSrc.split('createClient').length - 1;
+        results.push([`Front Page 8: the front-page code is network-free — the ${fpSrc.length}-char slice from 'FRONT PAGE REWORK — the title screen' to 'function debugFrontInfo' contains 'sb.' ${sbHits}x, 'from(' ${fromHits}x, 'channel(' ${chHits}x, 'createClient' ${cliHits}x, 'fetch(' ${fpSrc.split('fetch(').length - 1}x; it is the static fallback (painted once per size: fpPaintArt ${fpSrc.indexOf('function fpPaintArt') > 0}, no use of me / render( / loadWorld: ${!/\bme\b\.|\brender\(|loadWorld|loginPlayer/.test(fpSrc.replace(/\/\*[\s\S]*?\*\//g, ''))})`,
+          fpSrc.length > 500 && sbHits === 0 && fromHits === 0 && chHits === 0 && cliHits === 0 && !/\bme\b\.|\brender\(|loadWorld|loginPlayer/.test(fpSrc.replace(/\/\*[\s\S]*?\*\//g, ''))]);
+
+        // ---- FRESH boots that never log in: the real pre-login facts ----
+        const stubCtx = new Proxy({}, { get(t, p) { if (p === 'canvas') return { width: 1280, height: 720 }; if (p === 'createLinearGradient' || p === 'createRadialGradient') return () => ({ addColorStop() {} }); if (p === 'measureText') return () => ({ width: 10 }); return typeof p === 'string' ? function () {} : undefined; }, set() { return true; } });
+        const bootFresh = (seed) => {
+          const d2 = new JSDOM(bodyHtml, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'https://example.com/' }), w = d2.window;
+          const calls = { createClient: 0, from: 0, channel: 0, errors: [] };
+          w.supabase = { createClient: () => { calls.createClient++; return { from: () => { calls.from++; throw new Error('Supabase from() before login'); }, channel: () => { calls.channel++; throw new Error('Supabase channel() before login'); }, removeChannel() {} }; } };
+          const q = []; w.requestAnimationFrame = cb => { q.push(cb); return q.length; };
+          w.HTMLCanvasElement.prototype.getContext = () => stubCtx;
+          for (const [k, v] of Object.entries(seed || {})) w.localStorage.setItem(k, v);   // each jsdom window has its own real Storage; seeding it is the "reload"
+          w.addEventListener('error', e => calls.errors.push(String(e.message)));
+          w.eval(gameScript);
+          const pump = n => { for (let i = 0; i < n; i++) { const cur = q.splice(0); for (const cb of cur) { try { cb(1000 + i * 16.6); } catch (e) { calls.errors.push(String(e && e.message)); } } } };
+          return { w, q, calls, pump, ls: w.localStorage };
+        };
+        const out = {};
+        let f1 = null, kept1 = null;
+        try {
+          f1 = bootFresh({});
+          const w = f1.w, d = w.document;
+          const fi = () => w.debugFrontInfo();
+          out.boot = fi(); out.stored1 = f1.ls.getItem('rh_news_seen'); out.news1 = d.getElementById('fpNews').style.display;
+          const ticksQ = () => f1.q.filter(cb => cb === w.fpBackdropTick).length;
+          f1.pump(30); out.q1 = ticksQ();
+          out.m30 = fi().motes; out.on30 = fi().backdropOn; out.frames30 = fi().backdropFrames; out.cap = fi().FP_MOTES;
+          // walk every state, still without logging in
+          for (const s of ['select', 'redeem', 'connect', 'title']) { w.fpGo(s); f1.pump(2); }
+          out.mWalk = fi().motes; out.stateEnd = fi().state;
+          out.createClient = f1.calls.createClient; out.fromCalls = f1.calls.from; out.chanCalls = f1.calls.channel;
+          // Reduce motion: ONE tick leaves the motes at 0; turning it off lets them come back (so the 0 is not a dead loop)
+          w.setSetting('reduceMotion', true); const qLen = f1.q.length; w.fpBackdropTick(); out.mRm = fi().motes; out.rmOn = fi().backdropOn; out.qGrew = f1.q.length - qLen;
+          w.setSetting('reduceMotion', false); w.fpBackdropTick(); out.mBack = fi().motes;
+          // the loop stops once #login is hidden, and stays stopped
+                    d.getElementById('login').style.display = 'none'; const fr0 = fi().backdropFrames;
+          f1.pump(1); w.fpBackdropTick(); out.offOn = fi().backdropOn; out.offMotes = fi().motes; out.offFrames = fi().backdropFrames - fr0; f1.pump(3); out.offQ = ticksQ();
+          // a second look after a dismissal: the first boot marked the news seen; dismiss it, then reboot with the SAME store
+          out.errors1 = f1.calls.errors.length; kept1 = f1.ls.getItem('rh_news_seen');
+        } catch (e) { out.err = String(e && e.stack || e); } finally { if (f1) try { f1.w.close(); } catch (e) {} }
+        let f2 = null;
+        try {
+          f2 = bootFresh(kept1 === null ? {} : { rh_news_seen: kept1 });
+          const w = f2.w, d = w.document;
+          out.disp2 = d.getElementById('fpNews').style.display; out.seen2 = w.debugFrontInfo().newsSeen; out.shown2 = w.debugFrontInfo().newsShown;
+          d.getElementById('fpNewsLink').click(); out.link2 = d.getElementById('fpNews').style.display;
+          out.stored2 = f2.ls.getItem('rh_news_seen');
+        } catch (e) { out.err2 = String(e && e.stack || e); } finally { if (f2) try { f2.w.close(); } catch (e) {} }
+        let f3 = null;
+        try {
+          f3 = bootFresh({ rh_news_seen: 'THE OLD UPDATE' });
+          out.disp3 = f3.w.document.getElementById('fpNews').style.display; out.stored3 = f3.ls.getItem('rh_news_seen'); out.U = f3.w.debugFrontInfo().UPDATE_NAME;
+        } catch (e) { out.err3 = String(e && e.stack || e); } finally { if (f3) try { f3.w.close(); } catch (e) {} }
+        results.push([`Front Page 8: before login (fresh boot, never entered) — state '${out.boot && out.boot.state}', classes "${out.boot && out.boot.classes}", backdrop on ${out.on30} and drawing (${out.frames30} frames in 30 pumps), motes ${out.m30} (cap FP_MOTES ${out.cap}), after walking select/redeem/connect/title motes ${out.mWalk}; Supabase requests from the front-page code: createClient ${out.createClient}x, from() ${out.fromCalls}x, channel() ${out.chanCalls}x; page errors ${out.errors1}${out.err ? ' [ERROR ' + out.err + ']' : ''}`,
+          !out.err && !!out.boot && out.on30 === true && out.frames30 >= 30 && out.m30 > 0 && out.m30 <= out.cap && out.cap <= 40 && out.mWalk <= out.cap && out.createClient === 0 && out.fromCalls === 0 && out.chanCalls === 0 && out.errors1 === 0]);
+        results.push([`Front Page 8: Reduce motion — with SETTINGS.reduceMotion true ONE fpBackdropTick leaves motes ${out.mRm} (the loop is still on: ${out.rmOn}, and it queued ${out.qGrew} next frame); with it off again one tick makes ${out.mBack} (so the 0 was the setting, not a dead loop)`,
+          out.mRm === 0 && out.rmOn === true && out.qGrew === 1 && out.mBack > 0 && out.mBack <= out.cap]);
+        results.push([`Front Page 8: the loop stops with the login card — while it was up exactly ${out.q1} fpBackdropTick sat in the frame queue (the loop re-queues itself); once #login is display:none one tick ends it: backdropOn ${out.offOn}, motes ${out.offMotes}, ${out.offFrames} frames drawn after, ${out.offQ} fpBackdropTick left queued; in the harness (logged in, #login '${st0.display}') debugFrontInfo() says backdropOn ${st0.back}, motes ${infoF().motes}, ${st0.frames} frames drawn`,
+          out.q1 === 1 && out.offOn === false && out.offMotes === 0 && out.offFrames === 0 && out.offQ === 0 && st0.back === false && infoF().backdropOn === false && infoF().motes === 0]);
+        results.push([`Front Page 5: once per update, across reloads — first boot (nothing stored) shows #fpNews ('${out.news1}') and stores "${out.stored1}"; a reload with the same store leaves it '${out.disp2}' (newsSeen ${out.seen2}, newsShown ${out.shown2}) and the #fpNewsLink brings it back ('${out.link2}'); a store from another update ("THE OLD UPDATE") shows it again ('${out.disp3}') and re-marks it "${out.stored3}" (UPDATE_NAME "${out.U}")`,
+          !out.err2 && !out.err3 && out.news1 === 'block' && out.stored1 === out.U && out.disp2 === 'none' && out.seen2 === true && out.shown2 === false && out.link2 === 'block' && out.stored2 === out.U && out.disp3 === 'block' && out.stored3 === out.U]);
+      }
+
+      /* ---- 9. fonts and tokens ---- */
+      {
+        const imp = html.match(/@import url\('([^']+)'\)/), imported = imp ? imp[1] : '';
+        const tokens = (cssTok.match(/--menu-[a-z-]+\s*:/g) || []).length;
+        let hexN = 0, rgbaN = 0; const lits = {};
+        for (const r of rulesFP) {
+          for (const m of (r.body.match(/#[0-9a-fA-F]{3,8}\b/g) || [])) { hexN++; lits[m.toLowerCase()] = (lits[m.toLowerCase()] || 0) + 1; }
+          for (const m of (r.body.match(/rgba?\([^)]*\)/g) || [])) { rgbaN++; lits[m] = (lits[m] || 0) + 1; }
+        }
+        const allowed = new Set(['#7fc96b', '#4bb8e8']);
+        const stray = Object.keys(lits).filter(k => !allowed.has(k));
+        const varUses = (cssBody.match(/var\(--menu-[a-z-]+\)/g) || []).length;
+        const fams = []; for (const r of rulesFP) { const m = r.body.match(/font-family:\s*([^;]+)/); if (m) fams.push(m[1].trim()); }
+        const famBad = fams.filter(f => !/^var\(--menu-(display|serif)\)/.test(f));
+        const inkTok = /--menu-ink:\s*#e9dcc0/.test(cssTok), goldTok = /--menu-gold:\s*#e8b64c/.test(cssTok), dispTok = /--menu-display:\s*'Grenze Gotisch', 'Almendra Display', serif/.test(cssTok), serTok = /--menu-serif:\s*'Cormorant Garamond', Georgia/.test(cssTok);
+        results.push([`Front Page 9: fonts — the first @import names Grenze+Gotisch (${/Grenze\+Gotisch/.test(imported)}) and Cormorant+Garamond (${/Cormorant\+Garamond/.test(imported)}), still Almendra+Display and Barlow (${/Almendra\+Display/.test(imported) && /Barlow/.test(imported)}); --menu-display falls back to Almendra Display (${dispTok}), --menu-serif to Georgia (${serTok}); the FRONT PAGE block has ${fams.length} font-family declarations and ${famBad.length} of them are not var(--menu-display|serif)${famBad.length ? ' [' + famBad.join(' | ') + ']' : ''}`,
+          /Grenze\+Gotisch/.test(imported) && /Cormorant\+Garamond/.test(imported) && /Almendra\+Display/.test(imported) && /Barlow/.test(imported) && dispTok && serTok && fams.length > 10 && famBad.length === 0]);
+        console.log('Front Page 9 literal count outside the token block:', JSON.stringify(lits), '| hex', hexN, 'rgba', rgbaN, '| var(--menu-*) uses', varUses, '| token declarations', tokens, '| rules', rulesFP.length);
+        results.push([`Front Page 9: tokens — the FRONT PAGE CSS block (${cssFP.length} chars, ${rulesFP.length} rules outside the :root block) uses var(--menu-*) ${varUses}x; the :root token block declares ${tokens} --menu-* properties (ink #e9dcc0 ${inkTok}, gold #e8b64c ${goldTok}); colour literals outside it: ${hexN} hex + ${rgbaN} rgba = {${Object.entries(lits).map(([k, v]) => k + ' x' + v).join(', ') || 'none'}} — only the status-dot greens #7fc96b / #4bb8e8 are allowed (${stray.length} other${stray.length ? ': ' + stray.join(' ') : ''})`,
+          cssFP.length > 5000 && varUses > 50 && tokens >= 12 && inkTok && goldTok && stray.length === 0 && hexN === (lits['#7fc96b'] || 0) + (lits['#4bb8e8'] || 0) && rgbaN === 0 && (lits['#7fc96b'] || 0) >= 1 && (lits['#4bb8e8'] || 0) >= 1]);
+      }
+
+      // ---- put everything back ----
+      restoreLogin();
+      rafQ.splice(rqF);
+      if (docF.activeElement !== st0.active && st0.active && typeof st0.active.focus === 'function') { try { st0.active.focus(); } catch (e) {} }
+    } else {
+      results.push(['Front Page: the front-page hooks exist (debugFrontInfo, fpGo, fpTitleItems, fpNewsSeen, fpShowNews, fpMarkNewsSeen, fpDismissNews, fpSyncStatus, fpBackdropTick, debugSetResume, resumePause, openSettings, closeSettings)', false]);
     }
 
 
