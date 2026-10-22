@@ -6,7 +6,7 @@
 <title>RuneHaven</title>
 <!-- v23: approved hashbrown mark, icon only, pre-built + verified at 32px -->
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Almendra+Display&family=Barlow:wght@400;500;600&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Almendra+Display&family=Barlow:wght@400;500;600&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500;1,600&family=Grenze+Gotisch:wght@600;700;800&display=swap');
 
   :root {
     --gold: #e8b64c;
@@ -595,6 +595,272 @@
   /* The two overrides the shared bar rule needs to stop being a fixed corner
      element and start being a row inside a card. Nothing else about it moves. */
   #bossBarWrap { position: relative; bottom: auto; right: auto; width: 100%; height: 14px; }
+  /* =====================================================================
+     FRONT PAGE REWORK (README "Front Page Rework", owner request 2026-10-22)
+     One layer ADDED on top of the old login/settings rules — nothing above
+     was edited, so every rule a gate reads is still there; these win by
+     order and specificity. Menu layer only: the in-world HUD keeps Barlow
+     and its own look. The reference is Thronefall's Settings screen and
+     upgrade tooltip: blackletter titles, spaced italic small caps, serif
+     body, dark rounded cards, round badges, square checkboxes.
+     ===================================================================== */
+  :root {
+    --menu-ink: #e9dcc0;
+    --menu-dim: #9b917d;
+    --menu-faint: #5e574b;
+    --menu-gold: #e8b64c;
+    --menu-panel: rgba(18,19,23,0.94);
+    --menu-card: #16171b;
+    --menu-edge: rgba(233,220,192,0.10);
+    --menu-shade: rgba(5,6,8,0.62);
+    --menu-radius: 14px;
+    --menu-display: 'Grenze Gotisch', 'Almendra Display', serif;
+    --menu-serif: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
+  }
+  /* --- the screen itself: a full-bleed stage over the painted backdrop --- */
+  #login.fp {
+    background: var(--ink);
+    font-family: var(--menu-serif); color: var(--menu-ink);
+    padding: 0; gap: 0; overflow: hidden;
+  }
+  #login.fp > #fpBackdrop { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; zoom: 1; }
+  #login.fp > #fpShade {
+    position: absolute; inset: 0; z-index: 1; pointer-events: none; zoom: 1;
+    background: linear-gradient(90deg, var(--menu-shade) 0%, var(--menu-shade) 32%, transparent 72%);
+  }
+  #login.fp > * { position: relative; z-index: 2; }
+  #login.fp > #fpBackdrop, #login.fp > #fpShade { position: absolute; }
+  /* the logo */
+  #login.fp h1 {
+    position: absolute; left: 8vw; top: 9vh; margin: 0;
+    font-family: var(--menu-display); font-weight: 800; color: var(--menu-ink);
+    font-size: clamp(64px, 7.4vw, 112px); letter-spacing: 1px; line-height: 0.95;
+    text-shadow: 0 3px 0 rgba(0,0,0,0.55), 0 10px 28px rgba(0,0,0,0.55);
+    transition: font-size 400ms cubic-bezier(.22,.68,.28,1), top 400ms cubic-bezier(.22,.68,.28,1);
+  }
+  #login.fp .tagline {
+    position: absolute; left: 8vw; top: calc(9vh + clamp(64px, 7.4vw, 112px) + 14px); margin: 0;
+    color: var(--menu-dim); font-family: var(--menu-serif); font-style: italic; font-weight: 600;
+    font-size: 14px; letter-spacing: 0.32em; text-transform: uppercase;
+  }
+  /* the title menu: real buttons, italic serif, gold with dashes on focus */
+  #login.fp .fp-item {
+    position: absolute; left: 8vw; margin: 0;
+    background: none; border: none; padding: 4px 0; cursor: pointer;
+    font-family: var(--menu-serif); font-style: italic; font-weight: 600;
+    font-size: 28px; letter-spacing: 0.04em; color: var(--menu-dim);
+    text-transform: none; text-align: left; border-radius: 0; transition: color 120ms ease;
+  }
+  #login.fp .fp-item::before, #login.fp .fp-item::after { content: ""; color: var(--menu-gold); }
+  #login.fp .fp-item:hover, #login.fp .fp-item:focus-visible, #login.fp .fp-item.fp-focus { color: var(--menu-gold); outline: none; }
+  #login.fp .fp-item:hover::before, #login.fp .fp-item:focus-visible::before, #login.fp .fp-item.fp-focus::before { content: "– "; }
+  #login.fp .fp-item:hover::after, #login.fp .fp-item:focus-visible::after, #login.fp .fp-item.fp-focus::after { content: " –"; }
+  #login.fp #fpPlay       { top: 44vh; }
+  #login.fp #settingsBtn  { top: calc(44vh + 52px); }
+  #login.fp #fpRedeem     { top: calc(44vh + 104px); }
+  #login.fp #fpCredits    { top: calc(44vh + 156px); }
+  #login.fp #settingsBtn:hover { border: none; }
+  /* the corners: update banner, world status, what's new link */
+  #login.fp #fpBanner {
+    position: absolute; left: 8vw; bottom: 5vh; color: var(--menu-dim);
+    font-size: 13px; letter-spacing: 0.32em; text-transform: uppercase; font-weight: 600;
+  }
+  #login.fp #fpBanner b { color: var(--menu-ink); font-weight: 600; }
+  #login.fp #fpStatus, #login.fp #fpNewsLink {
+    position: absolute; bottom: 5vh; background: none; border: none; cursor: pointer;
+    font-family: var(--menu-serif); font-style: italic; font-weight: 600; font-size: 17px;
+    color: var(--menu-dim); padding: 2px 0; border-radius: 0;
+  }
+  #login.fp #fpStatus { right: 5vw; }
+  #login.fp #fpNewsLink { right: calc(5vw + 230px); }
+  #login.fp #fpStatus:hover, #login.fp #fpNewsLink:hover,
+  #login.fp #fpStatus:focus-visible, #login.fp #fpNewsLink:focus-visible { color: var(--menu-gold); outline: none; }
+  #login.fp #fpStatus .dot { display: inline-block; width: 8px; height: 8px; margin-right: 8px; vertical-align: 1px; background: var(--danger); }
+  #login.fp #fpStatus.ok .dot { background: #7fc96b; }
+  body.cb #login.fp #fpStatus.ok .dot { background: #4bb8e8; }
+  /* --- one card component (the tooltip reference) --- */
+  .menu-card {
+    background: var(--menu-card); border: 1px solid var(--menu-edge); border-radius: var(--menu-radius);
+    padding: 20px 22px; color: var(--menu-ink); font-family: var(--menu-serif);
+    box-shadow: 0 18px 50px rgba(0,0,0,0.5);
+  }
+  .menu-card .mc-title { font-family: var(--menu-display); font-weight: 700; font-size: 30px; line-height: 1.05; }
+  .menu-card .mc-sub { color: var(--menu-ink); font-size: 13px; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase; margin: 8px 0 10px; }
+  .menu-card .mc-body { color: var(--menu-ink); font-size: 17px; line-height: 1.35; opacity: 0.86; }
+  .menu-card .mc-x {
+    position: absolute; top: 10px; right: 12px; background: none; border: none; cursor: pointer;
+    color: var(--menu-dim); font-family: var(--menu-serif); font-size: 18px; line-height: 1; padding: 4px;
+  }
+  .menu-card .mc-x:hover, .menu-card .mc-x:focus-visible { color: var(--menu-gold); outline: none; }
+  .badges { display: flex; gap: 10px; justify-content: center; margin-top: 10px; }
+  .badge {
+    width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid var(--menu-ink);
+    display: inline-flex; align-items: center; justify-content: center; color: var(--menu-ink); opacity: 0.85;
+  }
+  .badge svg { width: 18px; height: 18px; }
+  .badge.lead { background: var(--menu-ink); color: var(--menu-card); opacity: 1; }
+  /* what's new */
+  #login.fp #fpNews { position: absolute; right: 5vw; bottom: calc(5vh + 46px); width: 380px; max-width: 42vw; }
+  #login.fp #fpNews ul { list-style: none; margin: 0; padding: 0; }
+  #login.fp #fpNews li { padding: 5px 0 5px 18px; position: relative; font-size: 16px; line-height: 1.3; }
+  #login.fp #fpNews li::before { content: ""; position: absolute; left: 2px; top: 12px; width: 6px; height: 6px; background: var(--menu-gold); transform: rotate(45deg); }
+  /* --- states: title shows the menu; select shows the character screen --- */
+  #login.fp .fp-sel, #login.fp .fp-sub { visibility: hidden; opacity: 0; pointer-events: none; transition: opacity 300ms ease; }
+  #login.fp.fp-title .fp-ttl { visibility: visible; opacity: 1; pointer-events: auto; transition: opacity 300ms ease; }
+  #login.fp:not(.fp-title) .fp-ttl { visibility: hidden; opacity: 0; pointer-events: none; }
+  #login.fp.fp-select .fp-sel { visibility: visible; opacity: 1; pointer-events: auto; }
+  #login.fp.fp-redeem #redeemRow, #login.fp.fp-redeem #redeemMsg, #login.fp.fp-redeem #fpRedeemCard,
+  #login.fp.fp-connect #connectBox, #login.fp.fp-connect #fpConnectCard { visibility: visible; opacity: 1; pointer-events: auto; }
+  #login.fp.fp-select.fp-needconn #connectBox { visibility: visible; opacity: 1; pointer-events: auto; }
+  #login.fp.fp-redeem #fpBack, #login.fp.fp-connect #fpBack { visibility: visible; opacity: 1; pointer-events: auto; }
+  #login.fp.fp-sub-open .fp-item, #login.fp.fp-sub-open #fpNews, #login.fp.fp-sub-open #fpNewsLink { visibility: hidden; opacity: 0; pointer-events: none; }
+  /* the logo steps back to the corner on the inner screens */
+  #login.fp:not(.fp-title) h1 { font-size: 46px; top: 4vh; }
+  #login.fp:not(.fp-title) .tagline { visibility: hidden; opacity: 0; }
+  #login.fp #fpBack {
+    position: absolute; right: 5vw; top: 5vh; background: none; border: none; cursor: pointer;
+    font-family: var(--menu-serif); font-style: italic; font-weight: 600; font-size: 20px; color: var(--menu-dim); padding: 2px 0;
+  }
+  #login.fp #fpBack:hover, #login.fp #fpBack:focus-visible { color: var(--menu-gold); outline: none; }
+  /* character select: a centred column under the corner logo */
+  #login.fp.fp-select { display: flex; flex-direction: column; align-items: center; justify-content: safe center; gap: 12px; padding: max(11vh, 100px) 3vw 3vh; overflow-y: auto; }
+  /* short screens: the same column, tighter, so Enter stays on screen */
+  @media (max-height: 760px) {
+    #login.fp.fp-select { gap: 8px; }
+    #login.fp .class-card canvas { width: 64px; height: 64px; }
+    #login.fp .class-card .cname { font-size: 23px; }
+    #login.fp .class-card .cdesc { min-height: 0; font-size: 14px; }
+    #login.fp .class-card .crole { margin: 2px 0 4px; }
+    #login.fp .badge { width: 30px; height: 30px; }
+    #login.fp .badge svg { width: 15px; height: 15px; }
+  }
+  @media (max-width: 1180px) { #login.fp .class-row { gap: 10px; } #login.fp .class-card .cname { font-size: 22px; } }
+  #login.fp:not(.fp-select) .fp-sel { position: absolute; }
+  /* hidden sub-cards take no room in the character column */
+  #login.fp .fp-sub { position: absolute; }
+  #login.fp.fp-select.fp-needconn #connectBox { position: relative; }
+  #login.fp #fpSelHead { font-family: var(--menu-serif); font-size: 13px; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase; color: var(--menu-dim); }
+  #login.fp #username {
+    background: transparent; border: none; border-bottom: 1px solid var(--menu-faint); border-radius: 0;
+    font-family: var(--menu-serif); font-style: italic; font-weight: 600; font-size: 26px; color: var(--menu-ink);
+    width: 340px; padding: 2px 8px 4px; box-shadow: none;
+  }
+  #login.fp #username::placeholder { color: var(--menu-faint); }
+  #login.fp #username:focus { border-bottom-color: var(--menu-gold); box-shadow: none; }
+  #login.fp #pinInput {
+    background: transparent; border: none; border-bottom: 1px solid var(--menu-faint); border-radius: 0;
+    font-family: var(--menu-serif); font-size: 22px; color: var(--menu-ink); width: 220px; margin-top: -6px; box-shadow: none;
+  }
+  #login.fp #pinInput:focus { border-bottom-color: var(--menu-gold); }
+  #login.fp #pinNotice, #login.fp #resumeNotice {
+    background: var(--menu-card); border: 1px solid var(--menu-edge); border-radius: 10px;
+    color: var(--menu-ink); font-family: var(--menu-serif); font-size: 15px; letter-spacing: 0; margin-top: -4px;
+  }
+  #login.fp #pinProtect, #login.fp #resumeCancel, #login.fp #redeemBtn {
+    background: none; border: 1px solid var(--menu-faint); border-radius: 999px; color: var(--menu-ink);
+    font-family: var(--menu-serif); font-weight: 600; font-size: 13px; letter-spacing: 0.24em; text-transform: uppercase; padding: 6px 16px;
+  }
+  #login.fp #pinProtect:hover, #login.fp #resumeCancel:hover, #login.fp #redeemBtn:hover { border-color: var(--menu-gold); color: var(--menu-gold); }
+  /* the class cards = the tooltip card */
+  #login.fp .class-row { gap: 16px; max-width: 1180px; }
+  #login.fp .class-card {
+    width: clamp(150px, 16.6vw, 198px); padding: 10px 12px 14px; text-align: center; border-radius: var(--menu-radius);
+    background: var(--menu-card); border: 1px solid var(--menu-edge); opacity: 0.78;
+    transition: transform 160ms ease, opacity 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  }
+  #login.fp .class-card:hover { opacity: 0.95; transform: translateY(-3px); }
+  #login.fp .class-card.selected { opacity: 1; transform: translateY(-6px); border-color: var(--menu-gold); box-shadow: 0 16px 40px rgba(0,0,0,0.55); }
+  #login.fp .class-card canvas { width: 84px; height: 84px; image-rendering: pixelated; }
+  #login.fp .class-card .cname { font-family: var(--menu-display); font-weight: 700; color: var(--menu-ink); font-size: 27px; letter-spacing: 0.5px; margin-top: 0; line-height: 1.05; }
+  #login.fp .class-card .crole { font-size: 12px; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase; color: var(--menu-ink); margin: 4px 0 8px; }
+  #login.fp .class-card .cdesc { font-family: var(--menu-serif); color: var(--menu-ink); opacity: 0.86; font-size: 15px; line-height: 1.25; min-height: 38px; }
+  #login.fp .class-card .cweap { font-family: var(--menu-serif); font-style: italic; color: var(--menu-dim); font-size: 14px; letter-spacing: 0; margin-top: 6px; }
+  #login.fp .class-card.selected .badge.lead { background: var(--menu-gold); border-color: var(--menu-gold); }
+  /* connect + redeem as cards */
+  #login.fp #connectBox { width: 420px; max-width: 90vw; background: var(--menu-card); border: 1px solid var(--menu-edge); border-radius: var(--menu-radius); font-family: var(--menu-serif); }
+  #login.fp #connectBox summary { color: var(--menu-ink); font-size: 18px; font-style: italic; font-weight: 600; padding: 12px 18px; }
+  #login.fp .conn-hint { color: var(--menu-dim); font-size: 15px; }
+  #login.fp #sbUrl, #login.fp #sbKey, #login.fp #redeemInput {
+    background: transparent; border: none; border-bottom: 1px solid var(--menu-faint); border-radius: 0;
+    font-family: var(--menu-serif); font-size: 17px; color: var(--menu-ink); padding: 6px 4px;
+  }
+  #login.fp #sbUrl:focus, #login.fp #sbKey:focus, #login.fp #redeemInput:focus { border-bottom-color: var(--menu-gold); }
+  #login.fp.fp-connect #connectBox, #login.fp.fp-redeem #fpRedeemCard { position: absolute; left: 8vw; top: 44vh; }
+  #login.fp #fpRedeemCard { width: 420px; max-width: 90vw; }
+  #login.fp.fp-redeem #redeemRow { position: absolute; left: calc(8vw + 22px); top: calc(44vh + 112px); }
+  #login.fp.fp-redeem #redeemMsg { position: absolute; left: calc(8vw + 22px); top: calc(44vh + 160px); text-align: left; font-family: var(--menu-serif); font-size: 15px; color: var(--menu-dim); }
+  /* the one big action */
+  #login.fp #enterBtn {
+    background: none; color: var(--menu-ink); border: none; border-radius: 0; box-shadow: none;
+    font-family: var(--menu-serif); font-style: italic; font-weight: 600; font-size: 26px; letter-spacing: 0.22em;
+    padding: 6px 18px 10px; position: relative;
+  }
+  #login.fp #enterBtn::before { content: "– "; color: var(--menu-gold); letter-spacing: 0; }
+  #login.fp #enterBtn::after { content: " –"; color: var(--menu-gold); letter-spacing: 0; }
+  #login.fp #enterBtn { border-bottom: 2px solid rgba(232,182,76,0.45); }
+  #login.fp #enterBtn.ready { box-shadow: none; }
+  #login.fp #enterBtn.ready:hover, #login.fp #enterBtn.ready:focus-visible { color: var(--menu-gold); outline: none; box-shadow: none; }
+  #login.fp #enterBtn.ready:hover { border-bottom-color: var(--menu-gold); }
+  #login.fp #loginError { font-family: var(--menu-serif); font-size: 17px; font-style: italic; }
+  /* =====================================================================
+     SETTINGS — a full-screen page in the reference's look. Scoped to
+     #settingsOverlay so the in-game panels that reuse .set-tab are untouched.
+     ===================================================================== */
+  #settingsOverlay { background: rgba(10,10,12,0.97); padding: 7vh 6vw; }
+  #settingsOverlay #settingsCard {
+    width: 860px; max-width: 100%; margin: 0 auto; background: none; border: none; padding: 0;
+    backdrop-filter: none; font-family: var(--menu-serif); color: var(--menu-ink);
+  }
+  #settingsOverlay #settingsCard h3 {
+    font-family: var(--menu-display); font-weight: 800; color: var(--menu-ink); font-size: 60px;
+    letter-spacing: 0.04em; text-transform: lowercase; margin: 0 0 24px; text-shadow: 0 3px 0 rgba(0,0,0,0.55);
+  }
+  #settingsOverlay #settingsCard h3::first-letter { text-transform: uppercase; }
+  #settingsOverlay #settingsCard h4 { font-family: var(--menu-display); color: var(--menu-ink); font-size: 22px; letter-spacing: 0.04em; }
+  #settingsOverlay .set-tabs { gap: 0; justify-content: space-between; margin-bottom: 30px; border-bottom: 1px solid var(--menu-edge); padding-bottom: 12px; }
+  #settingsOverlay .set-tab {
+    background: none; border: none; border-radius: 0; padding: 4px 6px; color: var(--menu-dim);
+    font-family: var(--menu-serif); font-style: italic; font-weight: 500; font-size: 14px; letter-spacing: 0.32em;
+  }
+  #settingsOverlay .set-tab:hover, #settingsOverlay .set-tab:focus-visible { color: var(--menu-ink); outline: none; }
+  #settingsOverlay .set-tab.selected { color: var(--menu-ink); font-weight: 600; font-size: 16px; border: none; }
+  #settingsOverlay .set-tab.selected::before { content: "-"; }
+  #settingsOverlay .set-tab.selected::after { content: "-"; }
+  #settingsOverlay .set-row { border-bottom: none; padding: 9px 6px; font-size: 18px; }
+  #settingsOverlay .set-row .lab { color: var(--menu-ink); font-style: italic; font-weight: 500; }
+  #settingsOverlay .set-row .note { color: var(--menu-dim); font-style: normal; font-size: 15px; display: inline-block; margin-top: 3px; }
+  #settingsOverlay .set-row .val { color: var(--menu-dim); font-family: var(--menu-serif); font-size: 15px; }
+  #settingsOverlay .set-btn {
+    background: none; border: 1px solid var(--menu-faint); border-radius: 999px; color: var(--menu-ink);
+    font-family: var(--menu-serif); font-weight: 600; font-size: 13px; letter-spacing: 0.2em; min-width: 0; padding: 5px 14px;
+  }
+  #settingsOverlay .set-btn:hover, #settingsOverlay .set-btn:focus-visible { border-color: var(--menu-ink); color: var(--menu-ink); outline: none; }
+  #settingsOverlay .set-btn.on, #settingsOverlay .set-btn.capturing { border-color: var(--menu-gold); color: var(--menu-gold); }
+  /* ON/OFF toggles drawn as the reference's square checkboxes; the ON/OFF
+     text stays in the button (gates and screen readers read it) */
+  #settingsOverlay .set-btn.set-toggle {
+    width: 16px; height: 16px; min-width: 0; padding: 0; border: 1.5px solid var(--menu-ink); border-radius: 1px;
+    font-size: 0; letter-spacing: 0; position: relative; opacity: 0.85;
+  }
+  #settingsOverlay .set-btn.set-toggle.on::after {
+    content: ""; position: absolute; left: 2px; top: 2px; right: 2px; bottom: 2px; background: var(--menu-ink);
+  }
+  #settingsOverlay .set-btn.set-toggle:hover, #settingsOverlay .set-btn.set-toggle:focus-visible { opacity: 1; border-color: var(--menu-gold); }
+  #settingsOverlay .set-row input[type=range] { accent-color: #e9dcc0; width: 180px; }
+  #settingsOverlay #settingsClose {
+    background: none; color: var(--menu-ink); border: none; border-radius: 0; margin-top: 28px; padding: 4px 0;
+    font-family: var(--menu-serif); font-style: italic; font-weight: 600; font-size: 18px; letter-spacing: 0.24em;
+  }
+  #settingsOverlay #settingsClose::before { content: "– "; color: var(--menu-gold); }
+  #settingsOverlay #settingsClose::after { content: " –"; color: var(--menu-gold); }
+  #settingsOverlay #settingsClose:hover, #settingsOverlay #settingsClose:focus-visible { color: var(--menu-gold); outline: none; }
+  #settingsOverlay .cr-role { font-family: var(--menu-serif); color: var(--menu-dim); font-size: 13px; letter-spacing: 0.24em; text-transform: uppercase; }
+  #settingsOverlay .cr-name, #settingsOverlay .collab-row .collab-name { font-family: var(--menu-serif); color: var(--menu-ink); font-size: 18px; }
+  /* PART F: the intro's title in the new display face */
+  .intro-title { font-family: var(--menu-display); font-weight: 800; letter-spacing: 2px; }
+  /* keyboard focus is always visible on the menu layer */
+  #login.fp button:focus-visible, #settingsOverlay button:focus-visible { outline: 1px solid var(--menu-gold); outline-offset: 3px; }
+  #login.fp .fp-item:focus-visible, #login.fp #enterBtn:focus-visible, #settingsOverlay .set-tab:focus-visible, #settingsOverlay #settingsClose:focus-visible { outline: none; }
 </style>
 </head>
 <body>
@@ -606,11 +872,37 @@
   <div class="intro-title">RuneHaven</div>
 </div>
 
-<div id="login">
-  <h1>RUNEHAVEN</h1>
-  <div class="tagline">ONE WORLD &nbsp;•&nbsp; ONE HISTORY &nbsp;•&nbsp; SHARED BY ALL</div>
-  <button id="settingsBtn">&#9881; SETTINGS</button>
-  <input id="username" maxlength="16" placeholder="Choose your name" autocomplete="off" spellcheck="false">
+<div id="login" class="fp fp-title">
+  <!-- Front Page Rework (README, owner 2026-10-22): the painted backdrop and
+       its shade sit under everything; the title menu (.fp-ttl) and the
+       character screen (.fp-sel) are two states of this one card. Every
+       pre-existing element keeps its id, its type, its handler and its order. -->
+  <canvas id="fpBackdrop"></canvas>
+  <div id="fpShade"></div>
+  <h1>RuneHaven</h1>
+  <div class="tagline">One world &nbsp;·&nbsp; one history &nbsp;·&nbsp; shared by all</div>
+  <button class="fp-item fp-ttl" id="fpPlay">Play</button>
+  <button id="settingsBtn">Settings</button>
+  <button class="fp-item fp-ttl" id="fpRedeem">Redeem a Code</button>
+  <button class="fp-item fp-ttl" id="fpCredits">Credits</button>
+  <div id="fpBanner" class="fp-ttl"></div>
+  <button id="fpNewsLink" class="fp-ttl">What's new</button>
+  <button id="fpStatus" class="fp-ttl"><span class="dot"></span><span id="fpStatusText">Connect your world</span></button>
+  <div id="fpNews" class="menu-card fp-ttl" style="display:none">
+    <button class="mc-x" id="fpNewsX" title="Dismiss">&#10005;</button>
+    <div class="mc-title">What's new</div>
+    <div class="mc-sub" id="fpNewsSub"></div>
+    <ul id="fpNewsList"></ul>
+  </div>
+  <button id="fpBack" class="fp-sel">&larr; Back</button>
+  <div id="fpRedeemCard" class="menu-card fp-sub">
+    <div class="mc-title">Redeem a Code</div>
+    <div class="mc-sub">Gifts from the makers</div>
+    <div class="mc-body">Type the code you were given and press Redeem.</div>
+    <div style="height:72px"></div>
+  </div>
+  <div id="fpSelHead" class="fp-sel">Your name &nbsp;·&nbsp; your calling</div>
+  <input id="username" maxlength="16" placeholder="Your name" autocomplete="off" spellcheck="false">
   <!-- Account PIN Protection: directly below the name field, and only ever
        visible once the typed name has been looked up. -->
   <input id="pinInput" type="password" maxlength="12" inputmode="numeric" placeholder="Create a PIN" autocomplete="off" spellcheck="false" style="display:none">
@@ -797,19 +1089,19 @@
     <div class="set-sec shown" id="secGraphics">
       <div class="set-row">
         <span class="lab">Fullscreen</span>
-        <span class="ctl"><button class="set-btn" id="setFullscreen">OFF</button></span>
+        <span class="ctl"><button class="set-btn set-toggle" id="setFullscreen">OFF</button></span>
       </div>
       <div class="set-row">
         <span class="lab">Reduce motion &amp; particles
           <br><span class="note">Turns off the ambient drifting effects &mdash; motes, embers,
           fireflies, snow, butterflies. Combat feedback is unaffected (screen shake has its own switch below).</span></span>
-        <span class="ctl"><button class="set-btn" id="setReduceMotion">OFF</button></span>
+        <span class="ctl"><button class="set-btn set-toggle" id="setReduceMotion">OFF</button></span>
       </div>
       <div class="set-row">
         <span class="lab">Screen shake
           <br><span class="note">The small camera jolt when you hit or are hit. Hit flashes and the
           brief hit-stop on heavy blows stay either way.</span></span>
-        <span class="ctl"><button class="set-btn" id="setScreenShake">ON</button></span>
+        <span class="ctl"><button class="set-btn set-toggle" id="setScreenShake">ON</button></span>
       </div>
     </div>
 
@@ -826,7 +1118,7 @@
         <span class="lab">Colourblind-friendly palette
           <br><span class="note">Deuteranopia-safe: the greens that read against a red &mdash; the
           HP numbers and bar, the weakened tame ring and its name tag &mdash; become blue.</span></span>
-        <span class="ctl"><button class="set-btn" id="setColorblind">OFF</button></span>
+        <span class="ctl"><button class="set-btn set-toggle" id="setColorblind">OFF</button></span>
       </div>
     </div>
 
@@ -8010,6 +8302,36 @@ let chosenClass = null;
 
 const previewAnims = [];
 let previewIdx = 0;
+/* Front Page Rework PART D: each class card is the reference's tooltip card —
+   a spaced small-caps role line under the name, and a row of three round
+   badges for what the class is good at (the first one filled). Flat inline
+   SVG glyphs, no image files. */
+const FP_GLYPH = {
+  bow:    '<path d="M6 3c6 3 6 15 0 18M6 3v18M3 12h15m-3-3 3 3-3 3"/>',
+  eye:    '<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5"/>',
+  boot:   '<path d="M8 3v11l-4 3v3h15v-3l-5-2V3z"/>',
+  sword:  '<path d="M18 3l3 3-11 11-3-3zM5 16l3 3M3 21l3-3"/>',
+  shield: '<path d="M12 3l8 3v6c0 5-4 8-8 9-4-1-8-4-8-9V6z"/>',
+  heart:  '<path d="M12 20s-7-4.5-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.5-7 10-7 10z"/>',
+  staff:  '<path d="M7 21L17 7M15 3l6 6M17 7l2-2"/><circle cx="18" cy="6" r="2"/>',
+  spark:  '<path d="M12 2v6M12 16v6M2 12h6M16 12h6M5 5l4 4M15 15l4 4M19 5l-4 4M9 15l-4 4"/>',
+  ring:   '<circle cx="12" cy="14" r="6"/><path d="M9 4h6l-3 4z"/>',
+  paw:    '<circle cx="7" cy="9" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="17" cy="9" r="2"/><path d="M8 17c0-3 2-5 4-5s4 2 4 5-2 3-4 3-4 0-4-3z"/>',
+  spear:  '<path d="M4 20L18 6M15 3h6v6M18 6l3-3"/>',
+  hammer: '<path d="M13 4l7 7-3 3-7-7zM10 7L3 20l1 1 13-7"/>',
+  wall:   '<path d="M3 6h18v12H3zM3 12h18M9 6v6M15 12v6"/>',
+};
+const CLASS_FRONT = {
+  Ranger:      { role: "Scout · Archer", badges: ["bow", "eye", "boot"] },
+  Knight:      { role: "Vanguard",       badges: ["sword", "shield", "heart"] },
+  Mystic:      { role: "Arcanist",       badges: ["staff", "spark", "ring"] },
+  Beastmaster: { role: "Tamer",          badges: ["paw", "spear", "heart"] },
+  Architect:   { role: "Builder",        badges: ["hammer", "wall", "shield"] },
+};
+function fpBadgesHtml(list) {
+  return `<div class="badges">` + (list || []).map((g, i) =>
+    `<span class="badge${i === 0 ? " lead" : ""}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${FP_GLYPH[g] || ""}</svg></span>`).join("") + `</div>`;
+}
 for (const [name, c] of Object.entries(CLASSES)) {
   const card = document.createElement("div");
   card.className = "class-card";
@@ -8020,7 +8342,10 @@ for (const [name, c] of Object.entries(CLASSES)) {
   previewIdx++;
   card.appendChild(cv);
   card.insertAdjacentHTML("beforeend",
-    `<div class="cname">${name}</div><div class="cdesc">${c.desc}</div><div class="cweap">Best: ${c.weapons}</div>`);
+    `<div class="cname">${name}</div>` +
+    `<div class="crole">${(CLASS_FRONT[name] || {}).role || ""}</div>` +   // Front Page PART D
+    `<div class="cdesc">${c.desc}</div><div class="cweap">Best: ${c.weapons}</div>` +
+    fpBadgesHtml((CLASS_FRONT[name] || {}).badges));
   card.onclick = () => {
     document.querySelectorAll(".class-card").forEach(el => el.classList.remove("selected"));
     card.classList.add("selected");
@@ -8029,6 +8354,231 @@ for (const [name, c] of Object.entries(CLASSES)) {
   };
   classRow.appendChild(card);
 }
+/* ============ FRONT PAGE REWORK — the title screen ======================
+   README "Front Page Rework" (owner request 2026-10-22). Two states of the
+   one #login card: "title" (logo, Play / Settings / Redeem a Code / Credits,
+   the update banner, the world status, What's new) and "select" (name, PIN,
+   class cards, Enter the World), plus two small sub-states of the title for
+   Redeem and Connect. Nothing here changes what any existing control does:
+   the states only show and hide them. */
+const UPDATE_NAME = "THE REFORGING UPDATE";   // TUNABLE: the banner, and the What's new once-per-update key
+const UPDATE_VERSION = "v60";
+const FP_NEWS = [
+  "The Elder Drake now roams the world — and a Bounty Board at Spawn names a daily hunt.",
+  "Weather: rain, fog, ashfall and snow, the same for everyone where you stand.",
+  "Real stakes: a recap of what you dropped, your pack on the compass, raid alerts for your base.",
+  "Combat feel: hit-stop on heavy blows, a shake you can switch off, and new sound effects.",
+  "A new front page, character select and settings.",
+];
+const FP_NEWS_KEY = "rh_news_seen";
+let fpState = "title";
+function fpGo(st) {
+  if (!loginEl) return fpState;
+  fpState = st;
+  loginEl.classList.toggle("fp-title", st === "title" || st === "redeem" || st === "connect");
+  loginEl.classList.toggle("fp-select", st === "select");
+  loginEl.classList.toggle("fp-redeem", st === "redeem");
+  loginEl.classList.toggle("fp-connect", st === "connect");
+  /* the title's own items step aside while a sub-card is up */
+  loginEl.classList.toggle("fp-sub-open", st === "redeem" || st === "connect");
+  const focusTo = st === "title" ? "fpPlay" : st === "select" ? "username" : st === "redeem" ? "redeemInput" : "sbUrl";
+  const el = document.getElementById(focusTo);
+  if (el && typeof el.focus === "function") { try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); } }
+  if (st === "connect") { const cb = document.getElementById("connectBox"); if (cb) cb.open = true; }
+  return fpState;
+}
+function fpTitleItems() {
+  return ["fpPlay", "settingsBtn", "fpRedeem", "fpCredits"].map(id => document.getElementById(id)).filter(Boolean);
+}
+function fpNewsSeen() { try { return localStorage.getItem(FP_NEWS_KEY) === UPDATE_NAME; } catch (e) { return false; } }
+function fpShowNews(show) {
+  const n = document.getElementById("fpNews");
+  if (n) n.style.display = show ? "block" : "none";
+}
+function fpDismissNews() {
+  fpShowNews(false);
+  try { localStorage.setItem(FP_NEWS_KEY, UPDATE_NAME); } catch (e) { /* private window: shown again next time */ }
+}
+function fpSyncStatus() {
+  const dot = document.getElementById("connDot"), st = document.getElementById("fpStatus"), tx = document.getElementById("fpStatusText");
+  const ok = !!dot && dot.classList.contains("connected");
+  if (st) st.classList.toggle("ok", ok);
+  if (tx) tx.textContent = ok ? "World connected" : "Connect your world";
+  if (loginEl) loginEl.classList.toggle("fp-needconn", !ok);
+}
+(function fpWire() {
+  const $id = id => document.getElementById(id);
+  /* Which state each pre-existing control belongs to — added here, not in the
+     markup, so every tag a gate reads is byte-for-byte what it was. */
+  for (const id of ["username", "pinInput", "pinNotice", "pinProtect", "classRow", "resumeNotice", "loginError", "enterBtn"]) { const el = $id(id); if (el) el.classList.add("fp-sel"); }
+  for (const id of ["connectBox", "redeemRow", "redeemMsg"]) { const el = $id(id); if (el) el.classList.add("fp-sub"); }
+  { const sb0 = $id("settingsBtn"); if (sb0) sb0.classList.add("fp-item", "fp-ttl"); }
+  const banner = $id("fpBanner");
+  if (banner) banner.innerHTML = `<b>${UPDATE_NAME}</b> &nbsp;·&nbsp; ${UPDATE_VERSION.toUpperCase()}`;
+  const sub = $id("fpNewsSub"), list = $id("fpNewsList");
+  if (sub) sub.textContent = UPDATE_NAME;
+  if (list) list.innerHTML = FP_NEWS.map(t => `<li>${t}</li>`).join("");
+  fpShowNews(!fpNewsSeen());
+  const on = (id, fn) => { const el = $id(id); if (el) el.addEventListener("click", fn); };
+  on("fpPlay", () => fpGo("select"));
+  on("fpRedeem", () => fpGo("redeem"));
+  on("fpCredits", () => { if (typeof openSettings === "function") openSettings("credits"); });
+  on("fpBack", () => fpGo("title"));
+  on("fpStatus", () => fpGo("connect"));
+  on("fpNewsLink", () => fpShowNews(true));
+  on("fpNewsX", fpDismissNews);
+  fpSyncStatus();
+  const dot = $id("connDot");
+  if (dot && typeof MutationObserver === "function") new MutationObserver(fpSyncStatus).observe(dot, { attributes: true, attributeFilter: ["class"] });
+  /* An error, or the returning-player resume pause, always shows on the
+     character screen — never behind the title menu. */
+  const toSelect = () => { if (fpState !== "select") fpGo("select"); };
+  const err = $id("loginError"), rn = $id("resumeNotice");
+  if (typeof MutationObserver === "function") {
+    let lastErr = "";
+    if (err) new MutationObserver(() => {
+      const t = err.textContent.trim();
+      if (t && t !== lastErr) toSelect();
+      lastErr = t;
+    }).observe(err, { childList: true, characterData: true, subtree: true });
+    /* the resume pause: only the moment it APPEARS, never on a re-set */
+    let rnShown = false;
+    if (rn) new MutationObserver(() => {
+      const shown = !!rn.style.display && rn.style.display !== "none";
+      if (shown && !rnShown) toSelect();
+      rnShown = shown;
+    }).observe(rn, { attributes: true, attributeFilter: ["style"] });
+  }
+  /* Keyboard: ↑/↓ + Enter on the title, ←/→ through the classes, Esc back. */
+  document.addEventListener("keydown", (e) => {
+    if (!loginEl || loginEl.style.display === "none") return;
+    if (document.body.classList.contains("intro-lock")) return;
+    const ov = $id("settingsOverlay");
+    if (ov && ov.classList.contains("open")) return;
+    const typing = document.activeElement && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
+    if (e.key === "Escape" && fpState !== "title") { e.preventDefault(); fpGo("title"); return; }
+    if (fpState === "title" && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      const items = fpTitleItems();
+      const i = items.indexOf(document.activeElement);
+      const j = i < 0 ? 0 : (i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+      items[j].focus();
+      return;
+    }
+    if (fpState === "select" && !typing && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      const cards = [...document.querySelectorAll(".class-card")];
+      const i = cards.findIndex(c => c.classList.contains("selected"));
+      const j = i < 0 ? 0 : (i + (e.key === "ArrowRight" ? 1 : cards.length - 1)) % cards.length;
+      cards[j].click();
+    }
+  });
+  requestAnimationFrame(() => { if (fpState === "title") { const p0 = $id("fpPlay"); if (p0) p0.focus(); } });
+})();
+
+/* PART C — the backdrop. The live-world option was weighed and NOT taken:
+   the world is not generated until ENTER (loadWorld / placeLandmarks /
+   buildFeatureList all run inside the login flow) and render() reads the
+   logged-in player throughout, so drawing it here would mean running
+   worldgen before login and a stand-in player — exactly what the spec says
+   must never risk login. This is the spec's static fallback, made as key
+   art in the locked style: flat-shaded low-poly ridges (lit left face, shade
+   right face — the 0.72 / 0.55 rule), the Eternal Tower's silhouette with lit
+   windows, a pale moon, pines, and slow gold motes (cap FP_MOTES, none under
+   Reduce motion). Flat fills only. Painted once per size to an offscreen
+   canvas; each frame is one blit plus the motes; it stops the moment the
+   login card is hidden. */
+const FP_MOTES = 40;   // TUNABLE (spec cap 40)
+let fpArt = null, fpArtW = 0, fpArtH = 0, fpMotes = [], fpBackdropOn = true, fpBackdropFrames = 0;
+function fpPaintArt(w, h) {
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  const c = cv.getContext && cv.getContext("2d");
+  if (!c) return null;
+  const bands = ["#07080b", "#08090c", "#08090d", "#090a0e", "#0a0b10", "#0a0c11", "#0b0d12", "#0c0e14", "#0c0f15", "#0d1016", "#0e1118", "#0f1219"];
+  for (let i = 0; i < bands.length; i++) { c.fillStyle = bands[i]; c.fillRect(0, Math.floor(h * i / bands.length), w, Math.ceil(h / bands.length) + 1); }
+  // the moon
+  c.fillStyle = "rgba(233,220,192,0.88)"; c.beginPath(); c.arc(w * 0.78, h * 0.2, Math.max(18, h * 0.045), 0, Math.PI * 2); c.fill();
+  c.fillStyle = "rgba(233,220,192,0.03)"; c.beginPath(); c.arc(w * 0.78, h * 0.2, Math.max(18, h * 0.045) * 2.2, 0, Math.PI * 2); c.fill();
+  // three ridges, far to near, each a run of flat-shaded peaks
+  const ridge = (base, amp, step, lit, shade, seed) => {
+    let x = -step, prevY = base;
+    const pts = [];
+    for (let i = 0; x < w + step * 2; i++, x += step) {
+      const y = base - amp * (0.35 + 0.65 * hash2(i, seed, 913));
+      pts.push([x, y]);
+    }
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const [x0, y0] = pts[i], [x1, y1] = pts[i + 1];
+      const peakX = (x0 + x1) / 2 + (hash2(i, seed, 47) - 0.5) * step * 0.4;
+      const peakY = Math.min(y0, y1) - amp * 0.25 * hash2(i, seed, 71);
+      c.fillStyle = lit;   // lit (sun-left) face
+      c.beginPath(); c.moveTo(x0, h); c.lineTo(x0, y0); c.lineTo(peakX, peakY); c.lineTo(peakX, h); c.closePath(); c.fill();
+      c.fillStyle = shade; // shade face
+      c.beginPath(); c.moveTo(peakX, h); c.lineTo(peakX, peakY); c.lineTo(x1, y1); c.lineTo(x1, h); c.closePath(); c.fill();
+    }
+  };
+  ridge(h * 0.62, h * 0.22, w / 7, "#1a2131", "#141a27", 11);
+  ridge(h * 0.72, h * 0.16, w / 9, "#151b27", "#10151f", 23);
+  // the Eternal Tower on its hill, right third
+  const tx = Math.round(w * 0.7), hillY = Math.round(h * 0.74);
+  c.fillStyle = "#12161f"; c.beginPath(); c.moveTo(tx - w * 0.16, h); c.lineTo(tx - w * 0.05, hillY); c.lineTo(tx + w * 0.06, hillY); c.lineTo(tx + w * 0.18, h); c.closePath(); c.fill();
+  const u = Math.max(6, Math.round(h * 0.012));
+  const tiers = [[9, 12], [7.5, 11], [6, 10], [4.6, 8]];
+  let ty = hillY;
+  for (const [bw, bh] of tiers) {
+    const hw = Math.round(bw * u / 2), hh = Math.round(bh * u);
+    c.fillStyle = "#1c2230"; c.fillRect(tx - hw, ty - hh, hw, hh);          // lit half
+    c.fillStyle = "#151a25"; c.fillRect(tx, ty - hh, hw, hh);                // shade half
+    c.fillStyle = "#232a3a"; c.fillRect(tx - hw - u * 0.4, ty - hh, hw * 2 + u * 0.8, Math.max(2, Math.round(u * 0.5)));   // ledge
+    ty -= hh;
+  }
+  c.fillStyle = "#151a25"; c.beginPath(); c.moveTo(tx - u * 2.6, ty); c.lineTo(tx, ty - u * 5); c.lineTo(tx + u * 2.6, ty); c.closePath(); c.fill();
+  c.fillStyle = "#1c2230"; c.beginPath(); c.moveTo(tx - u * 2.6, ty); c.lineTo(tx, ty - u * 5); c.lineTo(tx, ty); c.closePath(); c.fill();
+  c.fillStyle = "#e8b64c";   // lit windows
+  for (let i = 0; i < 9; i++) {
+    const wy = hillY - Math.round(u * (4 + i * 4.2)), wx = tx + Math.round((hash2(i, 5, 3) - 0.5) * u * 4);
+    if (wy > ty) c.fillRect(wx, wy, Math.max(2, Math.round(u * 0.45)), Math.max(3, Math.round(u * 0.8)));
+  }
+  // the near ridge and its pines
+  ridge(h * 0.86, h * 0.1, w / 11, "#0f131b", "#0b0e15", 37);
+  for (let i = 0; i < 26; i++) {
+    const px = Math.round(hash2(i, 41, 7) * w), base = Math.round(h * (0.88 + hash2(i, 43, 7) * 0.1));
+    const ph = Math.round(h * (0.05 + hash2(i, 47, 7) * 0.05)), pw = Math.round(ph * 0.42);
+    c.fillStyle = "#0b0e14"; c.beginPath(); c.moveTo(px - pw, base); c.lineTo(px, base - ph); c.lineTo(px, base); c.closePath(); c.fill();
+    c.fillStyle = "#080a0f"; c.beginPath(); c.moveTo(px, base); c.lineTo(px, base - ph); c.lineTo(px + pw, base); c.closePath(); c.fill();
+  }
+  c.fillStyle = "#07080c"; c.fillRect(0, Math.round(h * 0.96), w, h);
+  return cv;
+}
+function fpBackdropTick() {
+  const cv = document.getElementById("fpBackdrop");
+  if (!fpBackdropOn || !cv || !loginEl || loginEl.style.display === "none") { fpBackdropOn = false; fpMotes.length = 0; return; }
+  const w = Math.max(1, Math.round(window.innerWidth || 1280)), h = Math.max(1, Math.round(window.innerHeight || 720));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const c = cv.getContext && cv.getContext("2d");
+  if (!c) return;   // a canvas-less environment: the shade and the dark card are the backdrop
+  if (!fpArt || fpArtW !== w || fpArtH !== h) { fpArt = fpPaintArt(w, h); fpArtW = w; fpArtH = h; }
+  if (fpArt) c.drawImage(fpArt, 0, 0);
+  const want = (typeof SETTINGS !== "undefined" && SETTINGS.reduceMotion) ? 0 : FP_MOTES;
+  if (fpMotes.length > want) fpMotes.length = want;
+  while (fpMotes.length < want) fpMotes.push({ x: Math.random() * w, y: h * (0.35 + Math.random() * 0.65), v: 6 + Math.random() * 14, p: Math.random() * 6.28 });
+  const tNow = performance.now() / 1000;
+  for (const m of fpMotes) {
+    m.y -= m.v / 60; m.x += Math.sin(tNow * 0.6 + m.p) * 0.15;
+    if (m.y < h * 0.25) { m.y = h * (0.9 + Math.random() * 0.1); m.x = Math.random() * w; }
+    c.fillStyle = `rgba(232,182,76,${(0.35 + 0.35 * Math.sin(tNow * 2 + m.p) ** 2).toFixed(3)})`;
+    c.fillRect(Math.round(m.x), Math.round(m.y), 2, 2);
+  }
+  fpBackdropFrames++;
+  requestAnimationFrame(fpBackdropTick);
+}
+requestAnimationFrame(fpBackdropTick);
+function debugFrontInfo() {
+  return { state: fpState, classes: loginEl ? loginEl.className : "", UPDATE_NAME, UPDATE_VERSION, news: FP_NEWS.slice(),
+           newsShown: (document.getElementById("fpNews") || {}).style ? document.getElementById("fpNews").style.display !== "none" : false,
+           newsSeen: fpNewsSeen(), backdropOn: fpBackdropOn, backdropFrames: fpBackdropFrames, motes: fpMotes.length, FP_MOTES };
+}
+
 /* v9: idle-animated previews — gentle bob + sway while the login screen shows */
 function animatePreviews(t) {
   if (loginEl.style.display === "none") return;
