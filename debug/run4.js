@@ -1893,7 +1893,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['the AudioContext is created on the ENTER click, never at page load',
         initAt >= 0 && gameScript.slice(initAt, initAt + 260).indexOf('connectSupabase();') > 0 &&
         gameScript.split('AudioEngine.init()').length === 2]);   // exactly one call site in the whole file
-      results.push(['SFX stays unwired — no sound-effect files have been provided yet',
+      results.push(['file SFX stay unused (AudioEngine.playSFX is never called) — S8 sound effects are synthesised through AudioEngine.playSynth instead',
         gameScript.split('AudioEngine.playSFX(').length === 1]);
       /* Mob Rarity PART D: three sites now, not two — the rotation, the
          ordinary combat track, and the Elder cue. Updated, not relaxed: the
