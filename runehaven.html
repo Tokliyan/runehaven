@@ -10331,11 +10331,11 @@ function debugSetCombatLogout(patch) {
 }
 window.addEventListener("beforeunload", (e) => {
   if (me && sb) savePlayer();
-  storeMyBaseCount();   // S7 PART C: "pieces you owned at your last logout"
   /* The save above is unchanged and still happens FIRST, on every path — a
      player who leaves mid-fight must not also lose their progress. The prompt
      is only ever raised inside the window, and never for someone already
      dead: a corpse has nothing to flee from. */
+  storeMyBaseCount();   // S7 PART C: "pieces you owned at your last logout" — after the save
   if (me && !dead && inCombatLogoutWindow()) {
     e.preventDefault();
     e.returnValue = "";        // the two forms browsers actually read
@@ -13458,9 +13458,8 @@ function update(dt, t) {
          not just the same speed as every other mount. */
       const mountMult = (me.mounted && activePet && activePet.species === "duskfox_elder")
         ? MOUNT_SPEED_MULT * 2 : (me.mounted ? MOUNT_SPEED_MULT : 1);
-      const spd = PLAYER_SPEED * (SLOW.has(here) ? 0.55 : 1) * (isBlocking() ? 0.5 : 1)
-                * mountMult * speedPotionMult()    // v28, v52 hotfix: Duskfox Elder 2x; v58: the draught, which returns 1 while mounted
-                * weatherSpeedMult();              // S7 PART A: snow, -15% on foot only
+      const spd = PLAYER_SPEED * (SLOW.has(here) ? 0.55 : 1) * weatherSpeedMult() * (isBlocking() ? 0.5 : 1)   // S7 PART A: snow, -15% on foot only
+                * mountMult * speedPotionMult();   // v28, v52 hotfix: Duskfox Elder 2x; v58: the draught, which returns 1 while mounted
       const nx = me.x + (dx / len) * spd * dt;
       const ny = me.y + (dy / len) * spd * dt;
       /* v21: the one movement gate the dive toggle touches — diveBlocked()

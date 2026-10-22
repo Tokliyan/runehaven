@@ -6414,7 +6414,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           gameScript.indexOf('const pinCheck = await requirePinForLogin(username);') > 0]);
         results.push(['v46 B: it stores a NAME and never a PIN or a credential',
           gameScript.indexOf('localStorage.setItem(LS_LAST_USER, username)') > 0 &&
-          (gameScript.match(/localStorage\.setItem\(/g) || []).length === 5]);
+          /* S7 Real Stakes PART C adds a sixth setItem, ordered by its spec: the
+             count of base pieces you owned, under rh_base_count_<username> —
+             a number, never a PIN or credential (the S7 block pins its key). */
+          (gameScript.match(/localStorage\.setItem\(/g) || []).length === 6 &&
+          gameScript.indexOf('localStorage.setItem(baseCountKey(), String(myBasePieces().length))') > 0]);
         enterEl46.onclick = realClick;
         nameEl46.value = 'BootTest';
         try { window.localStorage.removeItem('rh_last_user'); } catch (e) {}
