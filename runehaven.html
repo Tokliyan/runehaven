@@ -22063,7 +22063,7 @@ function saveSettings() {
   } catch (e) {}
 }
 
-/* --- PART C: the audio engine. Infrastructure only, no tracks exist yet ---- */
+/* --- PART C: the audio engine. Music from audio/ (v24); S8 synthesised SFX -- */
 const SFX_MIN_GAP_MS = 45;   // S8: the same synth sound cannot stack faster than this
 const AudioEngine = {
   ctx: null, masterGain: null, musicGain: null, sfxGain: null, musicSource: null,
