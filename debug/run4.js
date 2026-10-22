@@ -11788,10 +11788,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         const mm = gameScript.match(new RegExp('\\bconst ' + name + ' = ([^;]+);'));
         if (!mm) return undefined;
         const keys = Object.keys(S6C);
-        return (S6C[name] = new Function(...keys, 'return (' + mm[1] + ');')(...keys.map(k => S6C[k])));
+        return (S6C[name] = new Function('MOBS', ...keys, 'return (' + mm[1] + ');')(window.debugWorldInfo().MOBS, ...keys.map(k => S6C[k])));
       };
       for (const n of ['DRAKE_LEG_MS', 'DRAKE_ROAM_R', 'DRAKE_SAFE_MARGIN', 'DRAKE_LEG_MAX', 'DRAKE_RESYNC_MS',
-                       'ELDER_DRAKE_RESPAWN_MS', 'DAY_LENGTH', 'BOUNTY_REWARD_RUNIC']) s6const(n);
+                       'ELDER_DRAKE_RESPAWN_MS', 'DAY_LENGTH', 'BOUNTY_REWARD_RUNIC',
+                       'DRAKE_UNSEEN_R', 'DRAKE_SYNC_STALE_MS', 'DRAKE_IDLE_BAND']) s6const(n);
       { // `const BOUNTY_NEAR = 150, BOUNTY_FAR = 600;` is one declaration, so it is read by its own pattern
         const nf = gameScript.match(/\bconst BOUNTY_NEAR = (\d+), BOUNTY_FAR = (\d+);/);
         S6C.BOUNTY_NEAR = nf ? +nf[1] : NaN; S6C.BOUNTY_FAR = nf ? +nf[2] : NaN;
@@ -11800,8 +11801,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       {
         // the margin has to cover what the Drake itself can reach from its home: its leash plus its idle patrol (min(0.4 * leash, 4))
         const edm = window.debugWorldInfo().MOBS.elder_drake, reach = edm.leashRadius + Math.min(edm.leashRadius * 0.4, 4);
-        results.push([`S6 A: the spec's tunables — a leg is ${LEG / 60000} min, targets within ${ROAM_R} tiles of the Volcano, margin ${MARGIN} (leash + patrol reach ${reach}), longest leg ${LEG_MAX}, a day ${S6C.DAY_LENGTH} s`,
-          LEG === 20 * 60 * 1000 && ROAM_R === 900 && MARGIN >= reach && LEG_MAX > 0 && S6C.DAY_LENGTH === 600 && S6C.DRAKE_RESYNC_MS === 10000]);
+        results.push([`S6 A: the spec's tunables — a leg is ${LEG / 60000} min, targets within ${ROAM_R} tiles of the Volcano, margin ${MARGIN} (leash + patrol reach ${reach}), longest leg ${LEG_MAX}, a day ${S6C.DAY_LENGTH} s, idle band ${S6C.DRAKE_IDLE_BAND}, sync stale ${S6C.DRAKE_SYNC_STALE_MS} ms, unseen ${S6C.DRAKE_UNSEEN_R} tiles`,
+          LEG === 20 * 60 * 1000 && ROAM_R === 900 && MARGIN >= reach && LEG_MAX === 0.5 * edm.moveSpeed * LEG / 1000 && S6C.DAY_LENGTH === 600 && S6C.DRAKE_RESYNC_MS === 10000 &&
+          S6C.DRAKE_IDLE_BAND === 6.5 && S6C.DRAKE_SYNC_STALE_MS === 1500 && S6C.DRAKE_UNSEEN_R === 40]);
       }
 
       // ---- save everything this block will move ----
@@ -11965,7 +11967,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           results.push([`S6 A: and keeps up with its home — ${lagEnd.toFixed(2)} tiles behind it at the end (worst ${maxLag.toFixed(2)}), ${Math.round(drakePath)} tiles flown itself`,
             lagEnd <= 6 && drakePath > homePath * 0.5]);
           results.push([`S6 A: and it never stands in a Safe Zone or the Colosseum — ${zoneFrames} of 600 frames`, zoneFrames === 0]);
-          results.push([`S6 A: and nothing provoked it — never aggro or attack in 600 frames (${engagedFrames} engaged; ${notIdle} frames in "leash" while catching up with the home, as the 4.5-tile idle band allows), never nearer than ${Math.round(minDme)} tiles to the player`,
+          results.push([`S6 A: and nothing provoked it — never aggro or attack in 600 frames (${engagedFrames} engaged; ${notIdle} frames in "leash" while catching up with the home, catching up after 6 s steps), never nearer than ${Math.round(minDme)} tiles to the player`,
             engagedFrames === 0 && minDme > 100]);
         }
 
@@ -11977,51 +11979,153 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           if (!best || d > best.d) best = { o, d };
         }
 
-        /* ---- 5b. While it fights, the home holds where the fight began (another "player" stands 6 tiles off for five minutes) ---- */
+        /* ---- 5b. While it fights, its home keeps following the roaming home ("leashing measures from the current home"):
+           a "player" stands 6 tiles off for 45 s; the home flies on, the Drake breaks off at the leash and walks back without a snap ---- */
         {
           setClock(best.o);
           const H = homeNow();
           calm(H);
-          HB6.others.set('s6:dummy', { x: H.x + 6, y: H.y, dead: false, name: 's6dummy', u: 's6dummy' });
+          const dum = { x: H.x + 6, y: H.y, dead: false, name: 's6dummy', u: 's6dummy' };
+          HB6.others.set('s6:dummy', dum);
           let T = 4e6;
-          window.updateMob(dm, 0.05, T, T);          // first tick: not yet engaged, so the home is still set; it picks the dummy and turns aggro
-          const hx0 = dm.hx, hy0 = dm.hy;
-          let drift = 0, engagedFrames = 0, maxFromHome = 0;
-          for (let f = 1; f <= 100; f++) {
-            setClock(best.o + f * 3000);
-            T += 3000;
+          window.updateMob(dm, 0.05, T, T);          // first tick: snaps to the home (simAt 0), picks the dummy, turns aggro
+          let prev = { x: dm.x, y: dm.y }, maxErr = 0, engagedFrames = 0, maxFromHome = 0, maxJump = 0, brokeAt = -1;
+          for (let f = 1; f <= 900; f++) {
+            setClock(best.o + f * 50);
+            T += 50;
             window.updateMob(dm, 0.05, T, T);
-            drift = Math.max(drift, Math.abs(dm.hx - hx0), Math.abs(dm.hy - hy0));
-            if (dm.state === 'aggro' || dm.state === 'attack') engagedFrames++;
+            const hm = homeNow();
+            maxErr = Math.max(maxErr, Math.hypot(dm.hx - hm.x, dm.hy - hm.y));
+            const eng = dm.state === 'aggro' || dm.state === 'attack';
+            if (eng) engagedFrames++;
+            if (!eng && brokeAt < 0 && engagedFrames > 0) brokeAt = f;
             maxFromHome = Math.max(maxFromHome, Math.hypot(dm.x - dm.hx, dm.y - dm.hy));
+            maxJump = Math.max(maxJump, Math.hypot(dm.x - prev.x, dm.y - prev.y)); prev = { x: dm.x, y: dm.y };
           }
-          const hNow = homeNow(), away = Math.hypot(hNow.x - hx0, hNow.y - hy0);
+          const hNow = homeNow(), away = Math.hypot(hNow.x - H.x, hNow.y - H.y);
+          // the fight is over: nobody left to chase, the Drake walks back to the moving home at its own pace
           HB6.others.delete('s6:dummy');
-          results.push([`S6 A: while it fights the home holds where the fight began — drifted ${drift} tiles in 100 frames (5 min) while the roaming home flew ${away.toFixed(0)} tiles on; engaged on ${engagedFrames}/100 frames, never more than ${maxFromHome.toFixed(1)} tiles from the held home`,
-            drift === 0 && away > 100 && engagedFrames >= 95 && maxFromHome <= W6.MOBS.elder_drake.leashRadius]);
+          const lagA = Math.hypot(dm.x - hNow.x, dm.y - hNow.y);
+          let maxJump2 = 0, sawLeash = false;
+          for (let f = 901; f <= 1500; f++) {
+            setClock(best.o + f * 50);
+            T += 50;
+            window.updateMob(dm, 0.05, T, T);
+            if (dm.state === 'leash') sawLeash = true;
+            maxJump2 = Math.max(maxJump2, Math.hypot(dm.x - prev.x, dm.y - prev.y)); prev = { x: dm.x, y: dm.y };
+          }
+          const hEnd = homeNow(), lagB = Math.hypot(dm.x - hEnd.x, dm.y - hEnd.y);
+          results.push([`S6 A: mid-fight its home still follows drakeRoamHome(now) — off by at most ${maxErr.toFixed(4)} tiles over 900 frames while the home flew ${away.toFixed(0)} tiles; engaged ${engagedFrames} frames, broke off at the leash at frame ${brokeAt} (never more than ${maxFromHome.toFixed(1)} tiles from the home, leash ${W6.MOBS.elder_drake.leashRadius}), biggest step ${maxJump.toFixed(4)} <= ${(MS * 0.05).toFixed(2)}`,
+            maxErr <= 0.05 && away > W6.MOBS.elder_drake.leashRadius + 5 && engagedFrames >= 300 && brokeAt > 0 &&
+            maxFromHome <= W6.MOBS.elder_drake.leashRadius + 1 && maxJump <= MS * 0.05 + 1e-6]);
+          results.push([`S6 A: and once the fight is over it walks back to the moving home with no snap — ${lagA.toFixed(1)} -> ${lagB.toFixed(1)} tiles in 600 frames (state "${dm.state}", leash seen: ${sawLeash}), biggest step ${maxJump2.toFixed(4)}`,
+            lagA > S6C.DRAKE_IDLE_BAND && lagB < lagA - 5 && (dm.state === 'leash' || dm.state === 'idle') && sawLeash && maxJump2 <= MS * 0.05 + 1e-6]);
         }
 
-        /* ---- 5c. Second line of defence: chasing someone inside the Colosseum, the Drake is refused at its edge ---- */
+        /* ---- 5c. Second line of defence: a Drake walking home across the Colosseum is turned aside at its rim, never into it ---- */
         {
           const col = window.drakeZones()[2];
           const isCol = col && window.inColosseum(col.x, col.y) && window.inColosseum(col.x + col.r - 0.5, col.y) && !window.inColosseum(col.x + col.r + 0.5, col.y);
-          if (isCol && col.r > 14) {
+          if (isCol) {
             setClock(best.o);
-            calm({ x: col.x + col.r + 1, y: col.y });
-            dm.state = 'aggro'; dm.simAt = window.drakeNow();       // engaged, so its home is the spot it stands on
-            const dum = { x: col.x + col.r - 12, y: col.y, dead: false, name: 's6dummy', u: 's6dummy' };
-            HB6.others.set('s6:dummy', dum);
-            let T = 5e6, inside = 0, minEdge = Infinity, startD = Math.hypot(dm.x - dum.x, dm.y - dum.y);
-            for (let f = 1; f <= 200; f++) {
+            const H = homeNow(), ux = (col.x - H.x), uy = (col.y - H.y), ul = Math.hypot(ux, uy) || 1;
+            // stand on the far side of the arena from the home, so the straight walk home goes through it
+            const sx = col.x + ux / ul * (col.r + 2), sy = col.y + uy / ul * (col.r + 2);
+            calm({ x: sx, y: sy });
+            dm.simAt = window.drakeNow();
+            let T = 5e6, inside = 0, minEdge = Infinity, maxJump = 0, prev = { x: dm.x, y: dm.y };
+            const d0 = Math.hypot(dm.x - H.x, dm.y - H.y);
+            for (let f = 1; f <= 1200; f++) {
+              setClock(best.o + f * 50);
               T += 50;
               window.updateMob(dm, 0.05, T, T);
-              if (window.inColosseum(dm.x, dm.y)) inside++;
+              if (window.inColosseum(dm.x, dm.y) || window.inSafeZone(dm.x, dm.y)) inside++;
               minEdge = Math.min(minEdge, Math.hypot(dm.x - col.x, dm.y - col.y) - col.r);
+              maxJump = Math.max(maxJump, Math.hypot(dm.x - prev.x, dm.y - prev.y)); prev = { x: dm.x, y: dm.y };
             }
-            HB6.others.delete('s6:dummy');
-            results.push([`S6 A: chasing a player inside the Colosseum (${startD.toFixed(1)} tiles off, radius ${col.r}) the Drake is stopped at the edge — ${inside}/200 frames inside, closest ${minEdge.toFixed(2)} tiles from the rim, still "${dm.state}"`,
-              !window.inSafeZone(dum.x, dum.y) && inside === 0 && minEdge >= 0 && minEdge < 0.3 && dm.state === 'aggro']);
-          } else results.push(['S6 A: the Colosseum is zone 2 of drakeZones and big enough to test the edge', false]);
+            // progress is measured against where the home was when it set off (the home itself moves on)
+            const d1 = Math.hypot(dm.x - H.x, dm.y - H.y);
+            const a0 = Math.atan2(sy - col.y, sx - col.x), a1 = Math.atan2(dm.y - col.y, dm.x - col.x);
+            const arc = Math.abs(((a1 - a0) * 180 / Math.PI + 540) % 360 - 180);
+            results.push([`S6 A: walking home across the Colosseum (radius ${col.r}) the Drake touches the rim (${minEdge.toFixed(2)} tiles) but is never inside it or a Safe Zone — ${inside}/1200 frames — and slides round it: ${(d0 - d1).toFixed(1)} tiles gained on the starting home, ${arc.toFixed(0)} degrees round the rim, biggest step ${maxJump.toFixed(4)}`,
+              inside === 0 && minEdge >= 0 && minEdge < 0.3 && maxJump <= MS * 0.05 + 1e-6 && d1 < d0 - 20 && arc > 20]);
+          } else results.push(['S6 A: the Colosseum is zone 2 of drakeZones', false]);
+        }
+
+        /* ---- 5d. The Drake that was idle all along does not flip idle <-> leash while it patrols a moving home ---- */
+        {
+          setClock(best.o);
+          calm(homeNow());
+          let T = 6e6;
+          window.updateMob(dm, 0.05, T, T);
+          let prevS = dm.state, flips = 0, engaged = 0, maxLag = 0, maxJump = 0, prev = { x: dm.x, y: dm.y }, leashFrames = 0;
+          for (let f = 1; f <= 6000; f++) {
+            setClock(best.o + f * 50);
+            T += 50;
+            window.updateMob(dm, 0.05, T, T);
+            const s2 = dm.state;
+            if ((s2 === 'idle' || s2 === 'leash') && (prevS === 'idle' || prevS === 'leash') && s2 !== prevS) flips++;
+            if (s2 === 'leash') leashFrames++;
+            if (s2 === 'aggro' || s2 === 'attack') engaged++;
+            prevS = s2;
+            maxLag = Math.max(maxLag, Math.hypot(dm.x - dm.hx, dm.y - dm.hy));
+            maxJump = Math.max(maxJump, Math.hypot(dm.x - prev.x, dm.y - prev.y)); prev = { x: dm.x, y: dm.y };
+          }
+          const hN = homeNow(), hf = Math.hypot(hN.x - dm.x, hN.y - dm.y);
+          results.push([`S6 A: patrolling a moving home for 6000 frames (5 min, home flew on) it flips idle<->leash ${flips} times (limit 10), ${leashFrames} frames in leash, never more than ${maxLag.toFixed(2)} tiles from home (idle band ${S6C.DRAKE_IDLE_BAND}), biggest step ${maxJump.toFixed(4)}`,
+            flips <= 10 && engaged === 0 && maxJump <= MS * 0.05 + 1e-6 && hf <= S6C.DRAKE_IDLE_BAND]);
+        }
+
+        /* ---- 5e. A stale mob_sync target is dropped; a fresh one cannot drag a respawned Drake back to its old spot ---- */
+        {
+          setClock(best.o);
+          const H = homeNow();
+          calm(H);
+          let T = 7e6, f = 0;
+          const step = () => { f++; setClock(best.o + f * 50); T += 50; window.updateMob(dm, 0.05, T, T); };
+          step();
+          const farX = H.x + 300, farY = H.y + 300;
+          dm.syncTargetX = farX; dm.syncTargetY = farY; dm.syncAt = T - 5000;
+          let prev = { x: dm.x, y: dm.y }, maxJump = 0;
+          for (let i = 0; i < 300; i++) { step(); maxJump = Math.max(maxJump, Math.hypot(dm.x - prev.x, dm.y - prev.y)); prev = { x: dm.x, y: dm.y }; }
+          const hE = homeNow(), lag = Math.hypot(dm.x - hE.x, dm.y - hE.y), gone = dm.syncTargetX === undefined && dm.syncTargetY === undefined;
+          results.push([`S6 A: a mob_sync target 5 s old is dropped for the roaming Drake — gone: ${gone}; after 300 idle frames it is ${lag.toFixed(2)} tiles from its home (band ${S6C.DRAKE_IDLE_BAND}), biggest step ${maxJump.toFixed(4)} <= ${(MS * 0.05).toFixed(2)}, though the target was 424 tiles away`,
+            gone && lag <= S6C.DRAKE_IDLE_BAND && maxJump <= MS * 0.05 + 1e-6]);
+          // a fresh target (age 0) survives while it is fresh...
+          dm.syncTargetX = farX; dm.syncTargetY = farY; dm.syncAt = T;
+          const xBefore = dm.x;
+          step();
+          const pulled = Math.hypot(dm.x - xBefore, 0) > 1;
+          const stillThere = dm.syncTargetX !== undefined;
+          // ...but a respawn clears it and lands on the home
+          dm.dead = true; dm.hp = 0; dm.respawnAt = 0; dm.syncTargetX = farX; dm.syncTargetY = farY; dm.syncAt = T;
+          step();
+          const exp = homeNow(), err = Math.hypot(dm.x - exp.x, dm.y - exp.y), alive = dm.dead === false, cleared = dm.syncTargetX === undefined;
+          prev = { x: dm.x, y: dm.y }; maxJump = 0;
+          for (let i = 0; i < 60; i++) { step(); maxJump = Math.max(maxJump, Math.hypot(dm.x - prev.x, dm.y - prev.y)); prev = { x: dm.x, y: dm.y }; }
+          results.push([`S6 A: a fresh sync target still pulls it (${stillThere && pulled}), but a respawn with one pending lands ${err.toFixed(4)} tiles from drakeRoamHome(now) (alive ${alive}, target cleared ${cleared}) and the next 60 frames never jump — biggest step ${maxJump.toFixed(4)}`,
+            stillThere && pulled && alive && cleared && err <= 0.05 && maxJump <= MS * 0.05 + 1e-6]);
+        }
+
+        /* ---- 5f. The unseen rejoin: after a long gap it walks in when you could see it, and is placed only when neither end is on your screen ---- */
+        {
+          setClock(best.o);
+          const H = homeNow(), UN = S6C.DRAKE_UNSEEN_R, MS5 = MS * 0.05;
+          const trial = (mePos, drakeOff) => {
+            window.debugSetPlayer({ x: mePos.x, y: mePos.y });
+            calm(H);
+            dm.x = H.x + drakeOff.x; dm.y = H.y + drakeOff.y;
+            dm.simAt = window.drakeNow() - 30000;       // 30 s since it was last simulated
+            const before = { x: dm.x, y: dm.y };
+            window.updateMob(dm, 0.05, 8e6, 8e6);
+            return { jump: Math.hypot(dm.x - before.x, dm.y - before.y), toHome: Math.hypot(dm.x - window.drakeRoamHome(window.drakeNow()).x, dm.y - window.drakeRoamHome(window.drakeNow()).y) };
+          };
+          const a = trial({ x: SP.x + 0.5, y: SP.y + 0.5 }, { x: 200, y: 0 });       // you are far from both: placed at the home
+          const b = trial({ x: H.x + 200 + 30, y: H.y }, { x: 200, y: 0 });          // you can see where it was: it walks
+          const c = trial({ x: H.x + 20, y: H.y }, { x: 200, y: 0 });                // you can see where it should be: it walks
+          window.debugSetPlayer({ x: SP.x + 0.5, y: SP.y + 0.5 });
+          results.push([`S6 A: after a 30 s gap the Drake is placed at its home only when neither end is within ${UN} tiles of you — unseen: jumped ${a.jump.toFixed(0)} tiles to ${a.toHome.toFixed(2)} from home; seen at its old spot: stepped ${b.jump.toFixed(3)}; home in view: stepped ${c.jump.toFixed(3)}`,
+            a.jump > 150 && a.toHome < 0.5 && b.jump <= MS5 + 1e-6 && c.jump <= MS5 + 1e-6]);
         }
 
         /* ---- 6. After combat: the home moved on while the Drake fought; it walks back at its own speed, with no snap ---- */
@@ -12148,8 +12252,28 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           r1 === false && R1 === R0 && c1 === 0 && r1b === false && R1b === R0]);
         results.push([`S6 B: today's species slain pays ${BI.reward} Runic Stone once — ${r2}, ${R1} -> ${R2}, claimed day ${c2} of ${BI.day}; the same species tamed the same day: ${r3}, ${R3}`,
           r2 === true && R2 === R1 + BI.reward && BI.reward === S6C.BOUNTY_REWARD_RUNIC && c2 === BI.day && r3 === false && R3 === R2]);
+        // a tame that landed just before midnight is credited to the day it landed on (the optional 3rd argument)
+        window.debugSetBounty({ claimedDay: 0 });
+        const yDay = BI.day - 1, ySpecies = BI.forDay(yDay), RY0 = rs();
+        const rY = window.bountyCredit(ySpecies, 'tamed', yDay), RY1 = rs(), cY = window.debugBountyInfo().claimedDay;
+        const rWrong = window.bountyCredit(BI.today, 'tamed', yDay), RY2 = rs();
+        const rToday = window.bountyCredit(BI.today, 'slain'), RY3 = rs();
+        results.push([`S6 B: a tame that landed on day ${yDay} is credited to day ${yDay}, not today — ${ySpecies}: ${rY} (${RY0} -> ${RY1}, claimed day ${cY}); today's species against that day: ${rWrong}; and today's own bounty is still open: ${rToday} (${RY2} -> ${RY3})`,
+          yDay >= 1 && ySpecies !== BI.today && rY === true && RY1 === RY0 + BI.reward && cY === yDay && rWrong === false && RY2 === RY1 && rToday === true && RY3 === RY2 + BI.reward]);
         window.debugSetPlayer({ inv: inv0 });
         window.debugSetBounty({ claimedDay: claimed0 });
+      }
+
+      /* ---- 8b. The claim survives a reload: it rides in the cosmetics jsonb, keyed by the world seed ---- */
+      {
+        const f = window.bountyClaimFromRow;
+        const okRow = f({ bounty: { seed: seedWas, day: 7 } }), otherSeed = f({ bounty: { seed: seedWas + 1, day: 7 } });
+        const none = [f(null), f(undefined), f({}), f({ bounty: null }), f({ bounty: { seed: seedWas, day: 'x' } }), f({ bounty: { seed: seedWas, day: NaN } }), f('str')];
+        results.push([`S6 B: bountyClaimFromRow reads the claimed day back for this world only — this seed ${okRow}, another seed ${otherSeed}, null/empty/garbage rows ${none.join(',')}`,
+          typeof f === 'function' && okRow === 7 && otherSeed === 0 && none.every(v => v === 0)]);
+        results.push(['S6 B: and it is written and read — savePlayerExtras stores bounty {seed, day} in cosmetics, loginPlayer restores it',
+          gameScript.indexOf('bounty: { seed: worldSeed, day: bountyClaimedDay }') > 0 &&
+          gameScript.indexOf('bountyClaimedDay = bountyClaimFromRow(p.cosmetics)') > 0]);
       }
 
       /* ---- 11. Pool contents ---- */
@@ -12161,11 +12285,14 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         const hostile = pool.filter(k => W6.MOBS[k]).length, pets = pool.filter(k => !W6.MOBS[k]).length;
         results.push([`S6 B: the bounty pool (${pool.length}: ${hostile} hostile, ${pets} companions) excludes the Drake, Demon Knight and all four Elders (${present.length} present) and is sorted: ${sorted}`,
           present.length === 0 && sorted && known && hostile > 0 && pets > 0 && pool.length >= 8]);
+        const zeroCount = pool.filter(k => W6.MOBS[k] && !(W6.MOBS[k].count > 0));
+        results.push([`S6 B: nothing in the pool is a creature that never spawns — salamander_king (count ${W6.MOBS.salamander_king && W6.MOBS.salamander_king.count}) in pool: ${pool.includes('salamander_king')}; ${zeroCount.length} of the ${hostile} world mobs in it have count 0`,
+          !pool.includes('salamander_king') && zeroCount.length === 0 && Object.values(W6.MOBS).some(d => d.biomes && d.biomes.length && !(d.count > 0))]);
       }
 
       /* ---- 13. Wiring ---- */
       results.push(['S6 B: wired — a kill and a tame both call bountyCredit, E at the board reads it, and the board is drawn',
-        gameScript.indexOf('bountyCredit(m.kind, "slain")') > 0 && gameScript.indexOf('bountyCredit(w.species, "tamed")') > 0 &&
+        gameScript.indexOf('bountyCredit(m.kind, "slain")') > 0 && gameScript.indexOf('bountyCredit(w.species, "tamed", tameDay)') > 0 && gameScript.indexOf('const tameDay = worldDayNum();') > 0 &&
         gameScript.indexOf('if (nearBountyBoard())') > 0 && gameScript.indexOf('drawBountyBoardEntity(t)') > 0]);
 
       // ---- put the world back ----
