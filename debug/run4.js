@@ -9870,10 +9870,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             const p = window.debugWorldInfo().player;
             return Math.hypot(p.x - SPOT58.x, p.y - SPOT58.y);
           };
+          /* S7 weather is part of `spd` too (snow, x0.85): it can commit between
+             the two ticks below, which made this read 1.0625 (= 1.25 x 0.85).
+             Held clear for the measurement, like every other factor. */
+          if (window.debugSetWeather) window.debugSetWeather({ force: 'clear' });
           setC({ speed: 0 });
           const distPlain = walk58(700000);
           setC({ speed: Date.now() + 60000 });
           const distFast = walk58(800000);
+          if (window.debugSetWeather) window.debugSetWeather({ force: null });
           /* Deliberately left RUNNING: the guild sweep directly below reads
              speedPotionMult() and needs a live effect to read. Turning it off
              here is what made that sweep see a flat 1 under every guild and
