@@ -1893,7 +1893,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['the AudioContext is created on the ENTER click, never at page load',
         initAt >= 0 && gameScript.slice(initAt, initAt + 260).indexOf('connectSupabase();') > 0 &&
         gameScript.split('AudioEngine.init()').length === 2]);   // exactly one call site in the whole file
-      results.push(['SFX stays unwired — no sound-effect files have been provided yet',
+      results.push(['file SFX stay unused (AudioEngine.playSFX is never called) — S8 sound effects are synthesised through AudioEngine.playSynth instead',
         gameScript.split('AudioEngine.playSFX(').length === 1]);
       /* Mob Rarity PART D: three sites now, not two — the rotation, the
          ordinary combat track, and the Elder cue. Updated, not relaxed: the
@@ -4283,8 +4283,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // ...but four continuous seconds does
       stage({});
       const sentBefore = sentBroadcasts.length;
+      /* The deadline is bracketed by the clock just before and just after the
+         two arming ticks: the countdown must be exactly 10 s from the moment it
+         armed, wherever in that bracket that was. (Comparing against a later
+         Date.now() also counted the slow harness ticks that follow, ~1.1 s each,
+         and failed intermittently while the countdown itself was right.) */
+      const tArm0 = Date.now();
       set39({ tick: 2000 }); set39({ tick: 2000 });
       const fired = v39();
+      const tArm1 = Date.now();
       results.push(['four continuous seconds arms it', fired.worldResetArmed === true]);
       {
         const pend = sentBroadcasts.slice(sentBefore)
@@ -4295,9 +4302,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           sentBroadcasts.slice(sentBefore)
             .filter(m => m && m.event === 'world_reset_pending').length === 1]);
       }
-      results.push(['and starts a countdown of exactly ten seconds',
+      results.push([`and starts a countdown of exactly ten seconds (deadline - arm time = between ${fired.worldResetAt - tArm1} and ${fired.worldResetAt - tArm0} ms)`,
         fired.worldResetAt > 0 &&
-        Math.abs(fired.worldResetAt - Date.now() - 10000) < 1500]);
+        fired.worldResetAt >= tArm0 + 10000 && fired.worldResetAt <= tArm1 + 10000]);
       // the countdown is actually on screen, and it is the only thing that is
       if (window.updateUnmakingHud) {
         window.updateUnmakingHud();
@@ -9870,10 +9877,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             const p = window.debugWorldInfo().player;
             return Math.hypot(p.x - SPOT58.x, p.y - SPOT58.y);
           };
+          /* S7 weather is part of `spd` too (snow, x0.85): it can commit between
+             the two ticks below, which made this read 1.0625 (= 1.25 x 0.85).
+             Held clear for the measurement, like every other factor. */
+          if (window.debugSetWeather) window.debugSetWeather({ force: 'clear' });
           setC({ speed: 0 });
           const distPlain = walk58(700000);
           setC({ speed: Date.now() + 60000 });
           const distFast = walk58(800000);
+          if (window.debugSetWeather) window.debugSetWeather({ force: null });
           /* Deliberately left RUNNING: the guild sweep directly below reads
              speedPotionMult() and needs a live effect to read. Turning it off
              here is what made that sweep see a flat 1 under every guild and
@@ -12673,7 +12685,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push([`S7 A: the aggro multipliers — rain ${mults.rain}, fog ${mults.fog}, snow ${mults.snow}, ash ${mults.ash}, clear ${mults.clear}`,
           mults.rain === 0.75 && mults.fog === 0.6 && mults.snow === 1 && mults.ash === 1 && mults.clear === 1]);
         // the live check: a goblin (not tameable) with the player at a fraction of its aggro radius
-        const gob = HB7.mobs.find(q => q.kind === 'goblin' && !q.dead && !(q.space && q.space !== 'main'));
+        /* Which goblin is alive first depends on earlier gates' kills and their
+           wall-clock respawns, so pick one whose whole probe line stands outside
+           every safe zone — the test is about weather, not about safe zones. */
+        const R7g = W7.MOBS.goblin.aggroRadius * ((window.bloodMoonActive && window.bloodMoonActive()) ? 1.5 : 1);
+        const gob = HB7.mobs.find(q => q.kind === 'goblin' && !(q.space && q.space !== 'main') &&
+          !window.inSafeZone(q.hx, q.hy) && !window.inSafeZone(q.hx + 0.8 * R7g, q.hy) &&
+          !window.inSafeZone(q.hx + 0.58 * R7g, q.hy));
         if (gob) {
           const def = W7.MOBS.goblin, snap = Object.assign({}, gob);
           HB7.others.clear();
@@ -13282,6 +13300,502 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     } else {
       results.push(['S7: the real-stakes hooks exist', false]);
     }
+
+
+    /* ===================== S8 Feel pass — hit-stop, shake, synthesised sound, first five minutes =====
+       GAUNTLET.md "S8 — Feel pass". 1 hit-stop 40-60 ms on heavy hits (tunable); 2 screen shake
+       tunable with an off switch in Settings; 3 WebAudio-synthesised SFX (swing, hit, pickup,
+       level-up, UI click) through AudioEngine's sfx gain, no new files; 4 first-five-minutes fix:
+       a brand new account starts at the Tutorial Grounds. Top-level `const`s and `let`s never land
+       on window, so the tunables are read out of the game source (the way S6/S7 do) and the rest
+       is driven through the game's own functions and debugFeelInfo / debugSetFeel. The harness
+       AudioContext mock has no createOscillator, so the SFX gates install a RECORDING fake on
+       AudioEngine.ctx (and fake gains for sfxGain / masterGain) and put the originals back. The
+       tutorial gates run a real loginPlayer for two throw-away names and log BootTest back in.
+       Everything this block moves (player, inventory, weapon, armour, level, settings, the feel
+       state, the audio engine, window.update / render, the stub tables, `others`, `mobs`, the
+       weather force, the combat signals, the tutorial flags) is put back at the end. */
+    if (window.debugFeelInfo && window.debugSetFeel && window.hitStop && window.landHit && window.noteHurt &&
+        window.shakeOffset && window.debugAudioEngine && window.loop && window.tutorialStartSpot && window.startTutorialIfNeeded) {
+      const doc8 = window.document, AE8 = window.debugAudioEngine();
+      const feel8 = () => window.debugFeelInfo(), dsf8 = window.debugSetFeel;
+      const dsp8 = window.debugSetPlayer, dwi8 = () => window.debugWorldInfo().player;
+      const dsa8 = window.debugSetAbility, dsv8 = window.debugSetV35;
+      const W8 = window.debugWorldInfo(), B8 = W8.B, SP8 = W8.SPAWN, HB8 = window.debugCombatHandles();
+      let FORGE8 = { x: SP8.x + 4, y: SP8.y + 2 }; try { if (window.debugDuskfoxInfo) FORGE8 = window.debugDuskfoxInfo().SPAWN_FORGE; } catch (e) {}
+      const BLK8 = b => b === B8.DEEP || b === B8.PEAK || b === B8.LAVA;      // BLOCKED = DEEP, PEAK, LAVA (const BLOCKED in the source)
+      const pnow8 = () => window.performance.now();
+      const num8 = n => { const mm = gameScript.match(new RegExp('\\bconst ' + n + ' = (-?[0-9.]+)\\s*;')); return mm ? +mm[1] : NaN; };
+
+      // ---- snapshot of everything this block will move ----
+      window.render(9000);                                   // one frame, so the HUD carries the player's name
+      const uname8 = (doc8.getElementById('hudPlayer').textContent.split(' — ')[0] || '').trim();
+      const p8 = dwi8(), gear8 = window.debugGearInfo(), v8 = window.debugV35Info();
+      const eq8 = gear8.weapon === 'fists' ? null : gear8.weapon, arm8 = gear8.armor, cls8 = v8.cls, lvl8 = v8.level;
+      const f8 = feel8();
+      const st8 = { ss: !!window.debugSettingsInfo().SETTINGS.screenShake };
+      const ae8 = { ctx: AE8.ctx, sfx: AE8.sfxGain, master: AE8.masterGain, nb: AE8._noiseBuf, last: AE8._sfxLast, play: AE8.playSynth };
+      const gi8 = tableData.ground_items.slice();
+      const rq8 = rafQ.length, proj8 = HB8.projectiles.length;
+      const lsStore8 = window.localStorage;
+      const mu8 = window.debugMusicInfo ? window.debugMusicInfo() : null;
+      const ab8 = window.debugAbilityInfo();
+      const MAXHP8 = p8.maxHp || 100;
+      const putBack8 = () => dsp8({ x: p8.x, y: p8.y, hp: p8.hp, inv: Object.assign({}, p8.inv), equipped: eq8, armor: arm8, cls: cls8, level: lvl8 });
+      const calm8 = () => {                                  // the combat signals a real hit leaves behind
+        if (window.debugSetMusicState) window.debugSetMusicState({ combatMusicUntil: mu8 ? mu8.combatMusicUntil : 0, inCombatMusic: false, musicCheckAt: 0 });
+        if (window.debugSetCombatLogout) window.debugSetCombatLogout({ lastAt: 0 });
+        dsa8({ guardBreakUntil: 0, lastAttack: ab8.lastAttack });
+      };
+      results.push([`S8: the harness knows who it is — player "${uname8}", hp ${p8.hp}/${MAXHP8}, class ${cls8}, level ${lvl8}, performance clock ${Math.round(pnow8())} ms (needs > ${num8('HIT_STOP_MIN_GAP_MS')} for the first freeze)`,
+        uname8.length > 0 && p8.hp > 0 && MAXHP8 === 100 && pnow8() > 400]);
+
+      // ---- the recording fake AudioContext (and the sound log) ----
+      const mkFake8 = (state) => {
+        const rec = { nodes: [], edges: [], resumed: 0 };
+        const mk = (kind) => { const n = { kind, connect(d) { rec.edges.push([n, d]); return d; }, disconnect() {}, start() {}, stop() {} }; rec.nodes.push(n); return n; };
+        const param = () => ({ value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} });
+        const ctx = {
+          state, currentTime: 1.5, sampleRate: 44100, destination: { kind: 'destination' },
+          resume() { rec.resumed++; return Promise.resolve(); },
+          createOscillator() { const n = mk('osc'); n.type = ''; n.frequency = param(); return n; },
+          createGain() { const n = mk('gain'); n.gain = param(); return n; },
+          createBuffer(c, n) { return { getChannelData: () => new Float32Array(n) }; },
+          createBufferSource() { return mk('src'); },
+          createBiquadFilter() { const n = mk('filter'); n.type = ''; n.frequency = param(); n.Q = param(); return n; },
+        };
+        rec.ctx = ctx; rec.sfx = ctx.createGain(); rec.master = ctx.createGain();
+        rec.nodes.length = 0; rec.edges.length = 0;           // only what a sound creates counts
+        return rec;
+      };
+      let fk = null;
+      const log8 = [];                                        // [name, returned] for every playSynth call
+      const install8 = (rec) => { fk = rec; AE8.ctx = rec.ctx; AE8.sfxGain = rec.sfx; AE8.masterGain = rec.master; AE8._sfxLast = {}; AE8._noiseBuf = null; };
+      const uninstall8 = () => { AE8.ctx = ae8.ctx; AE8.sfxGain = ae8.sfx; AE8.masterGain = ae8.master; AE8._noiseBuf = ae8.nb; AE8._sfxLast = ae8.last; AE8.playSynth = ae8.play; fk = null; };
+      AE8.playSynth = function (n) { const r = ae8.play.call(this, n); log8.push([n, r]); return r; };
+      const names8 = () => log8.filter(e => e[1]).map(e => e[0]).join(',');
+      const fresh8 = () => { log8.length = 0; AE8._sfxLast = {}; dsf8({ hitStopUntil: -1e9 }); };
+      const clearFreeze8 = () => dsf8({ hitStopUntil: -1e9 });
+
+      try {
+        install8(mkFake8('running'));
+
+        /* ---- 1. the tunables ---- */
+        const C8 = {};
+        for (const n of ['HIT_STOP_MS', 'HIT_STOP_MIN_GAP_MS', 'HEAVY_HIT_MULT', 'HEAVY_TAKEN_FRAC', 'SHAKE_MS', 'SHAKE_PX', 'SHAKE_HEAVY_PX', 'SFX_MIN_GAP_MS']) C8[n] = num8(n);
+        results.push([`S8 1: the tunables — hit-stop ${C8.HIT_STOP_MS} ms (spec 40-60), at least ${C8.HIT_STOP_MIN_GAP_MS} ms between freezes, heavy = ${C8.HEAVY_HIT_MULT}x the weapon's base damage or ${C8.HEAVY_TAKEN_FRAC * 100}% of max hp taken, shake ${C8.SHAKE_MS} ms / ${C8.SHAKE_PX} px (heavy ${C8.SHAKE_HEAVY_PX} px), same sound at most every ${C8.SFX_MIN_GAP_MS} ms; the debug view reports the same numbers; HEAVY_HIT_DMG is gone`,
+          C8.HIT_STOP_MS >= 40 && C8.HIT_STOP_MS <= 60 && C8.HIT_STOP_MIN_GAP_MS === 350 && C8.HEAVY_HIT_MULT === 1.5 && C8.HEAVY_TAKEN_FRAC === 0.3 &&
+          C8.SHAKE_MS === 220 && C8.SHAKE_PX === 5 && C8.SHAKE_HEAVY_PX === 8 && C8.SHAKE_HEAVY_PX > C8.SHAKE_PX && C8.SFX_MIN_GAP_MS === 45 &&
+          f8.HIT_STOP_MS === C8.HIT_STOP_MS && f8.HIT_STOP_MIN_GAP_MS === C8.HIT_STOP_MIN_GAP_MS && f8.HEAVY_HIT_MULT === C8.HEAVY_HIT_MULT &&
+          f8.HEAVY_TAKEN_FRAC === C8.HEAVY_TAKEN_FRAC && f8.SHAKE_MS === C8.SHAKE_MS && f8.SHAKE_PX === C8.SHAKE_PX && f8.SHAKE_HEAVY_PX === C8.SHAKE_HEAVY_PX &&
+          gameScript.indexOf('HEAVY_HIT_DMG') < 0]);
+
+        /* ---- 2. the freeze holds update() but never render() ---- */
+        {
+          const u0 = window.update, r0 = window.render;
+          let uc = 0, rc = 0, lastDt = null;
+          window.update = (dt) => { uc++; lastDt = dt; };
+          window.render = () => { rc++; };
+          let frozenU = -1, frozenR = -1, thawU = -1, thawR = -1, gotStop = null, span = null, again = null, untilSame = null, gapNow = null, gapOk = null, minDt = null;
+          try {
+            clearFreeze8();
+            const t0 = pnow8();
+            gotStop = window.hitStop();
+            const until = feel8().hitStopUntil;
+            span = until - t0;
+            again = window.hitStop();                         // chained straight away
+            untilSame = feel8().hitStopUntil === until;
+            dsf8({ hitStopUntil: pnow8() + 5000 });           // hold it open so the frame count cannot race the clock
+            uc = 0; rc = 0;
+            for (let i = 0; i < 6; i++) window.loop(pnow8());
+            frozenU = uc; frozenR = rc;
+            dsf8({ hitStopUntil: 0 });
+            uc = 0; rc = 0;
+            for (let i = 0; i < 4; i++) window.loop(pnow8());
+            thawU = uc; thawR = rc; minDt = lastDt;
+            // the gap after a freeze: refused 100 ms after one ended, allowed 400 ms after
+            dsf8({ hitStopUntil: pnow8() - 100 }); gapNow = window.hitStop();
+            dsf8({ hitStopUntil: pnow8() - 400 }); gapOk = window.hitStop();
+          } finally { window.update = u0; window.render = r0; rafQ.length = Math.min(rafQ.length, rq8); clearFreeze8(); }
+          results.push([`S8 2: a heavy hit freezes ${span !== null ? span.toFixed(1) : '?'} ms (hitStop returned ${gotStop}); during the freeze 6 loop() frames ran update ${frozenU}x and render ${frozenR}x; after it 4 frames ran update ${thawU}x and render ${thawR}x (dt ${minDt !== null && minDt.toFixed ? minDt.toFixed(3) : minDt}); a second hitStop() straight away returns ${again} and leaves the deadline alone (${untilSame}); 100 ms after a freeze ended a new one is ${gapNow ? 'ALLOWED' : 'refused'}, 400 ms after it is ${gapOk ? 'allowed' : 'REFUSED'}`,
+            gotStop === true && span >= C8.HIT_STOP_MS && span <= C8.HIT_STOP_MS + 25 && again === false && untilSame === true &&
+            frozenU === 0 && frozenR === 6 && thawU === 4 && thawR === 4 && minDt !== null && minDt <= 0.05 && gapNow === false && gapOk === true]);
+
+          // the wall-clock timers move with the freeze: a winding mob's windupStart, a future atkAt (and the taming channel, pinned in source)
+          const nowM = pnow8(), LEN = C8.HIT_STOP_MS;
+          const mA = { id: 's8:wind', winding: true, windupStart: nowM - 100, atkAt: nowM + 5000, dead: true };
+          const mB = { id: 's8:idle', winding: false, windupStart: nowM - 100, atkAt: nowM - 3000, dead: true };
+          HB8.mobs.push(mA, mB);
+          let moved = null;
+          try { clearFreeze8(); moved = window.hitStop(); } finally { HB8.mobs.splice(HB8.mobs.indexOf(mA), 1); HB8.mobs.splice(HB8.mobs.indexOf(mB), 1); clearFreeze8(); }
+          results.push([`S8 2: and a freeze never eats a mob's telegraph — the winding mob's windupStart moved ${mA.windupStart - (nowM - 100)} ms and its future atkAt ${mA.atkAt - (nowM + 5000)} ms (freeze ${LEN}); a mob that is not winding kept windupStart (${mB.windupStart === nowM - 100}) and a past atkAt (${mB.atkAt === nowM - 3000}); the taming channel clock is pushed in the source (${gameScript.indexOf('if (taming && taming.start) taming.start += len;') > 0})`,
+            moved === true && mA.windupStart - (nowM - 100) === LEN && mA.atkAt - (nowM + 5000) === LEN && mB.windupStart === nowM - 100 && mB.atkAt === nowM - 3000 &&
+            gameScript.indexOf('if (taming && taming.start) taming.start += len;') > 0]);
+        }
+
+        /* ---- 3. what is a heavy hit you land ---- */
+        {
+          const cases = [
+            ['10/base 10', [10, false, false, 10], false, 'hit'], ['14/base 10', [14, false, false, 10], false, 'hit'],
+            ['15/base 10 (exactly 1.5x)', [15, false, false, 10], true, 'heavy'], ['23/base 15', [23, false, false, 15], true, 'heavy'],
+            ['22/base 15', [22, false, false, 15], false, 'hit'], ['15/base 15', [15, false, false, 15], false, 'hit'],
+            ['crit', [10, true, false, 10], true, 'heavy'], ['kill', [10, false, true, 10], true, 'heavy'],
+            ['50 with no base', [50, false, false], false, 'hit'],
+          ];
+          const out = [];
+          let allCase = true;
+          for (const [lab, args, heavy, snd] of cases) {
+            fresh8();
+            const h0 = feel8().hitStops;
+            const ret = window.landHit(...args);
+            const fr = feel8().hitStops - h0;
+            const ok = ret === heavy && fr === (heavy ? 1 : 0) && feel8().sfxLastName === snd && names8() === snd;
+            if (!ok) allCase = false;
+            out.push(`${lab} -> ${ret ? 'HEAVY' : 'light'}, ${fr ? 'freeze' : 'no freeze'}, "${feel8().sfxLastName}"${ok ? '' : ' (WRONG)'}`);
+          }
+          clearFreeze8();
+          results.push([`S8 3: heavy = crit, a kill, or >= ${C8.HEAVY_HIT_MULT}x the weapon's base damage — ${out.join('; ')}`, allCase]);
+        }
+
+        /* ---- 4. what is a heavy hit you take ---- */
+        {
+          const lo = Math.ceil(C8.HEAVY_TAKEN_FRAC * MAXHP8) - 1, hi = Math.ceil(C8.HEAVY_TAKEN_FRAC * MAXHP8);
+          fresh8(); let h0 = feel8().hitStops; window.noteHurt(lo); const loFr = feel8().hitStops - h0, loSnd = feel8().sfxLastName;
+          fresh8(); h0 = feel8().hitStops; window.noteHurt(hi); const hiFr = feel8().hitStops - h0, hiSnd = feel8().sfxLastName;
+          clearFreeze8();
+          // the real path: applyDamage outside a safe zone, bare, not blocking
+          let outA = null; { for (let d = W8.SAFE_RADIUS + 60; d < 1500 && !outA; d += 37) for (const [ox, oy] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) {
+            const x = SP8.x + ox * d + 0.5, y = SP8.y + oy * d + 0.5;
+            if (x > 8 && y > 8 && x < W8.N - 8 && y < W8.N - 8 && !window.inSafeZone(x, y) && !window.inColosseum(x, y) && !BLK8(window.biomeAt(Math.floor(x), Math.floor(y)))) { outA = { x, y }; break; } } }
+          let realLo = null, realHi = null, ash = null, ashCtl = null;
+          if (outA) {
+            dsp8({ x: outA.x, y: outA.y, hp: MAXHP8, armor: null }); dsa8({ guardBreakUntil: 0 });
+            fresh8(); h0 = feel8().hitStops; window.applyDamage(lo, 'a test mob'); realLo = { fr: feel8().hitStops - h0, names: names8(), lost: MAXHP8 - dwi8().hp };
+            dsp8({ hp: MAXHP8 }); fresh8(); h0 = feel8().hitStops; window.applyDamage(hi, 'a test mob'); realHi = { fr: feel8().hitStops - h0, names: names8(), lost: MAXHP8 - dwi8().hp };
+            // ashfall: the weather tick hurts, but it is not a "hit" — no hurt sound, no freeze
+            if (window.debugSetWeather) {
+              dsp8({ hp: MAXHP8 }); fresh8(); h0 = feel8().hitStops;
+              window.debugSetWeather({ force: 'ash', ashAcc: 3.9 }); window.debugSetWeather({ update: true, dt: 1 });
+              ash = { lost: MAXHP8 - dwi8().hp, fr: feel8().hitStops - h0, names: names8() };
+              window.debugSetWeather({ force: null, ashAcc: 0, peak: 0 }); window.debugSetWeather({ update: true, dt: 0 });
+              dsp8({ hp: MAXHP8 }); fresh8(); window.applyDamage(1, 'a test mob'); ashCtl = names8();
+            }
+            calm8(); clearFreeze8();
+          }
+          const adSrc = gameScript.slice(gameScript.indexOf('function applyDamage('), gameScript.indexOf('function updateBreath('));
+          const guarded = /if \(!envDamageNow\) \{[^}]*noteHurt\(dmg\);[^}]*\}/.test(adSrc);
+          const calls = gameScript.split('noteHurt(').length - 1;
+          results.push([`S8 4: taking a hit — noteHurt(${lo}) of ${MAXHP8} max hp: ${loFr ? 'freeze' : 'no freeze'}, "${loSnd}"; noteHurt(${hi}): ${hiFr ? 'freeze' : 'no freeze'}, "${hiSnd}"; through the real applyDamage: ${lo} -> lost ${realLo && realLo.lost}, freezes ${realLo && realLo.fr}, sounds [${realLo && realLo.names}]; ${hi} -> lost ${realHi && realHi.lost}, freezes ${realHi && realHi.fr}, sounds [${realHi && realHi.names}]`,
+            loFr === 0 && loSnd === 'hurt' && hiFr === 1 && hiSnd === 'hurt' && !!realLo && realLo.fr === 0 && realLo.names === 'hurt' && realLo.lost === lo &&
+            !!realHi && realHi.fr === 1 && realHi.names === 'hurt' && realHi.lost === hi]);
+          results.push([`S8 4: ashfall never freezes or hurts-with-sound — a weather tick cost ${ash && ash.lost} hp with ${ash && ash.fr} freezes and sounds [${ash && ash.names}] while a real hit of 1 plays [${ashCtl}]; noteHurt( is called ${calls}x in the source (its definition and one call) and that call sits inside applyDamage's if (!envDamageNow) block: ${guarded}`,
+            !!ash && ash.lost === 1 && ash.fr === 0 && ash.names === '' && ashCtl === 'hurt' && calls === 2 && guarded]);
+        }
+
+        /* ---- 5. the shake, and its off switch ---- */
+        {
+          const T = 1e6, samp = (nowMs, n = 200) => { const o = []; for (let i = 0; i < n; i++) o.push(window.shakeOffset(nowMs)); return o; };
+          const maxAbs = a => Math.max(...a.map(v => Math.max(Math.abs(v[0]), Math.abs(v[1]))));
+          const defOn = window.debugSettingsInfo().SETTINGS_DEFAULTS.screenShake === true;
+          // off: even right after a real hitStop(), every sample is exactly zero
+          window.setSetting('screenShake', false);
+          clearFreeze8(); window.hitStop();
+          const sOff = []; for (let i = 0; i < 50; i++) sOff.push(window.shakeOffset(feel8().shakeT + 10));
+          const offZero = sOff.every(v => v[0] === 0 && v[1] === 0);
+          window.setSetting('screenShake', true);
+          dsf8({ shakeT: T, shakeHeavyUntil: 0 });
+          const norm = samp(T + 10), normMax = maxAbs(norm), halfN = (1 - 10 / C8.SHAKE_MS) * C8.SHAKE_PX / 2;
+          const normMid = maxAbs(samp(T + C8.SHAKE_MS / 2)), midBound = 0.5 * C8.SHAKE_PX / 2;
+          dsf8({ shakeT: T, shakeHeavyUntil: T + C8.SHAKE_MS });
+          const heavy = samp(T + 10), heavyMax = maxAbs(heavy), halfH = (1 - 10 / C8.SHAKE_MS) * C8.SHAKE_HEAVY_PX / 2;
+          // a later LIGHT shake inside the heavy window stays heavy; past the window it is light again
+          dsf8({ shakeT: T + 100, shakeHeavyUntil: T + C8.SHAKE_MS });
+          const inWin = maxAbs(samp(T + 110)), inWinHalf = (1 - 10 / C8.SHAKE_MS) * C8.SHAKE_HEAVY_PX / 2;
+          dsf8({ shakeT: T + 250, shakeHeavyUntil: T + C8.SHAKE_MS });
+          const pastWin = maxAbs(samp(T + 300)), pastHalf = (1 - 50 / C8.SHAKE_MS) * C8.SHAKE_PX / 2;
+          dsf8({ shakeT: T, shakeHeavyUntil: T + C8.SHAKE_MS });
+          const gone = [window.shakeOffset(T + C8.SHAKE_MS), window.shakeOffset(T + C8.SHAKE_MS + 1), window.shakeOffset(T + 5000), window.shakeOffset(T - 1)];
+          const goneZero = gone.slice(0, 3).every(v => v[0] === 0 && v[1] === 0);
+          results.push([`S8 5: the off switch — default is ON (${defOn}); with screenShake false, 50 samples right after a real hit-stop are all exactly [0,0] (${offZero}); with it true a light shake stays inside +-${halfN.toFixed(2)} px (max of 200 samples ${normMax.toFixed(2)}, half way ${normMid.toFixed(2)} <= ${midBound}), a heavy one inside +-${halfH.toFixed(2)} (max ${heavyMax.toFixed(2)}, and goes past the light bound), nothing after ${C8.SHAKE_MS} ms (${goneZero})`,
+            defOn && offZero && normMax <= halfN + 1e-9 && normMax > halfN * 0.4 && normMid <= midBound + 1e-9 &&
+            heavyMax <= halfH + 1e-9 && heavyMax > halfN + 0.2 && goneZero]);
+          results.push([`S8 5: heavy is a window — a light shake 100 ms into a heavy one stays heavy (max ${inWin.toFixed(2)} <= ${inWinHalf.toFixed(2)} and past the light bound ${(1 - 10 / C8.SHAKE_MS) * C8.SHAKE_PX / 2}), and once the window is over the next light shake is light again (max ${pastWin.toFixed(2)} <= ${pastHalf.toFixed(2)}); the debug view reports shakeHeavyUntil (${feel8().shakeHeavyUntil === T + C8.SHAKE_MS})`,
+            inWin <= inWinHalf + 1e-9 && inWin > (1 - 10 / C8.SHAKE_MS) * C8.SHAKE_PX / 2 + 0.1 && pastWin <= pastHalf + 1e-9 && feel8().shakeHeavyUntil === T + C8.SHAKE_MS]);
+
+          // persistence across a simulated reload (needs a working localStorage — the shared header stubs it to a no-op, the settings gate installs a real one)
+          let lsOk = false; try { window.localStorage.setItem('rh_probe8', 'x'); lsOk = window.localStorage.getItem('rh_probe8') === 'x'; window.localStorage.removeItem('rh_probe8'); } catch (e) {}
+          let ownStore = false;
+          if (!lsOk) { const store = {}; window.localStorage = { getItem: k => (Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } }; ownStore = true; }
+          let afterOff = null, afterOn = null;
+          try {
+            window.saveSettings();                              // everything else as it is now, so the reload changes nothing but this
+            window.setSetting('screenShake', false);
+            window.loadSettings(); window.applySettings(); afterOff = window.debugSettingsInfo().SETTINGS.screenShake;
+            window.setSetting('screenShake', true);
+            window.loadSettings(); window.applySettings(); afterOn = window.debugSettingsInfo().SETTINGS.screenShake;
+          } finally { if (ownStore) window.localStorage = lsStore8; }
+          results.push([`S8 5: the choice persists — screenShake false survives a loadSettings() reload (${afterOff}), true survives one too (${afterOn}) (${ownStore ? 'harness-installed' : 'existing'} localStorage)`,
+            afterOff === false && afterOn === true]);
+
+          // the Settings button
+          const btn = doc8.getElementById('setScreenShake'), sec = doc8.getElementById('secGraphics');
+          window.setSetting('screenShake', true);
+          const t0lab = btn ? btn.textContent : null, t0on = btn ? btn.classList.contains('on') : null;
+          fresh8(); if (btn) btn.click();
+          const t1set = window.debugSettingsInfo().SETTINGS.screenShake, t1lab = btn.textContent, t1on = btn.classList.contains('on'), t1snd = names8();
+          AE8._sfxLast = {}; btn.click();
+          const t2set = window.debugSettingsInfo().SETTINGS.screenShake, t2lab = btn.textContent, t2on = btn.classList.contains('on');
+          results.push([`S8 5: Settings > Graphics has the button — #setScreenShake ${btn && sec && sec.contains(btn) ? 'is' : 'is NOT'} inside #secGraphics; it reads "${t0lab}" with the setting on, a click turns the setting ${t1set ? 'ON' : 'off'} and the label "${t1lab}" (class on: ${t1on}), a second click brings it back to ${t2set} / "${t2lab}" / ${t2on}; the click also played [${t1snd}]`,
+            !!btn && !!sec && sec.contains(btn) && t0lab === 'ON' && t0on === true && t1set === false && t1lab === 'OFF' && t1on === false && t2set === true && t2lab === 'ON' && t2on === true && t1snd === 'click']);
+          window.setSetting('screenShake', st8.ss);
+          clearFreeze8();
+        }
+
+        /* ---- 6. render reads the shake from shakeOffset ---- */
+        {
+          const rSrc = gameScript.slice(gameScript.indexOf('function render('), gameScript.indexOf('function render(') + 40000);
+          results.push([`S8 6: render() takes its translate from shakeOffset — "const [shX, shY] = shakeOffset(performance.now());" appears ${gameScript.split('const [shX, shY] = shakeOffset(performance.now());').length - 1}x, "sinceShake" ${gameScript.split('sinceShake').length - 1}x in the file, the fixed 220 shake gone (${gameScript.indexOf('sinceShake < 220') < 0}), and the translate uses shX, shY (${rSrc.indexOf('ctx.translate(shX, shY);') > 0}) [source pin: the canvas stub cannot read translate arguments]`,
+            gameScript.split('const [shX, shY] = shakeOffset(performance.now());').length === 2 && gameScript.indexOf('sinceShake < 220') < 0 && gameScript.indexOf('sinceShake') < 0 && rSrc.indexOf('ctx.translate(shX, shY);') > 0]);
+        }
+
+        /* ---- 7. the synthesised sound effects ---- */
+        {
+          const NAMES = ['swing', 'hit', 'heavy', 'hurt', 'pickup', 'levelup', 'click'];
+          const term = (n, edges) => { let cur = n, hops = 0; for (;;) { const e = edges.find(x => x[0] === cur); if (!e || ++hops > 10) return cur; cur = e[1]; } };
+          const per = [];
+          let chainsOk = true, retsOk = true, namesOk = true, nodesTotal = 0;
+          for (const nm of NAMES) {
+            AE8._sfxLast = {}; fk.nodes.length = 0; fk.edges.length = 0;
+            const before = feel8().sfxPlays;
+            const ret = AE8.playSynth(nm);
+            const srcs = fk.nodes.filter(n => n.kind === 'osc' || n.kind === 'src');
+            const ends = srcs.map(n => term(n, fk.edges));
+            const onlySfx = srcs.length > 0 && ends.every(e => e === fk.sfx);
+            const bad = fk.edges.some(e => e[1] === fk.ctx.destination || e[1] === fk.master);
+            const nameOk = feel8().sfxLastName === nm && feel8().sfxPlays === before + 1;
+            if (!(ret === true)) retsOk = false; if (!onlySfx || bad) chainsOk = false; if (!nameOk) namesOk = false;
+            nodesTotal += fk.nodes.length;
+            per.push(`${nm}:${ret ? 'ok' : 'FALSE'}/${srcs.length} src -> sfxGain${onlySfx && !bad ? '' : ' BROKEN'}`);
+          }
+          results.push([`S8 7: every sound plays and every audio chain ends at AudioEngine.sfxGain, never destination or masterGain — ${per.join(', ')} (${nodesTotal} nodes, sfxLastName/sfxPlays follow: ${namesOk})`, retsOk && chainsOk && namesOk]);
+
+          // unknown names, the repeat gap, the suspended state, no context, a context without oscillators
+          AE8._sfxLast = {}; fk.nodes.length = 0;
+          const unk = AE8.playSynth('nope'), unkNodes = fk.nodes.length;
+          AE8._sfxLast = {};
+          const a1 = AE8.playSynth('hit'), a2 = AE8.playSynth('hit'), a3 = AE8.playSynth('hurt');
+          // after the gap the same sound plays again
+          AE8._sfxLast = { hit: pnow8() - (C8.SFX_MIN_GAP_MS + 20) }; const a4 = AE8.playSynth('hit');
+          AE8._sfxLast = { hit: pnow8() - (C8.SFX_MIN_GAP_MS - 25) }; const a5 = AE8.playSynth('hit');
+          results.push([`S8 7: an unknown name returns ${unk} and builds ${unkNodes} nodes; a sound repeated straight away returns ${a2} (first ${a1}), a different one plays (${a3}); ${C8.SFX_MIN_GAP_MS + 20} ms later the same sound plays again (${a4}), ${C8.SFX_MIN_GAP_MS - 25} ms later it does not (${a5})`,
+            unk === false && unkNodes === 0 && a1 === true && a2 === false && a3 === true && a4 === true && a5 === false]);
+
+          const susp = mkFake8('suspended'), intr = mkFake8('interrupted'), run2 = mkFake8('running');
+          const swap = (rec, fn) => { const keep = [AE8.ctx, AE8.sfxGain, AE8.masterGain]; AE8.ctx = rec.ctx; AE8.sfxGain = rec.sfx; AE8.masterGain = rec.master; AE8._sfxLast = {}; try { return fn(); } finally { [AE8.ctx, AE8.sfxGain, AE8.masterGain] = keep; } };
+          const rS = swap(susp, () => AE8.playSynth('hit')), rI = swap(intr, () => AE8.playSynth('hit')), rR = swap(run2, () => AE8.playSynth('hit'));
+          results.push([`S8 7: a suspended context (iOS after backgrounding) plays nothing and is asked to resume — returns ${rS}, resume() called ${susp.resumed}x, ${susp.nodes.length} nodes; "interrupted" returns ${rI} with resume() ${intr.resumed}x; "running" returns ${rR} and never calls resume() (${run2.resumed}x)`,
+            rS === false && susp.resumed === 1 && susp.nodes.length === 0 && rI === false && intr.resumed === 1 && rR === true && run2.resumed === 0]);
+
+          let nullRet = null, nullThrew = null, legacyRet = null, origRet = 'n/a', legacyThrew = null;
+          const legacy = { state: 'running', destination: {}, createGain() { return { gain: { value: 1 }, connect() {}, disconnect() {} }; }, createBufferSource() { return { connect() {}, disconnect() {}, start() {}, stop() {} }; }, resume: async () => {} };
+          const keep = [AE8.ctx, AE8.sfxGain, AE8.masterGain];
+          try {
+            AE8._sfxLast = {}; AE8.ctx = null; try { nullRet = AE8.playSynth('hit'); } catch (e) { nullThrew = e; }
+            AE8.ctx = legacy; AE8.sfxGain = legacy.createGain(); AE8._sfxLast = {}; try { legacyRet = AE8.playSynth('hit'); } catch (e) { legacyThrew = e; }
+            if (ae8.ctx && typeof ae8.ctx.createOscillator !== 'function') { AE8.ctx = ae8.ctx; AE8.sfxGain = ae8.sfx || legacy.createGain(); AE8._sfxLast = {}; origRet = AE8.playSynth('hit'); }
+          } finally { [AE8.ctx, AE8.sfxGain, AE8.masterGain] = keep; }
+          results.push([`S8 7: with no AudioContext at all playSynth returns ${nullRet} and throws nothing (${nullThrew === null}); with the harness's old mock (no createOscillator) it returns ${legacyRet} (${legacyThrew === null ? 'no throw' : 'THREW'})${origRet === 'n/a' ? '' : ' and against the harness\'s own live mock ' + origRet}`,
+            nullRet === false && nullThrew === null && legacyRet === false && legacyThrew === null && (origRet === 'n/a' || origRet === false)]);
+
+          // source: never init() in playSynth (the browser needs the gesture), no files, no fetch
+          const b0 = gameScript.indexOf('  playSynth(name) {'), b1 = gameScript.indexOf('  async playSFX(');
+          const body = gameScript.slice(b0, b1);
+          const audioRefs = (gameScript.match(/\.(mp3|wav|ogg)\b/g) || []).length;
+          results.push([`S8 7: no new files and no new init — playSynth is ${body.length} chars, contains init( ${body.split('init(').length - 1}x, fetch( ${body.split('fetch(').length - 1}x, decodeAudioData ${body.split('decodeAudioData').length - 1}x, destination ${body.split('destination').length - 1}x, masterGain ${body.split('masterGain').length - 1}x, and reads from this.sfxGain (${body.indexOf('out = this.sfxGain') > 0}); AudioEngine.init() appears ${gameScript.split('AudioEngine.init()').length - 1}x; audio file references in the game: ${audioRefs} (12 when S8 was written; the eight tracks, siren and tension plus their comments)`,
+            b0 > 0 && b1 > b0 && body.length > 500 && body.indexOf('init(') < 0 && body.indexOf('fetch(') < 0 && body.indexOf('decodeAudioData') < 0 && body.indexOf('destination') < 0 &&
+            body.indexOf('masterGain') < 0 && body.indexOf('out = this.sfxGain') > 0 && gameScript.split('AudioEngine.init()').length === 2 && audioRefs === 12]);
+        }
+
+        /* ---- 8. the hooks fire ---- */
+        {
+          const findSpot = (safe) => {
+            const near = (x, y, r) => HB8.mobs.some(m => !m.dead && Math.hypot(m.x - x, m.y - y) < r) || [...HB8.others.values()].some(o => Math.hypot(o.x - x, o.y - y) < r);
+            if (safe) { for (const r of [0.5, 3, 6, 10, 20, 40]) for (const [ox, oy] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) {
+              const x = SP8.x + ox * r + 0.5, y = SP8.y + oy * r + 0.5;
+              if (window.inSafeZone(x, y) && !BLK8(window.biomeAt(Math.floor(x), Math.floor(y))) && !near(x, y, 15)) return { x, y }; } return null; }
+            for (let d = W8.SAFE_RADIUS + 60; d < 1500; d += 37) for (const [ox, oy] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) {
+              const x = SP8.x + ox * d + 0.5, y = SP8.y + oy * d + 0.5;
+              if (x > 8 && y > 8 && x < W8.N - 8 && y < W8.N - 8 && !window.inSafeZone(x, y) && !window.inColosseum(x, y) && !BLK8(window.biomeAt(Math.floor(x), Math.floor(y))) && !near(x, y, 15)) return { x, y };
+            } return null;
+          };
+          const outS = findSpot(false), inS = findSpot(true);
+          const swing = (spot, fx) => {
+            dsp8({ x: spot.x, y: spot.y, hp: MAXHP8, equipped: null, armor: null });
+            HB8.others.set('s8:foe', { x: spot.x + 0.8, y: spot.y, fx, fy: 0, dead: false, flash: 0 });
+            fresh8(); dsa8({ lastAttack: -1e9 }); const h0 = feel8().hitStops, s0 = feel8().sfxPlays;
+            try { window.tryAttack(); } finally { HB8.others.delete('s8:foe'); }
+            return { names: names8(), fr: feel8().hitStops - h0, plays: feel8().sfxPlays - s0 };
+          };
+          let dealNone = null, dealOut = null, dealIn = null, nrm = null, bck = null, safeSw = null, bare = null;
+          if (outS) {
+            dsp8({ x: outS.x, y: outS.y, hp: MAXHP8, equipped: null, armor: null });
+            dealNone = window.dealHit('s8:nobody', 5);
+            HB8.others.set('s8:foe', { x: outS.x + 0.8, y: outS.y, fx: -1, fy: 0, dead: false, flash: 0 }); dealOut = window.dealHit('s8:foe', 5); HB8.others.delete('s8:foe');
+            bare = (() => { fresh8(); dsa8({ lastAttack: -1e9 }); window.tryAttack(); return names8(); })();   // nobody in reach: a swing is only a swing
+            nrm = swing(outS, -1);                                // the target faces me: no backstab
+            bck = swing(outS, 1);                                 // I hit it in the back: a crit, so heavy
+          }
+          if (inS) {
+            dsp8({ x: inS.x, y: inS.y, hp: MAXHP8, equipped: null, armor: null });
+            HB8.others.set('s8:foe', { x: inS.x + 0.8, y: inS.y, fx: -1, fy: 0, dead: false, flash: 0 }); dealIn = window.dealHit('s8:foe', 5); HB8.others.delete('s8:foe');
+            safeSw = swing(inS, -1);
+          }
+          HB8.projectiles.length = Math.min(HB8.projectiles.length, proj8);
+          calm8(); clearFreeze8();
+          const sgl = gameScript.indexOf('const landed = dealHit(') > 0 || gameScript.indexOf('landed = dealHit(') > 0;
+          results.push([`S8 8: swinging — a bare swing in the open plays [${bare}]; at a player facing me: [${nrm && nrm.names}] with ${nrm && nrm.fr} freezes; in his back: [${bck && bck.names}] with ${bck && bck.fr} freezes (sfxPlays +${bck && bck.plays}); inside a safe zone the blow is refused (dealHit ${dealIn}) so only [${safeSw && safeSw.names}] plays and ${safeSw && safeSw.fr} freezes; dealHit returns ${dealNone} for nobody and ${dealOut} for a landed blow`,
+            !!outS && !!inS && bare === 'swing' && !!nrm && nrm.names === 'swing,hit' && nrm.fr === 0 && !!bck && bck.names === 'swing,heavy' && bck.fr === 1 && bck.plays === 2 &&
+            !!safeSw && safeSw.names === 'swing' && safeSw.fr === 0 && dealNone === false && dealOut === true && dealIn === false && sgl]);
+          results.push([`S8 8: the other melee wirings — a mob hit calls landHit(..., bestM.dead, w.dmg) (${gameScript.indexOf('landHit(mcrit ? Math.round(w.dmg * 1.6) : w.dmg, mcrit, bestM.dead, w.dmg);') > 0}), the spear thrust counts only landed blows and a landed PvP crit is heavy (${gameScript.indexOf('if (crit) heavyThrust = true;') > 0}, ${gameScript.indexOf('if (hits) landHit(w.dmg, heavyThrust, false, w.dmg);') > 0}); bows, staves and pets never freeze: landHit is called ${gameScript.split('landHit(').length - 2}x in the game (all melee) [source pins: a mob and a spear cannot be staged here]`,
+            gameScript.indexOf('landHit(mcrit ? Math.round(w.dmg * 1.6) : w.dmg, mcrit, bestM.dead, w.dmg);') > 0 && gameScript.indexOf('if (crit) heavyThrust = true;') > 0 &&
+            gameScript.indexOf('if (hits) landHit(w.dmg, heavyThrust, false, w.dmg);') > 0 && gameScript.split('landHit(').length - 2 === 3]);
+
+          // the UI click: any <button> (capture phase on document), nothing else
+          fresh8(); const probeBtn = doc8.createElement('button'); doc8.body.appendChild(probeBtn); probeBtn.click(); const clickBtn = names8();
+          AE8._sfxLast = {}; log8.length = 0; const probeDiv = doc8.createElement('div'); doc8.body.appendChild(probeDiv); probeDiv.click(); const clickDiv = names8();
+          const span8 = doc8.createElement('button'), inner = doc8.createElement('span'); span8.appendChild(inner); doc8.body.appendChild(span8);
+          AE8._sfxLast = {}; log8.length = 0; inner.click(); const clickInner = names8();
+          probeBtn.remove(); probeDiv.remove(); span8.remove();
+          results.push([`S8 8: UI click — a click on a <button> plays [${clickBtn}], on something inside a button [${clickInner}], on a plain <div> [${clickDiv}] (the listener is capture-phase on document: ${gameScript.indexOf('}, true);\nfunction debugFeelInfo()') > 0}); the Settings button was covered by gate 5`,
+            clickBtn === 'click' && clickInner === 'click' && clickDiv === '' && gameScript.indexOf('}, true);\nfunction debugFeelInfo()') > 0]);
+
+          // the level-up: the 'kill' broadcast naming me
+          const lv0 = window.debugV35Info().level;
+          fresh8(); const nHand = deliverBroadcast('kill', { killer: uname8, victim: 'S8Victim' });
+          const lv1 = window.debugV35Info().level, kNames = names8();
+          dsp8({ level: lvl8 });
+          fresh8(); const nOther = deliverBroadcast('kill', { killer: 'SomeoneElse', victim: 'S8Victim' }); const otherNames = names8(), lv2 = window.debugV35Info().level;
+          results.push([`S8 8: level-up — a 'kill' broadcast naming ${uname8} (${nHand} handler${nHand === 1 ? '' : 's'}) moves level ${lv0} -> ${lv1} and plays [${kNames}]; one naming someone else plays [${otherNames}] and leaves level ${lv2}`,
+            nHand >= 1 && lv1 === lv0 + nHand && /(^|,)levelup(,|$)/.test(kNames) && otherNames === '' && lv2 === lvl8]);
+
+          // the pickup: a successful pick-up of a ground item, a lost race, and the five gather sites
+          dsp8({ x: p8.x, y: p8.y });
+          tableData.ground_items.length = 0; tableData.ground_items.push({ id: 's8:g1', type: 'wood', qty: 1, x: p8.x, y: p8.y });
+          fresh8(); await window.tryPickup({ id: 's8:g1', type: 'wood', qty: 1, x: p8.x, y: p8.y }); const pkOk = names8();
+          tableData.ground_items.length = 0;
+          fresh8(); await window.tryPickup({ id: 's8:g2', type: 'wood', qty: 1, x: p8.x, y: p8.y }); const pkLost = names8();
+          tableData.ground_items.length = 0; tableData.ground_items.push(...gi8);
+          putBack8();
+          const pickSites = gameScript.split('AudioEngine.playSynth("pickup");').length - 1;
+          results.push([`S8 8: pickup — tryPickup of a stub ground item plays [${pkOk}], one somebody else got first plays [${pkLost}]; the sound is wired in ${pickSites} places (tryPickup, finite node yield, plain gather incl. wood, interior node, generator yield = 5) [the node/generator paths need a staged world: source pin]`,
+            pkOk === 'pickup' && pkLost === '' && pickSites === 5]);
+
+          // the tutorial dummy
+          dsv8({ tutorialActive: true, tutorialDone: false });
+          dsp8({ x: v8.TUTORIAL_DUMMY.x + 1, y: v8.TUTORIAL_DUMMY.y });
+          fresh8(); window.tutorialNoteAttack(); const dumNames = names8();
+          dsv8({ tutorialActive: false });
+          dsp8({ x: SP8.x + 30.5, y: SP8.y + 30.5 }); fresh8(); dsv8({ tutorialActive: true }); window.tutorialNoteAttack(); const dumFar = names8();
+          dsv8({ tutorialActive: v8.tutorialActive, tutorialDone: v8.tutorialDone });
+          putBack8();
+          results.push([`S8 8: the tutorial dummy — a strike beside it plays [${dumNames}], from 30 tiles away [${dumFar}]`, dumNames === 'hit' && dumFar === '']);
+        }
+      } finally {
+        uninstall8();
+        rafQ.length = Math.min(rafQ.length, rq8);
+      }
+
+      /* ---- 9. the first five minutes: a brand new account starts at the Tutorial Grounds ---- */
+      {
+        const tsrc = gameScript.slice(gameScript.indexOf('async function loginPlayer('), gameScript.indexOf('function tutorialStartSpot('));
+        const insAt = tsrc.indexOf('const { error } = await sb.from("players").insert({'), errAt = tsrc.indexOf('if (error.code === "23505")'), setAt = tsrc.indexOf('newPlayerRow = username;');
+        const sts = gameScript.slice(gameScript.indexOf('function startTutorialIfNeeded('), gameScript.indexOf('function tutorialAdvance('));
+        results.push([`S8 9: wiring — the new-row branch picks the spot first (const s = tutorialStartSpot(); ${tsrc.indexOf('const s = tutorialStartSpot();') > 0}), inserts it, and only AFTER the insert and its error throws sets newPlayerRow = username (${insAt > 0 && errAt > insAt && setAt > errAt}; ${gameScript.split('newPlayerRow = username;').length - 1} such line, ${gameScript.split('newPlayerRow = null;').length - 1} clears); startTutorialIfNeeded re-picks only when newPlayerRow === me.username (${sts.indexOf('newPlayerRow === me.username') > 0}) then clears it, and no other line assigns it (${(gameScript.match(/\bnewPlayerRow\s*=[^=]/g) || []).length} assignments in all)`,
+          tsrc.indexOf('const s = tutorialStartSpot();') > 0 && insAt > 0 && errAt > insAt && setAt > errAt && gameScript.split('newPlayerRow = username;').length === 2 &&
+          sts.indexOf('newPlayerRow === me.username') > 0 && sts.indexOf('newPlayerRow = null;') > 0 && (gameScript.match(/\bnewPlayerRow\s*=[^=]/g) || []).length === 4]);
+
+        // the spot itself: where, clear of everything, and not on another newcomer
+        const nearLoc = window.debugSetPlayer({ x: SP8.x + 0.5, y: SP8.y + 3.5 });           // loads the feature window round the Grounds
+        const samples = []; for (let i = 0; i < 200; i++) samples.push(window.tutorialStartSpot());
+        const dS = s => Math.hypot(s.x - SP8.x, s.y - SP8.y), dF = s => Math.hypot(s.x - FORGE8.x, s.y - FORGE8.y);
+        const maxD = Math.max(...samples.map(dS)), minF = Math.min(...samples.map(dF));
+        const blocked = samples.filter(s => BLK8(window.biomeAt(Math.floor(s.x), Math.floor(s.y)))).length;
+        const distinct = new Set(samples.map(s => s.x.toFixed(1) + ',' + s.y.toFixed(1))).size;
+        let gatherable = 0; for (let i = 0; i < 80; i++) { const s = samples[i]; dsp8({ x: s.x, y: s.y }); if (window.nearestGatherable()) gatherable++; }
+        // the control: the same question asked on a 1-tile grid round the Grounds finds gatherables, so "nothing in reach" above means something
+        let gathNear = 0, gridPts = 0; for (let gx = -8; gx <= 8; gx++) for (let gy = -8; gy <= 8; gy++) { dsp8({ x: SP8.x + gx + 0.5, y: SP8.y + gy + 0.5 }); gridPts++; if (window.nearestGatherable()) gathNear++; }
+        dsp8({ x: SP8.x + 0.5, y: SP8.y + 3.5 });
+        const first = window.tutorialStartSpot();
+        HB8.others.set('s8:newcomer', { x: first.x, y: first.y, dead: false, flash: 0 });
+        let minOther = Infinity; try { for (let i = 0; i < 200; i++) { const s = window.tutorialStartSpot(); minOther = Math.min(minOther, Math.hypot(s.x - first.x, s.y - first.y)); } } finally { HB8.others.delete('s8:newcomer'); }
+        results.push([`S8 9: the Tutorial Grounds spot — 200 picks all within ${maxD.toFixed(2)} tiles of Spawn (limit 7), nearest ${minF.toFixed(2)} tiles to the Spawn Forge (limit 4.3), ${blocked} on blocked ground, nothing gatherable in reach at ${80 - gatherable}/80 of them (control: ${gathNear} of ${gridPts} grid points within 8 tiles of Spawn DO have something in reach), ${distinct} distinct places (it is random); with another newcomer standing on the first pick, 200 more picks never came nearer than ${minOther.toFixed(2)} tiles to him (limit 2.2)`,
+          maxD <= 7 && minF >= 4.3 && blocked === 0 && gatherable === 0 && gathNear > 0 && distinct >= 3 && minOther >= 2.2]);
+
+        // the real thing: a brand new name logs in, a returning one never moves
+        const rows0 = tableData.players.length, v9 = window.debugV35Info(), wolf9 = v9.tutorialWolfInWorld;
+        const hasBoot = tableData.players.some(r => r.username === uname8);
+        let fresh = null, startedAt = null, second = null, otherCase = null, farSpot = null, loginErr = null;
+        try {
+          dsp8({ x: SP8.x + 0.5, y: SP8.y + 3.5 });
+          await window.loginPlayer('S8Fresh', 'Knight');
+          const row = tableData.players.find(r => r.username === 'S8Fresh');
+          const me1 = dwi8();
+          fresh = { row: row ? { x: row.x, y: row.y } : null, me: { x: me1.x, y: me1.y } };
+          farSpot = { x: SP8.x + 30.5, y: SP8.y + 30.5 };
+          dsp8({ x: farSpot.x, y: farSpot.y });
+          dsv8({ tutorialActive: false, tutorialDone: false });
+          const r1 = window.startTutorialIfNeeded();
+          const m1 = dwi8();
+          dsp8({ x: m1.x, y: m1.y });                              // reload the feature window round where he landed, then look
+          startedAt = { ret: r1, x: m1.x, y: m1.y, gath: !!window.nearestGatherable() };
+          // the flag is spent: a second call (tutorial reset) leaves him wherever he is
+          dsp8({ x: farSpot.x, y: farSpot.y }); dsv8({ tutorialActive: false, tutorialDone: false });
+          const r2 = window.startTutorialIfNeeded(); const m2 = dwi8();
+          second = { ret: r2, moved: m2.x !== farSpot.x || m2.y !== farSpot.y };
+          // a flag left behind for someone else: log S8Other in (new row, flag = S8Other), then S8Fresh back in (a returning row)
+          await window.loginPlayer('S8Other', 'Knight');
+          await window.loginPlayer('S8Fresh', 'Knight');
+          dsp8({ x: farSpot.x, y: farSpot.y }); dsv8({ tutorialActive: false, tutorialDone: false });
+          const r3 = window.startTutorialIfNeeded(); const m3 = dwi8();
+          otherCase = { ret: r3, moved: m3.x !== farSpot.x || m3.y !== farSpot.y, x: m3.x, y: m3.y };
+        } catch (e) { loginErr = e && e.message || String(e); }
+        finally {
+          for (let i = tableData.players.length - 1; i >= 0; i--) if (tableData.players[i].username === 'S8Fresh' || tableData.players[i].username === 'S8Other') tableData.players.splice(i, 1);
+          try { await window.loginPlayer(uname8, 'Beastmaster'); } catch (e) { loginErr = loginErr || (e && e.message); }
+          dsv8({ tutorialActive: v9.tutorialActive, tutorialDone: v9.tutorialDone });
+          if (wolf9 && !window.debugV35Info().tutorialWolfInWorld) {      // startTutorialIfNeeded stands the wolf back up; then the flags go back
+            dsv8({ tutorialActive: false, tutorialDone: false }); window.startTutorialIfNeeded();
+            dsv8({ tutorialActive: v9.tutorialActive, tutorialDone: v9.tutorialDone });
+          }
+          putBack8();
+        }
+        const dd = s => s ? Math.hypot(s.x - SP8.x, s.y - SP8.y) : NaN;
+        results.push([`S8 9: a brand new account — the row written to the table is ${fresh && fresh.row ? dd(fresh.row).toFixed(2) : '?'} tiles from Spawn and the player stands ${fresh ? dd(fresh.me).toFixed(2) : '?'} tiles from it (limit 7); with the feature index now up, startTutorialIfNeeded moved him from 30 tiles away to ${startedAt ? dd(startedAt).toFixed(2) : '?'} tiles from Spawn, nothing gatherable in reach: ${startedAt ? !startedAt.gath : '?'}; the flag is spent — a second start moved him: ${second ? second.moved : '?'}${loginErr ? ' [ERROR ' + loginErr + ']' : ''}`,
+          loginErr === null && !!fresh && !!fresh.row && dd(fresh.row) <= 7 && dd(fresh.me) <= 7 && !!startedAt && startedAt.ret === true && dd(startedAt) <= 7 && !startedAt.gath && !!second && second.ret === true && second.moved === false]);
+        results.push([`S8 9: a returning player is never moved — newPlayerRow left behind for another name (S8Other) while S8Fresh is the player: startTutorialIfNeeded ran (${otherCase && otherCase.ret}) and moved him: ${otherCase ? otherCase.moved : '?'}; the BootTest row existed to log back in as (${hasBoot}); ${tableData.players.length - rows0 === 0 ? 'the stub table is back to its' : 'the stub table has ' + (tableData.players.length - rows0) + ' extra rows over its'} ${rows0} rows`,
+          loginErr === null && !!otherCase && otherCase.ret === true && otherCase.moved === false && tableData.players.length === rows0]);
+      }
+
+      /* ---- 10. preservation: the two older audio gates are still there, with the same assertions ---- */
+      {
+        const me8 = require('fs').readFileSync(require('path').join(__dirname, 'run4.js'), 'utf8');
+        const unwired = me8.indexOf("gameScript.split('AudioEngine." + "playSFX(').length === 1]);");
+        const initOne = me8.indexOf("gameScript.split('AudioEngine." + "init()').length === 2]);   // exactly one call site in the whole file");
+        const musicThree = me8.indexOf("gameScript.split('AudioEngine." + "playMusic(').length === 4]);");
+        results.push([`S8 10: the old audio gates are intact — playSFX is still never called (${gameScript.split('AudioEngine.playSFX(').length - 1} calls; gate assertion present: ${unwired > 0}), AudioEngine.init() has one call site (${gameScript.split('AudioEngine.init()').length - 1}; gate: ${initOne > 0}), music is wired from three sites (${gameScript.split('AudioEngine.playMusic(').length - 1} + the definition; gate: ${musicThree > 0})`,
+          gameScript.split('AudioEngine.playSFX(').length === 1 && unwired > 0 && gameScript.split('AudioEngine.init()').length === 2 && initOne > 0 && gameScript.split('AudioEngine.playMusic(').length === 4 && musicThree > 0]);
+      }
+
+      // ---- put everything back ----
+      dsf8({ hitStopUntil: f8.hitStopUntil, hitStops: f8.hitStops, shakeT: f8.shakeT, shakeHeavyUntil: f8.shakeHeavyUntil, sfxPlays: f8.sfxPlays });
+      if (window.debugSettingsInfo().SETTINGS.screenShake !== st8.ss) window.setSetting('screenShake', st8.ss);
+      tableData.ground_items.length = 0; tableData.ground_items.push(...gi8);
+      HB8.others.delete('s8:foe'); HB8.others.delete('s8:newcomer');
+      calm8();
+    } else {
+      results.push(['S8: the feel-pass hooks exist (debugFeelInfo, debugSetFeel, hitStop, landHit, noteHurt, shakeOffset, loop, tutorialStartSpot)', false]);
+    }
+
 
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }

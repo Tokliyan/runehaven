@@ -802,8 +802,14 @@
       <div class="set-row">
         <span class="lab">Reduce motion &amp; particles
           <br><span class="note">Turns off the ambient drifting effects &mdash; motes, embers,
-          fireflies, snow, butterflies. Combat feedback is unaffected.</span></span>
+          fireflies, snow, butterflies. Combat feedback is unaffected (screen shake has its own switch below).</span></span>
         <span class="ctl"><button class="set-btn" id="setReduceMotion">OFF</button></span>
+      </div>
+      <div class="set-row">
+        <span class="lab">Screen shake
+          <br><span class="note">The small camera jolt when you hit or are hit. Hit flashes and the
+          brief hit-stop on heavy blows stay either way.</span></span>
+        <span class="ctl"><button class="set-btn" id="setScreenShake">ON</button></span>
       </div>
     </div>
 
@@ -838,9 +844,9 @@
         <span class="ctl"><input type="range" id="sldSfx" min="0" max="100"><span class="val" id="valSfx">80</span><button class="set-btn" id="btnMuteSfx">MUTE</button></span>
       </div>
       <div class="set-row">
-        <span class="note">No music or sound effects ship in this version yet. These controls are
-        live and already drive the audio engine &mdash; there is simply nothing playing
-        through them until the first real track lands.</span>
+        <span class="note">Music plays from the game's own tracks. Sound effects (swings, hits,
+        pickups, level-ups, button clicks) are synthesised live in your browser &mdash; no
+        sound files &mdash; through the Sound effects control above.</span>
       </div>
     </div>
 
@@ -2009,6 +2015,7 @@ const TUTORIAL_STEPS = [
 ];
 let tutorialActive = false, tutorialStep = 0, tutorialDone = false;
 let tutorialRuns = 0;            // how many times it has actually started
+let newPlayerRow = null;         // S8: the username whose row this login created (see tutorialStartSpot)
 
 /* Pure, and the whole of the "once per player" rule. A row with the flag set
    never runs it again. PRE-MIGRATION: a row with no `tutorial_done` column at
@@ -2022,6 +2029,14 @@ function startTutorialIfNeeded() {
   tutorialActive = true;
   tutorialStep = 0;
   tutorialRuns++;
+  /* S8: a brand new row was placed before the feature index existed; now it
+     does, so step off any tree or rock — before the first frame is drawn. */
+  if (me && newPlayerRow && newPlayerRow === me.username) {
+    newPlayerRow = null;
+    const s2 = tutorialStartSpot();
+    me.x = s2.x; me.y = s2.y; cam.x = me.x; cam.y = me.y;
+    if (typeof sendMove === "function" && channel) sendMove(true);   // review fix: others see the real spot at once
+  }
   if (!wilds.some(w => w.id === TUTORIAL_WOLF_ID)) {
     wilds.push({ id: TUTORIAL_WOLF_ID, species: "wolf",
                  x: TUTORIAL_WOLF.x, y: TUTORIAL_WOLF.y, ph: 0.7, tut: true });
@@ -2049,8 +2064,10 @@ function endTutorial(completed) {
   wilds = wilds.filter(w => w.id !== TUTORIAL_WOLF_ID);
   savePlayerExtras();
   refreshTutorialHud();
-  toast(completed ? "Tutorial Grounds complete — the world is open to you."
-                  : "Tutorial skipped — the world is open to you.");
+  /* S8 first five minutes: the walk found nothing told a new player what to
+     do next. The Bounty Board, a few steps north, is a goal for today. */
+  toast(completed ? "Tutorial Grounds complete — the world is open to you. Today's hunt is on the Bounty Board, just north."
+                  : "Tutorial skipped — the world is open to you. Today's hunt is on the Bounty Board, just north.");
   return true;
 }
 
@@ -2068,6 +2085,7 @@ function tutorialNoteAttack() {
   if (!tutorialActive || inInterior()) return;
   if (Math.hypot(me.x - TUTORIAL_DUMMY.x, me.y - TUTORIAL_DUMMY.y) <= TUTORIAL_HIT_R) {
     burst(TUTORIAL_DUMMY.x, TUTORIAL_DUMMY.y, "#c8b090", 6, 1.8);
+    AudioEngine.playSynth("hit");   // S8: a new player's first strike should sound like one
     tutorialAdvance("fight");
   }
 }
@@ -8787,7 +8805,14 @@ async function loginPlayer(username, cls, pinCheck) {
       } catch (e) { console.warn("PIN not stored:", e); toast("Could not store that PIN — this name is still unprotected."); }
     }
   } else {
-    const s = findSpawn();
+    /* S8 first-five-minutes fix: a brand new player's tutorial starts by
+       pointing at a stone beside the Spawn centre, but findSpawn() scatters
+       anyone across the whole safe zone (radius 452 since the expansions),
+       so a new player could open the game ~200 tiles from the Tutorial
+       Grounds with "walk to the marked stone" and no stone in sight. New
+       rows start at the Grounds; returning players and respawns are as before. */
+    const s = tutorialStartSpot();
+    newPlayerRow = null;
     const { error } = await sb.from("players").insert({
       username, class: cls, x: s.x, y: s.y, level: 1, hp: 100, max_hp: 100, inventory: {},
     });
@@ -8796,6 +8821,10 @@ async function loginPlayer(username, cls, pinCheck) {
       if (String(error.message || "").includes("hp")) throw new Error("Your database is missing the new columns — run the Stage 1-3 SQL.");
       throw error;
     }
+    /* S8 review fix: only a row that was really created, and only for THIS
+       name — a failed insert followed by logging into an existing account
+       must never teleport that returning player. */
+    newPlayerRow = username;
     /* Account PIN Protection: the players row and the account_pins row are
        written by the same submit, in that order — a PIN row that outlived a
        failed insert would protect a name nobody owns. Never throws: if the
@@ -8841,6 +8870,45 @@ async function loginPlayer(username, cls, pinCheck) {
   cam.x = me.x; cam.y = me.y;
 }
 
+/* Where a brand new player opens their eyes: just south-west of the Spawn
+   centre, with the marked stone, the dummy and the wolf all on screen. */
+function tutorialStartSpot() {
+  /* The first prompt a new player sees should be the tutorial's, not
+     "[E] Gather Wood" from a tree they happen to stand beside: take the
+     nearest of a few spots by the Grounds with nothing gatherable in reach. */
+  const clear = (x, y) => {
+    if (BLOCKED.has(biomeAt(Math.floor(x), Math.floor(y)))) return false;
+    /* review fix: outside the Spawn Forge's prompt radius (4) and its fenced
+       yard, and not on top of another newcomer (their give prompt, and a
+       dummy swing that would pick THEM as the target) */
+    if (Math.hypot(x - SPAWN_FORGE.x, y - SPAWN_FORGE.y) < 4.3) return false;
+    for (const [, o] of others) if (Math.hypot(o.x - x, o.y - y) < 2.2) return false;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const f = featureIndex.get((Math.floor(x) + dx) + "," + (Math.floor(y) + dy));
+      if (f && f.type !== "pillar" && Math.hypot(f.x - x, f.y - y) < GATHER_RANGE + 0.6) return false;
+    }
+    return true;
+  };
+  const tries = [[-0.5, 3.5], [0.5, 4.5], [-1.5, 2.5], [-0.5, 5.5], [1.5, 5.5], [-1.5, 4.5], [0.5, 6.0], [-2.5, 3.5]];
+  /* any clear spot, picked at random with a little jitter, so newcomers
+     arriving together do not stand on one tile */
+  const ok = tries.map(([ox, oy]) => ({ x: SPAWN.x + ox + (Math.random() - 0.5) * 0.6, y: SPAWN.y + oy + (Math.random() - 0.5) * 0.6 }))
+                  .filter(c => clear(c.x, c.y));
+  if (ok.length) return ok[Math.floor(Math.random() * ok.length)];
+  /* None of those clear in this world (trees grow where the seed puts them):
+     search outward from the Grounds for the nearest clear spot instead of
+     falling back to one beside a tree. */
+  for (let r = 0; r <= 7; r += 0.5) {
+    for (let a = 0; a < 16; a++) {
+      const x = SPAWN.x + 0.5 + Math.cos(a / 16 * Math.PI * 2) * r;
+      const y = SPAWN.y + 4.5 + Math.sin(a / 16 * Math.PI * 2) * r;
+      if (clear(x, y)) return { x, y };
+      if (r === 0) break;
+    }
+  }
+  const c = { x: SPAWN.x + 0.5, y: SPAWN.y + 2.5 };
+  return BLOCKED.has(biomeAt(Math.floor(c.x), Math.floor(c.y))) ? findSpawn() : c;
+}
 function findSpawn() {
   for (let i = 0; i < 80; i++) {
     const a = Math.random() * Math.PI * 2, r = 2 + Math.random() * (SAFE_RADIUS - 4);
@@ -9957,6 +10025,7 @@ async function joinRealtime() {
   channel.on("broadcast", { event: "kill" }, ({ payload: p }) => {
     if (p.killer === me.username) {
       me.level += 1;
+      AudioEngine.playSynth("levelup");   // S8
       me.lastKillAt = Date.now();     // v12: blood window opens
       /* v52+53 PART B: the victor's purse. This is the single existing site
          where a victor is already credited, so the duel reward belongs here
@@ -10673,6 +10742,7 @@ async function tryPickup(item) {
   groundItems.delete(item.id);
   if (data && data.length) {
     invAdd(item.type, item.qty);
+    AudioEngine.playSynth("pickup");   // S8
     toast(`Picked up ${ITEM_META[item.type]?.name || item.type} ×${item.qty}`);
     burst(item.x, item.y, ITEM_META[item.type]?.color || "#fff", 6, 1.5);
     channel.send({ type: "broadcast", event: "item_del", payload: { id: item.id } });
@@ -10925,6 +10995,7 @@ function tryAttack(aimX, aimY) {
   const now = performance.now();
   if (now - lastAttack < (w.cd || 450)) return;
   lastAttack = now;
+  AudioEngine.playSynth("swing");   // S8
   combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;   // v24: combat music signal
   /* v35 PART B: the training dummy is scenery, not a mob — it has no HP, no
      AI and no loot. A real swing taken beside it is what teaches the lesson,
@@ -11010,6 +11081,7 @@ function tryAttack(aimX, aimY) {
       const kb = wk === "axe" ? 1.1 : wk === "dagger" ? 0.2 : wk === "spear" ? 0.6 : wk === "sword" ? 0.55 : 0.3;
       mobHit(bestM, mcrit ? Math.round(w.dmg * 1.6) : w.dmg, { crit: mcrit, kx: ndx, ky: ndy, kb });
       shakeT = now;
+      landHit(mcrit ? Math.round(w.dmg * 1.6) : w.dmg, mcrit, bestM.dead, w.dmg);   // S8: sound + hit-stop when heavy
       return;
     }
     if (best) {
@@ -11022,8 +11094,9 @@ function tryAttack(aimX, aimY) {
       let dmg = crit ? Math.round(w.dmg * 1.6) : w.dmg;
       // v10: per-weapon knockback weight (axe heaviest, dagger lightest)
       const kb = wk === "axe" ? 1.1 : wk === "dagger" ? 0.2 : wk === "spear" ? 0.6 : wk === "sword" ? 0.55 : 0.3;
-      dealHit(best, dmg, { crit, kx: ndx, ky: ndy, kb, pois: me.equipped === "venomblade" });
+      const landed = dealHit(best, dmg, { crit, kx: ndx, ky: ndy, kb, pois: me.equipped === "venomblade" });
       shakeT = now;
+      if (landed) landHit(dmg, crit, false, w.dmg);   // S8: not for a blow the safe zone refused
     }
   } else {
     // v9: staff casts show a pulse at the caster; every projectile carries a shape
@@ -11041,14 +11114,14 @@ function tryAttack(aimX, aimY) {
 
 function dealHit(targetName, dmg, opts = {}) {
   const o = others.get(targetName);
-  if (!o) return;
+  if (!o) return false;   // S8: callers play the hit sound / hit-stop only for a blow that landed
   /* v37: the Colosseum overrides safe-zone protection for BOTH parties —
      the bible calls it an open duelling arena, and an arena where nobody
      can be hit is not an arena. Both must be inside it, so nobody can
      stand in the ring and swing at someone safely outside it. */
   const arena37 = inColosseum(me.x, me.y) && inColosseum(o.x, o.y);
   if (!arena37 && (inSafeZone(me.x, me.y) || inSafeZone(o.x, o.y))) {
-    toast("The safe zone protects them"); return;
+    toast("The safe zone protects them"); return false;
   }
   channel.send({ type: "broadcast", event: "hit", payload: {
     to: targetName, from: me.username, dmg,
@@ -11072,6 +11145,7 @@ function dealHit(targetName, dmg, opts = {}) {
   hitEmbers(o.x, o.y, opts.kx, opts.ky);   // v55 PART D
   // v10: crits read amber with an "!" — unmistakably not a normal hit
   addFloat(o.x, o.y, opts.crit ? `-${dmg}!` : `-${dmg}`, opts.crit ? "#ffb340" : "#ffe9b0", opts.crit);
+  return true;
 }
 
 /* v9: rising damage numbers (v10: big flag for crits) */
@@ -11108,7 +11182,7 @@ function inThrustCone(tx, ty, dir, range, bodyR = 0) {
    only difference is that this one does not stop at the first body. */
 function spearThrust(w, dir, now) {
   const kb = 0.6;                                   // v10's spear weight, unchanged
-  let hits = 0;
+  let hits = 0, heavyThrust = false;
   for (const [name, o] of others) {
     if (o.dead) continue;
     if (!inThrustCone(o.x, o.y, dir, w.range)) continue;
@@ -11116,8 +11190,10 @@ function spearThrust(w, dir, now) {
     const ndx = (o.x - me.x) / al, ndy = (o.y - me.y) / al;
     const tf = { x: o.fx ?? 0, y: o.fy ?? 1 };
     const crit = (ndx * tf.x + ndy * tf.y) > 0.4;
-    dealHit(name, crit ? Math.round(w.dmg * 1.6) : w.dmg, { crit, kx: ndx, ky: ndy, kb });
-    hits++;
+    if (dealHit(name, crit ? Math.round(w.dmg * 1.6) : w.dmg, { crit, kx: ndx, ky: ndy, kb })) {
+      hits++;
+      if (crit) heavyThrust = true;   // S8: a PvP crit is heavy too
+    }
   }
   for (const m of mobs) {
     if (m.dead) continue;
@@ -11127,8 +11203,10 @@ function spearThrust(w, dir, now) {
     const mcrit = (ndx * m0f(m.fx) + ndy * m0f(m.fy)) > 0.4;
     mobHit(m, mcrit ? Math.round(w.dmg * 1.6) : w.dmg, { crit: mcrit, kx: ndx, ky: ndy, kb });
     hits++;
+    if (mcrit || m.dead) heavyThrust = true;
   }
   if (hits) shakeT = now;
+  if (hits) landHit(w.dmg, heavyThrust, false, w.dmg);   // S8: one sound per thrust, heavy if any blow was
   return hits;
 }
 
@@ -11328,6 +11406,7 @@ function applyDamage(dmg, from, opts = {}) {
   combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;   // v24: combat music signal
   noteCombatDamage();          // v47 PART E: damage TAKEN opens the logout window
   shakeT = performance.now();
+  noteHurt(dmg);               // S8: the hurt sound, and a hit-stop when the blow is heavy
   }
   hitFlash = performance.now();
   // v10: stagger recoil + knockback shove in the hit direction
@@ -11651,6 +11730,7 @@ async function doInteract() {
       const mat = GENERATOR_GIVES[gen.tier] || "wood";
       if (got > 0) {
         invAdd(mat, got);
+        AudioEngine.playSynth("pickup");   // S8
         gen.lastCollected = Date.now();
         burst(gen.x, gen.y, ITEM_META[mat].color, 8, 2);
         toast(`+${got} ${ITEM_META[mat].name}`);
@@ -11691,6 +11771,7 @@ async function doInteract() {
     const qty32 = g._node.qty || 1;
     burst(g.x, g.y, ITEM_META[got32].color, 7, 2);
     invAdd(got32, qty32);
+    AudioEngine.playSynth("pickup");   // S8
     toast("+" + qty32 + " " + ITEM_META[got32].name);
     savePlayer();
     return;
@@ -11738,9 +11819,11 @@ async function doInteract() {
          alike, because all three come through here. */
       const qty = (g.type === "rock" ? 3 : g.type === "orb" ? 1 : 2) + guildOreBonus(g.type);
       invAdd(got, qty);
+      AudioEngine.playSynth("pickup");   // S8
       toast(`+${qty} ${ITEM_META[got].name}` + (PICKED.has(g.type) ? "" : " — the vein is spent"));
     } else {
       invAdd(got, 1);
+      AudioEngine.playSynth("pickup");   // S8 review fix: wood, the first thing a new player gathers
       toast(`+1 ${ITEM_META[got].name}`);
     }
     savePlayer();
@@ -13476,6 +13559,85 @@ addEventListener("resize", resize); resize();
 
 let lastT = 0;
 let loopErrCount = 0;
+/* ============ S8 Feel pass — HIT-STOP, SHAKE, SOUND ==================
+   GAUNTLET.md S8. A HEAVY hit — a crit, a killing blow, or one at least
+   HEAVY_HIT_MULT x your weapon's base damage that you land in melee (review
+   fix: relative, so it stays rare at every tier), or a hit you take worth at least
+   HEAVY_TAKEN_FRAC of your max hp — freezes the simulation for HIT_STOP_MS
+   while rendering carries on (the flash and the shake still play over the
+   held frame: the classic impact frame), and shakes harder. The shake is a
+   tunable span over SHAKE_MS, and Settings > Graphics > Screen shake turns
+   it off entirely. Your own ranged and pet hits never freeze the world
+   (hits you TAKE from anything can, when heavy). */
+const HIT_STOP_MS = 50;            // TUNABLE: the spec's 40–60 ms
+const HIT_STOP_MIN_GAP_MS = 350;   // TUNABLE: review fix — at least this long between freezes, so they read as impacts, never stutter
+const HEAVY_HIT_MULT = 1.5;        // TUNABLE: review fix — heavy is RELATIVE to your weapon (a crit is 1.6x), not an absolute number every runic hit passes
+const HEAVY_TAKEN_FRAC = 0.3;      // TUNABLE: a hit taken for this share of max hp is heavy (the Drake's 28 is not; its phase-3 sweep is)
+const SHAKE_MS = 220;              // TUNABLE: how long a shake lasts (the old fixed 220)
+const SHAKE_PX = 5;                // TUNABLE: shake span in px (the old fixed 5, i.e. ±2.5)
+const SHAKE_HEAVY_PX = 8;          // TUNABLE: a heavy hit's span
+let hitStopUntil = 0, hitStops = 0, shakeHeavyUntil = 0;
+function hitStop(ms) {
+  const now = performance.now(), len = ms || HIT_STOP_MS;
+  shakeT = now; shakeHeavyUntil = now + SHAKE_MS;   // review fix: heavy is a window, so a later light shake cannot downgrade it
+  /* never chain freezes, and leave a gap after one so a fast weapon never stutters */
+  if (hitStopUntil > now || now - hitStopUntil < HIT_STOP_MIN_GAP_MS) return false;
+  hitStopUntil = now + len;
+  hitStops++;
+  /* Review fix: update() is held, but these clocks are wall-clock — push them
+     on by the freeze so it never eats a mob's telegraph (your dodge window),
+     its next swing, or a taming channel. */
+  for (const m of mobs) {
+    if (m.winding) m.windupStart += len;
+    if (m.atkAt > now) m.atkAt += len;
+  }
+  if (taming && taming.start) taming.start += len;
+  return true;
+}
+function hitStopActive() { return performance.now() < hitStopUntil; }
+/* Every melee hit you land comes through here: the sound, and the freeze
+   when it is heavy. `killed` is read AFTER the damage went in. */
+function landHit(dmg, crit, killed, base) {
+  const heavy = !!crit || !!killed || dmg >= HEAVY_HIT_MULT * (base || dmg + 1);
+  AudioEngine.playSynth(heavy ? "heavy" : "hit");
+  if (heavy) hitStop();
+  return heavy;
+}
+/* A hit you took (never ashfall — applyDamage only calls this outside
+   envDamageNow). */
+function noteHurt(dmg) {
+  AudioEngine.playSynth("hurt");
+  if (me && dmg >= HEAVY_TAKEN_FRAC * (me.maxHp || 100)) hitStop();
+}
+function shakeOffset(nowMs) {
+  if (!SETTINGS.screenShake) return [0, 0];
+  const since = nowMs - shakeT;
+  if (!(since < SHAKE_MS)) return [0, 0];
+  const f = (1 - since / SHAKE_MS) * (nowMs < shakeHeavyUntil ? SHAKE_HEAVY_PX : SHAKE_PX);
+  return [(Math.random() - 0.5) * f, (Math.random() - 0.5) * f];
+}
+let sfxPlays = 0, sfxLastName = "";
+/* UI click: one capture-phase listener for every <button> (there is no
+   central click path — every control has its own onclick). Silent until
+   ENTER has created the audio context, so the login screen stays quiet. */
+document.addEventListener("click", (e) => {
+  const b = e.target && e.target.closest ? e.target.closest("button") : null;
+  if (b) AudioEngine.playSynth("click");
+}, true);
+function debugFeelInfo() {
+  return { HIT_STOP_MS, HIT_STOP_MIN_GAP_MS, HEAVY_HIT_MULT, HEAVY_TAKEN_FRAC, SHAKE_MS, SHAKE_PX, SHAKE_HEAVY_PX,
+           hitStopUntil, hitStops, frozen: hitStopActive(), shakeT, shakeHeavyUntil,
+           screenShake: SETTINGS.screenShake, sfxPlays, sfxLastName };
+}
+function debugSetFeel(patch) {
+  if (!patch) return debugFeelInfo();
+  if ("hitStopUntil" in patch) hitStopUntil = patch.hitStopUntil;
+  if ("hitStops" in patch) hitStops = patch.hitStops;
+  if ("shakeT" in patch) shakeT = patch.shakeT;
+  if ("shakeHeavyUntil" in patch) shakeHeavyUntil = patch.shakeHeavyUntil;
+  if ("sfxPlays" in patch) sfxPlays = patch.sfxPlays;
+  return debugFeelInfo();
+}
 function loop(t) {
   const dt = Math.min((t - lastT) / 1000, 0.05);
   lastT = t;
@@ -13487,7 +13649,7 @@ function loop(t) {
      itself and catches throws, so nothing there ever stops.
      One bad frame must never be fatal. */
   try {
-    update(dt, t);
+    if (!hitStopActive()) update(dt, t);   // S8: a heavy hit holds the world; render() below carries on
   } catch (e) {
     if (loopErrCount++ < 5) console.error("update() threw — frame skipped:", e);
   }
@@ -19865,13 +20027,9 @@ function render(t) {
     : 0;
   if (cloudDim > 0) SUN = { ...SUN, alpha: SUN.alpha * (1 - cloudDim * 0.6) };
 
-  let shX = 0, shY = 0;
-  const sinceShake = performance.now() - shakeT;
-  if (sinceShake < 220) {
-    const f = (1 - sinceShake / 220) * 5;
-    shX = (Math.random() - 0.5) * f;
-    shY = (Math.random() - 0.5) * f;
-  }
+  /* S8: tunable (SHAKE_MS / SHAKE_PX, harder on a heavy hit) and switchable
+     off in Settings — same random jitter, same linear decay as before. */
+  const [shX, shY] = shakeOffset(performance.now());
 
   ctx.save();
   ctx.translate(shX, shY);
@@ -21825,6 +21983,7 @@ let kbCapture = null;           // action awaiting a keypress, or null
 
 const SETTINGS_DEFAULTS = {
   reduceMotion: false, fullscreen: false,                    // Graphics
+  screenShake: true,                                         // S8: Graphics — the shake's off switch
   textSize: "medium", colorblind: false,                     // Accessibility
   volMaster: 80, volMusic: 70, volSfx: 80,                   // Audio, 0-100
   muteMaster: false, muteMusic: false, muteSfx: false,
@@ -21904,7 +22063,8 @@ function saveSettings() {
   } catch (e) {}
 }
 
-/* --- PART C: the audio engine. Infrastructure only, no tracks exist yet ---- */
+/* --- PART C: the audio engine. Music from audio/ (v24); S8 synthesised SFX -- */
+const SFX_MIN_GAP_MS = 45;   // S8: the same synth sound cannot stack faster than this
 const AudioEngine = {
   ctx: null, masterGain: null, musicGain: null, sfxGain: null, musicSource: null,
   vol: { master: 0.8, music: 0.7, sfx: 0.8 },
@@ -21965,6 +22125,72 @@ const AudioEngine = {
       this.musicSource = src;
       return true;
     } catch (e) { return false; }
+  },
+  /* S8: sound effects synthesised with WebAudio — no files. Plays only once
+     ENTER has created the context (never init() here: browsers need the
+     gesture), through sfxGain so the Sound effects slider and mute govern it.
+     The same sound cannot retrigger within SFX_MIN_GAP_MS. */
+  _sfxLast: {}, _noiseBuf: null,
+  playSynth(name) {
+    const c = this.ctx;
+    if (!c || !this.sfxGain || typeof c.createOscillator !== "function") return false;
+    /* Review fix: a suspended context (iOS after backgrounding, a device
+       change) has a frozen clock — sounds would pile up and fire at once on
+       resume. Ask it to resume (we are usually inside a gesture) and skip. */
+    if (c.state && c.state !== "running") {
+      try { const pr = c.resume && c.resume(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) { /* not resumable now */ }
+      return false;
+    }
+    const nowMs = performance.now();
+    if (nowMs - (this._sfxLast[name] || -1e9) < SFX_MIN_GAP_MS) return false;
+    try {
+      const t0 = c.currentTime || 0, out = this.sfxGain;
+      const env = (g, start, dur, vol) => {
+        g.gain.setValueAtTime(0.0001, t0 + start);
+        g.gain.exponentialRampToValueAtTime(vol, t0 + start + Math.min(0.012, dur / 4));
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + start + dur);
+      };
+      const tone = (type, f0, f1, start, dur, vol) => {
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(f0, t0 + start);
+        if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, t0 + start + dur);
+        env(g, start, dur, vol);
+        o.connect(g); g.connect(out);
+        o.start(t0 + start); o.stop(t0 + start + dur + 0.03);
+      };
+      const noise = (start, dur, vol, hz) => {
+        if (typeof c.createBuffer !== "function") return;
+        if (!this._noiseBuf) {
+          const n = Math.floor((c.sampleRate || 44100) * 0.3), b = c.createBuffer(1, n, c.sampleRate || 44100), d = b.getChannelData(0);
+          for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+          this._noiseBuf = b;
+        }
+        const src = c.createBufferSource(), g = c.createGain();
+        src.buffer = this._noiseBuf;
+        let head = src;
+        if (typeof c.createBiquadFilter === "function") {
+          const f = c.createBiquadFilter(); f.type = "bandpass"; f.frequency.value = hz; f.Q.value = 0.9;
+          src.connect(f); head = f;
+        }
+        env(g, start, dur, vol);
+        head.connect(g); g.connect(out);
+        src.start(t0 + start); src.stop(t0 + start + dur + 0.03);
+      };
+      switch (name) {
+        case "swing":   noise(0, 0.11, 0.16, 1900); tone("triangle", 520, 190, 0, 0.09, 0.04); break;
+        case "hit":     tone("square", 190, 72, 0, 0.09, 0.12); noise(0, 0.05, 0.18, 900); break;
+        case "heavy":   tone("square", 140, 46, 0, 0.17, 0.18); noise(0, 0.09, 0.26, 520); break;
+        case "hurt":    tone("sawtooth", 230, 110, 0, 0.12, 0.08); break;
+        case "pickup":  tone("sine", 660, 660, 0, 0.07, 0.11); tone("sine", 990, 990, 0.06, 0.09, 0.11); break;
+        case "levelup": [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone("triangle", f, f, i * 0.09, 0.15, 0.13)); break;
+        case "click":   tone("sine", 1250, 880, 0, 0.035, 0.05); break;
+        default: return false;
+      }
+      this._sfxLast[name] = nowMs;
+      sfxPlays++; sfxLastName = name;
+      return true;
+    } catch (e) { return false; }   // an audio stack without these nodes stays silent, never breaks a frame
   },
   async playSFX(url) {
     if (!this.init()) return false;
@@ -22600,6 +22826,7 @@ function refreshSettingsUI() {
   };
   onOff($("setFullscreen"), SETTINGS.fullscreen);
   onOff($("setReduceMotion"), SETTINGS.reduceMotion);
+  onOff($("setScreenShake"), SETTINGS.screenShake);   // S8
   onOff($("setColorblind"), SETTINGS.colorblind);
   for (const pair of TEXT_SIZES) {
     const el = $(pair[0]);
@@ -22699,6 +22926,7 @@ function wireSettingsUI() {
   }
   const fs = $("setFullscreen"); if (fs) fs.onclick = () => toggleFullscreen();
   const rm = $("setReduceMotion"); if (rm) rm.onclick = () => setSetting("reduceMotion", !SETTINGS.reduceMotion);
+  const ss = $("setScreenShake"); if (ss) ss.onclick = () => setSetting("screenShake", !SETTINGS.screenShake);   // S8
   const cb = $("setColorblind"); if (cb) cb.onclick = () => setSetting("colorblind", !SETTINGS.colorblind);
   for (const pair of TEXT_SIZES) {
     const el = $(pair[0]);

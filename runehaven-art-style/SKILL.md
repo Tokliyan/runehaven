@@ -53,6 +53,47 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-22 (Gauntlet S8 — Feel pass: hit-stop, shake switch, synthesised SFX, first five minutes)
+
+GAUNTLET.md S8.
+- **Hit-stop.** HIT_STOP_MS 50 (spec 40–60). Heavy = a crit, a killing blow, or
+  a melee hit >= 1.5x your weapon's base damage (relative, so it stays rare at
+  every tier), or a hit you take >= 30% of max hp. update() is held while
+  render() carries on; at least 350 ms between freezes; the freeze pushes the
+  wall-clock mob wind-ups, mob swings and the taming channel on by its length,
+  so it never eats a dodge window. Not for your own ranged/pet hits, ashfall,
+  or a blow the safe zone refused.
+- **Screen shake.** SHAKE_MS 220 / SHAKE_PX 5 (the old fixed values, now named)
+  and SHAKE_HEAVY_PX 8 for a heavy hit's window; Settings > Graphics > Screen
+  shake (default on, persisted) turns it off. Same random jitter + linear decay.
+- **Sound effects.** `AudioEngine.playSynth()` — oscillators + one cached noise
+  buffer, no files: swing, hit, heavy, hurt, pickup, level-up, UI click (one
+  capture-phase listener on every <button>). Through sfxGain (the Sound effects
+  slider and mute), never init() (ENTER keeps the one gesture), silent with no
+  or a suspended context (asks it to resume), 45 ms per-name gap.
+- **The first five minutes** (walked as a new account with real key presses):
+  1. FIXED — new accounts spawned anywhere in the 452-tile safe zone (~200
+     tiles from the Grounds in the walk): "walk to the marked stone" pointed at
+     nothing on screen. They now start at the Tutorial Grounds.
+  2. FIXED — the start could be beside a tree or inside the Spawn Forge's
+     radius, so "[E] Gather Wood" / "[C] Spawn Forge" competed with step 1. The
+     spot is now clear of both, of fences and of other newcomers, and random.
+  3. FIXED — after the tutorial nothing suggested a goal; the completion
+     message now points at the Bounty Board just north.
+  4. FIXED — the first wood gather and the dummy strike were silent.
+  5. LISTED — the wayfinding signpost's 7px "‹ TOWER / FORGE ›" sits under the
+     SPAWN FORGE label (pre-existing; the label layout is gate-pinned).
+  6. LISTED — the inventory panel covers the day card's "1 online" line.
+  7. LISTED — toasts share one slot, so a tame result and the tutorial
+     completion overwrite each other within a second.
+  8. LISTED — nothing keeps worldgen trees/decor off the Grounds themselves.
+- Independent Opus review: 2 bugs fixed (silent wood gather; the Drake sweep's
+  heavy shake downgraded) + risks fixed (stutter from every runic hit heavy,
+  freeze eating dodge windows, suspended-audio pile-up, sounds for refused
+  PvP hits, start spot in the forge radius / on one shared tile / after the
+  first broadcast, a failed insert teleporting a returning player). Known: the
+  swing/flash timers keep animating through the 50 ms hold.
+
 ### 2026-10-22 (Gauntlet S7 — Real Stakes: weather, death weight, raid alerts)
 
 README spec "Real Stakes — Weather, Death Weight & Raid Alerts". No new
