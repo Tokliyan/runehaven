@@ -1,1 +1,1 @@
-Build exactly per "Confirmed, locked spec for a future version (Real Stakes — Weather, Death Weight & Raid Alerts)" in README.md.
+Nothing to build tonight — report a "nothing to build" night (README step 9). Every locked README spec has shipped through Real Stakes; the remaining gauntlet stages (S8 Feel pass, S9 Final report in GAUNTLET.md) are being built in an owner-run session, and a nightly build of them would clash. The owner will point this file at the next spec.
