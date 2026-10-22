@@ -42,7 +42,7 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
 ## S6 — World Encounters (Roaming Boss & Bounty Board): SHIPPED to `main`
 - **The Elder Drake roams** (approved bible deviation, owner 2026-10-12): `drakeRoamHome(now)` — 20-min straight legs to hashed targets within 900 tiles of the Volcano, pure in clock + seed (no network), never within 30 tiles of any Safe Zone or the Colosseum. Home = that path every frame; flies; respawns on the path; `worldBossPos()` hook. Demon Knights, loot, 6 h respawn, boss bar, music unchanged.
 - **Bounty Board** at Spawn: one creature per in-game day (never twice running), slay or tame it for +2 Runic Stone once a day (claim persisted in the cosmetics jsonb, no SQL); also tells you where the Drake was last seen, in the compass dial's own directions.
-- run4 1888 -> **1924 PASS / 0 FAIL** (36 S6 gates, mutation-checked); run3 clean; run5 CAUGHT none; run6 see commit.
+- run4 1888 -> **1924 PASS / 0 FAIL** (36 S6 gates, mutation-checked); run3 clean; run5 CAUGHT none; run6 all PASS (pixel match 0.000% x4; frame rate 1.27x Colosseum, 1.27x Bazaar).
 - Process: Opus built and decided; Haiku mapped the code; Sonnet wrote the gates; one Opus review at the end — 3 bugs + 6 risks found and fixed (stale mob_sync pinning the Drake, clients disagreeing mid-fight, bounty repeats, reload double-claim, never-spawning Salamander King in the pool, idle/leash flicker, stuck at zone edges, tame across a day rollover).
 - **Open for the owner:** (1) fights drift with the moving home (spec's "current home"); alternative is freezing the home while fighting, which needs a mob_sync change. (2) bounty reward size — 2 Runic Stone per 10-minute in-game day.
 - `NEXT_BUILD.md` -> Real Stakes (S7).
