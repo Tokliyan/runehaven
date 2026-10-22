@@ -2056,8 +2056,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // ---- PART C: the two real combat signals set the linger window
       const dsp24 = window.debugSetPlayer, dwi24 = window.debugWorldInfo;
       const SP24 = dwi24().SPAWN;
-      results.push(['all three combat-signal sites carry the linger line',
-        gameScript.split('combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;').length === 4]);
+      /* S7 Real Stakes PART C orders a fourth site: a raid on your base "sets
+         the existing combat-music signal" (README). Count raised 3 -> 4 for
+         that reason only; the raid site itself is pinned by the S7 block. */
+      results.push(['all four combat-signal sites carry the linger line (attack, damage, poison, S7 raid alert)',
+        gameScript.split('combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;').length === 5]);
       results.push(['the linger is the locked 6s', dmi().COMBAT_MUSIC_LINGER === 6000]);
       dsms({ combatMusicUntil: 0, inCombatMusic: false, musicCheckAt: 0 });
       const tAtk = window.performance.now();

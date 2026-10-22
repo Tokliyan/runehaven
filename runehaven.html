@@ -526,6 +526,9 @@
     letter-spacing: 0.5px; transform: translate(-50%, -50%);
   }
   .mm-tick.major { color: var(--gold); font-size: 10px; }
+  /* S7 PART B/C: your own pack (parchment) and a raid on your base (red) */
+  .mm-mark.mm-pack { background: #f3e8c8; box-shadow: 0 0 4px rgba(243,232,200,0.7); }
+  .mm-mark.mm-raid { background: #e04a3c; box-shadow: 0 0 4px rgba(224,74,60,0.8); }
   .mm-mark {
     position: absolute; width: 7px; height: 7px; border-radius: 50%;
     background: var(--gold); transform: translate(-50%, -50%);
@@ -774,7 +777,8 @@
 <div id="deathOverlay">
   <h2>YOU DIED</h2>
   <p id="deathBy"></p>
-  <p>Everything you carried lies where you fell — unmarked.</p>
+  <p id="deathRecap"></p>
+  <p>Everything you carried lies where you fell. Your compass marks the pack — for a while.</p>
   <div id="deathTimer">00:30</div>
   <p class="dim">You will wake at the Spawn Safe Zone</p>
 </div>
@@ -8677,6 +8681,7 @@ enterBtn.onclick = async () => {
     await loadGroundItems();
     await loadBasePieces();          // v33: one select on login, like ground_items
     await joinRealtime();
+    raidLoginSummary();          // S7 PART C: what happened to your base while you were away
     loginEl.style.display = "none";
     /* v46 PART B: the one write. It happens HERE — after the PIN gate, after
        the world, after realtime — so only a login that genuinely reached the
@@ -9067,7 +9072,8 @@ function updateMob(m, dt, t, now) {
   }
   // pick target: nearest living player (me or others) in aggro range, not safe-zoned
   /* v31: "more aggressive" — mobs notice you from further away on a Blood Moon. */
-  let tgt = null, tgtD = def.aggroRadius * (bloodMoonActive() ? BLOOD_MOON_AGGRO_MULT : 1),
+  let tgt = null, tgtD = def.aggroRadius * (bloodMoonActive() ? BLOOD_MOON_AGGRO_MULT : 1) *
+        weatherAggroMult(),   // S7 PART A: rain hides your steps, fog hides you
       tgtIsMe = false;
   if (!dead && !inSafeZone(me.x, me.y)) {
     const d = Math.hypot(me.x - m.x, me.y - m.y);
@@ -9492,6 +9498,120 @@ const BLOOD_MOON_EVERY = 12;          // bible: "roughly every 12 day cycles"
 const BLOOD_MOON_MOB_MULT = 1.35;     // TUNABLE: mob hp/dmg while it runs
 const BLOOD_MOON_AGGRO_MULT = 1.5;    // TUNABLE: "more aggressive"
 const BLOOD_MOON_RARE_BOOST = 0.30;   // TUNABLE: added to presenceRoll
+/* ============ S7 Real Stakes PART A — SHARED WEATHER, NO NETWORK ======
+   README "Real Stakes" PART A. Weather is a pure function of
+   hash(worldSeed, weatherSlot, regionX, regionY): every player standing in
+   the same 256-tile region in the same 5-minute slot gets the same roll,
+   with no message sent. The roll decides IF the region's weather is
+   turned; the biome under you decides WHICH weather that is:
+     Rain     FOREST, PLAINS, MEADOW, ENCHFOREST, SACMEADOW  — mob aggro -25%
+     Fog      DARKFOREST, and RUINB at night                — aggro -40%, dark
+              overlay 0.28, other players' plates hidden beyond 8 tiles
+     Ashfall  VOLROCK, CALDERA, LAVA                         — 1 dmg / 4 s
+              unless the Fireward Draught is up; applyDamage's safe-zone rule
+     Snow     ROCK, PEAK                                     — move -15% on foot
+   Every other biome, and every interior, is Clear. Clear is the roll's
+   1 - WEATHER_CHANCE (60%) plus every non-weather biome, so >= 55% overall. */
+const WEATHER_SLOT_S = 300;          // TUNABLE (spec): half a game day
+const WEATHER_REGION = 256;          // TUNABLE (spec): tiles square
+const WEATHER_CHANCE = 0.4;          // TUNABLE: share of slot/region rolls that turn
+const WEATHER_SALT = 52711;          // new salt, used nowhere else
+const WEATHER_RAIN_AGGRO = 0.75, WEATHER_FOG_AGGRO = 0.6;   // spec: -25% / -40%
+const WEATHER_FOG_ALPHA = 0.28, WEATHER_FOG_PLATE_R = 8;   // spec
+const WEATHER_ASH_DMG = 1, WEATHER_ASH_EVERY_S = 4;        // spec
+const WEATHER_SNOW_MULT = 0.85;                            // spec: -15% unless mounted
+const WEATHER_PARTICLE_CAP = 160;                          // TUNABLE (spec)
+const WEATHER_RAIN_B = new Set([B.FOREST, B.PLAINS, B.MEADOW, B.ENCHFOREST, B.SACMEADOW]);
+const WEATHER_ASH_B = new Set([B.VOLROCK, B.CALDERA, B.LAVA]);
+const WEATHER_SNOW_B = new Set([B.ROCK, B.PEAK]);
+const WEATHER_NAMES = { clear: "Clear", rain: "Rain", fog: "Fog", ash: "Ashfall", snow: "Snow" };
+function weatherSlotAt(nowMs) { return Math.floor((nowMs / 1000 - worldEpoch) / WEATHER_SLOT_S); }
+/* rx < 16 on a 4000-tile map, so slot*64 + rx never collides. */
+function weatherRoll(slot, rx, ry) { return hash2(slot * 64 + rx, ry, worldSeed + WEATHER_SALT); }
+function weatherTypeFor(biome, roll, night) {
+  if (!(roll < WEATHER_CHANCE)) return "clear";
+  if (WEATHER_RAIN_B.has(biome)) return "rain";
+  if (biome === B.DARKFOREST || (biome === B.RUINB && night)) return "fog";
+  if (WEATHER_ASH_B.has(biome)) return "ash";
+  if (WEATHER_SNOW_B.has(biome)) return "snow";
+  return "clear";
+}
+function weatherAt(x, y, nowMs, night) {
+  if (!worldEpoch) return "clear";
+  const rx = Math.floor(x / WEATHER_REGION), ry = Math.floor(y / WEATHER_REGION);
+  return weatherTypeFor(biomeAt(Math.floor(x), Math.floor(y)), weatherRoll(weatherSlotAt(nowMs), rx, ry), !!night);
+}
+let curWeather = "clear", weatherForce = null, ashAcc = 0;
+/* Once a frame from update(): the weather where you stand, then its one
+   effect that ticks on its own (ashfall). The aggro and speed effects read
+   curWeather at their own sites. No weather inside any interior. */
+function updateWeather(dt) {
+  if (!me || inInterior()) curWeather = "clear";
+  else curWeather = weatherForce || weatherAt(me.x, me.y, Date.now(), nightAlpha(getDayT()) > 0.4);
+  if (curWeather === "ash" && !dead && !fireResistActive() && !inSafeZone(me.x, me.y)) {
+    ashAcc += dt;
+    while (ashAcc >= WEATHER_ASH_EVERY_S && !dead) { ashAcc -= WEATHER_ASH_EVERY_S; applyDamage(WEATHER_ASH_DMG, "the ashfall"); }
+  } else ashAcc = 0;
+}
+/* Joins BLOOD_MOON_AGGRO_MULT at the one mob aggro check — and nowhere else. */
+function weatherAggroMult() {
+  return curWeather === "rain" ? WEATHER_RAIN_AGGRO : curWeather === "fog" ? WEATHER_FOG_AGGRO : 1;
+}
+function weatherSpeedMult() { return curWeather === "snow" && !me.mounted ? WEATHER_SNOW_MULT : 1; }
+function weatherHidesPlate(p, isMe) {
+  return !isMe && curWeather === "fog" && Math.hypot(p.x - me.x, p.y - me.y) > WEATHER_FOG_PLATE_R;
+}
+/* The screen-space layer, drawn after the world and before the HUD: rain
+   streaks, ash flecks, snow dots — flat 1-2px fills, never a gradient — and
+   fog as one flat fill. Never more than WEATHER_PARTICLE_CAP alive. */
+const weatherParts = [];
+let weatherPartsKind = "clear", weatherLastT = 0, weatherPeak = 0;
+const WEATHER_PART = {
+  rain: { vx: -40, vy: 560, w: 1, h: 8, col: "rgba(190,214,238,0.62)" },
+  ash:  { vx: 14,  vy: 34,  w: 2, h: 2, col: "#cfc6bc", ember: "#f08a46" },   // light flecks: they fall over dark lava rock
+  snow: { vx: 8,   vy: 46,  w: 2, h: 2, col: "rgba(244,246,250,0.9)" },
+};
+function drawWeather(w, h) {
+  const nowT = performance.now();
+  const dt = Math.min(0.05, Math.max(0, (nowT - (weatherLastT || nowT)) / 1000));
+  weatherLastT = nowT;
+  const kind = curWeather;
+  if (kind === "fog") {
+    ctx.fillStyle = `rgba(16,20,26,${WEATHER_FOG_ALPHA})`;
+    ctx.fillRect(0, 0, w, h);
+  }
+  const P = WEATHER_PART[kind];
+  if (!P) { weatherParts.length = 0; weatherPartsKind = kind; return; }
+  if (kind !== weatherPartsKind) { weatherParts.length = 0; weatherPartsKind = kind; }
+  const want = Math.round(WEATHER_PARTICLE_CAP * (SETTINGS.reduceMotion ? 0.35 : 1));
+  /* A change of weather fills the whole screen at once; after that new
+     ones enter from the top, a few a frame, up to the cap. */
+  const seedAll = weatherParts.length === 0;
+  for (let n = 0; n < (seedAll ? want : 8) && weatherParts.length < want && weatherParts.length < WEATHER_PARTICLE_CAP; n++) {
+    weatherParts.push({ x: Math.random() * (w + 60), y: seedAll ? Math.random() * h : -10 - Math.random() * h * 0.3,
+                        s: 0.7 + Math.random() * 0.6, e: kind === "ash" && Math.random() < 0.15 });
+  }
+  for (const q of weatherParts) {
+    const sway = kind === "rain" ? 0 : Math.sin(nowT / 700 + q.s * 9) * 12;
+    q.x += (P.vx + sway) * q.s * dt; q.y += P.vy * q.s * dt;
+    if (q.y > h + 8 || q.x < -20 || q.x > w + 80) { q.x = Math.random() * (w + 60); q.y = -8; }
+    ctx.fillStyle = q.e ? P.ember : P.col;
+    ctx.fillRect(Math.round(q.x), Math.round(q.y), P.w, P.h);
+  }
+  if (weatherParts.length > weatherPeak) weatherPeak = weatherParts.length;
+}
+function debugWeatherInfo() {
+  return { cur: curWeather, force: weatherForce, parts: weatherParts.length, peak: weatherPeak,
+           cap: WEATHER_PARTICLE_CAP, ashAcc, slot: weatherSlotAt(Date.now()),
+           aggro: weatherAggroMult(), speed: me ? weatherSpeedMult() : 1 };
+}
+function debugSetWeather(patch) {
+  if (patch && "force" in patch) weatherForce = patch.force;
+  if (patch && "ashAcc" in patch) ashAcc = patch.ashAcc;
+  if (patch && "peak" in patch) weatherPeak = patch.peak;
+  if (patch && patch.update) updateWeather(patch.dt || 0);
+  return debugWeatherInfo();
+}
 
 function bloodMoonActive() {
   if (!worldEpoch) return false;
@@ -9898,6 +10018,9 @@ async function joinRealtime() {
   channel.on("broadcast", { event: "base_hit" }, ({ payload: p }) => {
     const bp = basePieces.get(p.id);
     if (!bp) return;
+    /* S7 PART C: a hit on YOUR piece that lowers it is a raid (a repair
+       rides this same event with a higher hp, and is not). */
+    if (me && bp.owner === me.username && Number(p.hp) < Number(bp.hp)) raidAlert(bp.x, bp.y);
     bp.hp = p.hp;
     bp.flash = performance.now();
   });
@@ -9905,13 +10028,19 @@ async function joinRealtime() {
   channel.on("broadcast", { event: "base_destroy" }, ({ payload: p }) => {
     const bp = basePieces.get(p.id);
     if (!bp) return;
+    const mine = !!me && bp.owner === me.username;   // S7 PART C
+    if (mine) raidAlert(bp.x, bp.y);
     bp.destroyed = true;
     basePieces.delete(p.id);
     baseIndex.delete(baseKey(bp.x, bp.y));
     chestContents.delete(p.id);
     burst(bp.x, bp.y, baseTierColor(bp.tier), 10, 3);
     refreshPanels();
+    if (mine) storeMyBaseCount();   // you saw this one go — next login must not report it again
   });
+
+  /* S7 PART B: someone's fresh death pile — the beacon is for everyone. */
+  channel.on("broadcast", { event: "pile_beacon" }, ({ payload: p }) => { addPileBeacon(p); });
 
   channel.on("broadcast", { event: "mob_sync" }, ({ payload: p }) => {
     const m = mobs.find(x => x.id === p.id);
@@ -10202,6 +10331,7 @@ function debugSetCombatLogout(patch) {
 }
 window.addEventListener("beforeunload", (e) => {
   if (me && sb) savePlayer();
+  storeMyBaseCount();   // S7 PART C: "pieces you owned at your last logout"
   /* The save above is unchanged and still happens FIRST, on every path — a
      player who leaves mid-fight must not also lose their progress. The prompt
      is only ever raised inside the window, and never for someone already
@@ -10280,6 +10410,149 @@ function invSpend(mats) {
   }
 }
 
+/* ============ S7 Real Stakes PART B — DEATH HAS WEIGHT ================
+   README "Real Stakes" PART B. Every respawn timer is untouched. Three
+   things are added around the drop that already happened:
+   - the recap: the death overlay lists exactly what dropAllItems() dropped,
+     read from the very list it built (lastDeathDrops), in ITEM_META names;
+   - your PACK: for PACK_MARK_MS, or until every row of that drop is gone
+     from the ground (picked up by anyone — item_del removes them from
+     groundItems), the compass and the minimap point at where you fell.
+     Local state only: nobody else's client ever has it;
+   - a beacon: for PILE_BEACON_MS a faint flat light column stands over the
+     fresh pile for EVERYONE (one pile_beacon broadcast — no table), and is
+     a light at night through collectLights(). A death becomes a race. */
+const PACK_MARK_MS = 10 * 60 * 1000;   // TUNABLE (spec)
+const PILE_BEACON_MS = 2 * 60 * 1000;  // TUNABLE (spec)
+let lastDeathDrops = [], myPack = null;
+const pileBeacons = [];
+function deathRecapText(list) {
+  if (!list || !list.length) return "You dropped nothing.";
+  return "You dropped: " + list.map(d => {
+    const nm = (ITEM_META[d.type] && ITEM_META[d.type].name) || d.type;
+    return d.qty > 1 ? `${d.qty} ${nm}` : nm;
+  }).join(", ");
+}
+function startPackMark(x, y, space, hasDrops) {
+  if (!hasDrops) { myPack = null; return; }
+  const now = Date.now();
+  myPack = { x, y, space, until: now + PACK_MARK_MS, ids: null };
+  addPileBeacon({ x, y, space, until: now + PILE_BEACON_MS });
+  if (channel) channel.send({ type: "broadcast", event: "pile_beacon", payload: { x: +x.toFixed(2), y: +y.toFixed(2), space, until: now + PILE_BEACON_MS } });
+}
+function addPileBeacon(b) {
+  if (!b || !Number.isFinite(b.x) || !Number.isFinite(b.y)) return;
+  const until = Math.min(Number(b.until) || 0, Date.now() + PILE_BEACON_MS);   // a remote clock cannot keep one up longer
+  if (until <= Date.now()) return;
+  pileBeacons.push({ x: b.x, y: b.y, space: b.space || "main", until });
+}
+/* Once a frame from update(): the pack mark ends on timeout or when the
+   last of its rows has left the ground; beacons end on their timer. */
+function deathMarksTick() {
+  const now = Date.now();
+  if (myPack && (now >= myPack.until ||
+      (myPack.ids && myPack.ids.length && myPack.ids.every(id => !groundItems.has(id))))) myPack = null;
+  for (let i = pileBeacons.length - 1; i >= 0; i--) if (now >= pileBeacons[i].until) pileBeacons.splice(i, 1);
+  if (raidMark && now >= raidMark.until) raidMark = null;
+}
+/* The flat column: two rects, alpha fading with the time left. */
+function drawPileBeacon(b) {
+  const frac = Math.max(0, Math.min(1, (b.until - Date.now()) / PILE_BEACON_MS));
+  const [sx, sy] = worldToScreen(b.x, b.y, groundZ(b.x, b.y));
+  ctx.fillStyle = `rgba(255,214,130,${(0.06 + 0.14 * frac).toFixed(3)})`;
+  ctx.fillRect(sx - 4, sy - 150, 8, 150);
+  ctx.fillStyle = `rgba(255,238,190,${(0.12 + 0.28 * frac).toFixed(3)})`;
+  ctx.fillRect(sx - 1, sy - 150, 2, 150);
+}
+
+/* ============ S7 Real Stakes PART C — RAID ALERTS =====================
+   README "Real Stakes" PART C. Online: a base_hit that LOWERS the hp of a
+   piece you own (the Quick Brace repair rides the same event with a higher
+   hp, and is not a raid), or a base_destroy of one, toasts at most once
+   every RAID_TOAST_EVERY_MS, puts a RAID mark on the compass for
+   RAID_MARK_MS and sets the existing combat-music signal. On login: pieces
+   you own below basePieceMaxHp() are counted as damaged; destroyed ones are
+   counted against how many you owned last time, kept in localStorage.
+   The raid mark is a point, stored here — the compass and the minimap only
+   ever read transientMarks(), never the base tables (the v35 rule). */
+const RAID_TOAST_EVERY_MS = 20000;     // TUNABLE (spec)
+const RAID_MARK_MS = 60000;            // spec
+let lastRaidToastAt = -Infinity, raidMark = null, raidToasts = 0, raidCountReady = false;
+function raidAlert(x, y) {
+  const now = Date.now();
+  raidMark = { x: x + 0.5, y: y + 0.5, until: now + RAID_MARK_MS };
+  if (now - lastRaidToastAt >= RAID_TOAST_EVERY_MS) {
+    lastRaidToastAt = now; raidToasts++;
+    toast("Your base is under attack!");
+  }
+  combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;
+}
+/* Full hp the way the insert computes it: the tier's BASE_TIER_HP, times
+   ARCHITECT_HP_BONUS when the piece was an Architect's. Rows read back from
+   the table do not carry `arch`, so a piece of YOURS takes your own class —
+   the same `me.cls === "Architect"` test the insert used. */
+function basePieceMaxHp(p) {
+  const arch = !!p.arch || (!!me && p.owner === me.username && me.cls === "Architect");
+  return Math.round((BASE_TIER_HP[p.tier] || BASE_TIER_HP.wood) * (arch ? ARCHITECT_HP_BONUS : 1));
+}
+function myBasePieces() {
+  const out = [];
+  if (!me) return out;
+  for (const [, bp] of basePieces) if (bp.owner === me.username && !bp.destroyed) out.push(bp);
+  return out;
+}
+/* ⚠️ PER DEVICE: the count lives in this browser's localStorage under your
+   username, so logging in from another device cannot know how many pieces
+   you had here — it reports no destroyed pieces rather than a wrong number. */
+function baseCountKey() { return "rh_base_count_" + (me ? me.username : ""); }
+function readStoredBaseCount() {
+  try { const v = localStorage.getItem(baseCountKey()); return v === null ? null : (Number(v) | 0); }
+  catch (e) { return null; }
+}
+function storeMyBaseCount() {
+  if (!me || !raidCountReady) return;
+  try { localStorage.setItem(baseCountKey(), String(myBasePieces().length)); } catch (e) { /* private window: per-device convenience only */ }
+}
+function raidLoginSummary() {
+  const mine = myBasePieces();
+  const damaged = mine.filter(p => (Number(p.hp) || 0) < basePieceMaxHp(p)).length;
+  const stored = readStoredBaseCount();
+  const destroyed = stored === null ? 0 : Math.max(0, stored - mine.length);
+  raidCountReady = true;
+  storeMyBaseCount();
+  if (!damaged && !destroyed) return "";
+  const msg = `While you were away: ${damaged} base piece${damaged === 1 ? " was" : "s were"} damaged` +
+              (destroyed ? `, and ${destroyed} destroyed` : "");
+  setTimeout(() => toast(msg), 2500);   // after the login toasts, which share the one toast slot
+  return msg;
+}
+/* The compass and the minimap read only this: points, with a label. */
+function transientMarks() {
+  const out = [];
+  if (!me) return out;
+  const sp = me.space || "main";
+  if (myPack && myPack.space === sp) out.push({ label: "PACK", x: myPack.x, y: myPack.y });
+  if (raidMark && sp === "main") out.push({ label: "RAID", x: raidMark.x, y: raidMark.y });
+  return out;
+}
+function debugStakesInfo() {
+  return { lastDeathDrops: lastDeathDrops.slice(), recap: (document.getElementById("deathRecap") || {}).textContent,
+           pack: myPack ? { ...myPack } : null, beacons: pileBeacons.map(b => ({ ...b })),
+           raidMark: raidMark ? { ...raidMark } : null, raidToasts, lastRaidToastAt,
+           marks: transientMarks(), storedCount: readStoredBaseCount(), raidCountReady,
+           PACK_MARK_MS, PILE_BEACON_MS, RAID_TOAST_EVERY_MS, RAID_MARK_MS };
+}
+function debugSetStakes(patch) {
+  if (!patch) return debugStakesInfo();
+  if ("pack" in patch) myPack = patch.pack;
+  if ("raidMark" in patch) raidMark = patch.raidMark;
+  if ("lastRaidToastAt" in patch) lastRaidToastAt = patch.lastRaidToastAt;
+  if ("raidToasts" in patch) raidToasts = patch.raidToasts;
+  if ("raidCountReady" in patch) raidCountReady = patch.raidCountReady;
+  if (patch.clearBeacons) pileBeacons.length = 0;
+  if (patch.tick) deathMarksTick();
+  return debugStakesInfo();
+}
 async function dropAllItems() {
   /* QA PASS: ground_items never carried a space tag, and the render/pickup
      paths never checked one either — dying inside a cave dropped items at
@@ -10293,14 +10566,28 @@ async function dropAllItems() {
   const dropSpace = me.space || "main";
   const drops = [];
   for (const [type, qty] of Object.entries(me.inv)) {
+    if (!(qty > 0)) continue;   // S7: a zero entry is not an item — it must not drop, or show in the recap
     drops.push({ type, qty, x: me.x + (Math.random() - 0.5) * 2.4, y: me.y + (Math.random() - 0.5) * 2.4, space: dropSpace });
   }
-  if (me.equipped) {
+  /* S7 fix: the weapon and armour slots are POINTERS into the inventory (the
+     item_give comment says so, and equipping never removes the item), so the
+     loop above already dropped them — pushing them again minted a second
+     sword on every death. They only drop here if they are somehow NOT in the
+     pack, which keeps the old guarantee that nothing you hold is lost. */
+  if (me.equipped && !(me.inv[me.equipped] > 0)) {
     drops.push({ type: me.equipped, qty: 1, x: me.x + (Math.random() - 0.5) * 2.4, y: me.y + (Math.random() - 0.5) * 2.4, space: dropSpace });
   }
-  if (me.armor) {
+  if (me.armor && !(me.inv[me.armor] > 0)) {
     drops.push({ type: me.armor, qty: 1, x: me.x + (Math.random() - 0.5) * 2.4, y: me.y + (Math.random() - 0.5) * 2.4, space: dropSpace });
   }
+  /* S7 PART B: the recap reads exactly this list, and the pack mark and the
+     beacon start here — synchronously, before the insert's await, so the
+     overlay that enterDeath() opens next already says what you lost. */
+  lastDeathDrops = drops.map(d => ({ type: d.type, qty: d.qty }));
+  const recapEl = document.getElementById("deathRecap");
+  if (recapEl) recapEl.textContent = deathRecapText(lastDeathDrops);
+  startPackMark(me.x, me.y, dropSpace, drops.length > 0);
+  const packAt = myPack;
   me.inv = {};
   me.equipped = null;
   me.armor = null;
@@ -10320,6 +10607,9 @@ async function dropAllItems() {
   if (data) {
     data.forEach(it => groundItems.set(it.id, it));
     channel.send({ type: "broadcast", event: "item_add", payload: { items: data } });
+    if (packAt && myPack === packAt) packAt.ids = data.map(it => it.id);   // S7 PART B: picked up = every one of these gone
+  } else if (packAt && myPack === packAt) {
+    myPack = null;   // nothing landed on the ground, so there is no pack to point at
   }
 }
 
@@ -11723,6 +12013,7 @@ async function baseDestroy(p) {
   channel.send({ type: "broadcast", event: "base_destroy", payload: { id: p.id } });
   try { await sb.from("base_pieces").delete().eq("id", p.id); } catch (e) {}
   refreshPanels();
+  if (me && p.owner === me.username) storeMyBaseCount();   // S7 PART C: you knocked down your own — not a raid next login
 }
 
 /* Nearest damageable structure within reach of an attack. */
@@ -11851,6 +12142,7 @@ async function placeBasePiece(kind, tier, x, y) {
      are the stored rows, and `arch` is a local-only field that must never
      look like a column — not in the DB, and not in anything inspecting it. */
   data.forEach(p => baseAdd(Object.assign({}, p, { arch: isArch34 })));
+  storeMyBaseCount();   // S7 PART C: a new piece is not a destroyed one next login
   channel.send({ type: "broadcast", event: "base_add", payload: { pieces: data } });
   toast(`${BASE_TIER_NAME[tier]} ${def.name} raised`);
   burst(chk.x, chk.y, baseTierColor(tier), 8, 2);
@@ -13167,7 +13459,8 @@ function update(dt, t) {
       const mountMult = (me.mounted && activePet && activePet.species === "duskfox_elder")
         ? MOUNT_SPEED_MULT * 2 : (me.mounted ? MOUNT_SPEED_MULT : 1);
       const spd = PLAYER_SPEED * (SLOW.has(here) ? 0.55 : 1) * (isBlocking() ? 0.5 : 1)
-                * mountMult * speedPotionMult();   // v28, v52 hotfix: Duskfox Elder 2x; v58: the draught, which returns 1 while mounted
+                * mountMult * speedPotionMult()    // v28, v52 hotfix: Duskfox Elder 2x; v58: the draught, which returns 1 while mounted
+                * weatherSpeedMult();              // S7 PART A: snow, -15% on foot only
       const nx = me.x + (dx / len) * spd * dt;
       const ny = me.y + (dy / len) * spd * dt;
       /* v21: the one movement gate the dive toggle touches — diveBlocked()
@@ -13233,6 +13526,7 @@ function update(dt, t) {
       me.hp = Math.min(me.maxHp, me.hp + FOOD_REGEN_RATE * dt);
     }
     updateBreath(dt);          // v21: dive breath / drowning / charm regen
+    updateWeather(dt);         // S7 PART A: where you stand, and ashfall's tick
     tutorialTick();            // v35: the tutorial's one proximity step
     duelTick();                // v52+53 PART B: a duel only lasts while both still stand for it
   } else if (me.deadUntil && Date.now() >= me.deadUntil) {
@@ -13281,6 +13575,7 @@ function update(dt, t) {
   // in this function; referencing it here was the v13 black-screen TDZ crash)
   const mobNow = performance.now();
   for (const m of mobs) updateMob(m, dt, t, mobNow);
+  deathMarksTick();   // S7 PART B/C: pack mark, beacons and the raid mark expire (alive or dead)
 
   // v11: active companions follow (species from roster / broadcast)
   updatePet(me, (activePet && activePet.species) || null, dt, t, iAmMoving);
@@ -18870,7 +19165,7 @@ function drawPlayerEntity(p, name, t, isMe) {
      flushOverlayPass() after every world entity, at EXACTLY the same pixels
      (same sx/sy anchor, same offsets — the art skill's "username row and
      HP bar must not move a pixel" holds). */
-  plateQueue.push({ p, name, isMe, sx, sy });
+  if (!weatherHidesPlate(p, isMe)) plateQueue.push({ p, name, isMe, sx, sy });   // S7 PART A: fog hides plates past 8 tiles
   if (isMe) {
     const gx = sx + rx, gy = sy - bob + ry + seatLift;
     meGhost = { x: gx, y: gy, cls: p.cls, S, tier, face, wkind, atier, blocking, cos: cosNow, step };
@@ -20029,6 +20324,11 @@ function render(t) {
   ents.push({ s: SHRINE.x + SHRINE.y + 0.3, kind: "shrine" });
   { const SG = shrineGatePos(); ents.push({ s: SG.x + SG.y, kind: "shrinegate" }); }   // Gauntlet S2 R1
   ents.push({ s: ORACLE.x + ORACLE.y + 0.3, kind: "oracle" });        // v35 PART E
+  for (const pb of pileBeacons) {   // S7 PART B: fresh death piles, for everyone in that space
+    if (pb.space !== (me.space || "main")) continue;
+    if (Math.abs(pb.x - cam.x) + Math.abs(pb.y - cam.y) > 90) continue;
+    ents.push({ s: pb.x + pb.y + 0.2, kind: "beacon", b: pb });
+  }
   if (Math.abs(BOUNTY_BOARD.x - cam.x) + Math.abs(BOUNTY_BOARD.y - cam.y) < 80)   // only when it could be on screen
     ents.push({ s: BOUNTY_BOARD.x + BOUNTY_BOARD.y + 0.3, kind: "bountyboard" });   // S6 PART B
   /* v35 PART B: the two tutorial props, which exist only while it runs. */
@@ -20195,6 +20495,7 @@ function render(t) {
     else if (e.kind === "shrinegate") drawShrineGate(t);              // Gauntlet S2 R1
     else if (e.kind === "oracle") drawOracleEntity(t);        // v35 PART E
     else if (e.kind === "bountyboard") drawBountyBoardEntity(t);   // S6 PART B
+    else if (e.kind === "beacon") drawPileBeacon(e.b);             // S7 PART B
     else if (e.kind === "tutmark") drawTutorialMark(t);       // v35 PART B
     else if (e.kind === "tutdummy") drawTutorialDummy(t);     // v35 PART B
     else if (e.kind === "bazaar") drawBazaarEntity(t);
@@ -20621,6 +20922,7 @@ function render(t) {
       ctx.fillRect(0, 0, w, h);
     }
   }
+  drawWeather(w, h);   // S7 PART A: after the world and its darkness, before the HUD
 
   ctx.restore();
   drawTowerArrow();
@@ -20644,6 +20946,12 @@ function collectLights() {
     col: mothLit ? "rgba(244,232,160,A)" : "rgba(255,190,120,A)" });
   for (const tp of TORCHES) lights.push({ x: tp.x, y: tp.y, z: 12, r: 78, a: 0.85, col: "rgba(255,176,80,A)" });
   if (!inInterior()) for (const bz of shrineBraziers()) lights.push({ x: bz.x, y: bz.y, z: 14, r: 70, a: 0.8, col: "rgba(255,176,80,A)" });   // S2 R3
+  /* S7 PART B: a fresh death pile's beacon is also a light at night, fading with it. */
+  for (const pb of pileBeacons) {
+    if (pb.space !== ((me && me.space) || "main")) continue;
+    const fr = Math.max(0, Math.min(1, (pb.until - Date.now()) / PILE_BEACON_MS));
+    if (fr > 0) lights.push({ x: pb.x, y: pb.y, z: 20, r: 90, a: 0.4 + 0.4 * fr, col: "rgba(255,214,130,A)" });
+  }
   /* ============ v55 PART G — SOMEONE LIVES HERE =====================
      A base has never had any way to read as inhabited from outside
      interaction range: the pieces are flat-shaded boxes like every rock
@@ -20749,6 +21057,15 @@ function minimapBearings() {
        exists to order the layout and nothing reads it for display. */
     out.push({ label, deg: Math.atan2(isoY(dx, dy), isoX(dx, dy)) * 180 / Math.PI,
                d: Math.hypot(dx, dy) });
+  }
+  /* S7 PART B/C (spec-directed): your own PACK for a while after you die,
+     and a RAID mark for 60 s when your base is hit. Both are points handed
+     over by transientMarks() — this section still reads no base or ground
+     table — and both exist only on the client they belong to. */
+  for (const tm of transientMarks()) {
+    const dx = tm.x - me.x, dy = tm.y - me.y;
+    out.push({ label: tm.label, deg: Math.atan2(isoY(dx, dy), isoX(dx, dy)) * 180 / Math.PI,
+               d: Math.hypot(dx, dy), transient: true });
   }
   return out;
 }
@@ -20864,7 +21181,7 @@ function updateMinimap() {
     compassBlockerBoxes = blockers;
     for (const r of marks) {
       const x = CX + R_MARK * Math.cos(rad(r.deg)), y = CY + R_MARK * Math.sin(rad(r.deg));
-      inner += `<div class="mm-mark" style="left:${x}px;top:${y}px"></div>`;
+      inner += `<div class="mm-mark${r.transient ? " mm-" + r.label.toLowerCase() : ""}" style="left:${x}px;top:${y}px"></div>`;   // S7: PACK / RAID colours
       /* The box the CSS actually produces: .mm-mark-label is 8px text with
          `translate(-50%, -140%)`, so the anchor point sits at the box's
          horizontal centre and 140% of its height below its top. */
@@ -20993,7 +21310,9 @@ function updateWorldMap() {
     if (Math.abs(o.x - me.x) > MAP_R + 0.5 || Math.abs(o.y - me.y) > MAP_R + 0.5) continue;
     onMap += id + ",";
   }
-  const mapKey = px + "," + py + "|" + onMap, nowMs = performance.now();
+  const tMarks = transientMarks();   // S7 PART B/C: PACK / RAID, points only
+  const mapKey = px + "," + py + "|" + onMap + "|" + tMarks.map(m => m.label + Math.round(m.x) + "," + Math.round(m.y)).join(";"),
+        nowMs = performance.now();
   if (mapKey === lastMapKey && nowMs - lastMapDraw < MAP_REDRAW_MS) {
     if (el.style.display !== "block") el.style.display = "block";
     return;
@@ -21060,6 +21379,15 @@ function updateWorldMap() {
     const cls = CLASSES[o.cls];
     c.fillStyle = (cls && cls.lit) || "#cdd2da";
     c.fillRect(ox - MAP_DOT / 2, oy - MAP_DOT / 2, MAP_DOT, MAP_DOT);
+  }
+  /* S7 PART B/C: your PACK and a RAID, pinned to the card's edge when they
+     lie beyond its window — the card says which way, the compass the same. */
+  for (const tm of tMarks) {
+    let [mx, my] = mapPixel(tm.x, tm.y, px, py);
+    mx = Math.max(MAP_DOT, Math.min(MAP_PX - MAP_DOT, mx));
+    my = Math.max(MAP_DOT, Math.min(MAP_PX - MAP_DOT, my));
+    c.fillStyle = tm.label === "RAID" ? "#e04a3c" : "#f3e8c8";
+    c.fillRect(Math.round(mx - MAP_DOT / 2), Math.round(my - MAP_DOT / 2), MAP_DOT, MAP_DOT);
   }
   const [sx, sy] = mapPixel(me.x, me.y, px, py);
   c.fillStyle = MAP_SELF_COL;
@@ -21176,7 +21504,8 @@ function updateHUD(dayT) {
   const phase = dayT < 0.25 ? "Morning" : dayT < 0.5 ? "Afternoon" : dayT < 0.62 ? "Dusk" : "Night";
   const dayNum = worldDayNum();   // v25 PART B: one counter, shared with the Krakenling gate
   setHtmlIfChanged(hudWorld, 
-    `Day <span class="gold">${dayNum}</span> — ${phase}<br>` +
+    `Day <span class="gold">${dayNum}</span> — ${phase}` +
+    (curWeather !== "clear" ? ` · ${WEATHER_NAMES[curWeather]}` : "") + `<br>` +   // S7 PART A
     `<span class="dim">${others.size + 1} online</span>`);
 
   hudZone.style.display = inSafeZone(me.x, me.y) ? "block" : "none";
