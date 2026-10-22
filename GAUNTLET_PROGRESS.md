@@ -44,8 +44,17 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
 - **Bounty Board** at Spawn: one creature per in-game day (never twice running), slay or tame it for +2 Runic Stone once a day (claim persisted in the cosmetics jsonb, no SQL); also tells you where the Drake was last seen, in the compass dial's own directions.
 - run4 1888 -> **1924 PASS / 0 FAIL** (36 S6 gates, mutation-checked); run3 clean; run5 CAUGHT none; run6 all PASS (pixel match 0.000% x4; frame rate 1.27x Colosseum, 1.27x Bazaar).
 - Process: Opus built and decided; Haiku mapped the code; Sonnet wrote the gates; one Opus review at the end — 3 bugs + 6 risks found and fixed (stale mob_sync pinning the Drake, clients disagreeing mid-fight, bounty repeats, reload double-claim, never-spawning Salamander King in the pool, idle/leash flicker, stuck at zone edges, tame across a day rollover).
-- **Open for the owner:** (1) fights drift with the moving home (spec's "current home"); alternative is freezing the home while fighting, which needs a mob_sync change. (2) bounty reward size — 2 Runic Stone per 10-minute in-game day.
+- **Owner decisions (2026-10-22):** (1) fights move with the Drake — the home keeps flying during a fight (spec's "current home"), no freeze. (2) bounty reward stays at 2 Runic Stone per in-game day.
 - `NEXT_BUILD.md` -> Real Stakes (S7).
 
+## S7 — Real Stakes (Weather, Death Weight & Raid Alerts): SHIPPED to `main`
+- **Weather:** shared by computation (seed x 5-min slot x 256-tile region), type by biome: Rain (mob aggro -25%), Fog (aggro -40%, dark overlay, far name plates hidden), Ashfall (1 dmg / 4 s unless Fireward Draught; never in safe zones; not treated as combat), Snow (-15% on foot). Flat particle layer capped at 160, off under Reduce motion; "· Rain" on the day card; none indoors. Clear measured 77% of samples (spec >= 55%).
+- **Death:** overlay lists exactly what dropped; your PACK on compass + minimap for 10 min or until picked up (yours only); a light column over the pile for 2 min for everyone. **Fixed a dupe bug:** equipped weapon/armour dropped twice on every death.
+- **Raids:** "Your base is under attack!" (max every 20 s), RAID compass mark 60 s, combat music; login summary of damaged/destroyed pieces since your last session on this device.
+- run4 1924 -> **1987 PASS / 0 FAIL** (63 S7 gates, 10 mutations each caught); run3 clean; run5 CAUGHT none; run6 all PASS (pixel 0.000% x4; frame rate 1.36x Colosseum, 1.29x Bazaar).
+- Spec-ordered gate count changes: combat-music sites 3 -> 4, localStorage.setItem 5 -> 6 (reasons written in the gates). Two landmark-count gates now clear the transient PACK/RAID marks first (setup, not relaxation).
+- Independent Opus review: 2 bugs fixed (false "damaged" for Architect/braced pieces; a failed base read reported the whole base destroyed) + 7 risks fixed. Known limit: the PACK mark does not survive a page reload.
+- `NEXT_BUILD.md` -> nothing to build (every locked README spec has shipped; S8/S9 are gauntlet-session work).
+
 ## Remaining stages
-S7 Real Stakes, S8 Feel pass, S9 Final report.
+S8 Feel pass, S9 Final report.

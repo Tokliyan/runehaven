@@ -53,6 +53,48 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-22 (Gauntlet S7 — Real Stakes: weather, death weight, raid alerts)
+
+README spec "Real Stakes — Weather, Death Weight & Raid Alerts". No new
+tables; every respawn timer untouched.
+
+- **Weather (PART A).** `weatherAt()` = hash(worldSeed, 300 s slot, 256-tile
+  region) decides if the region's weather turns (WEATHER_CHANCE 0.4); the
+  biome under you decides which: Rain (forest/plains/meadow/enchanted/sacred
+  meadow, mob aggro x0.75), Fog (dark forest, ruins at night: aggro x0.6,
+  flat rgba(16,20,26,0.28) fill, other plates hidden past 8 tiles), Ashfall
+  (volrock/caldera/lava: 1 dmg / 4 s, not with the Fireward Draught, not in
+  a safe zone, and NOT combat — no music, logout window, shake or Guard Break
+  use), Snow (rock/peak: -15% on foot). A new type commits after 1.5 s
+  (no flicker at biome edges). Screen-space layer after the world and its
+  darkness, before the HUD: rain = 1x8 streaks, ash = 2x2 light flecks with
+  a few embers, snow = 2x2 dots; whole pixels, flat, cap 160, none under
+  Reduce motion. Day card: "Day 433 — Morning · Rain". Clear indoors.
+- **Death (PART B).** The overlay lists exactly what dropped ("You dropped:
+  12 Wood, 3 Iron Ore, Iron Sword"). Your PACK (orange) is on the compass and
+  the minimap card for 10 min or until every row of the drop is picked up —
+  your client only. A fresh pile carries a faint flat light column (8 px +
+  2 px, whole pixels) for 2 min for everyone (pile_beacon broadcast with a
+  ttl, capped at 16, merged within 2 tiles) and is a collectLights light at
+  night. **Bug fixed:** equipped weapon/armour are pointers into the pack and
+  were dropped twice on every death (a free copy each time).
+- **Raids (PART C).** A hit that lowers YOUR piece (not a repair) or destroys
+  it: "Your base is under attack!" at most every 20 s, a red RAID compass mark
+  for 60 s, the combat-music signal. Login: "While you were away: N base
+  pieces were damaged, and M destroyed" — damaged = below basePieceMaxHp AND
+  below its hp at your last logout on this device; destroyed = count at last
+  logout minus now. Per device, keyed by world seed + username; a failed or
+  cut-short read of base_pieces reports nothing. The compass and minimap
+  still never read a base or ground table — they read transientMarks().
+- **Spec-ordered gate count changes:** combat-music sites 3 -> 4 (the raid
+  alert) and localStorage.setItem sites 5 -> 6 (the base record), each with
+  its reason written into the gate.
+- Independent Opus review: 2 bugs fixed (Architect/brace false "damaged";
+  a failed read reported the whole base destroyed) + risks fixed (beacon
+  flood and clock, weather flicker, ash dodge, ash as combat, empty death
+  clearing the pack, hp-less pieces). Known limit: the PACK mark does not
+  survive a reload.
+
 ### 2026-10-22 (Gauntlet S6 — World Encounters: the Elder Drake roams, Bounty Board)
 
 README spec "World Encounters — Roaming Boss & Bounty Board".
