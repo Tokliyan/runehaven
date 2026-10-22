@@ -53,6 +53,48 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-22 (Gauntlet S6 — World Encounters: the Elder Drake roams, Bounty Board)
+
+README spec "World Encounters — Roaming Boss & Bounty Board".
+
+- **APPROVED BIBLE DEVIATION (README World Encounters PART A, owner decision
+  2026-10-12):** the Elder Drake (`RUNEHAVEN_BIBLE.md:132`, "Volcano, World
+  Boss") no longer lives only at the Volcano — it is the roaming world boss.
+  No new creature was added.
+- **How it roams.** `drakeRoamHome(nowMs)`: legs of DRAKE_LEG_MS 20 min,
+  targets from `hash2(leg, k, worldSeed + 60617)` within DRAKE_ROAM_R 900 of
+  the VOLCANO, straight-line between targets, memoised from leg 0. Pure in
+  wall-clock time + worldEpoch + worldSeed — no network message. The Drake's
+  `hx/hy` IS that home every frame; the existing idle/leash/combat/mob_sync
+  code does the rest. It flies (no terrain check). Respawn lands exactly on
+  the home. `worldBossPos()` is the harness hook.
+- **Safe Zones.** A target, or a straight leg to it, within
+  DRAKE_SAFE_MARGIN 30 of Spawn's SAFE_RADIUS, any OTHER_SAFE_ZONES, the
+  Bazaar or the Colosseum is re-hashed (next k). `drakeStep` never ends a step
+  inside one (slides ±45/±90° first).
+- **Judgment calls (S6, for the owner):** DRAKE_LEG_MAX 960 (a leg is at most
+  half the Drake's own speed, so it can always catch its home after a fight);
+  half-speed idle patrol with no pause and an idle band of 6.5 (no idle/leash
+  flicker); a stale mob_sync target (> 1.5 s) is dropped for the Drake; the
+  one placement without walking is the rejoin after it was not simulated
+  (you changed space, or a hidden tab > 10 s with both points > 40 tiles off).
+  Because the home keeps moving during a fight (spec: "leashing measures from
+  the current home"), a long fight in one spot drifts — the Drake breaks off
+  once its home is a leash (24) away, and the fight moves with it.
+- **Bounty Board** at Spawn (SPAWN + (0.5, -5.5), between Shrine and Oracle):
+  two posts, plank face, three parchment notices, today's with a gold pin;
+  whole-pixel rects, sun shadow, x+y sort, gold "BOUNTY BOARD" world label.
+  One creature per `worldDayNum()` day (never the same two days running),
+  from hostile MOBS that worldgen spawns plus Common/Uncommon companions.
+  Slay or tame it: +2 Runic Stone (invAdd, like the duel reward), once per
+  player per day, persisted in the `cosmetics` jsonb (`bounty: {seed, day}`)
+  — no new SQL. Reading it also says where the Drake was last seen
+  ("far to the N"), in the compass dial's own 8 points.
+- Independent Opus review: 3 bugs fixed (stale mob_sync pinned the roaming
+  Drake; a frozen home made clients disagree mid-fight; bounty repeats), plus
+  risks fixed (claim lost on reload, Salamander King in the pool, idle/leash
+  flicker, stuck at zone edges, tame credited across a day rollover).
+
 ### 2026-10-21 (Gauntlet S4 — Performance: ground cache, whole-pixel camera, quiet HUD)
 
 README spec "Performance — Ground Cache & Quiet HUD". Rendering-scope changes,

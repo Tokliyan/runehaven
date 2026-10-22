@@ -1857,6 +1857,121 @@ function askOracle() {
   burst(ORACLE.x, ORACLE.y, "#8fd8f0", 9, 2);
   return h;
 }
+/* ============ S6 World Encounters PART B — THE BOUNTY BOARD ==========
+   README PART B: an interaction point at Spawn (the safe hub, beside the
+   Oracle and the Shrine) naming one existing creature as today's bounty.
+   It rotates on worldDayNum() — the file's one day counter, the same one the
+   rare-take budget and the Blood Moon use — so it is the same for every
+   player with no network message. Killing or taming that species while it
+   is today's bounty pays BOUNTY_REWARD_RUNIC Runic Stone, once per player
+   per day, through invAdd() exactly as the duel reward does (no new
+   currency). The board also says where the roaming Elder Drake was last
+   seen, using minimapBearings()' own bearing maths and the compass dial's
+   own eight points, so the words always agree with the dial. */
+const BOUNTY_BOARD = { x: SPAWN.x + 0.5, y: SPAWN.y - 5.5 };
+const BOUNTY_BOARD_R = 1.8;         // interact reach, the Oracle's
+const BOUNTY_SALT = 71993;          // new salt, used nowhere else
+const BOUNTY_REWARD_RUNIC = 2;      // TUNABLE
+const BOUNTY_NEAR = 150, BOUNTY_FAR = 600;   // TUNABLE: "close by" / "" / "far" (tiles from the board)
+/* Who can be a bounty: creatures that live in the open world and can be
+   met on an ordinary day. Hostile MOBS with a spawn biome (the Drake and its
+   Demon Knights are excluded — a 6h/3h respawn is not a daily target), plus
+   Common and Uncommon companions (no night-, dawn-, ruin- or ten-day-only
+   species, no Elder, admin or altar creature). Sorted, so every client
+   builds the identical list. */
+const BOUNTY_EXCLUDE = new Set(["elder_drake", "demon_knight"]);
+let bountyPoolCache = null;
+function bountyPool() {
+  if (bountyPoolCache) return bountyPoolCache;
+  const s = new Set();
+  for (const [k, d] of Object.entries(MOBS)) {
+    if (BOUNTY_EXCLUDE.has(k) || ORACLE_FORBIDDEN.has(k)) continue;
+    /* count 0 = never spawned by worldgen (e.g. the Salamander King exists
+       only when a neglected pet rampages) — not a creature you can find. */
+    if (!d.biomes || !d.biomes.length || !(d.count > 0)) continue;
+    s.add(k);
+  }
+  for (const [k, d] of Object.entries(WILD_SPECIES)) {
+    const r = PET_RARITY[k];
+    if (r !== "common" && r !== "uncommon") continue;
+    if (ORACLE_FORBIDDEN.has(k) || d.adminOnly || d.altarOnly) continue;
+    s.add(k);
+  }
+  return (bountyPoolCache = [...s].sort());
+}
+function bountyName(k) { return ((MOBS[k] || WILD_SPECIES[k]) || { name: k }).name; }
+function bountyRaw(day) {
+  const pool = bountyPool();
+  return pool[Math.floor(hash2(day, 3, worldSeed + BOUNTY_SALT) * pool.length) % pool.length];
+}
+/* Never the same creature two days running: on a repeat of YESTERDAY'S
+   ACTUAL pick, step one along. That depends on the day before, so the picks
+   are memoised forward from day 1 (144 days per real day — tiny). Review
+   fix: comparing raw against raw let 18 repeats in 3000 days through. */
+let bountyDays = [], bountyDaysKey = "";
+function bountyForDay(day) {
+  const pool = bountyPool();
+  day = Math.max(1, Math.min(day | 0, 2000000));
+  const key = worldSeed + ":" + pool.length;
+  if (key !== bountyDaysKey) { bountyDays = []; bountyDaysKey = key; }
+  for (let d = bountyDays.length + 1; d <= day; d++) {
+    let k = bountyRaw(d);
+    const prev = d > 1 ? bountyDays[d - 2] : null;
+    if (pool.length > 1 && k === prev) k = pool[(pool.indexOf(k) + 1) % pool.length];
+    bountyDays.push(k);
+  }
+  return bountyDays[day - 1];
+}
+function bountyToday() { return bountyForDay(worldDayNum()); }
+let bountyClaimedDay = 0;
+function nearBountyBoard() { return Math.hypot(me.x - BOUNTY_BOARD.x, me.y - BOUNTY_BOARD.y) < BOUNTY_BOARD_R; }
+/* Called from mobKill (the killer's client only) and resolveTaming (on a
+   successful tame). Pays only for today's species, once per day. */
+function bountyCredit(kind, verb, dayAt) {
+  const day = dayAt || worldDayNum();
+  if (kind !== bountyForDay(day) || bountyClaimedDay === day) return false;
+  bountyClaimedDay = day;
+  invAdd("runic_stone", BOUNTY_REWARD_RUNIC);
+  toast(`Bounty claimed: ${bountyName(kind)} ${verb} — +${BOUNTY_REWARD_RUNIC} Runic Stone`);
+  savePlayer();
+  savePlayerExtras();   // the claimed day rides in the cosmetics jsonb (see there) — a reload cannot claim twice
+  return true;
+}
+/* Review fix: the claim survives a reload. It is stored as an extra key on
+   the existing `cosmetics` jsonb (v35 column, no new SQL), keyed by the
+   world seed so a world reset starts fresh; normalizeCosmetics() drops
+   unknown keys, so every other reader of that column is unaffected. */
+function bountyClaimFromRow(raw) {
+  const b = raw && typeof raw === "object" ? raw.bounty : null;
+  return (b && b.seed === worldSeed && Number.isFinite(b.day)) ? b.day : 0;
+}
+function compassWord(deg) {
+  const h = ((deg % 360) + 360) % 360;
+  return COMPASS_POINTS[Math.round(h / 45) % 8][0];
+}
+function drakeSighting() {
+  const p = worldBossPos();
+  if (!p) return "No one has seen the Elder Drake.";
+  if (p.dead) return "The Elder Drake has fallen — no one has seen it since.";
+  const dx = p.x - BOUNTY_BOARD.x, dy = p.y - BOUNTY_BOARD.y, d = Math.hypot(dx, dy);
+  const deg = Math.atan2(isoY(dx, dy), isoX(dx, dy)) * 180 / Math.PI;   // minimapBearings()' maths
+  const how = d < BOUNTY_NEAR ? "close by, to the " : (d < BOUNTY_FAR ? "to the " : "far to the ");
+  return `The Elder Drake was last seen ${how}${compassWord(deg)}.`;
+}
+function readBountyBoard() {
+  const k = bountyToday(), day = worldDayNum();
+  const claimed = bountyClaimedDay === day;
+  toast(`Day ${day} bounty: ${bountyName(k)} — slay or tame one for ${BOUNTY_REWARD_RUNIC} Runic Stone` +
+        (claimed ? " (claimed)" : "") + ". " + drakeSighting());
+  burst(BOUNTY_BOARD.x, BOUNTY_BOARD.y, "#e8b64c", 7, 2);
+  return k;
+}
+function debugBountyInfo() {
+  return { board: { ...BOUNTY_BOARD }, day: worldDayNum(), today: bountyToday(), pool: bountyPool().slice(),
+           claimedDay: bountyClaimedDay, reward: BOUNTY_REWARD_RUNIC, sighting: drakeSighting(),
+           forDay: d => bountyForDay(d) };
+}
+function debugSetBounty(patch) { if (patch && "claimedDay" in patch) bountyClaimedDay = patch.claimedDay; return debugBountyInfo(); }
 /* ============ v35 PART B — TUTORIAL GROUNDS ======================
    Bible (TUTORIAL & NAVIGATION): "Tutorial Grounds — A small guided area
    within the Spawn Safe Zone teaching movement, basic combat, and pet taming
@@ -6166,6 +6281,104 @@ const FINITE = new Set(["rock", "iron", "runic", "herb", "essence", "meteor", "o
    v39: the orb is taken, not mined — the expedition IS the cost. */
 const NODE_HP = { tree: 30, rock: 40, iron: 50, runic: 55, meteor: 50, herb: 1, essence: 1, orb: 1 };
 const ELDER_DRAKE_RESPAWN_MS = 6 * 60 * 60 * 1000;   // v30: 6 real hours
+/* ============ S6 World Encounters PART A — THE ELDER DRAKE ROAMS ======
+   Owner decision 2026-10-12 (README, World Encounters PART A): the Elder
+   Drake itself is the roaming world boss — an approved bible deviation.
+   No new movement code: the Drake's HOME travels, and the existing idle /
+   leash logic in updateMob follows it. drakeRoamHome(nowMs) is a pure
+   function of wall-clock time, worldEpoch and worldSeed, so every client
+   agrees where the Drake is with no network messages.
+   Legs: each DRAKE_LEG_MS the home flies in a straight line from the last
+   target to the next. A target comes from hash2(leg, k, worldSeed + salt),
+   a point within DRAKE_ROAM_R of the VOLCANO; candidate k is skipped if the
+   point, or the straight leg to it, comes within DRAKE_SAFE_MARGIN of Spawn's
+   SAFE_RADIUS, any OTHER_SAFE_ZONES (ZONE_R), the Bazaar (BAZAAR_R) or the
+   Colosseum (COLOSSEUM_R) — re-hashed with the next k, as the spec says.
+   Judgment call (S6): a leg longer than DRAKE_LEG_MAX is also skipped, so
+   the home never moves faster than half the Drake's own moveSpeed and the
+   Drake can always catch it up after a fight without a snap. */
+const DRAKE_LEG_MS = 20 * 60 * 1000;   // TUNABLE (spec): one leg, 20 real minutes
+const DRAKE_ROAM_R = 900;              // TUNABLE (spec): targets within this many tiles of the VOLCANO
+const DRAKE_ROAM_SALT = 60617;         // new salt, used nowhere else
+/* The margin keeps the home this far outside every zone edge: the Drake's
+   leash (24) + its idle patrol (4) + 2, so neither patrolling nor chasing
+   within its leash reaches a zone. updateMob also refuses any step INTO a
+   zone, as a second line. */
+const DRAKE_SAFE_MARGIN = 30;
+const DRAKE_LEG_MAX = 0.5 * MOBS.elder_drake.moveSpeed * DRAKE_LEG_MS / 1000;   // 960 tiles: half its moveSpeed over one leg
+const DRAKE_RESYNC_MS = 10000;   // the Drake was not simulated this long (another space, hidden tab): rejoin its home unseen
+const DRAKE_UNSEEN_R = 40;       // tiles from you: further than any screen shows
+const DRAKE_SYNC_STALE_MS = 1500;   // three mob_sync periods (500 ms): an older sync target is dropped
+const DRAKE_IDLE_BAND = 6.5;     // idle patrol (4) + 2.5 of trailing room before it counts as leashing
+const DRAKE_LEG_CAP = 500000;    // ~19 years of legs: a wildly wrong clock cannot walk the memo forever
+let drakeLegs = [], drakeLegsKey = "";
+let drakeClockOffset = 0;        // harness only (debugSetDrakeClock)
+function drakeNow() { return Date.now() + drakeClockOffset; }
+function drakeZones() {
+  const z = [{ x: SPAWN.x, y: SPAWN.y, r: SAFE_RADIUS }];
+  if (BAZAAR) z.push({ x: BAZAAR.x, y: BAZAAR.y, r: BAZAAR_R });
+  if (COLOSSEUM) z.push({ x: COLOSSEUM.x, y: COLOSSEUM.y, r: COLOSSEUM_R });
+  for (const s of OTHER_SAFE_ZONES) z.push({ x: s.x, y: s.y, r: ZONE_R });
+  return z;
+}
+function segPointDist(ax, ay, bx, by, px, py) {
+  const vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy;
+  const u = L2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / L2)) : 0;
+  return Math.hypot(ax + vx * u - px, ay + vy * u - py);
+}
+function drakeLegClear(a, b, zones) {
+  for (const z of zones) if (segPointDist(a.x, a.y, b.x, b.y, z.x, z.y) < z.r + DRAKE_SAFE_MARGIN) return false;
+  return true;
+}
+/* Target of leg i (i = -1 is the start: the VOLCANO). Memoised forward from
+   leg 0, because whether a leg is clear depends on where the previous one
+   ended; the cache is keyed by the world, so a reset or new seed starts over. */
+function drakeLegTarget(i) {
+  if (!VOLCANO) return null;
+  const key = worldSeed + ":" + VOLCANO.x + "," + VOLCANO.y + ":" + OTHER_SAFE_ZONES.length;
+  if (key !== drakeLegsKey) { drakeLegs = []; drakeLegsKey = key; }
+  if (i < 0) return { x: VOLCANO.x + 0.5, y: VOLCANO.y + 0.5 };
+  if (i < drakeLegs.length) return drakeLegs[i];
+  const zones = drakeZones();
+  for (let L = drakeLegs.length; L <= i; L++) {
+    const prev = L === 0 ? { x: VOLCANO.x + 0.5, y: VOLCANO.y + 0.5 } : drakeLegs[L - 1];
+    let pick = prev;                      // nothing clear: the home rests for one leg
+    for (let k = 0; k < 64; k++) {
+      const ang = hash2(L, 2 * k + 1, worldSeed + DRAKE_ROAM_SALT) * Math.PI * 2;
+      const rr = Math.sqrt(hash2(L, 2 * k + 2, worldSeed + DRAKE_ROAM_SALT)) * DRAKE_ROAM_R;
+      const c = { x: VOLCANO.x + 0.5 + Math.cos(ang) * rr, y: VOLCANO.y + 0.5 + Math.sin(ang) * rr };
+      if (c.x < 8 || c.y < 8 || c.x > N - 8 || c.y > N - 8) continue;
+      if (Math.hypot(c.x - prev.x, c.y - prev.y) > DRAKE_LEG_MAX) continue;
+      if (!drakeLegClear(prev, c, zones)) continue;
+      pick = c; break;
+    }
+    drakeLegs.push(pick);
+  }
+  return drakeLegs[i];
+}
+function drakeLegAt(nowMs) {
+  /* worldEpoch is 0 until loadWorld() has read the world row (the boot-time
+     buildFeatureList calls run before it): rest at the first leg rather than
+     walk ~1.5 million legs from 1970. The post-load rebuild places it properly. */
+  const el = worldEpoch > 0 ? nowMs - worldEpoch * 1000 : 0;
+  if (el <= 0) return { leg: 0, f: 0 };
+  const leg = Math.floor(el / DRAKE_LEG_MS);
+  if (leg > DRAKE_LEG_CAP) return { leg: DRAKE_LEG_CAP, f: 0 };
+  return { leg, f: (el % DRAKE_LEG_MS) / DRAKE_LEG_MS };
+}
+function drakeRoamHome(nowMs) {
+  const { leg, f } = drakeLegAt(nowMs);
+  const a = drakeLegTarget(leg - 1), b = drakeLegTarget(leg);
+  if (!a || !b) return null;
+  return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
+}
+/* Harness hook (spec): the Drake's live position, always real. */
+function worldBossPos() {
+  const m = mobs.find(q => q.kind === "elder_drake");
+  if (!m) return null;
+  return { x: m.x, y: m.y, hx: m.hx, hy: m.hy, dead: !!m.dead, state: m.state, id: m.id };
+}
+function debugSetDrakeClock(offsetMs) { drakeClockOffset = Number(offsetMs) || 0; return drakeNow(); }
 const nodeHP = new Map();   // key -> remaining hp, cleared when the node dies   // FIX: ore mined once
 /* v17: finite, but picked rather than mined — verb + toast wording only */
 const PICKED = new Set(["herb", "essence", "orb"]);
@@ -6913,9 +7126,13 @@ function buildFeatureList() {
     const spot = edPlace();
     if (spot) {
       const ed = MOBS.elder_drake;
+      /* S6 PART A: the id stays keyed by the lair spot (stable for mob_sync on
+         every client); the Drake itself starts wherever its roaming home is
+         right now. The Demon Knights below still stand at the lair. */
+      const H0 = drakeRoamHome(drakeNow()) || { x: spot[0] + 0.5, y: spot[1] + 0.5 };
       mobs.push({
         id: "elder_drake:" + spot[0] + "," + spot[1], kind: "elder_drake",
-        x: spot[0] + 0.5, y: spot[1] + 0.5, hx: spot[0] + 0.5, hy: spot[1] + 0.5,
+        x: H0.x, y: H0.y, hx: H0.x, hy: H0.y, roams: true, simAt: 0,
         hp: Math.round(ed.hp * bloodMoonMobMult()),
         maxHp: Math.round(ed.hp * bloodMoonMobMult()), state: "idle", target: null,
         atkAt: 0, windupStart: 0, winding: false, flash: 0, boltT: 0,
@@ -8544,6 +8761,7 @@ async function loginPlayer(username, cls, pinCheck) {
     /* v35 PART B: shown once, ever. The flag is read here, on the row that
        came back from the players table, and written by savePlayerExtras(). */
     tutorialDone = !tutorialShouldRun(p);
+    bountyClaimedDay = bountyClaimFromRow(p.cosmetics);   // S6 PART B: today's claim survives a reload
     if (me.x < 1 || me.y < 1 || me.x > N - 1 || me.y > N - 1 ||
         BLOCKED.has(biomeAt(Math.floor(me.x), Math.floor(me.y)))) {
       const s = findSpawn();
@@ -8724,6 +8942,7 @@ async function mobKill(m, iKilled) {
     toast(`${ITEM_META[cosDrop].name} — a rare find!`);
   }
   toast(`${def.name} slain!`);
+  bountyCredit(m.kind, "slain");   // S6 PART B: after the slain toast, so a claim is the line you read
   if (!drops.length) return;
   const { data } = await sb.from("ground_items").insert(drops).select();
   if (data) {
@@ -8746,11 +8965,59 @@ function mobBlocked(m, tx, ty) {
   return BLOCKED.has(biomeAt(tx, ty));
 }
 
+/* S6 PART A: one Drake step toward (gx, gy), at most `max` tiles and never
+   past the goal. It flies, so terrain is not checked; a step that would end
+   inside any Safe Zone is never taken. Review fix: rather than stopping dead
+   at a zone's rim, it tries sliding 45 then 90 degrees either way first. */
+const DRAKE_STEP_TURNS = [0, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2];
+function drakeStep(m, gx, gy, max) {
+  const dx = gx - m.x, dy = gy - m.y, d = Math.hypot(dx, dy);
+  if (d < 1e-6) return;
+  const s = Math.min(max, d), a0 = Math.atan2(dy, dx);
+  for (const turn of DRAKE_STEP_TURNS) {
+    const nx = m.x + Math.cos(a0 + turn) * s, ny = m.y + Math.sin(a0 + turn) * s;
+    if (inSafeZone(nx, ny) || inColosseum(nx, ny)) continue;
+    m.x = nx; m.y = ny;
+    if (s > 0.002) m.movedAt = performance.now();
+    if (Math.abs(dx) > 0.05) { m.fx = Math.sign(dx); m.fy = 0; }
+    return;
+  }
+}
 function updateMob(m, dt, t, now) {
   const def = MOBS[m.kind];
   /* Only simulate a mob that shares your space. Without this an interior
      Sea Serpent would be ticked by every player standing on the surface. */
-  if ((m.space || "main") !== (me.space || "main")) return;
+  if ((m.space || "main") !== (me.space || "main")) { if (m.roams) m.simAt = 0; return; }
+  /* S6 PART A: the roaming Drake's home IS drakeRoamHome(now), every frame,
+     in every state — so every client holds the same home and leashing
+     measures from the current home, as the spec says (a long fight drifts
+     with it: the Drake breaks off once the home is a leash away, and the
+     ordinary leash branch walks it back at its normal speed — no snap).
+     The only placement without walking is the rejoin after the Drake was
+     not simulated: on first sight after changing space (nobody could see it
+     there), or after a hidden tab past DRAKE_RESYNC_MS when both where it
+     was and where it should be are off your screen; otherwise it walks in. */
+  if (m.roams) {
+    const rn = drakeNow(), H = drakeRoamHome(rn);
+    if (H) {
+      m.hx = H.x; m.hy = H.y;
+      const engaged = !m.dead && (m.state === "aggro" || m.state === "attack");
+      const unseen = (x, y) => Math.hypot(x - me.x, y - me.y) > DRAKE_UNSEEN_R;
+      const rejoin = !m.simAt || (rn - m.simAt > DRAKE_RESYNC_MS && unseen(m.x, m.y) && unseen(H.x, H.y));
+      if (!m.dead && !engaged && rejoin) {
+        m.x = m.hx; m.y = m.hy;
+        delete m.syncTargetX; delete m.syncTargetY;
+      }
+    }
+    m.simAt = rn;
+    /* Review fix: mob_sync is only sent while someone fights it, and nothing
+       ever cleared the last target — so after a fight it pinned this Drake
+       to the old fight spot forever (and dragged it back there after a
+       respawn). A target older than three sync periods is dropped. */
+    if (m.syncTargetX !== undefined && !(now - (m.syncAt || 0) < DRAKE_SYNC_STALE_MS)) {
+      delete m.syncTargetX; delete m.syncTargetY;
+    }
+  }
   /* hotfix: smooth, continuous correction toward the last mob_sync target,
      replacing the old instant on-packet snap. Converges within a few
      hundred ms, spread across many frames instead of one visible pop. */
@@ -8764,6 +9031,7 @@ function updateMob(m, dt, t, now) {
       m.hp = Math.round(def.hp * bloodMoonMobMult());   // v31
       m.maxHp = m.hp;
       m.x = m.hx; m.y = m.hy; m.state = "idle";
+      if (m.roams) { delete m.syncTargetX; delete m.syncTargetY; }   // S6: a fresh appearance, nothing pulls it away
     }
     return;
   }
@@ -8822,13 +9090,27 @@ function updateMob(m, dt, t, now) {
      flip back to "idle", and repeat — dozens of times a second. Confirmed
      by simulation: 164 state flips in 10 seconds before this fix. Scaling
      the threshold to match the same amp the wander code actually uses. */
-  } else if (fromHome > Math.min(def.leashRadius * 0.4, 4) + 0.5) {
+  /* S6 review fix: the roaming Drake patrols around a MOVING home, so it can
+     trail its ellipse point by a little; its idle band is DRAKE_IDLE_BAND,
+     not 4.5, or it flipped idle/leash ~2x a second (580 flips in 5 min). */
+  } else if (fromHome > (m.roams ? DRAKE_IDLE_BAND : Math.min(def.leashRadius * 0.4, 4) + 0.5)) {
     m.state = "leash"; m.target = null; m.winding = false;
   } else {
     m.state = "idle"; m.target = null; m.winding = false;
   }
 
-  if (m.state === "idle") {
+  if (m.state === "idle" && m.roams) {
+    /* S6 PART A: the same patrol ellipse around the (moving) home, but never
+       faster than the Drake's own moveSpeed and with no pause — a pause would
+       let the home leave it behind. It flies: no terrain check, only the
+       Safe Zone refusal every Drake step obeys. */
+    const amp = Math.min((def.leashRadius || 10) * 0.4, 4);
+    /* Half the usual patrol rate, so the ellipse point (~0.5 t/s) plus the
+       home (<= 0.8 t/s) stays under moveSpeed 1.6 and it never trails. */
+    const gx = m.hx + Math.cos(t / 8400 + m.ph) * amp;
+    const gy = m.hy + Math.sin(t / 7200 + m.ph * 1.3) * amp * 0.75;
+    drakeStep(m, gx, gy, def.moveSpeed * dt);
+  } else if (m.state === "idle") {
     // deterministic drift near home — same language as wild wander
     /* v30: a real patrol, not the old fixed 0.8-tile shuffle. Amplitude
        scales with the mob's own leashRadius (already per-species, no new
@@ -8847,10 +9129,13 @@ function updateMob(m, dt, t, now) {
     const gy = m.state === "leash" ? m.hy : m.target.y;
     const d = Math.hypot(gx - m.x, gy - m.y) || 1;
     const step = def.moveSpeed * dt;
+    if (m.roams) drakeStep(m, gx, gy, step);   // S6: flies, never into a Safe Zone
+    else {
     const nx = m.x + (gx - m.x) / d * step;
     const ny = m.y + (gy - m.y) / d * step;
     if (!mobBlocked(m, Math.floor(nx), Math.floor(m.y))) m.x = nx;
     if (!mobBlocked(m, Math.floor(m.x), Math.floor(ny))) m.y = ny;
+    }
     m.fx = (gx - m.x) / d; m.fy = (gy - m.y) / d;
     m.winding = false;
   } else if (m.state === "attack") {
@@ -8977,6 +9262,7 @@ async function resolveTaming() {
        the wild either way — a failed insert must not silently give the slot
        back. A non-capped species falls straight back out of noteRareTake. */
     noteRareTake(w.species);
+    const tameDay = worldDayNum();   // S6: credited against the day the tame landed, not after the insert's await
     if (w.mob) {
       // v14: taming forfeits the loot — the creature leaves the world as a mob
       w.mob.dead = true; w.mob.hp = 0;
@@ -8994,6 +9280,8 @@ async function resolveTaming() {
       myPets.push(data);
       await setActivePet(data);
       toast(`${petName} tamed — it follows you now!`);
+      /* S6 PART B: the tutorial's own wolf is a lesson, not a hunt. */
+      if (w.id !== TUTORIAL_WOLF_ID) bountyCredit(w.species, "tamed", tameDay);
       /* ============ v55 PART E — THE TAME LANDS IN ITS OWN COLOUR ====
          The one generic green that fired here served every creature in
          the game identically, which meant the biggest emotional beat the
@@ -9591,6 +9879,7 @@ async function joinRealtime() {
     const m = mobs.find(x => x.id === p.id);
     if (!m) return;
     m.dead = true; m.hp = 0;
+    if (m.roams) { delete m.syncTargetX; delete m.syncTargetY; }   // S6: no pull back to where it died
     /* v30: a world boss that respawns like a goblin is not a world boss. */
     m.respawnAt = p.until || (Date.now() +
       mobRespawnMs(m.kind));
@@ -9635,6 +9924,7 @@ async function joinRealtime() {
        exactly where this was reported. Actual blending now happens every
        frame in updateMob(), smoothly, not here. */
     m.syncTargetX = p.x; m.syncTargetY = p.y;
+    m.syncAt = performance.now();   // S6: a roaming Drake drops a target older than DRAKE_SYNC_STALE_MS
     m.hp = Math.min(m.hp, p.hp);
   });
 
@@ -9832,7 +10122,7 @@ async function savePlayerExtras() {
   try {
     await sb.from("players").update({
       tutorial_done: !!tutorialDone,
-      cosmetics: me.cos || emptyCosmetics(),
+      cosmetics: { ...(me.cos || emptyCosmetics()), bounty: { seed: worldSeed, day: bountyClaimedDay } },   // S6: + the claimed bounty day
     }).eq("username", me.username);
   } catch (e) { /* ignore — see above */ }
 }
@@ -10948,6 +11238,12 @@ async function doInteract() {
   if (nearOracle()) {
     lastGather = now;
     askOracle();
+    return;
+  }
+  /* S6 PART B: the bounty board, the third fixed Spawn fixture. */
+  if (nearBountyBoard()) {
+    lastGather = now;
+    readBountyBoard();
     return;
   }
   /* v39 PART B: the Dragon Elder Altar answers on the same interact key,
@@ -15903,7 +16199,8 @@ function drawMob(m, t) {
     ctx.translate(sx, sy);
     ctx.scale(flip * mk, mk);
     ctx.translate(-sx, -sy);
-    drawSpecies("elder_drake", sx, sy, t, m.state === "aggro" || m.state === "leash");
+    drawSpecies("elder_drake", sx, sy, t, m.state === "aggro" || m.state === "leash" ||
+      (m.roams && performance.now() - (m.movedAt || -1e9) < 250));   // S6: a roaming Drake that is flying is drawn flying
     ctx.restore();
     drawMobOverlays(m, sx, sy, t, def);
     return;
@@ -16912,6 +17209,40 @@ function drawOracleEntity(t) {
   ctx.fillStyle = `rgba(232,182,76,${(0.55 + Math.sin(t / 300) * 0.25).toFixed(3)})`;
   ctx.fillRect(sx + Math.cos(oa) * 9 - 1.2, sy - 22 + Math.sin(oa) * 3 - 1.2, 2.4, 2.4);
   queueWorldLabel("THE ORACLE", sx, sy - 30, "10px 'Barlow', sans-serif", "rgba(232,182,76,0.85)");   // S2 R1: overlay pass
+}
+/* S6 PART B: the Bounty Board. Two posts and a plank face square to the
+   camera, three parchment notices pinned to it — today's in the middle
+   with the gold pin. Flat fills, hard edges, standard sun shadow, x+y sort. */
+const BOUNTY_WOOD = "#8a6440", BOUNTY_WOOD_LIT = "#a77c50", BOUNTY_WOOD_DK = "#5e4229";
+function drawBountyBoardEntity(t) {
+  const B0 = BOUNTY_BOARD;
+  const [sx, sy] = worldToScreen(B0.x, B0.y, groundZ(B0.x, B0.y));
+  drawShadow(sx, sy, 30, 12);
+  ctx.fillStyle = BOUNTY_WOOD_DK;
+  ctx.fillRect(sx - 12, sy - 27, 3, 27);                  // posts
+  ctx.fillRect(sx + 9, sy - 27, 3, 27);
+  ctx.fillStyle = BOUNTY_WOOD;
+  ctx.fillRect(sx - 15, sy - 28, 30, 15);                 // plank face
+  ctx.fillStyle = BOUNTY_WOOD_LIT;
+  ctx.fillRect(sx - 15, sy - 28, 30, 2);                  // lit top edge
+  /* whole-pixel rects only (hard edges; sx/sy are whole since S4's camera snap) */
+  ctx.fillStyle = BOUNTY_WOOD_DK;
+  ctx.fillRect(sx - 15, sy - 14, 30, 1);                  // under-edge
+  ctx.fillRect(sx - 16, sy - 30, 32, 2);                  // little roof
+  ctx.fillStyle = "#e9dcb8";
+  ctx.fillRect(sx - 13, sy - 25, 7, 8);                   // notices
+  ctx.fillRect(sx + 6, sy - 24, 7, 8);
+  ctx.fillStyle = "#f3e8c8";
+  ctx.fillRect(sx - 5, sy - 26, 10, 10);                  // today's
+  ctx.fillStyle = "#a8432f";
+  ctx.fillRect(sx - 3, sy - 22, 6, 1);                    // its red "WANTED" bar
+  ctx.fillStyle = "#6b6052";
+  ctx.fillRect(sx - 3, sy - 20, 6, 1);
+  ctx.fillRect(sx - 3, sy - 18, 4, 1);
+  const gp = 0.7 + Math.sin(t / 520) * 0.3;
+  ctx.fillStyle = `rgba(232,182,76,${gp.toFixed(3)})`;
+  ctx.fillRect(sx - 1, sy - 27, 2, 2);                    // gold pin
+  queueWorldLabel("BOUNTY BOARD", sx, sy - 37, "10px 'Barlow', sans-serif", "rgba(232,182,76,0.85)");
 }
 
 /* v35 PART B: the Tutorial Grounds' two props. Both exist ONLY while the
@@ -19698,6 +20029,8 @@ function render(t) {
   ents.push({ s: SHRINE.x + SHRINE.y + 0.3, kind: "shrine" });
   { const SG = shrineGatePos(); ents.push({ s: SG.x + SG.y, kind: "shrinegate" }); }   // Gauntlet S2 R1
   ents.push({ s: ORACLE.x + ORACLE.y + 0.3, kind: "oracle" });        // v35 PART E
+  if (Math.abs(BOUNTY_BOARD.x - cam.x) + Math.abs(BOUNTY_BOARD.y - cam.y) < 80)   // only when it could be on screen
+    ents.push({ s: BOUNTY_BOARD.x + BOUNTY_BOARD.y + 0.3, kind: "bountyboard" });   // S6 PART B
   /* v35 PART B: the two tutorial props, which exist only while it runs. */
   if (tutorialActive && !inInterior()) {
     ents.push({ s: TUTORIAL_MARK.x + TUTORIAL_MARK.y, kind: "tutmark" });
@@ -19861,6 +20194,7 @@ function render(t) {
     else if (e.kind === "shrine") drawShrineEntity(t);
     else if (e.kind === "shrinegate") drawShrineGate(t);              // Gauntlet S2 R1
     else if (e.kind === "oracle") drawOracleEntity(t);        // v35 PART E
+    else if (e.kind === "bountyboard") drawBountyBoardEntity(t);   // S6 PART B
     else if (e.kind === "tutmark") drawTutorialMark(t);       // v35 PART B
     else if (e.kind === "tutdummy") drawTutorialDummy(t);     // v35 PART B
     else if (e.kind === "bazaar") drawBazaarEntity(t);
@@ -20873,6 +21207,8 @@ function updateHUD(dayT) {
   else if (nearShrine()) { setTextIfChanged(hudPrompt, "[E] Beastmaster Shrine — 3 Runic Stone for a taming blessing"); hudPrompt.style.display = "block"; }
   /* v35 PART E: the Oracle says what it is, like every other landmark. */
   else if (nearOracle()) { setTextIfChanged(hudPrompt, "[E] The Oracle — ask where a rare companion may be found"); hudPrompt.style.display = "block"; }
+  /* S6 PART B: names today's bounty right on the prompt. */
+  else if (nearBountyBoard()) { setTextIfChanged(hudPrompt, `[E] Bounty Board — today: ${bountyName(bountyToday())}` + (bountyClaimedDay === worldDayNum() ? " (claimed)" : "")); hudPrompt.style.display = "block"; }
   /* v37: the three new landmarks announce what they are. The Bazaar and
      Colosseum are informational (their mechanic is the zone you stand in,
      not a keypress); the Ancient Forge tells you what it unlocks. */
