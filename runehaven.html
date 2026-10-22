@@ -527,7 +527,7 @@
   }
   .mm-tick.major { color: var(--gold); font-size: 10px; }
   /* S7 PART B/C: your own pack (parchment) and a raid on your base (red) */
-  .mm-mark.mm-pack { background: #f3e8c8; box-shadow: 0 0 4px rgba(243,232,200,0.7); }
+  .mm-mark.mm-pack { background: #f0a040; box-shadow: 0 0 4px rgba(240,160,64,0.8); }
   .mm-mark.mm-raid { background: #e04a3c; box-shadow: 0 0 4px rgba(224,74,60,0.8); }
   .mm-mark {
     position: absolute; width: 7px; height: 7px; border-radius: 50%;
@@ -778,7 +778,7 @@
   <h2>YOU DIED</h2>
   <p id="deathBy"></p>
   <p id="deathRecap"></p>
-  <p>Everything you carried lies where you fell. Your compass marks the pack — for a while.</p>
+  <p>Everything you carried lies where you fell.</p>
   <div id="deathTimer">00:30</div>
   <p class="dim">You will wake at the Spawn Safe Zone</p>
 </div>
@@ -9541,17 +9541,37 @@ function weatherAt(x, y, nowMs, night) {
   const rx = Math.floor(x / WEATHER_REGION), ry = Math.floor(y / WEATHER_REGION);
   return weatherTypeFor(biomeAt(Math.floor(x), Math.floor(y)), weatherRoll(weatherSlotAt(nowMs), rx, ry), !!night);
 }
-let curWeather = "clear", weatherForce = null, ashAcc = 0;
+let curWeather = "clear", weatherForce = null, ashAcc = 0, envDamageNow = false;
+let weatherPending = null, weatherPendingAt = 0;
+/* S7 review fix: the type under you can change at every biome edge, which
+   flipped the particles and the HUD tile by tile. A new type is committed
+   only once it has held for WEATHER_SETTLE_MS; interiors and a forced
+   (harness) weather apply at once. */
+const WEATHER_SETTLE_MS = 1500;
 /* Once a frame from update(): the weather where you stand, then its one
    effect that ticks on its own (ashfall). The aggro and speed effects read
    curWeather at their own sites. No weather inside any interior. */
 function updateWeather(dt) {
-  if (!me || inInterior()) curWeather = "clear";
-  else curWeather = weatherForce || weatherAt(me.x, me.y, Date.now(), nightAlpha(getDayT()) > 0.4);
+  if (!me || inInterior()) { curWeather = "clear"; weatherPending = null; }
+  else if (weatherForce) { curWeather = weatherForce; weatherPending = null; }
+  else {
+    const want = weatherAt(me.x, me.y, Date.now(), nightAlpha(getDayT()) > 0.4), nowMs = performance.now();
+    if (want === curWeather) weatherPending = null;
+    else if (weatherPending !== want) { weatherPending = want; weatherPendingAt = nowMs; }
+    else if (nowMs - weatherPendingAt >= WEATHER_SETTLE_MS) { curWeather = want; weatherPending = null; }
+  }
   if (curWeather === "ash" && !dead && !fireResistActive() && !inSafeZone(me.x, me.y)) {
     ashAcc += dt;
-    while (ashAcc >= WEATHER_ASH_EVERY_S && !dead) { ashAcc -= WEATHER_ASH_EVERY_S; applyDamage(WEATHER_ASH_DMG, "the ashfall"); }
-  } else ashAcc = 0;
+    while (ashAcc >= WEATHER_ASH_EVERY_S && !dead) {
+      ashAcc -= WEATHER_ASH_EVERY_S;
+      envDamageNow = true;
+      try { applyDamage(WEATHER_ASH_DMG, "the ashfall"); } finally { envDamageNow = false; }
+    }
+  } else {
+    /* Review fix: decays rather than resets, so stepping off the ash for a
+       moment every few seconds no longer dodges it entirely. */
+    ashAcc = Math.max(0, ashAcc - dt);
+  }
 }
 /* Joins BLOOD_MOON_AGGRO_MULT at the one mob aggro check — and nowhere else. */
 function weatherAggroMult() {
@@ -9578,12 +9598,15 @@ function drawWeather(w, h) {
   const kind = curWeather;
   if (kind === "fog") {
     ctx.fillStyle = `rgba(16,20,26,${WEATHER_FOG_ALPHA})`;
-    ctx.fillRect(0, 0, w, h);
+    ctx.fillRect(-8, -8, w + 16, h + 16);   // past the edges: drawn inside the hit-shake translate
   }
   const P = WEATHER_PART[kind];
   if (!P) { weatherParts.length = 0; weatherPartsKind = kind; return; }
   if (kind !== weatherPartsKind) { weatherParts.length = 0; weatherPartsKind = kind; }
-  const want = Math.round(WEATHER_PARTICLE_CAP * (SETTINGS.reduceMotion ? 0.35 : 1));
+  /* Reduce motion turns the particles off (the v23 rule for ambient motion);
+     the HUD still names the weather and fog keeps its flat fill. */
+  const want = SETTINGS.reduceMotion ? 0 : WEATHER_PARTICLE_CAP;
+  if (weatherParts.length > want) weatherParts.length = want;
   /* A change of weather fills the whole screen at once; after that new
      ones enter from the top, a few a frame, up to the cap. */
   const seedAll = weatherParts.length === 0;
@@ -10020,7 +10043,7 @@ async function joinRealtime() {
     if (!bp) return;
     /* S7 PART C: a hit on YOUR piece that lowers it is a raid (a repair
        rides this same event with a higher hp, and is not). */
-    if (me && bp.owner === me.username && Number(p.hp) < Number(bp.hp)) raidAlert(bp.x, bp.y);
+    if (me && bp.owner === me.username && Number.isFinite(+p.hp) && +p.hp < baseHpOf(bp)) raidAlert(bp.x, bp.y);   // baseHpOf: a piece with no hp is full
     bp.hp = p.hp;
     bp.flash = performance.now();
   });
@@ -10423,6 +10446,7 @@ function invSpend(mats) {
      fresh pile for EVERYONE (one pile_beacon broadcast — no table), and is
      a light at night through collectLights(). A death becomes a race. */
 const PACK_MARK_MS = 10 * 60 * 1000;   // TUNABLE (spec)
+const PACK_MARK_COL = "#f0a040";       // orange: apart from the gold landmarks and the grey player dots
 const PILE_BEACON_MS = 2 * 60 * 1000;  // TUNABLE (spec)
 let lastDeathDrops = [], myPack = null;
 const pileBeacons = [];
@@ -10434,17 +10458,25 @@ function deathRecapText(list) {
   }).join(", ");
 }
 function startPackMark(x, y, space, hasDrops) {
-  if (!hasDrops) { myPack = null; return; }
+  if (!hasDrops) return;   // review fix: dying again empty-handed keeps pointing at the pile still out there
   const now = Date.now();
   myPack = { x, y, space, until: now + PACK_MARK_MS, ids: null };
-  addPileBeacon({ x, y, space, until: now + PILE_BEACON_MS });
-  if (channel) channel.send({ type: "broadcast", event: "pile_beacon", payload: { x: +x.toFixed(2), y: +y.toFixed(2), space, until: now + PILE_BEACON_MS } });
+  addPileBeacon({ x, y, space, ttl: PILE_BEACON_MS });
+  /* ttl (time left), not an absolute time: a sender whose clock is off
+     would otherwise send a beacon that is already over, or lasts too long. */
+  if (channel) channel.send({ type: "broadcast", event: "pile_beacon", payload: { x: +x.toFixed(2), y: +y.toFixed(2), space, ttl: PILE_BEACON_MS } });
 }
+const PILE_BEACON_CAP = 16;   // review fix: a flood of fake beacons cannot cost more than this
 function addPileBeacon(b) {
-  if (!b || !Number.isFinite(b.x) || !Number.isFinite(b.y)) return;
-  const until = Math.min(Number(b.until) || 0, Date.now() + PILE_BEACON_MS);   // a remote clock cannot keep one up longer
-  if (until <= Date.now()) return;
-  pileBeacons.push({ x: b.x, y: b.y, space: b.space || "main", until });
+  if (!b || !Number.isFinite(+b.x) || !Number.isFinite(+b.y)) return;
+  const ttl = "ttl" in b ? Math.max(0, Math.min(PILE_BEACON_MS, Number(b.ttl) || 0))
+                         : Math.max(0, Math.min(PILE_BEACON_MS, (Number(b.until) || 0) - Date.now()));
+  if (ttl <= 0) return;
+  const x = +b.x, y = +b.y, space = typeof b.space === "string" ? b.space : "main", until = Date.now() + ttl;
+  const near = pileBeacons.find(o => o.space === space && Math.hypot(o.x - x, o.y - y) < 2);
+  if (near) { near.until = Math.max(near.until, until); return; }   // same pile: one column
+  pileBeacons.push({ x, y, space, until });
+  if (pileBeacons.length > PILE_BEACON_CAP) pileBeacons.splice(0, pileBeacons.length - PILE_BEACON_CAP);
 }
 /* Once a frame from update(): the pack mark ends on timeout or when the
    last of its rows has left the ground; beacons end on their timer. */
@@ -10458,7 +10490,8 @@ function deathMarksTick() {
 /* The flat column: two rects, alpha fading with the time left. */
 function drawPileBeacon(b) {
   const frac = Math.max(0, Math.min(1, (b.until - Date.now()) / PILE_BEACON_MS));
-  const [sx, sy] = worldToScreen(b.x, b.y, groundZ(b.x, b.y));
+  const [sx0, sy0] = worldToScreen(b.x, b.y, groundZ(b.x, b.y));
+  const sx = Math.round(sx0), sy = Math.round(sy0);   // whole pixels: hard edges
   ctx.fillStyle = `rgba(255,214,130,${(0.06 + 0.14 * frac).toFixed(3)})`;
   ctx.fillRect(sx - 4, sy - 150, 8, 150);
   ctx.fillStyle = `rgba(255,238,190,${(0.12 + 0.28 * frac).toFixed(3)})`;
@@ -10501,28 +10534,50 @@ function myBasePieces() {
   for (const [, bp] of basePieces) if (bp.owner === me.username && !bp.destroyed) out.push(bp);
   return out;
 }
-/* ⚠️ PER DEVICE: the count lives in this browser's localStorage under your
-   username, so logging in from another device cannot know how many pieces
-   you had here — it reports no destroyed pieces rather than a wrong number. */
-function baseCountKey() { return "rh_base_count_" + (me ? me.username : ""); }
-function readStoredBaseCount() {
-  try { const v = localStorage.getItem(baseCountKey()); return v === null ? null : (Number(v) | 0); }
-  catch (e) { return null; }
+/* ⚠️ PER DEVICE: what you owned at your last logout lives in THIS browser's
+   localStorage (under the world seed and your username), so it only knows
+   about sessions on this device. Pieces you placed or knocked down from
+   another device can make the "destroyed" count wrong in either direction,
+   and the first login on a device reports none. A world reset changes the
+   seed, so it starts a fresh record rather than reading as a raid.
+   Stored: { count, hp: { id: hp } } — the hp snapshot means a piece is only
+   reported as damaged if it lost hp SINCE you left (old damage is not
+   re-announced every login, and an Architect bonus that cannot be known
+   after a reload cannot make a full piece look damaged). */
+function baseCountKey() { return "rh_base_" + worldSeed + "_" + (me ? me.username : ""); }
+function readStoredBaseRecord() {
+  try {
+    const v = JSON.parse(localStorage.getItem(baseCountKey()) || "null");
+    return v && Number.isFinite(v.count) ? { count: v.count | 0, hp: (v.hp && typeof v.hp === "object") ? v.hp : {} } : null;
+  } catch (e) { return null; }
 }
+function readStoredBaseCount() { const r = readStoredBaseRecord(); return r ? r.count : null; }
 function storeMyBaseCount() {
   if (!me || !raidCountReady) return;
-  try { localStorage.setItem(baseCountKey(), String(myBasePieces().length)); } catch (e) { /* private window: per-device convenience only */ }
+  const mine = myBasePieces(), hp = {};
+  for (const p of mine) hp[p.id] = baseHpOf(p);
+  try { localStorage.setItem(baseCountKey(), JSON.stringify({ count: mine.length, hp })); } catch (e) { /* private window: per-device convenience only */ }
 }
 function raidLoginSummary() {
+  /* Review fix: a failed or cut-short read of base_pieces is not "your whole
+     base was destroyed" — say nothing, and leave the stored record alone. */
+  if (!basePiecesLoadOk) return "";
   const mine = myBasePieces();
-  const damaged = mine.filter(p => (Number(p.hp) || 0) < basePieceMaxHp(p)).length;
-  const stored = readStoredBaseCount();
-  const destroyed = stored === null ? 0 : Math.max(0, stored - mine.length);
+  const rec = readStoredBaseRecord();
+  const damaged = mine.filter(p => {
+    const hp = baseHpOf(p);   // no hp column / value reads as full, as everywhere else
+    if (!(hp < basePieceMaxHp(p))) return false;
+    const was = rec && rec.hp ? Number(rec.hp[p.id]) : NaN;
+    return !Number.isFinite(was) || hp < was;
+  }).length;
+  const destroyed = rec ? Math.max(0, rec.count - mine.length) : 0;
   raidCountReady = true;
   storeMyBaseCount();
   if (!damaged && !destroyed) return "";
-  const msg = `While you were away: ${damaged} base piece${damaged === 1 ? " was" : "s were"} damaged` +
-              (destroyed ? `, and ${destroyed} destroyed` : "");
+  const pc = n => n + " base piece" + (n === 1 ? "" : "s");
+  const msg = "While you were away: " + (damaged
+    ? pc(damaged) + (damaged === 1 ? " was" : " were") + " damaged" + (destroyed ? `, and ${destroyed} destroyed` : "")
+    : pc(destroyed) + (destroyed === 1 ? " was" : " were") + " destroyed");
   setTimeout(() => toast(msg), 2500);   // after the login toasts, which share the one toast slot
   return msg;
 }
@@ -11237,6 +11292,11 @@ function applyDamage(dmg, from, opts = {}) {
      multiplicatively rather than summing to an accidental immunity. A
      Ranger's Marked Shot (mk) punches straight through it and does NOT
      consume it: that is the explicit counterplay pair between the two. */
+  /* S7 review fix: ashfall (envDamageNow, set only by updateWeather — never
+     from a payload) must not use up a Knight's Guard Break meant for a real
+     hit. Held across the unchanged block below and put back. */
+  const gbHeldForEnv = envDamageNow ? guardBreakUntil : 0;
+  if (envDamageNow) guardBreakUntil = 0;
   if (guardBreakUntil > performance.now() && !opts.mk) {
     guardBreakUntil = 0;                       // "next hit taken" — exactly one
     dmg = Math.max(1, Math.round(dmg * (1 - GUARD_BREAK_REDUCE)));
@@ -11260,11 +11320,16 @@ function applyDamage(dmg, from, opts = {}) {
     dmg = Math.max(1, Math.round(dmg * (1 - POTION_FIRE_REDUCE)));
     addFloat(me.x, me.y, "RESISTED", "#ff7a3c");
   }
+  if (envDamageNow) guardBreakUntil = gbHeldForEnv;
   me.hp -= dmg;
+  /* S7 review fix: weather is not combat — no combat music, no combat-logout
+     window, no screen shake every 4 s. The hp loss, the flash and death stay. */
+  if (!envDamageNow) {
   combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;   // v24: combat music signal
   noteCombatDamage();          // v47 PART E: damage TAKEN opens the logout window
-  hitFlash = performance.now();
   shakeT = performance.now();
+  }
+  hitFlash = performance.now();
   // v10: stagger recoil + knockback shove in the hit direction
   staggerT = performance.now();
   staggerDir = { x: opts.kx || 0, y: opts.ky || 0 };
@@ -12030,11 +12095,14 @@ function nearestBasePiece(range) {
 /* PART C — persistence, the same shape as ground_items: one select on login,
    one insert on placement, one broadcast so the piece appears for everyone
    the moment it is built. No new table shape and no new channel. */
+let basePiecesLoadOk = false;   // S7 PART C: the login summary trusts only a complete read
+const BASE_SELECT_CAP = 1000;    // PostgREST's default max-rows: a read this long may be cut short
 async function loadBasePieces() {
-  const { data } = await sb.from("base_pieces").select("*");
+  const { data, error } = await sb.from("base_pieces").select("*");
   basePieces.clear();
   baseIndex.clear();
   (data || []).forEach(p => baseAdd(p));
+  basePiecesLoadOk = !error && Array.isArray(data) && data.length < BASE_SELECT_CAP;
 }
 
 /* The whole collision model this version has. A solid piece stops movement on
@@ -21063,7 +21131,8 @@ function minimapBearings() {
      table — and both exist only on the client they belong to. */
   for (const tm of transientMarks()) {
     const dx = tm.x - me.x, dy = tm.y - me.y;
-    out.push({ label: tm.label, deg: Math.atan2(isoY(dx, dy), isoX(dx, dy)) * 180 / Math.PI,
+    /* rounded to 5 degrees, so a PACK a few tiles away does not rebuild the dial every frame */
+    out.push({ label: tm.label, deg: Math.round(Math.atan2(isoY(dx, dy), isoX(dx, dy)) * 36 / Math.PI) * 5,
                d: Math.hypot(dx, dy), transient: true });
   }
   return out;
@@ -21379,13 +21448,15 @@ function updateWorldMap() {
     c.fillStyle = (cls && cls.lit) || "#cdd2da";
     c.fillRect(ox - MAP_DOT / 2, oy - MAP_DOT / 2, MAP_DOT, MAP_DOT);
   }
-  /* S7 PART B/C: your PACK and a RAID, pinned to the card's edge when they
-     lie beyond its window — the card says which way, the compass the same. */
+  /* S7 PART B: your PACK (the spec puts it on the compass AND the minimap;
+     RAID is a compass mark only), pinned to the card's edge when it lies
+     beyond the window — the card says which way, as the compass does. */
   for (const tm of tMarks) {
+    if (tm.label !== "PACK") continue;
     let [mx, my] = mapPixel(tm.x, tm.y, px, py);
     mx = Math.max(MAP_DOT, Math.min(MAP_PX - MAP_DOT, mx));
     my = Math.max(MAP_DOT, Math.min(MAP_PX - MAP_DOT, my));
-    c.fillStyle = tm.label === "RAID" ? "#e04a3c" : "#f3e8c8";
+    c.fillStyle = PACK_MARK_COL;
     c.fillRect(Math.round(mx - MAP_DOT / 2), Math.round(my - MAP_DOT / 2), MAP_DOT, MAP_DOT);
   }
   const [sx, sy] = mapPixel(me.x, me.y, px, py);

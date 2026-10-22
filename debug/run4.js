@@ -6418,7 +6418,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
              count of base pieces you owned, under rh_base_count_<username> —
              a number, never a PIN or credential (the S7 block pins its key). */
           (gameScript.match(/localStorage\.setItem\(/g) || []).length === 6 &&
-          gameScript.indexOf('localStorage.setItem(baseCountKey(), String(myBasePieces().length))') > 0]);
+          gameScript.indexOf('localStorage.setItem(baseCountKey(), JSON.stringify({ count: mine.length, hp }))') > 0]);
         enterEl46.onclick = realClick;
         nameEl46.value = 'BootTest';
         try { window.localStorage.removeItem('rh_last_user'); } catch (e) {}
@@ -12308,6 +12308,768 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       window.debugSetDayT(null, ep0);
     } else {
       results.push(['S6: the world-encounter hooks exist', false]);
+    }
+
+    /* ===================== S7 Real Stakes — weather, death weight, raid alerts =====
+       README "Real Stakes", Proof gates. PART A: weather is a pure function of
+       (worldSeed, slot, region) and the biome under you; the aggro, speed, plate,
+       ashfall, particle and HUD effects read it. PART B: the death recap, your PACK
+       mark and the pile beacon. PART C: raid toasts, the RAID mark and the login
+       summary. Top-level `const`s and `let`s never land on window, so the tunables
+       are read out of the game source (the way S6 does) and everything else is driven
+       through the game's own functions and the debug hooks (debugWeatherInfo /
+       debugSetWeather / debugStakesInfo / debugSetStakes). Everything this block moves
+       (player, inventory, class, mount, fire draught, weather force, stakes state,
+       base pieces and their owners, localStorage, the stub ground_items rows, the
+       music signal, `others`, the goblin) is put back at the end. */
+    if (window.debugWeatherInfo && window.debugSetWeather && window.debugStakesInfo && window.debugSetStakes &&
+        window.weatherAt && window.dropAllItems && window.baseAdd && window.raidLoginSummary && window.debugSetBase) {
+      const sleep7 = ms => new Promise(r => setTimeout(r, ms));
+      const doc7 = window.document;
+      const W7 = window.debugWorldInfo(), B7 = W7.B, N7 = W7.N;
+      const bname7 = id => Object.keys(B7).find(k => B7[k] === id) || String(id);
+      let rs7 = 0x7a11e5;                                  // a seeded PRNG, so the samples are the same every run
+      const rnd7 = () => { rs7 = (rs7 + 0x6D2B79F5) | 0; let t = Math.imul(rs7 ^ (rs7 >>> 15), 1 | rs7); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+      // ---- the tunables, read from their declarations in the game source ----
+      const num7 = n => {
+        const mm = gameScript.match(new RegExp('\\b' + n + ' = (-?[0-9.]+(?:\\s*\\*\\s*[0-9.]+)*)\\s*[,;]'));
+        return mm ? new Function('return (' + mm[1] + ');')() : NaN;
+      };
+      const set7 = n => {
+        const mm = gameScript.match(new RegExp('const ' + n + ' = new Set\\(\\[([^\\]]*)\\]\\)'));
+        return new Set(mm ? mm[1].split(',').map(s => B7[s.trim().replace(/^B\./, '')]) : []);
+      };
+      const C7 = {};
+      for (const n of ['WEATHER_SLOT_S', 'WEATHER_REGION', 'WEATHER_CHANCE', 'WEATHER_RAIN_AGGRO', 'WEATHER_FOG_AGGRO', 'WEATHER_FOG_ALPHA',
+                       'WEATHER_FOG_PLATE_R', 'WEATHER_ASH_DMG', 'WEATHER_ASH_EVERY_S', 'WEATHER_SNOW_MULT', 'WEATHER_PARTICLE_CAP',
+                       'PACK_MARK_MS', 'PILE_BEACON_MS', 'RAID_TOAST_EVERY_MS', 'RAID_MARK_MS', 'ARCHITECT_HP_BONUS']) C7[n] = num7(n);
+      const RAIN_B = set7('WEATHER_RAIN_B'), ASH_B = set7('WEATHER_ASH_B'), SNOW_B = set7('WEATHER_SNOW_B');
+      const REG = C7.WEATHER_REGION, NR = Math.ceil(N7 / REG), SLOT_MS = C7.WEATHER_SLOT_S * 1000, CAP = C7.WEATHER_PARTICLE_CAP;
+      const setEq7 = (S, ids) => S.size === ids.length && ids.every(i => S.has(i));
+
+      // ---- the handles and the snapshot of everything this block will move ----
+      const dsp7 = window.debugSetPlayer, dsw7 = window.debugSetWeather, dss7 = window.debugSetStakes, dsm7 = window.debugSetMount;
+      const dwi7 = () => window.debugWorldInfo().player;
+      window.render(9000);                                  // one frame, so the HUD carries the player's name and class
+      const hud7 = doc7.getElementById('hudPlayer').textContent;
+      const uname = (hud7.split(' — ')[0] || '').trim();
+      const cls0 = (hud7.match(/ — ([A-Za-z]+)Level/) || [])[1] || null;
+      const p0 = dwi7(), gear0 = window.debugGearInfo(), mount0 = window.debugMountInfo().mounted;
+      const fire0 = window.debugConsumableInfo().until.fire;
+      const eq0 = gear0.weapon === 'fists' ? null : gear0.weapon, arm0 = gear0.armor;
+      const st0 = window.debugStakesInfo(), music0 = window.debugMusicInfo();
+      const gi0 = tableData.ground_items.slice();
+      const HB7 = window.debugCombatHandles();
+      const others7 = [...HB7.others.entries()];
+      const baseOwners0 = window.debugBaseInfo().pieces.map(p => ({ id: p.id, owner: p.owner }));
+      const lsKey7 = 'rh_base_count_' + uname;
+      let ls0 = null; try { ls0 = window.localStorage.getItem(lsKey7); } catch (e) {}
+      const fullHp = () => p0.maxHp || 100;
+      results.push([`S7: the harness knows who it is — player "${uname}", class ${cls0}, ${baseOwners0.filter(p => p.owner === uname).length} of its own base pieces already standing`,
+        uname.length > 0 && !!cls0 && p0.hp > 0]);
+
+      // a spot outside every safe zone, and the Spawn Safe Zone itself
+      const SP7 = W7.SPAWN;
+      let out7 = null;
+      for (let d = W7.SAFE_RADIUS + 60; d < 1500 && !out7; d += 37) {
+        for (const [ox, oy] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) {
+          const x = SP7.x + ox * d + 0.5, y = SP7.y + oy * d + 0.5;
+          if (x > 8 && y > 8 && x < N7 - 8 && y < N7 - 8 && !window.inSafeZone(x, y) && !window.inColosseum(x, y)) { out7 = { x, y }; break; }
+        }
+      }
+      const inSpawn7 = { x: SP7.x + 0.5, y: SP7.y + 0.5 };
+      results.push([`S7: a test spot outside every safe zone exists — (${out7 && out7.x.toFixed(1)}, ${out7 && out7.y.toFixed(1)}), ${out7 ? Math.hypot(out7.x - SP7.x, out7.y - SP7.y).toFixed(0) : '?'} tiles from Spawn (safe radius ${W7.SAFE_RADIUS}); the Spawn spot is inside: ${window.inSafeZone(inSpawn7.x, inSpawn7.y)}`,
+        !!out7 && window.inSafeZone(inSpawn7.x, inSpawn7.y) === true && window.inSafeZone(out7.x, out7.y) === false]);
+      if (!out7) out7 = { x: inSpawn7.x + 900, y: inSpawn7.y };
+
+      /* ---- A0. The spec's tunables and its biome lists ---- */
+      results.push([`S7 A: the spec's tunables — slot ${C7.WEATHER_SLOT_S} s, region ${C7.WEATHER_REGION} tiles, rain aggro ${C7.WEATHER_RAIN_AGGRO}, fog aggro ${C7.WEATHER_FOG_AGGRO}, fog alpha ${C7.WEATHER_FOG_ALPHA}, plates hidden past ${C7.WEATHER_FOG_PLATE_R} tiles, ash ${C7.WEATHER_ASH_DMG} per ${C7.WEATHER_ASH_EVERY_S} s, snow x${C7.WEATHER_SNOW_MULT}, particle cap ${C7.WEATHER_PARTICLE_CAP}, ${(C7.WEATHER_CHANCE * 100).toFixed(0)}% of rolls turn`,
+        C7.WEATHER_SLOT_S === 300 && C7.WEATHER_REGION === 256 && C7.WEATHER_RAIN_AGGRO === 0.75 && C7.WEATHER_FOG_AGGRO === 0.6 &&
+        C7.WEATHER_FOG_ALPHA === 0.28 && C7.WEATHER_FOG_PLATE_R === 8 && C7.WEATHER_ASH_DMG === 1 && C7.WEATHER_ASH_EVERY_S === 4 &&
+        C7.WEATHER_SNOW_MULT === 0.85 && C7.WEATHER_PARTICLE_CAP === 160 && C7.WEATHER_CHANCE > 0 && C7.WEATHER_CHANCE <= 0.45]);
+      results.push([`S7 A: the biome lists are the spec's — rain ${[...RAIN_B].map(bname7).join('/')}, ash ${[...ASH_B].map(bname7).join('/')}, snow ${[...SNOW_B].map(bname7).join('/')}`,
+        setEq7(RAIN_B, [B7.FOREST, B7.PLAINS, B7.MEADOW, B7.ENCHFOREST, B7.SACMEADOW]) &&
+        setEq7(ASH_B, [B7.VOLROCK, B7.CALDERA, B7.LAVA]) && setEq7(SNOW_B, [B7.ROCK, B7.PEAK])]);
+
+      /* ---- 1. Determinism: the same seed, slot and region always give the same weather ---- */
+      const now7 = Date.now(), slot0 = window.weatherSlotAt(now7);
+      {
+        let detMis = 0, compMis = 0, edge = 0;
+        const rolls = new Set(), kinds = {};
+        for (let i = 0; i < 500; i++) {
+          const slot = slot0 - 3000 + Math.floor(rnd7() * 6000);
+          let tx = Math.floor(rnd7() * N7), ty = Math.floor(rnd7() * N7);
+          if (i % 5 === 0) { tx = Math.max(0, Math.min(N7 - 1, (1 + Math.floor(rnd7() * (NR - 1))) * REG - (i % 2))); edge++; }   // right on a region edge
+          const x = tx + 0.5, y = ty + 0.5, rx = Math.floor(x / REG), ry = Math.floor(y / REG);
+          const night = rnd7() < 0.5, bio = window.biomeAt(tx, ty);
+          const r1 = window.weatherRoll(slot, rx, ry), r2 = window.weatherRoll(slot, rx, ry);
+          const a = window.weatherTypeFor(bio, r1, night), b = window.weatherTypeFor(bio, r2, night);
+          const ms = now7 + (slot - slot0) * SLOT_MS;       // same offset into the slot, so weatherSlotAt(ms) === slot
+          const w1 = window.weatherAt(x, y, ms, night), w2 = window.weatherAt(x, y, ms, night);
+          if (r1 !== r2 || a !== b || w1 !== w2) detMis++;
+          if (window.weatherSlotAt(ms) !== slot || w1 !== a) compMis++;     // weatherAt IS weatherTypeFor(biome, weatherRoll(slot, region), night)
+          rolls.add(r1.toFixed(7)); kinds[w1] = (kinds[w1] || 0) + 1;
+        }
+        results.push([`S7 A: weather is deterministic — 500 random slot/region/positions (${edge} on a region edge) evaluated twice each: ${detMis} disagree; weatherAt equals weatherTypeFor(biome, weatherRoll(slot, region), night) in ${500 - compMis}/500; ${rolls.size} distinct rolls; kinds ${JSON.stringify(kinds)}`,
+          detMis === 0 && compMis === 0 && rolls.size >= 450]);
+        // a slot is WEATHER_SLOT_S long: find the next boundary by walking the clock, then check both sides of it and a slot later
+        const sA = window.weatherSlotAt(now7);
+        let b0 = null;
+        for (let k = 1; k <= 301 && b0 === null; k++) if (window.weatherSlotAt(now7 + k * 1000) !== sA) b0 = now7 + k * 1000;
+        const okSlot = b0 !== null && window.weatherSlotAt(b0 - 1000) === sA && window.weatherSlotAt(b0) === sA + 1 &&
+          window.weatherSlotAt(b0 + SLOT_MS - 2000) === sA + 1 && window.weatherSlotAt(b0 + SLOT_MS + 1000) === sA + 2;
+        // and a new slot really is a new roll for most regions (otherwise the weather would never change)
+        let changed = 0;
+        for (let rx = 0; rx < NR; rx++) for (let ry = 0; ry < NR; ry++) if (window.weatherRoll(sA, rx, ry) !== window.weatherRoll(sA + 1, rx, ry)) changed++;
+        results.push([`S7 A: a slot is ${C7.WEATHER_SLOT_S} s — boundary found at +${b0 === null ? '?' : ((b0 - now7) / 1000)} s, ${okSlot ? 'slots sA, sA+1, sA+1, sA+2 either side and a slot later' : 'the slot walk is wrong'}; ${changed}/${NR * NR} regions roll differently in the next slot`,
+          okSlot && changed >= NR * NR * 0.9]);
+      }
+
+      /* ---- 2. Clear is the common case: >= 55% across 2000 slot/region pairs ---- */
+      {
+        let clearAll = 0, clearLand = 0, landN = 0, turned = 0;
+        const byType = {};
+        for (let i = 0; i < 2000; i++) {
+          const slot = slot0 - 10000 + Math.floor(rnd7() * 20000), rx = Math.floor(rnd7() * NR), ry = Math.floor(rnd7() * NR);
+          const roll = window.weatherRoll(slot, rx, ry);
+          let tx = 0, ty = 0, onLand = false;                // a real player position in that region: a random land tile
+          for (let k = 0; k < 60 && !onLand; k++) {
+            tx = Math.min(N7 - 1, rx * REG + Math.floor(rnd7() * REG)); ty = Math.min(N7 - 1, ry * REG + Math.floor(rnd7() * REG));
+            onLand = window.isPlaceableLand(tx, ty);
+          }
+          const t = window.weatherTypeFor(window.biomeAt(tx, ty), roll, rnd7() < 0.5);
+          byType[t] = (byType[t] || 0) + 1;
+          if (roll < C7.WEATHER_CHANCE) turned++;
+          if (t === 'clear') clearAll++;
+          if (onLand) { landN++; if (t === 'clear') clearLand++; }
+        }
+        results.push([`S7 A: Clear is at least 55% — ${(clearAll / 20).toFixed(1)}% of 2000 slot/region samples (${clearAll} clear), ${(clearLand / landN * 100).toFixed(1)}% of the ${landN} on land; ${(turned / 20).toFixed(1)}% of the rolls turned; ${JSON.stringify(byType)}`,
+          clearAll / 2000 >= 0.55 && clearLand / landN >= 0.55 && landN >= 500]);
+      }
+
+      /* ---- 3. Each weather only on its own biomes ---- */
+      const scanT0 = Date.now(), tiles7 = {};
+      {
+        const want = new Set([...RAIN_B, ...ASH_B, ...SNOW_B, B7.DARKFOREST, B7.RUINB, B7.UWCAVE]);
+        for (let ty = 3; ty < N7; ty += 7) for (let tx = 3; tx < N7; tx += 7) {
+          const bi = window.biomeAt(tx, ty);
+          if (want.has(bi)) (tiles7[bi] = tiles7[bi] || []).push([tx, ty]);
+        }
+      }
+      {
+        const allowed = (bi, night) => {
+          const s = new Set(['clear']);
+          if (RAIN_B.has(bi)) s.add('rain');
+          if (bi === B7.DARKFOREST || (bi === B7.RUINB && night)) s.add('fog');
+          if (ASH_B.has(bi)) s.add('ash');
+          if (SNOW_B.has(bi)) s.add('snow');
+          return s;
+        };
+        // (a) the rule itself, on every biome id, over 4000 real rolls, by day and by night
+        const R = [];
+        for (let i = 0; i < 4000; i++) R.push(window.weatherRoll(slot0 - 5000 + Math.floor(rnd7() * 10000), Math.floor(rnd7() * NR), Math.floor(rnd7() * NR)));
+        let ruleBad = 0, fogDayRuin = 0;
+        const seenRule = {};
+        for (const bi of Object.values(B7)) for (const night of [false, true]) {
+          const got = new Set();
+          for (const r of R) got.add(window.weatherTypeFor(bi, r, night));
+          const al = allowed(bi, night);
+          if (got.size !== al.size || [...got].some(t => !al.has(t))) ruleBad++;     // exactly its own set: clear plus its weather
+          if (bi === B7.RUINB && !night && got.has('fog')) fogDayRuin++;
+          for (const t of got) seenRule[t] = (seenRule[t] || 0) + 1;
+        }
+        results.push([`S7 A: weatherTypeFor gives each of the ${Object.keys(B7).length} biomes exactly its own weather and Clear — 4000 rolls x day/night: ${ruleBad} biomes wrong, fog on Ruins by day: ${fogDayRuin}; kinds seen ${JSON.stringify(seenRule)}`,
+          ruleBad === 0 && fogDayRuin === 0 && ['rain', 'fog', 'ash', 'snow'].every(t => seenRule[t] > 0)]);
+        // (b) the real thing: weatherAt at 4000 real positions (a quarter anywhere, the rest on the tiles of the weather biomes)
+        const wanted = Object.keys(tiles7).map(Number).filter(bi => bi !== B7.UWCAVE);
+        const bad = [], seen = {}, perBiome = {};
+        let ruinNightFog = 0, ruinDayAny = 0, ruinDay = 0;
+        for (let i = 0; i < 4000; i++) {
+          let tx, ty;
+          if (i % 4 === 0 || !wanted.length) { tx = Math.floor(rnd7() * N7); ty = Math.floor(rnd7() * N7); }
+          else { const L = tiles7[wanted[Math.floor(rnd7() * wanted.length)]]; const t = L[Math.floor(rnd7() * L.length)]; tx = t[0]; ty = t[1]; }
+          const slot = slot0 - 5000 + Math.floor(rnd7() * 10000), night = rnd7() < 0.5, bi = window.biomeAt(tx, ty);
+          const w = window.weatherAt(tx + 0.5, ty + 0.5, now7 + (slot - slot0) * SLOT_MS, night);
+          seen[w] = (seen[w] || 0) + 1;
+          perBiome[bname7(bi)] = perBiome[bname7(bi)] || {}; perBiome[bname7(bi)][w] = (perBiome[bname7(bi)][w] || 0) + 1;
+          if (!allowed(bi, night).has(w)) bad.push(`${w}@${bname7(bi)}${night ? '/night' : ''}`);
+          if (bi === B7.RUINB) { if (night) { if (w === 'fog') ruinNightFog++; } else { ruinDay++; if (w !== 'clear') ruinDayAny++; } }
+        }
+        const everyWeatherBiomeTurns = [...RAIN_B, ...ASH_B, ...SNOW_B, B7.DARKFOREST].filter(bi => tiles7[bi] && tiles7[bi].length)
+          .every(bi => Object.keys(perBiome[bname7(bi)] || {}).some(k => k !== 'clear'));
+        results.push([`S7 A: each weather appears only on its biomes — 4000 real positions: ${bad.length} on the wrong biome${bad.length ? ' (' + bad.slice(0, 3).join(', ') + ')' : ''}; seen ${JSON.stringify(seen)}; Ruins by night fogged ${ruinNightFog}, by day ${ruinDay} samples with ${ruinDayAny} weathered; every weather biome that exists turned at least once: ${everyWeatherBiomeTurns} (map scan of ${Object.values(tiles7).reduce((s, l) => s + l.length, 0)} tiles took ${Date.now() - scanT0} ms)`,
+          bad.length === 0 && ['clear', 'rain', 'fog', 'ash', 'snow'].every(t => seen[t] > 0) && ruinDayAny === 0 && everyWeatherBiomeTurns]);
+      }
+
+      /* ---- 4. Ashfall: 1 damage every 4 s; fire resist stops it; a safe zone never takes it ---- */
+      {
+        const hp = () => dwi7().hp;
+        const setup = (pos) => { dsp7({ x: pos.x, y: pos.y, hp: fullHp(), armor: null }); dsw7({ force: 'ash', ashAcc: 0 }); };
+        window.debugSetConsumable({ fire: 0 });
+        setup(out7);
+        const h0 = hp(), steps = [];
+        for (let i = 0; i < 8; i++) { dsw7({ update: true, dt: 1 }); steps.push(h0 - hp()); }
+        const exact = steps[2] === 0 && steps[3] === 1 && steps[6] === 1 && steps[7] === 2;
+        setup(out7);
+        const hq = hp(); for (let i = 0; i < 32; i++) dsw7({ update: true, dt: 0.25 });
+        const fine = hq - hp();
+        results.push([`S7 A: ashfall — 8 x 1 s outside a safe zone cost exactly 2 hp (cumulative loss after each second: ${steps.join(',')}); 32 x 0.25 s cost ${fine}`,
+          h0 === fullHp() && steps[7] === 2 && exact && fine === 2]);
+        // fire resist: nothing for 8 s, accumulator held at 0, and the damage is back the moment it lapses
+        window.debugSetConsumable({ fire: Date.now() + 60000 });
+        setup(out7);
+        const hf = hp(); for (let i = 0; i < 8; i++) dsw7({ update: true, dt: 1 });
+        const lostFire = hf - hp(), accFire = window.debugWeatherInfo().ashAcc;
+        setup(out7); dsw7({ update: true, dt: 8 });
+        const lostFireBig = fullHp() - hp();
+        window.debugSetConsumable({ fire: Date.now() - 1 });
+        setup(out7); for (let i = 0; i < 4; i++) dsw7({ update: true, dt: 1 });
+        const lostAfter = fullHp() - hp();
+        results.push([`S7 A: with the fire-resist draught up ashfall costs ${lostFire} hp over 8 s (one 8 s tick: ${lostFireBig}, accumulator ${accFire}); once it lapses 4 s cost ${lostAfter}`,
+          lostFire === 0 && lostFireBig === 0 && accFire === 0 && lostAfter === 1]);
+        // the Spawn Safe Zone, and another safe zone
+        window.debugSetConsumable({ fire: 0 });
+        setup(inSpawn7);
+        const hs = hp(); for (let i = 0; i < 8; i++) dsw7({ update: true, dt: 1 });
+        const lostSpawn = hs - hp();
+        setup(inSpawn7); dsw7({ ashAcc: 3.9 }); dsw7({ update: true, dt: 1 });
+        const lostSpawn2 = fullHp() - hp(), accSpawn = window.debugWeatherInfo().ashAcc;
+        let lostOther = 'n/a', otherIn = 'n/a';
+        if (W7.OTHER_SAFE_ZONES.length) {
+          const z = W7.OTHER_SAFE_ZONES[0];
+          otherIn = window.inSafeZone(z.x + 0.5, z.y + 0.5);
+          setup({ x: z.x + 0.5, y: z.y + 0.5 }); for (let i = 0; i < 8; i++) dsw7({ update: true, dt: 1 });
+          lostOther = fullHp() - hp();
+        }
+        // and nothing else hurts: every other weather for 8 s
+        const lostOthers = {};
+        for (const k of ['clear', 'rain', 'fog', 'snow']) { setup(out7); dsw7({ force: k }); for (let i = 0; i < 8; i++) dsw7({ update: true, dt: 1 }); lostOthers[k] = fullHp() - hp(); }
+        results.push([`S7 A: ashfall never applies inside a safe zone — Spawn: ${lostSpawn} hp over 8 s, ${lostSpawn2} with the accumulator primed at 3.9 (it stays ${accSpawn}); another safe zone (inside: ${otherIn}): ${lostOther}; and Clear/Rain/Fog/Snow cost ${JSON.stringify(lostOthers)}`,
+          lostSpawn === 0 && lostSpawn2 === 0 && accSpawn === 0 && (lostOther === 0 || lostOther === 'n/a') && Object.values(lostOthers).every(v => v === 0)]);
+        window.debugSetConsumable({ fire: fire0 });
+      }
+
+      /* ---- 5. Snow: -15% on foot, 0% mounted ---- */
+      {
+        dsp7({ x: out7.x, y: out7.y, hp: fullHp() });
+        dsm7({ mounted: false });
+        const mult = {};
+        for (const k of ['clear', 'rain', 'fog', 'ash', 'snow']) { dsw7({ force: k, update: true, dt: 0 }); mult[k] = window.weatherSpeedMult(); }
+        dsw7({ force: 'snow', update: true, dt: 0 });
+        const infoOn = window.debugWeatherInfo().speed;
+        dsm7({ mounted: true });
+        const snowMounted = window.weatherSpeedMult(), infoMounted = window.debugWeatherInfo().speed;
+        dsm7({ mounted: mount0 });
+        results.push([`S7 A: snow slows by 15% on foot and 0% mounted — weatherSpeedMult() ${mult.snow} on foot (info ${infoOn}), ${snowMounted} mounted (info ${infoMounted}); the other weathers ${mult.clear}/${mult.rain}/${mult.fog}/${mult.ash}`,
+          mult.snow === 0.85 && infoOn === 0.85 && snowMounted === 1 && infoMounted === 1 && mult.clear === 1 && mult.rain === 1 && mult.fog === 1 && mult.ash === 1]);
+        // the same through the real movement code: 20 frames of walking, clear vs snow, from the same land tile
+        const PS = window.debugConsumableInfo().against.PLAYER_SPEED;
+        const press7 = (key, type) => window.dispatchEvent(new window.KeyboardEvent(type, { key, bubbles: true }));
+        const walkFrom = (pos, force, base) => {
+          dsp7({ x: pos[0] + 0.5, y: pos[1] + 0.5, hp: fullHp(), diving: false });
+          dsm7({ mounted: false }); dsw7({ force, ashAcc: 0, update: true, dt: 0 });   // (update() reads the weather only AFTER it has moved you)
+          press7('w', 'keydown');
+          for (let i = 0; i < 20; i++) window.update(0.05, base + i * 50);
+          press7('w', 'keyup');
+          const q = dwi7(); return Math.hypot(q.x - (pos[0] + 0.5), q.y - (pos[1] + 0.5));
+        };
+        let dClear = 0, dSnow = 0, tried = 0;
+        const cand = (tiles7[B7.PLAINS] || []).concat(tiles7[B7.MEADOW] || []);
+        for (let k = 0; k < cand.length && tried < 40; k += Math.max(1, Math.floor(cand.length / 40))) {
+          tried++;
+          dClear = walkFrom(cand[k], 'clear', 300000);
+          if (dClear > 0.95 * PS) { dSnow = walkFrom(cand[k], 'snow', 310000); break; }
+        }
+        press7('w', 'keyup');
+        results.push([`S7 A: and a walking player really is slower — 20 frames of 0.05 s at PLAYER_SPEED ${PS}: ${dClear.toFixed(4)} tiles clear, ${dSnow.toFixed(4)} in snow, ratio ${(dSnow / dClear).toFixed(4)} (want 0.85); the speed line carries weatherSpeedMult()`,
+          dClear > 0.95 * PS && Math.abs(dSnow / dClear - 0.85) < 0.005 && /const spd = PLAYER_SPEED[^;]*weatherSpeedMult\(\)[^;]*;/.test(gameScript)]);
+        dsw7({ force: null, update: true, dt: 0 });
+      }
+
+      /* ---- 6. Rain and fog thin out mob aggro, and only that ---- */
+      {
+        const mults = {};
+        dsp7({ x: out7.x, y: out7.y, hp: fullHp() });
+        for (const k of ['clear', 'rain', 'fog', 'snow', 'ash']) { dsw7({ force: k, update: true, dt: 0 }); mults[k] = window.weatherAggroMult(); }
+        results.push([`S7 A: the aggro multipliers — rain ${mults.rain}, fog ${mults.fog}, snow ${mults.snow}, ash ${mults.ash}, clear ${mults.clear}`,
+          mults.rain === 0.75 && mults.fog === 0.6 && mults.snow === 1 && mults.ash === 1 && mults.clear === 1]);
+        // the live check: a goblin (not tameable) with the player at a fraction of its aggro radius
+        const gob = HB7.mobs.find(q => q.kind === 'goblin' && !q.dead && !(q.space && q.space !== 'main'));
+        if (gob) {
+          const def = W7.MOBS.goblin, snap = Object.assign({}, gob);
+          HB7.others.clear();
+          const bm = window.bloodMoonActive ? window.bloodMoonActive() : false;
+          const Reff = def.aggroRadius * (bm ? 1.5 : 1);
+          let T = 5e6;
+          const probe = (force, frac) => {
+            Object.assign(gob, snap); gob.dead = false; gob.hp = gob.maxHp = def.hp; gob.x = gob.hx; gob.y = gob.hy; gob.state = 'idle'; gob.target = null; gob.winding = false;
+            dsp7({ x: gob.x + frac * Reff, y: gob.y, hp: fullHp() });
+            dsw7({ force, update: true, dt: 0 });
+            T += 50; window.updateMob(gob, 0.05, T, T);
+            return gob.state;
+          };
+          const safeAtProbe = !window.inSafeZone(gob.x + 0.8 * Reff, gob.y);
+          const st = { clear: probe('clear', 0.8), rain: probe('rain', 0.8), fog: probe('fog', 0.8), snow: probe('snow', 0.8), ash: probe('ash', 0.8) };
+          const edge = { rain_in: probe('rain', 0.72), rain_out: probe('rain', 0.78), fog_in: probe('fog', 0.58), fog_out: probe('fog', 0.62) };
+          const hunts = s => s === 'aggro' || s === 'attack';
+          results.push([`S7 A: live goblin at 0.8 x its aggro radius${bm ? ' (Blood Moon on: x1.5)' : ''} (${(0.8 * Reff).toFixed(2)} of ${Reff.toFixed(2)} tiles, outside a safe zone: ${safeAtProbe}) — clear "${st.clear}", rain "${st.rain}", fog "${st.fog}", snow "${st.snow}", ash "${st.ash}"; rain at 0.72/0.78: "${edge.rain_in}"/"${edge.rain_out}"; fog at 0.58/0.62: "${edge.fog_in}"/"${edge.fog_out}"`,
+            safeAtProbe && hunts(st.clear) && st.rain === 'idle' && st.fog === 'idle' && hunts(st.snow) && hunts(st.ash) &&
+            hunts(edge.rain_in) && edge.rain_out === 'idle' && hunts(edge.fog_in) && edge.fog_out === 'idle']);
+          // the leash radius and the mob's speed are the mob's own, and the weather does not touch the speed line
+          const defAfter = window.debugWorldInfo().MOBS.goblin;
+          dsw7({ force: 'rain', update: true, dt: 0 }); const spRain = window.weatherSpeedMult();
+          dsw7({ force: 'fog', update: true, dt: 0 }); const spFog = window.weatherSpeedMult();
+          const mobFn = gameScript.slice(gameScript.indexOf('function updateMob('), gameScript.indexOf('\nfunction ', gameScript.indexOf('function updateMob(') + 10));
+          results.push([`S7 A: the leash radius and speed are untouched — goblin leash ${def.leashRadius} / moveSpeed ${def.moveSpeed} (after: ${defAfter.leashRadius} / ${defAfter.moveSpeed}), player speed multiplier ${spRain} in rain and ${spFog} in fog, and updateMob (${mobFn.length} chars) mentions no weather speed or curWeather`,
+            defAfter.leashRadius === def.leashRadius && defAfter.moveSpeed === def.moveSpeed && spRain === 1 && spFog === 1 &&
+            mobFn.length > 2000 && mobFn.indexOf('weatherSpeedMult') < 0 && mobFn.indexOf('curWeather') < 0]);
+          // a mob already hunting you keeps hunting inside the leash: rain only changes who NOTICES you
+          Object.assign(gob, snap); for (const k of Object.keys(gob)) if (!(k in snap)) delete gob[k];
+          HB7.others.clear(); for (const [k, v] of others7) HB7.others.set(k, v);
+        } else {
+          results.push(['S7 A: a live goblin exists to test the aggro multiplier on', false]);
+        }
+        // the one place the multiplier is applied: exactly one use outside its definition and the debug info
+        const total = (gameScript.match(/weatherAggroMult\(\)/g) || []).length;
+        const inDef = (gameScript.match(/function weatherAggroMult\(\)/g) || []).length;
+        const inInfo = (gameScript.match(/aggro: weatherAggroMult\(\)/g) || []).length;
+        const uses = total - inDef - inInfo;
+        const aggroStmt = (() => { const i = gameScript.indexOf('let tgt = null, tgtD = '); return i < 0 ? '' : gameScript.slice(i, gameScript.indexOf('tgtIsMe = false;', i)); })();
+        const mobFn2 = gameScript.slice(gameScript.indexOf('function updateMob('), gameScript.indexOf('\nfunction ', gameScript.indexOf('function updateMob(') + 10));
+        results.push([`S7 A: weatherAggroMult() has exactly ${uses} use outside its definition (${inDef}) and the debug info (${inInfo}) of ${total} mentions, and it is in updateMob's aggro line beside BLOOD_MOON_AGGRO_MULT: ${aggroStmt.indexOf('weatherAggroMult()') > 0 && aggroStmt.indexOf('BLOOD_MOON_AGGRO_MULT') > 0 && aggroStmt.indexOf('def.aggroRadius') > 0 && mobFn2.indexOf(aggroStmt) >= 0}`,
+          uses === 1 && inDef === 1 && inInfo === 1 && aggroStmt.indexOf('weatherAggroMult()') > 0 && aggroStmt.indexOf('BLOOD_MOON_AGGRO_MULT') > 0 && aggroStmt.indexOf('def.aggroRadius') > 0 && mobFn2.indexOf(aggroStmt) >= 0]);
+        dsw7({ force: null, update: true, dt: 0 });
+      }
+
+      /* ---- 7. The particle layer never exceeds its cap ---- */
+      {
+        const info = () => window.debugWeatherInfo();
+        const per = {};
+        dsp7({ x: out7.x, y: out7.y, hp: fullHp() });
+        let overCap = 0, minParts = 1e9;
+        for (const k of ['rain', 'ash', 'snow']) {
+          dsw7({ force: k, peak: 0, update: true, dt: 0 });
+          for (let f = 0; f < (k === 'rain' ? 120 : 40); f++) {
+            window.render(30000 + f * 16);
+            const q = info(); if (q.parts > CAP) overCap++; if (f > 0) minParts = Math.min(minParts, q.parts);
+          }
+          per[k] = { parts: info().parts, peak: info().peak };
+        }
+        results.push([`S7 A: rendering whole frames under rain (120), ashfall and snow (40 each): particles never over the cap of ${CAP} — rain ${per.rain.parts} now / peak ${per.rain.peak}, ash ${per.ash.parts}/${per.ash.peak}, snow ${per.snow.parts}/${per.snow.peak}; ${overCap} frames over; fewest alive ${minParts}; the cap in the game is ${info().cap}`,
+          overCap === 0 && info().cap === CAP && Object.values(per).every(v => v.peak <= CAP && v.peak > 0 && v.parts > 0 && v.parts <= CAP) && minParts > 0]);
+        // 300 direct calls of the layer itself, at two screen sizes, for each kind
+        const gc0 = gradCalls, fr0 = drawOpsBy.fillRect || 0;
+        let maxPeak = 0, over2 = 0, calls = 0;
+        const peaks = {};
+        for (const k of ['rain', 'ash', 'snow']) {
+          dsw7({ force: k, peak: 0, update: true, dt: 0 });
+          for (let f = 0; f < 300; f++) { window.drawWeather(f % 2 ? 1280 : 1920, f % 2 ? 720 : 1080); calls++; const q = info(); if (q.parts > CAP) over2++; maxPeak = Math.max(maxPeak, q.peak); }
+          peaks[k] = info().peak;
+        }
+        const gradsMade = gradCalls - gc0, rectsMade = (drawOpsBy.fillRect || 0) - fr0;
+        // fog: no particles, one flat fill per frame
+        dsw7({ force: 'fog', update: true, dt: 0 });
+        const fr1 = drawOpsBy.fillRect || 0, gc1 = gradCalls;
+        for (let f = 0; f < 10; f++) window.drawWeather(1280, 720);
+        const fogRects = (drawOpsBy.fillRect || 0) - fr1, fogParts = info().parts, fogGrads = gradCalls - gc1;
+        dsw7({ force: 'clear', update: true, dt: 0 });
+        window.drawWeather(1280, 720);
+        const clearParts = info().parts;
+        const dwSrc = gameScript.slice(gameScript.indexOf('function drawWeather('), gameScript.indexOf('function debugWeatherInfo('));
+        results.push([`S7 A: ${calls} direct drawWeather calls — peak per kind ${JSON.stringify(peaks)} (never over ${CAP}, ${over2} over); ${gradsMade} gradients made (flat fills only), ${rectsMade} fillRects; fog: ${fogRects} fillRects over 10 frames (one flat fill each), ${fogParts} particles, ${fogGrads} gradients; clear: ${clearParts} particles; fog alpha ${C7.WEATHER_FOG_ALPHA} in the source: ${dwSrc.indexOf('rgba(16,20,26,${WEATHER_FOG_ALPHA})') > 0}`,
+          over2 === 0 && maxPeak <= CAP && maxPeak > 0 && Object.values(peaks).every(v => v > 0 && v <= CAP) && gradsMade === 0 && rectsMade >= calls * 50 &&
+          fogRects === 10 && fogParts === 0 && fogGrads === 0 && clearParts === 0 && dwSrc.indexOf('Gradient') < 0 && dwSrc.indexOf('rgba(16,20,26,${WEATHER_FOG_ALPHA})') > 0]);
+        dsw7({ force: null, peak: 0, update: true, dt: 0 });
+      }
+
+      /* ---- 8. Fog hides other players' plates past 8 tiles ---- */
+      {
+        dsp7({ x: out7.x, y: out7.y, hp: fullHp() });
+        const me7 = dwi7(), R8 = C7.WEATHER_FOG_PLATE_R;
+        const at = d => ({ x: me7.x + d, y: me7.y });
+        dsw7({ force: 'fog', update: true, dt: 0 });
+        const f9 = window.weatherHidesPlate(at(9), false), f7 = window.weatherHidesPlate(at(7), false), f8 = window.weatherHidesPlate(at(8), false);
+        const f8b = window.weatherHidesPlate(at(8.01), false), fMe = window.weatherHidesPlate(at(30), true), fDiag = window.weatherHidesPlate({ x: me7.x + 6, y: me7.y + 6 }, false);
+        const others = {};
+        for (const k of ['rain', 'ash', 'snow', 'clear']) { dsw7({ force: k, update: true, dt: 0 }); others[k] = window.weatherHidesPlate(at(30), false); }
+        results.push([`S7 A: fog hides name plates beyond ${R8} tiles — 9 tiles away: ${f9}, 8.01: ${f8b}, 8: ${f8}, 7: ${f7}, diagonal 8.5: ${fDiag}; your own plate: ${fMe}; at 30 tiles under rain/ash/snow/clear: ${others.rain}/${others.ash}/${others.snow}/${others.clear}; the plate push is guarded by it: ${gameScript.indexOf('if (!weatherHidesPlate(p, isMe)) plateQueue.push(') > 0}`,
+          f9 === true && f8b === true && f8 === false && f7 === false && fDiag === true && fMe === false &&
+          !others.rain && !others.ash && !others.snow && !others.clear && gameScript.indexOf('if (!weatherHidesPlate(p, isMe)) plateQueue.push(') > 0]);
+        dsw7({ force: null, update: true, dt: 0 });
+      }
+
+      /* ---- 9. No weather inside an interior ---- */
+      {
+        const dssp = window.debugSetSpace, uwTiles = tiles7[B7.UWCAVE] || [];
+        let entered = false, curIn = null, aggroIn = null, speedIn = null, lostIn = null, hudIn = '', packIn = null;
+        if (uwTiles.length) {
+          dsp7({ x: out7.x, y: out7.y, hp: fullHp() });
+          dssp({ clearCache: true });
+          dssp({ enterAt: uwTiles[Math.floor(uwTiles.length / 2)] });
+          entered = window.debugSpaceInfo().inInterior === true;
+          dsw7({ force: 'rain', update: true, dt: 0 });
+          curIn = window.debugWeatherInfo().cur; aggroIn = window.weatherAggroMult(); speedIn = window.weatherSpeedMult();
+          dsw7({ force: 'snow', update: true, dt: 0 }); const snowIn = window.weatherSpeedMult();
+          dsw7({ force: 'ash', ashAcc: 0 });
+          const h1 = dwi7().hp; for (let i = 0; i < 8; i++) dsw7({ update: true, dt: 1 });
+          lostIn = h1 - dwi7().hp;
+          const curAsh = window.debugWeatherInfo().cur;
+          dsw7({ force: 'rain', update: true, dt: 0 });
+          window.render(31000); hudIn = doc7.getElementById('hudWorld').textContent;
+          // and a PACK mark that points at the surface is not shown from in here
+          dss7({ pack: { x: out7.x, y: out7.y, space: 'main', until: Date.now() + 60000, ids: null }, raidMark: { x: out7.x, y: out7.y, until: Date.now() + 60000 } });
+          packIn = window.debugStakesInfo().marks.length;
+          dss7({ pack: null, raidMark: null });
+          dssp({ exit: true });
+          dsw7({ force: 'rain', update: true, dt: 0 });
+          const curOut = window.debugWeatherInfo().cur;
+          results.push([`S7 A: no weather inside interiors — in a cave (entered: ${entered}) forced rain gives "${curIn}" (aggro x${aggroIn}), forced snow speed x${snowIn}, forced ash "${curAsh}" costs ${lostIn} hp over 8 s, the HUD reads "${hudIn.replace(/\s+/g, ' ').trim()}"; surface marks hidden from inside: ${packIn}; back outside the same force is "${curOut}"`,
+            entered && curIn === 'clear' && aggroIn === 1 && speedIn === 1 && snowIn === 1 && curAsh === 'clear' && lostIn === 0 && hudIn.indexOf('·') < 0 && packIn === 0 && curOut === 'rain']);
+        } else {
+          results.push(['S7 A: no weather inside interiors (no cave tile found to enter)', false]);
+        }
+        dsw7({ force: null, update: true, dt: 0 });
+        dsp7({ x: out7.x, y: out7.y, hp: fullHp() });
+      }
+
+      /* ---- 10. The HUD day card shows the weather ---- */
+      {
+        dsp7({ x: out7.x, y: out7.y, hp: fullHp() });
+        const read = k => { dsw7({ force: k, update: true, dt: 0 }); window.render(32000); return doc7.getElementById('hudWorld').textContent.replace(/\s+/g, ' ').trim(); };
+        const txt = { rain: read('rain'), fog: read('fog'), ash: read('ash'), snow: read('snow'), clear: read('clear') };
+        results.push([`S7 A: the day card says the weather after the time of day — rain "${txt.rain}", fog "${txt.fog}", ash "${txt.ash}", snow "${txt.snow}", clear "${txt.clear}"`,
+          /^Day \d+ — \w+ · Rain\s*\d+ online$/.test(txt.rain) && /^Day \d+ — \w+ · Fog\s*\d+ online$/.test(txt.fog) && /^Day \d+ — \w+ · Ashfall\s*\d+ online$/.test(txt.ash) &&
+          /^Day \d+ — \w+ · Snow\s*\d+ online$/.test(txt.snow) && /^Day \d+ — \w+\s*\d+ online$/.test(txt.clear) && txt.clear.indexOf('·') < 0]);
+        dsw7({ force: null, update: true, dt: 0 });
+      }
+
+      /* ================= PART B: death has weight ================= */
+      const clearStakes7 = () => dss7({ pack: null, raidMark: null, clearBeacons: true });
+      const tables7 = tableData.ground_items;
+      const giRows = [1, 2, 3].map(i => ({ id: 's7:gi' + i, type: 'wood', qty: 1, x: 0, y: 0, space: 'main' }));
+      clearStakes7();
+      tables7.push(...giRows);                               // what the stub's insert(...).select() hands back: three rows with ids
+      const sent0 = sentBroadcasts.length;
+      dsp7({ x: out7.x, y: out7.y, hp: fullHp(), inv: { wood: 12, iron_ore: 3, iron_sword: 1 }, equipped: 'iron_sword', armor: null, charm: null });
+      const dropP = window.dropAllItems();
+      const recapSync = doc7.getElementById('deathRecap').textContent;     // before the insert returns: the overlay already says it
+      await dropP;
+      const S1 = window.debugStakesInfo();
+      const EXP = 'You dropped: 12 Wood, 3 Iron Ore, Iron Sword';
+      {
+        const ld = S1.lastDeathDrops;
+        results.push([`S7 B: the death recap matches the drop exactly — "${S1.recap}" (already "${recapSync === EXP ? 'the same' : recapSync}" before the insert returned); lastDeathDrops ${ld.length} entries ${JSON.stringify(ld.map(d => d.qty + ' ' + d.type))}, iron_sword x${ld.filter(d => d.type === 'iron_sword').length}; equals deathRecapText(lastDeathDrops): ${window.deathRecapText(ld) === S1.recap}`,
+          S1.recap === EXP && recapSync === EXP && ld.length === 3 && ld.filter(d => d.type === 'iron_sword').length === 1 &&
+          ld.every(d => d.qty > 0) && window.deathRecapText(ld) === S1.recap &&
+          ld.find(d => d.type === 'wood').qty === 12 && ld.find(d => d.type === 'iron_ore').qty === 3 && ld.find(d => d.type === 'iron_sword').qty === 1]);
+        const after = dwi7(), gearAfter = window.debugGearInfo();
+        results.push([`S7 B: and the pack really was emptied — inventory ${JSON.stringify(after.inv)}, weapon "${gearAfter.weapon}", armour ${gearAfter.armor}`,
+          Object.keys(after.inv).length === 0 && gearAfter.weapon === 'fists' && gearAfter.armor === null]);
+        // the equipped weapon/armour only drop on their own when they are NOT in the pack (nothing held is ever lost)
+        const armorKey = Object.keys(gearAfter.ARMOR_TIERS)[0];
+        clearStakes7();
+        dsp7({ inv: { wood: 2 }, equipped: 'iron_sword', armor: armorKey });
+        await window.dropAllItems();
+        const ld2 = window.debugStakesInfo().lastDeathDrops;
+        results.push([`S7 B: a weapon and armour that are not in the pack are still dropped, once each — ${JSON.stringify(ld2.map(d => d.qty + ' ' + d.type))}`,
+          ld2.length === 3 && ld2[0].type === 'wood' && ld2.filter(d => d.type === 'iron_sword').length === 1 && ld2.filter(d => d.type === armorKey).length === 1]);
+        clearStakes7();
+        dsp7({ inv: { wood: 0, stone: 2 }, equipped: null, armor: null });
+        await window.dropAllItems();
+        const ld3 = window.debugStakesInfo().lastDeathDrops;
+        results.push([`S7 B: a zero entry in the pack is not an item — ${JSON.stringify(ld3.map(d => d.qty + ' ' + d.type))}, recap "${window.debugStakesInfo().recap}"`,
+          ld3.length === 1 && ld3[0].type === 'stone' && ld3[0].qty === 2 && window.debugStakesInfo().recap === 'You dropped: 2 Stone']);
+        clearStakes7();
+        dsp7({ inv: {}, equipped: null, armor: null });
+        await window.dropAllItems();
+        const S0 = window.debugStakesInfo();
+        results.push([`S7 B: carrying nothing — "${S0.recap}", ${S0.lastDeathDrops.length} entries, PACK ${S0.pack === null ? 'none' : 'SET'}, beacons ${S0.beacons.length}, marks ${S0.marks.length}`,
+          S0.recap === 'You dropped nothing.' && S0.lastDeathDrops.length === 0 && S0.pack === null && S0.beacons.length === 0 && S0.marks.length === 0]);
+      }
+
+      // ---- death #2 is the one every following gate uses: the same pack as the first, with three rows on the ground ----
+      clearStakes7();
+      tables7.length = 0; tables7.push(...gi0, ...giRows);
+      dsp7({ x: out7.x, y: out7.y, hp: fullHp(), inv: { wood: 12, iron_ore: 3, iron_sword: 1 }, equipped: 'iron_sword', armor: null, charm: null });
+      const sentB = sentBroadcasts.length;
+      await window.dropAllItems();
+      const D2 = window.debugStakesInfo();
+
+      /* ---- 12. The PACK mark: yours alone, at the spot, on the compass and the minimap ---- */
+      {
+        const packMarks = D2.marks.filter(m => m.label === 'PACK');
+        dsp7({ x: out7.x + 30, y: out7.y });
+        const mb = window.minimapBearings(), tp = mb.filter(m => m.transient), fixed = mb.filter(m => !m.transient);
+        const bearing = tp.find(m => m.label === 'PACK');
+        const sentBeacon = sentBroadcasts.slice(sentB).filter(b => b.event === 'pile_beacon');
+        results.push([`S7 B: your PACK mark is at the death spot — ${packMarks.length} PACK at (${packMarks[0] && packMarks[0].x.toFixed(2)}, ${packMarks[0] && packMarks[0].y.toFixed(2)}) vs the drop at (${out7.x.toFixed(2)}, ${out7.y.toFixed(2)}); 30 tiles away the compass list has ${tp.length} transient mark(s)${bearing ? ' "' + bearing.label + '" at ' + bearing.d.toFixed(2) + ' tiles, ' + bearing.deg.toFixed(1) + ' deg' : ''} beside ${fixed.length} fixed landmarks; ${D2.pack ? 'ends in ' + ((D2.pack.until - Date.now()) / 1000).toFixed(0) + ' s of ' + D2.PACK_MARK_MS / 1000 : 'no pack'}`,
+          packMarks.length === 1 && Math.abs(packMarks[0].x - out7.x) < 1e-9 && Math.abs(packMarks[0].y - out7.y) < 1e-9 && tp.length === 1 && !!bearing &&
+          Math.abs(bearing.d - 30) < 1e-6 && Number.isFinite(bearing.deg) && fixed.length >= 9 && !!D2.pack && D2.pack.space === 'main' &&
+          Math.abs((D2.pack.until - Date.now()) - C7.PACK_MARK_MS) < 5000 && D2.PACK_MARK_MS === C7.PACK_MARK_MS]);
+        dsp7({ x: out7.x, y: out7.y });
+        /* ---- 14a. The beacon: there for everyone, a light while it lives ---- */
+        const bc = D2.beacons;
+        const lightsOn = window.collectLights().filter(l => bc[0] && Math.abs(l.x - bc[0].x) < 1e-9 && Math.abs(l.y - bc[0].y) < 1e-9 && l.r === 90);
+        dsw7({ force: 'rain', update: true, dt: 0 });
+        window.render(33000); window.render(33016);
+        dsw7({ force: null, update: true, dt: 0 });
+        results.push([`S7 B: a fresh death raises a beacon for everyone — ${bc.length} beacon at (${bc[0] && bc[0].x.toFixed(2)}, ${bc[0] && bc[0].y.toFixed(2)}) in "${bc[0] && bc[0].space}", ${bc[0] ? ((bc[0].until - Date.now()) / 1000).toFixed(0) : '?'} s of ${C7.PILE_BEACON_MS / 1000}; it was announced over the one channel ${sentBeacon.length}x (${JSON.stringify(sentBeacon[0] && sentBeacon[0].payload)}); collectLights() has ${lightsOn.length} light there (a ${lightsOn[0] && lightsOn[0].a.toFixed(2)}); frames render cleanly with it up: ${!caught}`,
+          bc.length === 1 && Math.abs(bc[0].x - out7.x) < 1e-9 && bc[0].space === 'main' && Math.abs((bc[0].until - Date.now()) - C7.PILE_BEACON_MS) < 5000 &&
+          sentBeacon.length === 1 && sentBeacon[0].payload.space === 'main' && Math.abs(sentBeacon[0].payload.x - out7.x) < 0.006 && sentBeacon[0].payload.until > Date.now() &&
+          lightsOn.length === 1 && lightsOn[0].a > 0.4 && lightsOn[0].a <= 0.8 && !caught]);
+      }
+
+      /* ---- 12b. A remote client: the beacon arrives, the PACK does not ---- */
+      {
+        const packSaved = Object.assign({}, window.debugStakesInfo().pack);
+        dss7({ pack: null, raidMark: null, clearBeacons: true });
+        const b0 = window.debugStakesInfo().beacons.length;
+        const n = deliverBroadcast('pile_beacon', { x: out7.x + 5, y: out7.y, space: 'main', until: Date.now() + C7.PILE_BEACON_MS });
+        const R = window.debugStakesInfo(), mb = window.minimapBearings();
+        results.push([`S7 B: a remote death shows the beacon but never a PACK — a fresh state (${b0} beacons, pack none), one pile_beacon broadcast (${n} handler) → ${R.beacons.length} beacon(s), ${R.marks.filter(m => m.label === 'PACK').length} PACK marks, ${mb.filter(m => m.transient).length} transient bearings, pack ${R.pack === null ? 'none' : 'SET'}`,
+          b0 === 0 && n >= 1 && R.beacons.length === 1 && R.marks.length === 0 && R.pack === null && mb.filter(m => m.transient).length === 0]);
+        dss7({ clearBeacons: true, pack: packSaved });
+      }
+
+      /* ---- 13. The PACK mark ends on pickup (every row gone) and on timeout ---- */
+      {
+        const P = window.debugStakesInfo().pack, ids = P && P.ids ? P.ids.slice() : [];
+        const idsOk = ids.length === 3 && ids.every(id => String(id).startsWith('s7:gi'));
+        const states = [];
+        let handlers = 0;
+        for (let i = 0; i < ids.length; i++) {
+          handlers += deliverBroadcast('item_del', { id: ids[i] });
+          states.push(dss7({ tick: true }).pack === null ? 'gone' : 'up');
+        }
+        // an unrelated pile being picked up does not touch it
+        deliverBroadcast('item_add', { items: [{ id: 's7:gi-other', type: 'wood', qty: 1, x: 1, y: 1, space: 'main' }, { id: 's7:gi-other2', type: 'wood', qty: 1, x: 1, y: 1, space: 'main' }] });
+        dss7({ pack: { x: out7.x, y: out7.y, space: 'main', until: Date.now() + 60000, ids: ['s7:gi-other', 's7:gi-other2'] } });
+        deliverBroadcast('item_del', { id: 's7:somebody-elses-pile' });
+        const unrelated = dss7({ tick: true }).pack !== null;
+        deliverBroadcast('item_del', { id: 's7:gi-other' });
+        const partial = dss7({ tick: true }).pack !== null;
+        deliverBroadcast('item_del', { id: 's7:gi-other2' });
+        const allGone = dss7({ tick: true }).pack === null;
+        // timeout
+        dss7({ pack: { x: out7.x, y: out7.y, space: 'main', until: Date.now() - 1, ids: null }, tick: true });
+        const timedOut = window.debugStakesInfo().pack === null;
+        dss7({ pack: { x: out7.x, y: out7.y, space: 'main', until: Date.now() + 60000, ids: null }, tick: true });
+        const notYet = window.debugStakesInfo().pack !== null;
+        results.push([`S7 B: the PACK mark is removed on pickup — ${ids.length} rows from the drop (${idsOk}); after each item_del + tick: ${states.join(' → ')} (${handlers} handler calls); another pile's pickup leaves it up: ${unrelated}; one of two rows taken: still up ${partial}, both taken: gone ${allGone}; removed on timeout (until in the past): ${timedOut}; still up before the timeout: ${notYet}`,
+          idsOk && states.join() === 'up,up,gone' && handlers >= 3 && unrelated && partial && allGone && timedOut && notYet]);
+        dss7({ pack: null });
+      }
+
+      /* ---- 14b. The beacon ends on its timer, cannot be stretched by a remote clock, and only lights its own space ---- */
+      {
+        dss7({ clearBeacons: true });
+        const dead0 = deliverBroadcast('pile_beacon', { x: out7.x, y: out7.y, space: 'main', until: Date.now() - 1 });
+        const afterPast = window.debugStakesInfo().beacons.length;
+        const t0 = Date.now();
+        deliverBroadcast('pile_beacon', { x: out7.x, y: out7.y, space: 'main', until: t0 + 60 });
+        const lit = window.collectLights().filter(l => l.r === 90 && Math.abs(l.x - out7.x) < 1e-9).length;
+        const alive = window.debugStakesInfo().beacons.length;
+        await sleep7(140);
+        dss7({ tick: true });
+        const afterTimer = window.debugStakesInfo().beacons.length, litAfter = window.collectLights().filter(l => l.r === 90 && Math.abs(l.x - out7.x) < 1e-9).length;
+        dss7({ clearBeacons: true });
+        const tf = Date.now();
+        deliverBroadcast('pile_beacon', { x: out7.x, y: out7.y, space: 'main', until: tf + 10 * 3600 * 1000 });
+        const far = window.debugStakesInfo().beacons[0];
+        const clampOk = !!far && far.until <= Date.now() + C7.PILE_BEACON_MS + 5 && far.until >= tf + C7.PILE_BEACON_MS - 5;
+        dss7({ clearBeacons: true });
+        const nLights0 = window.collectLights().length;
+        deliverBroadcast('pile_beacon', { x: out7.x, y: out7.y, space: 'uwcave:1,1', until: Date.now() + 60000 });
+        const otherSpace = window.debugStakesInfo().beacons.length, nLightsOther = window.collectLights().length;
+        dss7({ clearBeacons: true });
+        let junk = 0, threw = false;
+        try {
+          deliverBroadcast('pile_beacon', null); deliverBroadcast('pile_beacon', {}); deliverBroadcast('pile_beacon', { x: NaN, y: 3, until: Date.now() + 1000 });
+          deliverBroadcast('pile_beacon', { x: 3, y: 'a', until: Date.now() + 1000 }); deliverBroadcast('pile_beacon', { x: 3, y: 4, until: 'soon' });
+          junk = window.debugStakesInfo().beacons.length;
+        } catch (e) { threw = true; }
+        results.push([`S7 B: the beacon ends on its timer — a beacon already past is refused (${afterPast} kept), one with 60 ms left is up (${alive}, ${lit} light) then gone after the tick (${afterTimer}, ${litAfter} light); a remote beacon claiming 10 h is clamped to ${(far ? (far.until - tf) / 1000 : '?')} s (limit ${C7.PILE_BEACON_MS / 1000}); a beacon in another space adds ${nLightsOther - nLights0} lights here (${otherSpace} stored); malformed payloads add ${junk} (threw: ${threw})`,
+          dead0 >= 1 && afterPast === 0 && alive === 1 && lit === 1 && afterTimer === 0 && litAfter === 0 && clampOk && otherSpace === 1 && nLightsOther === nLights0 && junk === 0 && !threw]);
+        dss7({ clearBeacons: true });
+      }
+      tables7.length = 0; tables7.push(...gi0);
+      for (const r of giRows) deliverBroadcast('item_del', { id: r.id });
+
+      /* ================= PART C: raid alerts ================= */
+      // the harness's own base pieces are parked under another name, so "mine" is only what this block adds
+      const mkPiece = (id, tier, owner, hp, i) => ({ id, kind: 'foundation', tier, x: 60.5 + i * 5, y: 60.5, owner, hp });
+      for (const p of baseOwners0) if (p.owner === uname) window.debugSetBase({ ownerId: p.id, owner: 'S7Parked' });
+      const rmPiece = id => deliverBroadcast('base_destroy', { id });
+      const toastEl = doc7.getElementById('toast');
+      const setMusic0 = () => window.debugSetMusicState({ combatMusicUntil: 0, inCombatMusic: false, musicCheckAt: 0 });
+      const DM = () => window.debugMusicInfo();
+
+      /* ---- 15. Raid toasts are throttled ---- */
+      {
+        clearStakes7(); dss7({ lastRaidToastAt: -Infinity, raidToasts: 0 });
+        window.baseAdd(mkPiece('s7:own1', 'wood', uname, 80, 0));
+        setMusic0(); toastEl.textContent = '';
+        for (const hp of [75, 70, 65, 60, 55]) deliverBroadcast('base_hit', { id: 's7:own1', hp });
+        const a = window.debugStakesInfo(), toastA = toastEl.textContent;
+        dss7({ lastRaidToastAt: Date.now() - (C7.RAID_TOAST_EVERY_MS + 1) });
+        toastEl.textContent = '';
+        deliverBroadcast('base_hit', { id: 's7:own1', hp: 50 });
+        const b = window.debugStakesInfo(), toastB = toastEl.textContent;
+        dss7({ lastRaidToastAt: Date.now() - (C7.RAID_TOAST_EVERY_MS - 1500) });
+        toastEl.textContent = '';
+        deliverBroadcast('base_hit', { id: 's7:own1', hp: 45 });
+        const c = window.debugStakesInfo();
+        results.push([`S7 C: raid toasts are throttled to one per ${C7.RAID_TOAST_EVERY_MS / 1000} s — 5 hits in a row → ${a.raidToasts} toast (text "${toastA}"); a hit 20.001 s after the last → ${b.raidToasts} (toast "${toastB}"); a hit 18.5 s after that → still ${c.raidToasts} (toast text "${toastEl.textContent}")`,
+          a.raidToasts === 1 && toastA === 'Your base is under attack!' && b.raidToasts === 2 && toastB === 'Your base is under attack!' && c.raidToasts === 2 &&
+          toastEl.textContent === '' && C7.RAID_TOAST_EVERY_MS === 20000]);
+        // a repair (higher hp) and an unchanged hp are not raids
+        clearStakes7(); dss7({ lastRaidToastAt: -Infinity, raidToasts: 0 }); setMusic0(); toastEl.textContent = '';
+        deliverBroadcast('base_hit', { id: 's7:own1', hp: 100 });          // up from 45
+        deliverBroadcast('base_hit', { id: 's7:own1', hp: 100 });          // unchanged
+        const r = window.debugStakesInfo();
+        results.push([`S7 C: a repair is not a raid — hp 45 → 100 then 100 → 100: ${r.raidToasts} toasts, raid mark ${r.raidMark === null ? 'none' : 'SET'}, toast text "${toastEl.textContent}", combat music until ${DM().combatMusicUntil}`,
+          r.raidToasts === 0 && r.raidMark === null && toastEl.textContent === '' && DM().combatMusicUntil === 0 && r.marks.length === 0]);
+        rmPiece('s7:own1'); clearStakes7();
+      }
+
+      /* ---- 16. The RAID mark and the combat music are the owner's alone ---- */
+      {
+        window.baseAdd(mkPiece('s7:str1', 'wood', 'Stranger', 80, 1));
+        window.baseAdd(mkPiece('s7:own1', 'wood', uname, 80, 0));
+        clearStakes7(); dss7({ lastRaidToastAt: -Infinity, raidToasts: 0 }); setMusic0(); toastEl.textContent = '';
+        deliverBroadcast('base_hit', { id: 's7:str1', hp: 10 });
+        const s1 = window.debugStakesInfo(), musicS = DM().combatMusicUntil;
+        deliverBroadcast('base_destroy', { id: 's7:str1' });
+        const s2 = window.debugStakesInfo();
+        results.push([`S7 C: a hit on someone else's piece is nobody's alert but theirs — raid mark ${s1.raidMark === null ? 'none' : 'SET'}, ${s1.raidToasts} toasts, no RAID in the marks (${s1.marks.length}), combat music ${musicS}; destroying it: mark ${s2.raidMark === null ? 'none' : 'SET'}, ${s2.raidToasts} toasts, toast text "${toastEl.textContent}"`,
+          s1.raidMark === null && s1.raidToasts === 0 && s1.marks.length === 0 && musicS === 0 && s2.raidMark === null && s2.raidToasts === 0 && toastEl.textContent === '']);
+        // my own: the mark, 60 s ahead, in the compass list; the combat-music signal
+        const pf = window.performance.now();
+        deliverBroadcast('base_hit', { id: 's7:own1', hp: 70 });
+        const o1 = window.debugStakesInfo(), mb = window.minimapBearings().filter(m => m.label === 'RAID');
+        const ahead = o1.raidMark ? o1.raidMark.until - Date.now() : NaN, music = DM().combatMusicUntil - pf;
+        results.push([`S7 C: a hit on your own piece puts a RAID mark on the compass for ${C7.RAID_MARK_MS / 1000} s — mark ${o1.raidMark ? 'at (' + o1.raidMark.x + ', ' + o1.raidMark.y + ') ' + (ahead / 1000).toFixed(1) + ' s ahead' : 'none'}, marks [${o1.marks.map(m => m.label)}], the compass list has ${mb.length} transient RAID (${mb[0] ? mb[0].d.toFixed(0) + ' tiles' : '?'}); combat music pushed ${(music / 1000).toFixed(2)} s ahead (linger ${DM().COMBAT_MUSIC_LINGER / 1000} s)`,
+          !!o1.raidMark && Math.abs(o1.raidMark.x - 61) < 1e-9 && Math.abs(o1.raidMark.y - 61) < 1e-9 && ahead > C7.RAID_MARK_MS - 2000 && ahead <= C7.RAID_MARK_MS + 50 &&
+          o1.marks.filter(m => m.label === 'RAID').length === 1 && mb.length === 1 && mb[0].transient === true && music > 5000 && music <= 6100 && C7.RAID_MARK_MS === 60000]);
+        // it ends on its timer
+        dss7({ raidMark: { x: 65.5, y: 60.5, until: Date.now() - 1 }, tick: true });
+        const gone = window.debugStakesInfo().raidMark === null;
+        // and a base_destroy of your own piece is an alert too (and the piece is gone)
+        window.baseAdd(mkPiece('s7:own2', 'stone', uname, 180, 2));
+        clearStakes7(); dss7({ lastRaidToastAt: -Infinity, raidToasts: 0 }); toastEl.textContent = '';
+        deliverBroadcast('base_destroy', { id: 's7:own2' });
+        const d1 = window.debugStakesInfo(), still = window.debugBaseInfo().pieces.some(p => p.id === 's7:own2');
+        results.push([`S7 C: the RAID mark ends on its timer (${gone}); the destruction of your own piece also alerts — ${d1.raidToasts} toast ("${toastEl.textContent}"), mark ${d1.raidMark ? 'set' : 'none'}, piece still standing: ${still}`,
+          gone && d1.raidToasts === 1 && toastEl.textContent === 'Your base is under attack!' && !!d1.raidMark && !still]);
+        rmPiece('s7:own1'); rmPiece('s7:str1'); clearStakes7(); setMusic0();
+      }
+
+      /* ---- 17. The login summary, from stubbed rows ---- */
+      {
+        const ls = window.localStorage;
+        window.baseAdd(mkPiece('s7:l1', 'wood', uname, 80, 0));       // full
+        window.baseAdd(mkPiece('s7:l2', 'stone', uname, 100, 1));     // 100 of 180
+        window.baseAdd(mkPiece('s7:l3', 'iron', uname, 1, 2));        // 1 of 360
+        window.baseAdd(mkPiece('s7:l4', 'wood', 'Stranger', 5, 3));   // not mine, damaged, must not count
+        dsp7({ cls: cls0 === 'Architect' ? 'Knight' : cls0 });
+        const mine = window.myBasePieces().length;
+        const sum = (stored) => {
+          try { if (stored === null) ls.removeItem(lsKey7); else ls.setItem(lsKey7, String(stored)); } catch (e) {}
+          dss7({ raidCountReady: false });
+          return window.raidLoginSummary();
+        };
+        const m5 = sum(5), after5 = window.debugStakesInfo(), keyAfter = ls.getItem(lsKey7);
+        const mNone = sum(null), m3 = sum(3), m1 = sum(1);
+        // repair two of them to full through the real receiver and the damage count follows
+        deliverBroadcast('base_hit', { id: 's7:l2', hp: 180 }); deliverBroadcast('base_hit', { id: 's7:l3', hp: 360 });
+        const mOne = (() => { deliverBroadcast('base_hit', { id: 's7:l3', hp: 5 }); const x = sum(3); return x; })();
+        deliverBroadcast('base_hit', { id: 's7:l3', hp: 360 });
+        const mClean = sum(3), mLost = sum(5);
+        const EXP17 = 'While you were away: 2 base pieces were damaged, and 2 destroyed';
+        results.push([`S7 C: the login summary counts from stubbed rows — 3 pieces of mine (wood full, stone 100/180, iron 1/360; ${mine} mine counted, a stranger's damaged piece ignored) with 5 stored: "${m5}"`,
+          mine === 3 && m5 === EXP17]);
+        results.push([`S7 C: with no stored count there is no destroyed clause — "${mNone}"; stored 3 (nothing lost): "${m3}"; stored 1 (more pieces than before): "${m1}"; one damaged piece: "${mOne}"; all full, nothing lost: "${mClean}"; all full, 2 lost: "${mLost}"`,
+          mNone === 'While you were away: 2 base pieces were damaged' && m3 === mNone && m1 === mNone &&
+          mOne === 'While you were away: 1 base piece was damaged' && mClean === '' && /, and 2 destroyed$/.test(mLost)]);
+        // the count is stored under the username, only once the login summary has run
+        dss7({ raidCountReady: false });
+        try { ls.setItem(lsKey7, '9'); } catch (e) {}
+        window.storeMyBaseCount();
+        const notReady = ls.getItem(lsKey7);
+        dss7({ raidCountReady: true });
+        window.storeMyBaseCount();
+        const ready = ls.getItem(lsKey7);
+        results.push([`S7 C: the owned-piece count is kept per device under "rh_base_count_<username>" — after the summary it reads "${keyAfter}" (3 owned) and the state says ready: ${after5.raidCountReady}; storeMyBaseCount() before the summary leaves a stored 9 alone ("${notReady}"), after it writes ${ready}; a source comment says it is per device: ${/PER DEVICE/.test(gameScript.slice(gameScript.indexOf('function baseCountKey()') - 600, gameScript.indexOf('function baseCountKey()')))}`,
+          keyAfter === '3' && after5.raidCountReady === true && notReady === '9' && ready === '3' &&
+          /PER DEVICE/.test(gameScript.slice(gameScript.indexOf('function baseCountKey()') - 600, gameScript.indexOf('function baseCountKey()')))]);
+        // the Architect bonus, applied the way the insert applies it
+        const T = ['wood', 'stone', 'iron'], base = { wood: 80, stone: 180, iron: 360 };
+        dsp7({ cls: 'Knight' });
+        const knight = T.map(t => window.basePieceMaxHp({ tier: t, owner: uname })), stranger = T.map(t => window.basePieceMaxHp({ tier: t, owner: 'Stranger' }));
+        dsp7({ cls: 'Architect' });
+        const archMine = T.map(t => window.basePieceMaxHp({ tier: t, owner: uname })), archStranger = window.basePieceMaxHp({ tier: 'wood', owner: 'Stranger' });
+        const archFlag = window.basePieceMaxHp({ tier: 'wood', owner: 'Stranger', arch: true });
+        const msgArch = sum(3);                                       // l1/l2/l3 sit at 80/180/360: the NON-Architect full values
+        deliverBroadcast('base_hit', { id: 's7:l1', hp: 96 }); deliverBroadcast('base_hit', { id: 's7:l2', hp: 216 }); deliverBroadcast('base_hit', { id: 's7:l3', hp: 432 });
+        const msgArchFull = sum(3);                                   // the Architect's own full values: nothing damaged
+        dsp7({ cls: cls0 });
+        results.push([`S7 C: basePieceMaxHp follows the insert's Architect bonus — wood/stone/iron: knight-owner ${knight.join('/')}, stranger ${stranger.join('/')}; as an Architect my pieces ${archMine.join('/')} (wood = round(80 x ${C7.ARCHITECT_HP_BONUS}) = ${Math.round(80 * 1.2)}), a stranger's still ${archStranger}, a stranger's piece flagged arch ${archFlag}; as an Architect, pieces sitting at the plain 80/180/360 read as damaged ("${msgArch}") and at 96/216/432 as whole ("${msgArchFull}")`,
+          knight.join() === T.map(t => base[t]).join() && stranger.join() === knight.join() && archMine[0] === Math.round(80 * 1.2) &&
+          archMine.join() === T.map(t => Math.round(base[t] * 1.2)).join() && archStranger === 80 && archFlag === Math.round(80 * 1.2) &&
+          C7.ARCHITECT_HP_BONUS === 1.2 && msgArch === 'While you were away: 3 base pieces were damaged' && msgArchFull === '']);
+        // the insert uses the same factor (the number a piece is stored with is the number the summary compares against)
+        results.push(['S7 C: the insert and the summary share one rule — placeBasePiece stores hp = round(BASE_TIER_HP[tier] x ARCHITECT_HP_BONUS for an Architect), basePieceMaxHp = the same expression',
+          gameScript.indexOf('hp: Math.round((BASE_TIER_HP[tier] || BASE_TIER_HP.wood) * (isArch34 ? ARCHITECT_HP_BONUS : 1)) };') > 0 &&
+          gameScript.indexOf('return Math.round((BASE_TIER_HP[p.tier] || BASE_TIER_HP.wood) * (arch ? ARCHITECT_HP_BONUS : 1));') > 0]);
+        for (const id of ['s7:l1', 's7:l2', 's7:l3', 's7:l4']) rmPiece(id);
+        clearStakes7(); setMusic0();
+      }
+
+      /* ================= Preservation and wiring ================= */
+      results.push([`S7 P: every respawn timer is unchanged — const RESPAWN_SECONDS = 30; and ${(gameScript.match(/RESPAWN_SECONDS/g) || []).length} mentions (the declaration and its one read); the Hollow Choir's 0 s line is the same`,
+        gameScript.indexOf('const RESPAWN_SECONDS = 30;') > 0 && (gameScript.match(/RESPAWN_SECONDS/g) || []).length === 2 &&
+        gameScript.indexOf('me.deadUntil = Date.now() + guildRespawnWaitMs();') > 0 &&
+        gameScript.indexOf('guildIs("hollow_choir") ? 0 : RESPAWN_SECONDS * 1000') > 0]);
+      {
+        const unload = gameScript.slice(gameScript.indexOf('window.addEventListener("beforeunload"'), gameScript.indexOf('window.addEventListener("beforeunload"') + 1200);
+        const iDW = gameScript.indexOf('drawWeather(w, h);'), iHUD = gameScript.indexOf('updateHUD(dayT);', iDW), iTA = gameScript.indexOf('drawTowerArrow();', iDW);
+        const drawnInOrder = iDW > 0 && iHUD > iDW && iTA > iDW && iHUD - iDW < 400 && iTA - iDW < 400 && gameScript.lastIndexOf('const un = unmakingIntensity();', iDW) > iDW - 1200;
+        const comp = gameScript.slice(gameScript.indexOf('function minimapBearings()'), gameScript.indexOf('const COMPASS_POINTS'));
+        const wmap = gameScript.slice(gameScript.indexOf('function updateWorldMap()'), gameScript.indexOf('function debugMapInfo()'));
+        const linger = results.find(r => String(r[0]).indexOf('all four combat-signal sites carry the linger line') === 0);
+        const raidBody = gameScript.slice(gameScript.indexOf('function raidAlert('), gameScript.indexOf('function basePieceMaxHp('));
+        results.push([`S7 P: wired — updateWeather(dt); ${gameScript.indexOf('updateWeather(dt);') > 0}, drawWeather(w, h); ${gameScript.indexOf('drawWeather(w, h);') > 0} (after the world and the tint, before the tower arrow and the HUD: ${drawnInOrder}), raidLoginSummary(); ${gameScript.indexOf('raidLoginSummary();') > 0}, deathMarksTick(); ${gameScript.indexOf('deathMarksTick();') > 0}, storeMyBaseCount(); in beforeunload ${unload.indexOf('storeMyBaseCount();') > 0} (after the save: ${unload.indexOf('savePlayer()') >= 0 && unload.indexOf('savePlayer()') < unload.indexOf('storeMyBaseCount();')}), the raid alert sets the combat signal: ${raidBody.indexOf('combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;') > 0}; the linger-line gate exists and ${linger ? (linger[1] ? 'passes' : 'FAILS') : 'is MISSING'}`,
+          gameScript.indexOf('updateWeather(dt);') > 0 && gameScript.indexOf('drawWeather(w, h);') > 0 && gameScript.indexOf('raidLoginSummary();') > 0 &&
+          gameScript.indexOf('deathMarksTick();') > 0 && unload.indexOf('storeMyBaseCount();') > 0 && unload.indexOf('savePlayer()') < unload.indexOf('storeMyBaseCount();') &&
+          drawnInOrder && raidBody.indexOf('combatMusicUntil = performance.now() + COMBAT_MUSIC_LINGER;') > 0 &&
+          !!linger && linger[1] === true]);
+        results.push([`S7 P: the compass and the minimap still never read the base or ground tables — compass section ${comp.length} chars, minimap section ${wmap.length} chars, mentions of basePieces/baseIndex/groundItems: ${['basePieces', 'baseIndex', 'groundItems'].map(w => comp.split(w).length - 1 + '/' + (wmap.split(w).length - 1)).join(', ')}; they read the new marks only through transientMarks(): ${comp.indexOf('transientMarks()') > 0 && wmap.indexOf('transientMarks()') > 0}`,
+          comp.length > 500 && wmap.length > 500 && ['basePieces', 'baseIndex', 'groundItems'].every(w => comp.indexOf(w) < 0 && wmap.indexOf(w) < 0) &&
+          comp.indexOf('transientMarks()') > 0 && wmap.indexOf('transientMarks()') > 0]);
+        results.push(['S7 P: no new table and no new channel — the S7 code adds no .from("...") of its own and the file still opens exactly one channel',
+          (gameScript.match(/sb\.channel\(/g) || []).length === 1 &&
+          (() => {
+            const wx = gameScript.slice(gameScript.indexOf('S7 Real Stakes PART A'), gameScript.indexOf('function bloodMoonActive()'));
+            const bc = gameScript.slice(gameScript.indexOf('S7 Real Stakes PART B'), gameScript.indexOf('async function tryPickup('));
+            return wx.length > 3000 && bc.length > 3000 && (wx.match(/\.from\(/g) || []).length === 0 && (bc.match(/\.from\(/g) || []).length === 1 && bc.indexOf('sb.from("ground_items").insert(drops)') > 0;
+          })()]);
+      }
+
+      // ---- put everything back ----
+      for (const id of ['s7:own1', 's7:own2', 's7:str1', 's7:l1', 's7:l2', 's7:l3', 's7:l4']) rmPiece(id);
+      for (const p of baseOwners0) window.debugSetBase({ ownerId: p.id, owner: p.owner });
+      try { if (ls0 === null) window.localStorage.removeItem(lsKey7); else window.localStorage.setItem(lsKey7, ls0); } catch (e) {}
+      tableData.ground_items.length = 0; tableData.ground_items.push(...gi0);
+      dss7({ pack: st0.pack, raidMark: st0.raidMark, lastRaidToastAt: st0.lastRaidToastAt, raidToasts: st0.raidToasts, raidCountReady: st0.raidCountReady, clearBeacons: true });
+      for (const b of st0.beacons) deliverBroadcast('pile_beacon', b);
+      dsw7({ force: null, ashAcc: 0, peak: 0, update: true, dt: 0 });
+      window.debugSetConsumable({ fire: fire0 });
+      window.debugSetMusicState({ combatMusicUntil: music0.combatMusicUntil, inCombatMusic: music0.inCombatMusic });
+      dsm7({ mounted: mount0 });
+      dsp7({ x: p0.x, y: p0.y, hp: p0.hp, inv: Object.assign({}, p0.inv), equipped: eq0, armor: arm0, charm: p0.charm, cls: cls0 });
+      HB7.others.clear(); for (const [k, v] of others7) HB7.others.set(k, v);
+    } else {
+      results.push(['S7: the real-stakes hooks exist', false]);
     }
 
     let allOk = true;
