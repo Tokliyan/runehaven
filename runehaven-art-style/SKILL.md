@@ -53,6 +53,29 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-23 (RT pass — Readability, Transitions, Landmarks, "be extravagant")
+
+Owner asked to lift the three weakest S9 axes. Same rules: flat fills, PAL
+locked, no new gradient, ground work inside the tile's own diamond (S4 cache).
+- **Transitions:** `drawBiomeSeams` — between different same-height biomes the
+  edge interlocks (hash-owned teeth, corner cuts), higher neighbours cast a
+  foot shadow, and seam props (tufts on sand by grass, pebbles by rock, shrubs
+  by woods). Water, lava, peaks and caves are skipped. Deterministic per tile.
+- **Readability:** actor disc is a value jump (dark rim + bright core, r 13);
+  your own disc pulses (`ME_PULSE_MS`) and you get a faint cream backlight;
+  player scale 2.1 → 2.4; loot is raised, ringed and glints every 2.6 s.
+- **Landmarks:** Bazaar stalls are tents (`BAZAAR_STALL_K` 1.45) with pennants
+  and lanterns, each sorting on its own (`bazstall`), plus a well, crates and a
+  130 px banner pole with bunting. Colosseum: eight banner poles, a champion
+  statue on a stepped plinth with braziers, a dark ring line in the sand.
+  Volcano: second lava flow, crater halo, a 9-puff smoke plume lit from below.
+  Ancient Forge: molten channel, quench pool, steam, braziers. Night lights at
+  Bazaar, Forge and Colosseum.
+- Don't reintroduce: "floating coloured squares" stalls, staircase biome
+  borders, a player found only by its nameplate.
+- Still open (Sonnet re-score): basalt cracks everywhere (VOL_CRACK pinned),
+  cave interiors unchanged, sawtooth coasts.
+
 ### 2026-10-22 (Front Page Rework — title screen, character select, settings: "The Reforging Update")
 
 README spec "Front Page Rework" (owner request 2026-10-22, reference images:
