@@ -53,6 +53,46 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-22 (Front Page Rework — title screen, character select, settings: "The Reforging Update")
+
+README spec "Front Page Rework" (owner request 2026-10-22, reference images:
+Thronefall's Settings screen and upgrade tooltip). Menu layer only — nothing
+in the world, the HUD or gameplay changed.
+
+- **Type and tokens.** Grenze Gotisch (display/blackletter) + Cormorant
+  Garamond (menu and body) join the one Google Fonts @import; every new rule
+  uses the `--menu-*` tokens (parchment ink #e9dcc0, dim, faint, the game's
+  gold #e8b64c for active/hover/focus only, card #16171b, 14px radius). The
+  HUD keeps Barlow.
+- **Title screen.** Logo top-left, tagline in spaced italic small caps, a
+  left menu of real buttons (Play / Settings / Redeem a Code / Credits) that
+  turns gold framed "– Play –", ↑/↓/Enter/Esc; update banner bottom-left,
+  world status bottom-right, a What's new card (once per device per update).
+- **Backdrop — JUDGMENT CALL (YELLOW):** the spec's live world was not taken;
+  the world is only generated inside ENTER and render() reads the logged-in
+  player throughout, so it could not run safely before login. Shipped instead
+  as key art in the locked style: flat-shaded low-poly ridges (lit/shade faces
+  per the 0.72/0.55 rule), the Eternal Tower's silhouette with lit windows, a
+  moon, pines and <= 40 drifting gold motes (none under Reduce motion), flat
+  fills only, painted once per size; stops at ENTER. The left-side shade is a
+  CSS gradient on the DOM, not the canvas.
+- **Character select.** Underlined serif name field; the five class cards are
+  the tooltip card — portrait, blackletter name, spaced role line, serif
+  description, "Best with" in dim italic, three round badges (first filled,
+  gold when picked); the picked card lifts 6px with a gold edge;
+  "– ENTER THE WORLD –" with a gold underline. Five cards always fit one row.
+- **Settings** is a full-screen page in the reference's look: blackletter
+  "Settings", spaced italic tabs with the active one "-GRAPHICS-", italic
+  serif rows, ON/OFF toggles drawn as 14px squares (the ON/OFF text kept),
+  "– CLOSE –", Esc closes. Scoped to #settingsOverlay — in-game panels that
+  reuse .set-tab are untouched.
+- **Kept byte-identical:** every id, the ENTER / PIN / resume / redeem flows,
+  the pinned markup tags, the intro rules, the one AudioEngine.init().
+- Independent Opus review: 4 bugs fixed (a not-ready ENTER was clickable; Esc
+  did not close Settings; Enter during the intro pressed Play; the setItem
+  count gate) + risks fixed (Back during a resume pause, redeem needing a
+  name, What's new marked seen when shown, large-text wrap, colour tokens).
+
 ### 2026-10-22 (Gauntlet S8 — Feel pass: hit-stop, shake switch, synthesised SFX, first five minutes)
 
 GAUNTLET.md S8.
