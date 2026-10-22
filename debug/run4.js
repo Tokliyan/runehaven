@@ -6302,6 +6302,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             results.push(['v46 D: interior-hide gate had a UWCAVE tile to use', false]);
           }
         }
+        /* S7: an earlier death gate leaves your own PACK mark up (S7 PART B),
+           and it is not a landmark — this gate counts the nine landmarks, so
+           clear the transient marks and redraw first. Setup, not a relaxation. */
+        if (window.debugSetStakes) { window.debugSetStakes({ pack: null, raidMark: null }); window.render(6); }
         /* The compass is a SEPARATE card and was not touched. */
         results.push(['v46 D: the compass dial still exists beside it, with all nine marks',
           doc46.getElementById('hudMinimap').style.display === 'block' &&
@@ -10759,6 +10763,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         /* The compass waits out the tutorial (v56 PART C), so a brand new
            account has no dial at all until this is set. */
         window.debugSetV35({ tutorialDone: true, tutorialActive: false });
+        /* S7: no transient PACK/RAID mark left over from an earlier gate —
+           this block counts the fixed landmarks' dots. */
+        if (window.debugSetStakes) window.debugSetStakes({ pack: null, raidMark: null });
         const marks = (() => {
           const at = gameScript.indexOf('const MINIMAP_MARKS = [');
           return (gameScript.slice(at, gameScript.indexOf('];', at)).match(/\["/g) || []).length;
@@ -12342,7 +12349,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const C7 = {};
       for (const n of ['WEATHER_SLOT_S', 'WEATHER_REGION', 'WEATHER_CHANCE', 'WEATHER_RAIN_AGGRO', 'WEATHER_FOG_AGGRO', 'WEATHER_FOG_ALPHA',
                        'WEATHER_FOG_PLATE_R', 'WEATHER_ASH_DMG', 'WEATHER_ASH_EVERY_S', 'WEATHER_SNOW_MULT', 'WEATHER_PARTICLE_CAP',
-                       'PACK_MARK_MS', 'PILE_BEACON_MS', 'RAID_TOAST_EVERY_MS', 'RAID_MARK_MS', 'ARCHITECT_HP_BONUS']) C7[n] = num7(n);
+                       'PACK_MARK_MS', 'PILE_BEACON_MS', 'RAID_TOAST_EVERY_MS', 'RAID_MARK_MS', 'ARCHITECT_HP_BONUS', 'PILE_BEACON_CAP', 'WEATHER_SETTLE_MS']) C7[n] = num7(n);
       const RAIN_B = set7('WEATHER_RAIN_B'), ASH_B = set7('WEATHER_ASH_B'), SNOW_B = set7('WEATHER_SNOW_B');
       const REG = C7.WEATHER_REGION, NR = Math.ceil(N7 / REG), SLOT_MS = C7.WEATHER_SLOT_S * 1000, CAP = C7.WEATHER_PARTICLE_CAP;
       const setEq7 = (S, ids) => S.size === ids.length && ids.every(i => S.has(i));
@@ -12362,8 +12369,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const HB7 = window.debugCombatHandles();
       const others7 = [...HB7.others.entries()];
       const baseOwners0 = window.debugBaseInfo().pieces.map(p => ({ id: p.id, owner: p.owner }));
-      const lsKey7 = 'rh_base_count_' + uname;
-      let ls0 = null; try { ls0 = window.localStorage.getItem(lsKey7); } catch (e) {}
+      // every stored base record on this device, so they can be put back (the key is rh_base_<worldSeed>_<username>)
+      const lsBase0 = []; try { for (const k of Object.keys(window.localStorage)) if (k.indexOf('rh_base_') === 0) lsBase0.push([k, window.localStorage.getItem(k)]); } catch (e) {}
+      const rm0 = !!window.debugSettingsInfo().SETTINGS.reduceMotion;
+      if (rm0) window.setSetting('reduceMotion', false);
+      const bpRows0 = tableData.base_pieces;
       const fullHp = () => p0.maxHp || 100;
       results.push([`S7: the harness knows who it is — player "${uname}", class ${cls0}, ${baseOwners0.filter(p => p.owner === uname).length} of its own base pieces already standing`,
         uname.length > 0 && !!cls0 && p0.hp > 0]);
@@ -12501,6 +12511,34 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           bad.length === 0 && ['clear', 'rain', 'fog', 'ash', 'snow'].every(t => seen[t] > 0) && ruinDayAny === 0 && everyWeatherBiomeTurns]);
       }
 
+      /* ---- 3b. A natural change of weather is committed only after it has held for WEATHER_SETTLE_MS ---- */
+      {
+        const SETTLE = C7.WEATHER_SETTLE_MS;
+        const slotLeft = () => { const sa = window.weatherSlotAt(Date.now()); for (let k = 1; k <= 301; k++) if (window.weatherSlotAt(Date.now() + k * 1000) !== sa) return k * 1000; return 1e9; };
+        const left0 = slotLeft();
+        if (left0 < 10000) await sleep7(left0 + 300);        // never straddle a slot boundary with this check
+        const tNow = Date.now();
+        let spot = null, kind = null;
+        outer: for (const bi of [...RAIN_B, ...SNOW_B, ...ASH_B]) for (const [tx, ty] of (tiles7[bi] || [])) {
+          const w = window.weatherAt(tx + 0.5, ty + 0.5, tNow, false);
+          if (w !== 'clear') { spot = [tx, ty]; kind = w; break outer; }
+        }
+        if (spot) {
+          dsp7({ x: spot[0] + 0.5, y: spot[1] + 0.5, hp: fullHp() });
+          dsw7({ force: 'clear', update: true, dt: 0 }); dsw7({ force: null });         // it is clear now, and nature is about to disagree
+          const c0 = dsw7({ update: true, dt: 0 }).cur;
+          await sleep7(700); const c1 = dsw7({ update: true, dt: 0 }).cur;
+          await sleep7(SETTLE - 700 + 250); const c2 = dsw7({ update: true, dt: 0 }).cur;
+          // a forced weather is immediate
+          dsw7({ force: 'fog', update: true, dt: 0 }); const cf = window.debugWeatherInfo().cur;
+          results.push([`S7 A: a natural change of weather has to hold for ${SETTLE} ms before it shows — at (${spot[0]}, ${spot[1]}) nature says "${kind}" while it is "clear": at once "${c0}", after 0.7 s "${c1}", after ${((SETTLE + 250) / 1000).toFixed(2)} s "${c2}"; a forced weather applies immediately ("${cf}")`,
+            SETTLE === 1500 && c0 === 'clear' && c1 === 'clear' && c2 === kind && cf === 'fog' && window.weatherAt(spot[0] + 0.5, spot[1] + 0.5, Date.now(), false) === kind]);
+        } else {
+          results.push(['S7 A: a natural change of weather has to hold for the settle time (no weather tile found this slot)', false]);
+        }
+        dsw7({ force: null, ashAcc: 0, update: false }); dsw7({ force: 'clear', update: true, dt: 0 }); dsw7({ force: null });
+      }
+
       /* ---- 4. Ashfall: 1 damage every 4 s; fire resist stops it; a safe zone never takes it ---- */
       {
         const hp = () => dwi7().hp;
@@ -12544,8 +12582,49 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         // and nothing else hurts: every other weather for 8 s
         const lostOthers = {};
         for (const k of ['clear', 'rain', 'fog', 'snow']) { setup(out7); dsw7({ force: k }); for (let i = 0; i < 8; i++) dsw7({ update: true, dt: 1 }); lostOthers[k] = fullHp() - hp(); }
-        results.push([`S7 A: ashfall never applies inside a safe zone — Spawn: ${lostSpawn} hp over 8 s, ${lostSpawn2} with the accumulator primed at 3.9 (it stays ${accSpawn}); another safe zone (inside: ${otherIn}): ${lostOther}; and Clear/Rain/Fog/Snow cost ${JSON.stringify(lostOthers)}`,
-          lostSpawn === 0 && lostSpawn2 === 0 && accSpawn === 0 && (lostOther === 0 || lostOther === 'n/a') && Object.values(lostOthers).every(v => v === 0)]);
+        results.push([`S7 A: ashfall never applies inside a safe zone — Spawn: ${lostSpawn} hp over 8 s, ${lostSpawn2} with the accumulator primed at 3.9 (it only drains: ${accSpawn.toFixed(2)} after a second); another safe zone (inside: ${otherIn}): ${lostOther}; and Clear/Rain/Fog/Snow cost ${JSON.stringify(lostOthers)}`,
+          lostSpawn === 0 && lostSpawn2 === 0 && accSpawn < 3.9 && accSpawn >= 2.8 && (lostOther === 0 || lostOther === 'n/a') && Object.values(lostOthers).every(v => v === 0)]);
+        // the accumulator DECAYS off the ash instead of resetting, so a step off it every few seconds does not dodge it
+        setup(out7);
+        const hd = hp();
+        for (let i = 0; i < 3; i++) dsw7({ update: true, dt: 1 });
+        const accIn = window.debugWeatherInfo().ashAcc;
+        dsw7({ force: 'clear', update: true, dt: 1 });
+        const accOff = window.debugWeatherInfo().ashAcc;
+        dsw7({ force: 'ash', update: true, dt: 1 }); const lostMid = hd - hp();
+        dsw7({ update: true, dt: 1 }); const lostDecay = hd - hp();
+        dsw7({ force: 'clear', ashAcc: 2.5 }); dsw7({ update: true, dt: 10 });
+        const accFloor = window.debugWeatherInfo().ashAcc;
+        results.push([`S7 A: stepping off the ash does not reset the clock — 3 s in ash: accumulator ${accIn}; 1 s in clear: ${accOff} (drains by dt, not to 0); back in ash a second later: ${lostMid} hp lost, the second after: ${lostDecay}; 10 s of clear never goes below ${accFloor}`,
+          accIn === 3 && accOff === 2 && lostMid === 0 && lostDecay === 1 && accFloor === 0]);
+        // ashfall is weather, not combat: no combat music, no combat-logout window, no shake, and a Knight's Guard Break is not spent on it
+        const dscl = window.debugSetCombatLogout, dsa = window.debugSetAbility, dsms = window.debugSetMusicState;
+        const probes = () => ({ music: window.debugMusicInfo().combatMusicUntil, logoutAt: window.debugCombatLogoutInfo().lastAt, logoutActive: window.debugCombatLogoutInfo().active, guard: window.debugAbilityInfo().guardBreakUntil });
+        const arm = () => { dsms({ combatMusicUntil: 0, inCombatMusic: false, musicCheckAt: 0 }); dscl({ lastAt: 0 }); dsa({ guardBreakUntil: window.performance.now() + 10000 }); };
+        setup(out7); arm();
+        const gSet = window.debugAbilityInfo().guardBreakUntil;
+        dsw7({ ashAcc: 3.9 }); dsw7({ update: true, dt: 1 });
+        const ash = probes(), ashLost = fullHp() - hp();
+        // the control: a real hit trips all three probes, so a flat result above means something
+        setup(out7); arm();
+        window.applyDamage(1, 'a test mob');
+        const hit = probes(), hitLost = fullHp() - hp();
+        dsms({ combatMusicUntil: 0, inCombatMusic: false, musicCheckAt: 0 }); dscl({ lastAt: 0 }); dsa({ guardBreakUntil: 0 });
+        const adSrc = gameScript.slice(gameScript.indexOf('function applyDamage('), gameScript.indexOf('function updateBreath('));
+        const shakeGuarded = /if \(!envDamageNow\) \{[^}]*shakeT = performance\.now\(\);[^}]*\}/.test(adSrc);
+        results.push([`S7 A: an ashfall tick is not combat — it cost ${ashLost} hp but combat music stayed ${ash.music}, the combat-logout window stayed shut (last damage ${ash.logoutAt}, active ${ash.logoutActive}), the Guard Break was kept (${ash.guard === gSet}); a real hit costs ${hitLost}, sets the music to ${hit.music > 0}, the logout window ${hit.logoutActive} and spends the Guard Break (${hit.guard}); the shake is behind the same flag: ${shakeGuarded}; envDamageNow is set in exactly ${(gameScript.match(/envDamageNow = true/g) || []).length} place`,
+          ashLost === 1 && ash.music === 0 && ash.logoutAt === 0 && ash.logoutActive === false && ash.guard === gSet &&
+          hitLost === 1 && hit.music > 0 && hit.logoutAt > 0 && hit.logoutActive === true && hit.guard === 0 && shakeGuarded &&
+          (gameScript.match(/envDamageNow = true/g) || []).length === 1]);
+        // and the real frame loop does run them: 40 frames of update() tick the ash clock, and the same loop retires the marks
+        setup(out7);
+        for (let f = 0; f < 40; f++) window.update(0.05, 400000 + f * 50);
+        const accFrames = window.debugWeatherInfo().ashAcc;
+        dss7({ pack: { x: out7.x, y: out7.y, space: 'main', until: Date.now() - 1, ids: null }, raidMark: { x: out7.x, y: out7.y, until: Date.now() - 1 } });
+        window.update(0.05, 500000);
+        const stk = window.debugStakesInfo();
+        results.push([`S7 A/B/C: the real frame loop drives them — 40 frames of update(0.05) with ashfall forced leave the ash clock at ${accFrames.toFixed(3)} s (want 2.000); one more frame retires an expired PACK mark (${stk.pack === null ? 'gone' : 'STILL UP'}) and RAID mark (${stk.raidMark === null ? 'gone' : 'STILL UP'})`,
+          Math.abs(accFrames - 2) < 1e-6 && stk.pack === null && stk.raidMark === null]);
         window.debugSetConsumable({ fire: fire0 });
       }
 
@@ -12679,6 +12758,18 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push([`S7 A: ${calls} direct drawWeather calls — peak per kind ${JSON.stringify(peaks)} (never over ${CAP}, ${over2} over); ${gradsMade} gradients made (flat fills only), ${rectsMade} fillRects; fog: ${fogRects} fillRects over 10 frames (one flat fill each), ${fogParts} particles, ${fogGrads} gradients; clear: ${clearParts} particles; fog alpha ${C7.WEATHER_FOG_ALPHA} in the source: ${dwSrc.indexOf('rgba(16,20,26,${WEATHER_FOG_ALPHA})') > 0}`,
           over2 === 0 && maxPeak <= CAP && maxPeak > 0 && Object.values(peaks).every(v => v > 0 && v <= CAP) && gradsMade === 0 && rectsMade >= calls * 50 &&
           fogRects === 10 && fogParts === 0 && fogGrads === 0 && clearParts === 0 && dwSrc.indexOf('Gradient') < 0 && dwSrc.indexOf('rgba(16,20,26,${WEATHER_FOG_ALPHA})') > 0]);
+        // Reduce motion: no particles at all, trimmed the same frame; fog keeps its one flat fill
+        dsw7({ force: 'rain', peak: 0, update: true, dt: 0 });
+        window.drawWeather(1280, 720); const rmBefore = info().parts;
+        window.setSetting('reduceMotion', true);
+        window.drawWeather(1280, 720); const rmRain = info().parts;
+        const frR = drawOpsBy.fillRect || 0; for (let f = 0; f < 5; f++) window.drawWeather(1280, 720); const rmRects = (drawOpsBy.fillRect || 0) - frR;
+        dsw7({ force: 'fog', update: true, dt: 0 });
+        const frF = drawOpsBy.fillRect || 0; window.drawWeather(1280, 720); const rmFog = (drawOpsBy.fillRect || 0) - frF;
+        window.setSetting('reduceMotion', false);
+        dsw7({ force: 'snow', update: true, dt: 0 }); window.drawWeather(1280, 720); const rmBack = info().parts;
+        results.push([`S7 A: Reduce motion turns the weather particles off — rain ${rmBefore} particles, then ${rmRain} on the next frame with Reduce motion on (${rmRects} fillRects over 5 frames); fog still draws its ${rmFog} flat fill; with it off again snow has ${rmBack}`,
+          rmBefore === CAP && rmRain === 0 && rmRects === 0 && rmFog === 1 && rmBack === CAP]);
         dsw7({ force: null, peak: 0, update: true, dt: 0 });
       }
 
@@ -12801,10 +12892,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         dsp7({ x: out7.x + 30, y: out7.y });
         const mb = window.minimapBearings(), tp = mb.filter(m => m.transient), fixed = mb.filter(m => !m.transient);
         const bearing = tp.find(m => m.label === 'PACK');
+        const trueDeg = Math.atan2(window.isoY(-30, 0), window.isoX(-30, 0)) * 180 / Math.PI;
         const sentBeacon = sentBroadcasts.slice(sentB).filter(b => b.event === 'pile_beacon');
-        results.push([`S7 B: your PACK mark is at the death spot — ${packMarks.length} PACK at (${packMarks[0] && packMarks[0].x.toFixed(2)}, ${packMarks[0] && packMarks[0].y.toFixed(2)}) vs the drop at (${out7.x.toFixed(2)}, ${out7.y.toFixed(2)}); 30 tiles away the compass list has ${tp.length} transient mark(s)${bearing ? ' "' + bearing.label + '" at ' + bearing.d.toFixed(2) + ' tiles, ' + bearing.deg.toFixed(1) + ' deg' : ''} beside ${fixed.length} fixed landmarks; ${D2.pack ? 'ends in ' + ((D2.pack.until - Date.now()) / 1000).toFixed(0) + ' s of ' + D2.PACK_MARK_MS / 1000 : 'no pack'}`,
+        results.push([`S7 B: your PACK mark is at the death spot — ${packMarks.length} PACK at (${packMarks[0] && packMarks[0].x.toFixed(2)}, ${packMarks[0] && packMarks[0].y.toFixed(2)}) vs the drop at (${out7.x.toFixed(2)}, ${out7.y.toFixed(2)}); 30 tiles away the compass list has ${tp.length} transient mark(s)${bearing ? ' "' + bearing.label + '" at ' + bearing.d.toFixed(2) + ' tiles, ' + bearing.deg + ' deg (true bearing ' + trueDeg.toFixed(1) + ')' : ''} beside ${fixed.length} fixed landmarks; ${D2.pack ? 'ends in ' + ((D2.pack.until - Date.now()) / 1000).toFixed(0) + ' s of ' + D2.PACK_MARK_MS / 1000 : 'no pack'}`,
           packMarks.length === 1 && Math.abs(packMarks[0].x - out7.x) < 1e-9 && Math.abs(packMarks[0].y - out7.y) < 1e-9 && tp.length === 1 && !!bearing &&
-          Math.abs(bearing.d - 30) < 1e-6 && Number.isFinite(bearing.deg) && fixed.length >= 9 && !!D2.pack && D2.pack.space === 'main' &&
+          Math.abs(bearing.d - 30) < 1e-6 && Number.isFinite(bearing.deg) && bearing.deg % 5 === 0 && Math.abs(bearing.deg - trueDeg) <= 2.5 + 1e-9 && fixed.length >= 9 && !!D2.pack && D2.pack.space === 'main' &&
           Math.abs((D2.pack.until - Date.now()) - C7.PACK_MARK_MS) < 5000 && D2.PACK_MARK_MS === C7.PACK_MARK_MS]);
         dsp7({ x: out7.x, y: out7.y });
         /* ---- 14a. The beacon: there for everyone, a light while it lives ---- */
@@ -12813,10 +12905,36 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         dsw7({ force: 'rain', update: true, dt: 0 });
         window.render(33000); window.render(33016);
         dsw7({ force: null, update: true, dt: 0 });
-        results.push([`S7 B: a fresh death raises a beacon for everyone — ${bc.length} beacon at (${bc[0] && bc[0].x.toFixed(2)}, ${bc[0] && bc[0].y.toFixed(2)}) in "${bc[0] && bc[0].space}", ${bc[0] ? ((bc[0].until - Date.now()) / 1000).toFixed(0) : '?'} s of ${C7.PILE_BEACON_MS / 1000}; it was announced over the one channel ${sentBeacon.length}x (${JSON.stringify(sentBeacon[0] && sentBeacon[0].payload)}); collectLights() has ${lightsOn.length} light there (a ${lightsOn[0] && lightsOn[0].a.toFixed(2)}); frames render cleanly with it up: ${!caught}`,
+        results.push([`S7 B: a fresh death raises a beacon for everyone — ${bc.length} beacon at (${bc[0] && bc[0].x.toFixed(2)}, ${bc[0] && bc[0].y.toFixed(2)}) in "${bc[0] && bc[0].space}", ${bc[0] ? ((bc[0].until - Date.now()) / 1000).toFixed(0) : '?'} s of ${C7.PILE_BEACON_MS / 1000}; it was announced over the one channel ${sentBeacon.length}x, as a time-left not a clock time (${JSON.stringify(sentBeacon[0] && sentBeacon[0].payload)}); collectLights() has ${lightsOn.length} light there (a ${lightsOn[0] && lightsOn[0].a.toFixed(2)}); frames render cleanly with it up: ${!caught}`,
           bc.length === 1 && Math.abs(bc[0].x - out7.x) < 1e-9 && bc[0].space === 'main' && Math.abs((bc[0].until - Date.now()) - C7.PILE_BEACON_MS) < 5000 &&
-          sentBeacon.length === 1 && sentBeacon[0].payload.space === 'main' && Math.abs(sentBeacon[0].payload.x - out7.x) < 0.006 && sentBeacon[0].payload.until > Date.now() &&
+          sentBeacon.length === 1 && sentBeacon[0].payload.space === 'main' && Math.abs(sentBeacon[0].payload.x - out7.x) < 0.006 && sentBeacon[0].payload.ttl === C7.PILE_BEACON_MS && !('until' in sentBeacon[0].payload) &&
           lightsOn.length === 1 && lightsOn[0].a > 0.4 && lightsOn[0].a <= 0.8 && !caught]);
+      }
+
+      /* ---- 12a. Dying again with nothing keeps the PACK mark that is still out there; the minimap card shows PACK, never RAID ---- */
+      {
+        const before = window.debugStakesInfo(), packKeep = Object.assign({}, before.pack);
+        dsp7({ inv: {}, equipped: null, armor: null });
+        await window.dropAllItems();
+        const after = window.debugStakesInfo();
+        results.push([`S7 B: dying again empty-handed keeps the PACK mark that still points at the pile — before ${before.pack ? 'PACK at (' + before.pack.x.toFixed(1) + ', ' + before.pack.y.toFixed(1) + ') until +' + ((before.pack.until - Date.now()) / 1000).toFixed(0) + ' s' : 'none'}, after ${after.pack ? 'PACK at (' + after.pack.x.toFixed(1) + ', ' + after.pack.y.toFixed(1) + ') until +' + ((after.pack.until - Date.now()) / 1000).toFixed(0) + ' s' : 'none'}; the recap says "${after.recap}"; ${after.beacons.length} beacon(s) kept`,
+          !!before.pack && !!after.pack && after.pack.x === before.pack.x && after.pack.y === before.pack.y && after.pack.until === before.pack.until &&
+          after.recap === 'You dropped nothing.' && after.lastDeathDrops.length === 0 && after.beacons.length === before.beacons.length]);
+        // the minimap card: counted by what it draws (the stub canvas counts every fillRect)
+        window.debugSetV35 && window.debugSetV35({ tutorialDone: true, tutorialActive: false });
+        const rects = () => { const r0 = drawOpsBy.fillRect || 0; window.updateWorldMap(); return (drawOpsBy.fillRect || 0) - r0; };
+        dsp7({ x: out7.x, y: out7.y });
+        dss7({ pack: null, raidMark: null });
+        const dNone = rects();
+        dss7({ pack: { x: out7.x + 3, y: out7.y + 2, space: 'main', until: Date.now() + 60000, ids: null } });
+        const dPack = rects();
+        dss7({ pack: null, raidMark: { x: out7.x + 3, y: out7.y + 2, until: Date.now() + 60000 } });
+        const dRaid = rects();
+        const bearRaid = window.minimapBearings().filter(m => m.label === 'RAID' && m.transient).length;
+        dss7({ pack: packKeep, raidMark: null });
+        const cardSrc = gameScript.slice(gameScript.indexOf('function updateWorldMap()'), gameScript.indexOf('function debugMapInfo()'));
+        results.push([`S7 B/C: the minimap card draws your PACK and not a RAID — card redraw costs ${dNone} fillRects bare, ${dPack} with a PACK in view, ${dRaid} with a RAID mark; the compass still lists the RAID (${bearRaid}); the card's loop skips every label but PACK: ${cardSrc.indexOf('if (tm.label !== "PACK") continue;') > 0}`,
+          dNone > 500 && dPack === dNone + 1 && dRaid === dNone && bearRaid === 1 && cardSrc.indexOf('if (tm.label !== "PACK") continue;') > 0 && cardSrc.indexOf('"RAID"') < 0]);
       }
 
       /* ---- 12b. A remote client: the beacon arrives, the PACK does not ---- */
@@ -12824,7 +12942,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         const packSaved = Object.assign({}, window.debugStakesInfo().pack);
         dss7({ pack: null, raidMark: null, clearBeacons: true });
         const b0 = window.debugStakesInfo().beacons.length;
-        const n = deliverBroadcast('pile_beacon', { x: out7.x + 5, y: out7.y, space: 'main', until: Date.now() + C7.PILE_BEACON_MS });
+        const n = deliverBroadcast('pile_beacon', { x: out7.x + 5, y: out7.y, space: 'main', ttl: C7.PILE_BEACON_MS });
         const R = window.debugStakesInfo(), mb = window.minimapBearings();
         results.push([`S7 B: a remote death shows the beacon but never a PACK — a fresh state (${b0} beacons, pack none), one pile_beacon broadcast (${n} handler) → ${R.beacons.length} beacon(s), ${R.marks.filter(m => m.label === 'PACK').length} PACK marks, ${mb.filter(m => m.transient).length} transient bearings, pack ${R.pack === null ? 'none' : 'SET'}`,
           b0 === 0 && n >= 1 && R.beacons.length === 1 && R.marks.length === 0 && R.pack === null && mb.filter(m => m.transient).length === 0]);
@@ -12860,36 +12978,66 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         dss7({ pack: null });
       }
 
-      /* ---- 14b. The beacon ends on its timer, cannot be stretched by a remote clock, and only lights its own space ---- */
+      /* ---- 14b. The beacon ends on its timer, cannot be stretched by a remote clock, merges per pile, is capped, and only lights its own space ---- */
       {
+        const CAPB = C7.PILE_BEACON_CAP, PB = C7.PILE_BEACON_MS;
+        const bcs = () => window.debugStakesInfo().beacons, pb = (o) => deliverBroadcast('pile_beacon', o);
+        const lightsAt = () => window.collectLights().filter(l => l.r === 90 && Math.abs(l.x - out7.x) < 1e-9).length;
         dss7({ clearBeacons: true });
-        const dead0 = deliverBroadcast('pile_beacon', { x: out7.x, y: out7.y, space: 'main', until: Date.now() - 1 });
-        const afterPast = window.debugStakesInfo().beacons.length;
-        const t0 = Date.now();
-        deliverBroadcast('pile_beacon', { x: out7.x, y: out7.y, space: 'main', until: t0 + 60 });
-        const lit = window.collectLights().filter(l => l.r === 90 && Math.abs(l.x - out7.x) < 1e-9).length;
-        const alive = window.debugStakesInfo().beacons.length;
+        pb({ x: out7.x, y: out7.y, space: 'main', until: Date.now() - 1 }); pb({ x: out7.x, y: out7.y, space: 'main', ttl: 0 }); pb({ x: out7.x, y: out7.y, space: 'main', ttl: -5000 });
+        const afterPast = bcs().length;
+        pb({ x: out7.x, y: out7.y, space: 'main', ttl: 60 });
+        const lit = lightsAt(), alive = bcs().length;
         await sleep7(140);
         dss7({ tick: true });
-        const afterTimer = window.debugStakesInfo().beacons.length, litAfter = window.collectLights().filter(l => l.r === 90 && Math.abs(l.x - out7.x) < 1e-9).length;
+        const afterTimer = bcs().length, litAfter = lightsAt();
+        // a remote clock cannot stretch one: ttl or the older absolute form, 10 h claimed
         dss7({ clearBeacons: true });
         const tf = Date.now();
-        deliverBroadcast('pile_beacon', { x: out7.x, y: out7.y, space: 'main', until: tf + 10 * 3600 * 1000 });
-        const far = window.debugStakesInfo().beacons[0];
-        const clampOk = !!far && far.until <= Date.now() + C7.PILE_BEACON_MS + 5 && far.until >= tf + C7.PILE_BEACON_MS - 5;
+        pb({ x: out7.x, y: out7.y, space: 'main', ttl: 10 * 3600 * 1000 });
+        const farTtl = bcs()[0];
+        dss7({ clearBeacons: true });
+        pb({ x: out7.x, y: out7.y, space: 'main', until: tf + 10 * 3600 * 1000 });
+        const farUntil = bcs()[0];
+        dss7({ clearBeacons: true });
+        pb({ x: out7.x, y: out7.y, space: 'main', until: tf + 30000 });                 // the older absolute form still works
+        const legacy = bcs()[0];
+        const lim = x => !!x && x.until <= Date.now() + PB + 5 && x.until >= tf + PB - 5;
+        const clampOk = lim(farTtl) && lim(farUntil) && !!legacy && legacy.until > tf + 25000 && legacy.until < tf + 31000;
+        // a beacon in another space is not a light here
         dss7({ clearBeacons: true });
         const nLights0 = window.collectLights().length;
-        deliverBroadcast('pile_beacon', { x: out7.x, y: out7.y, space: 'uwcave:1,1', until: Date.now() + 60000 });
-        const otherSpace = window.debugStakesInfo().beacons.length, nLightsOther = window.collectLights().length;
+        pb({ x: out7.x, y: out7.y, space: 'uwcave:1,1', ttl: 60000 });
+        const otherSpace = bcs().length, nLightsOther = window.collectLights().length;
+        // one pile, one column: within 2 tiles in the same space they merge (and keep the longer life); 2+ tiles apart, or in another space, they do not
+        dss7({ clearBeacons: true });
+        pb({ x: out7.x, y: out7.y, space: 'main', ttl: 60000 });
+        pb({ x: out7.x + 1.5, y: out7.y, space: 'main', ttl: 100000 });
+        const mergedN = bcs().length, mergedUntil = bcs()[0] && bcs()[0].until - Date.now();
+        pb({ x: out7.x, y: out7.y + 1, space: 'main', ttl: 1000 });
+        const stillN = bcs().length, stillUntil = bcs()[0] && bcs()[0].until - Date.now();
+        pb({ x: out7.x + 2.5, y: out7.y, space: 'main', ttl: 60000 });
+        const apartN = bcs().length;
+        pb({ x: out7.x, y: out7.y, space: 'uwcave:1,1', ttl: 60000 });
+        const spaceN = bcs().length;
+        // the cap: a flood of 100 distinct piles keeps the newest CAPB
+        dss7({ clearBeacons: true });
+        for (let i = 0; i < 100; i++) pb({ x: out7.x + 10 * i, y: out7.y, space: 'main', ttl: PB });
+        const flood = bcs(), kept = flood.map(b => Math.round((b.x - out7.x) / 10));
+        const newest = kept.length === CAPB && kept.every((k, i) => k === 100 - CAPB + i);
+        // junk
         dss7({ clearBeacons: true });
         let junk = 0, threw = false;
         try {
-          deliverBroadcast('pile_beacon', null); deliverBroadcast('pile_beacon', {}); deliverBroadcast('pile_beacon', { x: NaN, y: 3, until: Date.now() + 1000 });
-          deliverBroadcast('pile_beacon', { x: 3, y: 'a', until: Date.now() + 1000 }); deliverBroadcast('pile_beacon', { x: 3, y: 4, until: 'soon' });
-          junk = window.debugStakesInfo().beacons.length;
+          pb(null); pb({}); pb({ x: NaN, y: 3, ttl: 1000 }); pb({ x: 3, y: 'a', ttl: 1000 }); pb({ x: 3, y: 4, ttl: 'soon' }); pb({ x: 3, y: 4, ttl: NaN }); pb({ x: 3, y: 4, until: 'soon' });
+          junk = bcs().length;
         } catch (e) { threw = true; }
-        results.push([`S7 B: the beacon ends on its timer — a beacon already past is refused (${afterPast} kept), one with 60 ms left is up (${alive}, ${lit} light) then gone after the tick (${afterTimer}, ${litAfter} light); a remote beacon claiming 10 h is clamped to ${(far ? (far.until - tf) / 1000 : '?')} s (limit ${C7.PILE_BEACON_MS / 1000}); a beacon in another space adds ${nLightsOther - nLights0} lights here (${otherSpace} stored); malformed payloads add ${junk} (threw: ${threw})`,
-          dead0 >= 1 && afterPast === 0 && alive === 1 && lit === 1 && afterTimer === 0 && litAfter === 0 && clampOk && otherSpace === 1 && nLightsOther === nLights0 && junk === 0 && !threw]);
+        results.push([`S7 B: the beacon ends on its timer — already-past/zero/negative are refused (${afterPast} kept); a 60 ms one is up (${alive}, ${lit} light) then gone after the tick (${afterTimer}, ${litAfter} light); a remote beacon claiming 10 h is clamped to ${farTtl ? ((farTtl.until - tf) / 1000).toFixed(0) : '?'} s by ttl and ${farUntil ? ((farUntil.until - tf) / 1000).toFixed(0) : '?'} s by clock time (limit ${PB / 1000}), the older absolute form still lives ${legacy ? ((legacy.until - tf) / 1000).toFixed(0) : '?'} s; another space adds ${nLightsOther - nLights0} lights here (${otherSpace} stored); malformed payloads add ${junk} (threw: ${threw})`,
+          afterPast === 0 && alive === 1 && lit === 1 && afterTimer === 0 && litAfter === 0 && clampOk && otherSpace === 1 && nLightsOther === nLights0 && junk === 0 && !threw]);
+        results.push([`S7 B: one pile, one column — a second beacon 1.5 tiles away merges into the first (${mergedN} beacon, life ${(mergedUntil / 1000).toFixed(0)} s = the longer of 60 and 100), a shorter one on top does not shorten it (${stillN}, ${(stillUntil / 1000).toFixed(0)} s), one 2.5 tiles away is a second column (${apartN}), the same spot in another space is a third (${spaceN})`,
+          mergedN === 1 && Math.abs(mergedUntil - 100000) < 2000 && stillN === 1 && Math.abs(stillUntil - 100000) < 2000 && apartN === 2 && spaceN === 3]);
+        results.push([`S7 B: a flood of 100 beacons is capped at PILE_BEACON_CAP = ${CAPB} — ${flood.length} kept, the newest (piles ${kept[0]}..${kept[kept.length - 1]} of 0..99): ${newest}`,
+          CAPB === 16 && flood.length === CAPB && newest]);
         dss7({ clearBeacons: true });
       }
       tables7.length = 0; tables7.push(...gi0);
@@ -12930,6 +13078,19 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push([`S7 C: a repair is not a raid — hp 45 → 100 then 100 → 100: ${r.raidToasts} toasts, raid mark ${r.raidMark === null ? 'none' : 'SET'}, toast text "${toastEl.textContent}", combat music until ${DM().combatMusicUntil}`,
           r.raidToasts === 0 && r.raidMark === null && toastEl.textContent === '' && DM().combatMusicUntil === 0 && r.marks.length === 0]);
         rmPiece('s7:own1'); clearStakes7();
+        // the live check is Number.isFinite(+p.hp) && +p.hp < baseHpOf(bp): garbage never alerts, and a piece with no hp column reads as full
+        const noHp = mkPiece('s7:nohp', 'wood', uname, undefined, 4); delete noHp.hp;
+        window.baseAdd(noHp);
+        dss7({ lastRaidToastAt: -Infinity, raidToasts: 0, raidMark: null });
+        for (const bad of [undefined, NaN, 'abc', {}]) deliverBroadcast('base_hit', { id: 's7:nohp', hp: bad });
+        const nGarbage = window.debugStakesInfo().raidToasts;
+        deliverBroadcast('base_hit', { id: 's7:nohp', hp: 80 });
+        const nEqual = window.debugStakesInfo().raidToasts;
+        deliverBroadcast('base_hit', { id: 's7:nohp', hp: 79 });
+        const nLower = window.debugStakesInfo().raidToasts;
+        rmPiece('s7:nohp'); clearStakes7();
+        results.push([`S7 C: the raid check reads hp the way the game does — garbage hp (undefined/NaN/"abc"/{}) raises ${nGarbage} alerts, an unchanged hp on a piece with no hp column (reads as its full 80) ${nEqual}, a lower one ${nLower}`,
+          nGarbage === 0 && nEqual === 0 && nLower === 1 && gameScript.indexOf('Number.isFinite(+p.hp) && +p.hp < baseHpOf(bp)') > 0]);
       }
 
       /* ---- 16. The RAID mark and the combat music are the owner's alone ---- */
@@ -12967,41 +13128,89 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       /* ---- 17. The login summary, from stubbed rows ---- */
       {
         const ls = window.localStorage;
-        window.baseAdd(mkPiece('s7:l1', 'wood', uname, 80, 0));       // full
-        window.baseAdd(mkPiece('s7:l2', 'stone', uname, 100, 1));     // 100 of 180
-        window.baseAdd(mkPiece('s7:l3', 'iron', uname, 1, 2));        // 1 of 360
-        window.baseAdd(mkPiece('s7:l4', 'wood', 'Stranger', 5, 3));   // not mine, damaged, must not count
-        dsp7({ cls: cls0 === 'Architect' ? 'Knight' : cls0 });
+        const rowL = [
+          { id: 's7:l1', kind: 'foundation', tier: 'wood', x: 60.5, y: 60.5, owner: uname, hp: 80 },       // full
+          { id: 's7:l2', kind: 'foundation', tier: 'stone', x: 65.5, y: 60.5, owner: uname, hp: 100 },     // 100 of 180
+          { id: 's7:l3', kind: 'foundation', tier: 'iron', x: 70.5, y: 60.5, owner: uname, hp: 1 },        // 1 of 360
+          { id: 's7:l4', kind: 'foundation', tier: 'wood', x: 75.5, y: 60.5, owner: 'Stranger', hp: 5 }];  // not mine: must not count
+        const fresh = () => rowL.map(r => Object.assign({}, r));
+        const load = async (rows) => { tableData.base_pieces = rows; await window.loadBasePieces(); };
+        await load(fresh());
         const mine = window.myBasePieces().length;
-        const sum = (stored) => {
-          try { if (stored === null) ls.removeItem(lsKey7); else ls.setItem(lsKey7, String(stored)); } catch (e) {}
-          dss7({ raidCountReady: false });
-          return window.raidLoginSummary();
-        };
-        const m5 = sum(5), after5 = window.debugStakesInfo(), keyAfter = ls.getItem(lsKey7);
-        const mNone = sum(null), m3 = sum(3), m1 = sum(1);
-        // repair two of them to full through the real receiver and the damage count follows
-        deliverBroadcast('base_hit', { id: 's7:l2', hp: 180 }); deliverBroadcast('base_hit', { id: 's7:l3', hp: 360 });
-        const mOne = (() => { deliverBroadcast('base_hit', { id: 's7:l3', hp: 5 }); const x = sum(3); return x; })();
-        deliverBroadcast('base_hit', { id: 's7:l3', hp: 360 });
-        const mClean = sum(3), mLost = sum(5);
+        // earlier gates swapped the world seed, so there may be several rh_base_<seed>_<name> records; clear them all (they are put back at the end), then write once: the one key that appears is the current seed's
+        for (const k of Object.keys(ls)) if (k.indexOf('rh_base_') === 0) ls.removeItem(k);
+        dss7({ raidCountReady: true }); window.storeMyBaseCount();
+        const lsKey = Object.keys(ls).find(k => k.indexOf('rh_base_') === 0 && k.slice(-uname.length - 1) === '_' + uname);
+        const setRec = (rec) => { if (rec === null) ls.removeItem(lsKey); else ls.setItem(lsKey, JSON.stringify(rec)); };
+        const sum = (rec) => { setRec(rec); dss7({ raidCountReady: false }); return window.raidLoginSummary(); };
+        const SNAP = { 's7:l1': 80, 's7:l2': 100, 's7:l3': 1 };
         const EXP17 = 'While you were away: 2 base pieces were damaged, and 2 destroyed';
-        results.push([`S7 C: the login summary counts from stubbed rows — 3 pieces of mine (wood full, stone 100/180, iron 1/360; ${mine} mine counted, a stranger's damaged piece ignored) with 5 stored: "${m5}"`,
-          mine === 3 && m5 === EXP17]);
-        results.push([`S7 C: with no stored count there is no destroyed clause — "${mNone}"; stored 3 (nothing lost): "${m3}"; stored 1 (more pieces than before): "${m1}"; one damaged piece: "${mOne}"; all full, nothing lost: "${mClean}"; all full, 2 lost: "${mLost}"`,
-          mNone === 'While you were away: 2 base pieces were damaged' && m3 === mNone && m1 === mNone &&
-          mOne === 'While you were away: 1 base piece was damaged' && mClean === '' && /, and 2 destroyed$/.test(mLost)]);
-        // the count is stored under the username, only once the login summary has run
+        const keyOk = !!lsKey && /^rh_base_-?\d+_/.test(lsKey);
+        const m5 = sum({ count: 5, hp: {} });
+        const rec5 = JSON.parse(ls.getItem(lsKey) || 'null'), ready5 = window.debugStakesInfo().raidCountReady;
+        results.push([`S7 C: the login summary counts from stubbed rows — 3 pieces of mine (wood 80/80, stone 100/180, iron 1/360; ${mine} mine counted from the loaded rows, a stranger's damaged piece ignored), 5 stored: "${m5}"; the record is kept per device under "${lsKey}" (world seed, then username) and now reads ${JSON.stringify(rec5)}, ready: ${ready5}`,
+          mine === 3 && keyOk && m5 === EXP17 && !!rec5 && rec5.count === 3 && JSON.stringify(rec5.hp) === JSON.stringify(SNAP) && ready5 === true]);
+        const mNone = sum(null), m3 = sum({ count: 3, hp: {} }), m1 = sum({ count: 1, hp: {} });
+        results.push([`S7 C: no stored record means no destroyed clause — "${mNone}"; stored 3 (nothing lost): "${m3}"; stored 1 (more pieces than before): "${m1}"`,
+          mNone === 'While you were away: 2 base pieces were damaged' && m3 === mNone && m1 === mNone]);
+        // the hp snapshot: only hp lost SINCE you left is news
+        const sQuiet = sum({ count: 3, hp: SNAP });
+        const sWorse = sum({ count: 3, hp: { 's7:l1': 80, 's7:l2': 100, 's7:l3': 50 } });
+        const sWorse2 = sum({ count: 3, hp: { 's7:l1': 80, 's7:l2': 150, 's7:l3': 1 } });
+        const sBoth = sum({ count: 5, hp: { 's7:l1': 80, 's7:l2': 100, 's7:l3': 50 } });
+        results.push([`S7 C: old damage is not announced twice — the same hp as the snapshot: "${sQuiet}"; iron down from 50 to 1: "${sWorse}"; stone down from 150 to 100: "${sWorse2}"; iron down and 2 lost: "${sBoth}"`,
+          sQuiet === '' && sWorse === 'While you were away: 1 base piece was damaged' && sWorse2 === 'While you were away: 1 base piece was damaged' &&
+          sBoth === 'While you were away: 1 base piece was damaged, and 2 destroyed']);
+        const dOnly = sum({ count: 5, hp: SNAP }), dOne = sum({ count: 4, hp: SNAP }), dAll = sum({ count: 0, hp: {} });
+        results.push([`S7 C: pieces that only went missing are reported as destroyed, singular and plural — 5 stored, nothing newly damaged: "${dOnly}"; 4 stored: "${dOne}"; 0 stored: "${dAll}"`,
+          dOnly === 'While you were away: 2 base pieces were destroyed' && dOne === 'While you were away: 1 base piece was destroyed' && dAll === 'While you were away: 2 base pieces were damaged']);
+        // another world seed's record is not read (a reset starts fresh)
+        const otherKey = lsKey.replace(/^rh_base_-?\d+_/, 'rh_base_999999937_');
+        ls.setItem(otherKey, JSON.stringify({ count: 9, hp: {} }));
+        const mSeed = sum(null);
+        ls.removeItem(otherKey);
+        results.push([`S7 C: a record from another world seed is ignored — with a count-9 record under "${otherKey}" the summary says "${mSeed}"`,
+          mSeed === 'While you were away: 2 base pieces were damaged' && otherKey !== lsKey]);
+        // a failed or cut-short read of base_pieces reports nothing and leaves the record alone
+        const REC = JSON.stringify({ count: 5, hp: {} });
+        const readOnly = async (setup) => {
+          ls.setItem(lsKey, REC); dss7({ raidCountReady: false });
+          setup(); await window.loadBasePieces();
+          const msg = window.raidLoginSummary(), after = ls.getItem(lsKey), ready = window.debugStakesInfo().raidCountReady;
+          return { msg, same: after === REC, ready };
+        };
+        redeemMissing.add('base_pieces');
+        const fErr = await readOnly(() => {});
+        redeemMissing.delete('base_pieces');
+        const fNull = await readOnly(() => { tableData.base_pieces = null; });
+        const pad = n => { const a = fresh().slice(0, 3); for (let i = 0; i < n; i++) a.push({ id: 's7:pad' + i, kind: 'foundation', tier: 'wood', x: 100.5 + i, y: 90.5, owner: 'Stranger', hp: 80 }); return a; };
+        const fCut = await readOnly(() => { tableData.base_pieces = pad(997); });          // 1000 rows: PostgREST's cap, may be cut short
+        const okEdge = await readOnly(() => { tableData.base_pieces = pad(996); });         // 999 rows: a complete read
+        results.push([`S7 C: a failed read says nothing and does not touch the record — a database error: "${fErr.msg}" (record untouched: ${fErr.same}, ready ${fErr.ready}); no data back: "${fNull.msg}" (${fNull.same}); a read of 1000 rows (the row cap): "${fCut.msg}" (${fCut.same}); a read of 999 rows is trusted: "${okEdge.msg}"`,
+          fErr.msg === '' && fErr.same && !fErr.ready && fNull.msg === '' && fNull.same && !fNull.ready && fCut.msg === '' && fCut.same && !fCut.ready &&
+          okEdge.msg === EXP17 && !okEdge.same && okEdge.ready]);
+        // the Architect: a piece sitting at its plain hp is not "damaged" by a bonus the reload cannot know; with no snapshot it is
+        await load(fresh());
+        dsp7({ cls: 'Architect' });
+        const aNo = sum({ count: 3, hp: {} }), aSnap = sum({ count: 3, hp: SNAP });
+        dsp7({ cls: cls0 === 'Architect' ? 'Knight' : cls0 });
+        results.push([`S7 C: the Architect bonus cannot make a whole piece look damaged — as an Architect (max 96/216/432) with the 80/180/360 pieces: no snapshot "${aNo}", with the snapshot of those hp "${aSnap}"`,
+          aNo === 'While you were away: 3 base pieces were damaged' && aSnap === '']);
+        // storing is a no-op until the summary has run
+        await load(fresh());
         dss7({ raidCountReady: false });
-        try { ls.setItem(lsKey7, '9'); } catch (e) {}
+        ls.setItem(lsKey, JSON.stringify({ count: 9, hp: {} }));
         window.storeMyBaseCount();
-        const notReady = ls.getItem(lsKey7);
+        const notReady = JSON.parse(ls.getItem(lsKey)).count;
         dss7({ raidCountReady: true });
         window.storeMyBaseCount();
-        const ready = ls.getItem(lsKey7);
-        results.push([`S7 C: the owned-piece count is kept per device under "rh_base_count_<username>" — after the summary it reads "${keyAfter}" (3 owned) and the state says ready: ${after5.raidCountReady}; storeMyBaseCount() before the summary leaves a stored 9 alone ("${notReady}"), after it writes ${ready}; a source comment says it is per device: ${/PER DEVICE/.test(gameScript.slice(gameScript.indexOf('function baseCountKey()') - 600, gameScript.indexOf('function baseCountKey()')))}`,
-          keyAfter === '3' && after5.raidCountReady === true && notReady === '9' && ready === '3' &&
-          /PER DEVICE/.test(gameScript.slice(gameScript.indexOf('function baseCountKey()') - 600, gameScript.indexOf('function baseCountKey()')))]);
+        const readyRec = JSON.parse(ls.getItem(lsKey));
+        results.push([`S7 C: storeMyBaseCount() leaves a stored record alone until the summary has run (count ${notReady}) and then writes the live one ${JSON.stringify(readyRec)}; a source comment says it is per device: ${/PER DEVICE/.test(gameScript.slice(gameScript.indexOf('function baseCountKey()') - 1300, gameScript.indexOf('function baseCountKey()')))}`,
+          notReady === 9 && readyRec.count === 3 && JSON.stringify(readyRec.hp) === JSON.stringify(SNAP) &&
+          /PER DEVICE/.test(gameScript.slice(gameScript.indexOf('function baseCountKey()') - 1300, gameScript.indexOf('function baseCountKey()')))]);
+        results.push(['S7 C: basePiecesLoadOk is set by the real load — a complete array read under the row cap and no error, nothing else; and the record key carries the world seed',
+          gameScript.indexOf('return "rh_base_" + worldSeed + "_" + (me ? me.username : "");') > 0 && gameScript.indexOf('basePiecesLoadOk = !error && Array.isArray(data) && data.length < BASE_SELECT_CAP;') > 0 && /const BASE_SELECT_CAP = 1000;/.test(gameScript) &&
+          gameScript.indexOf('if (!basePiecesLoadOk) return "";') > 0]);
         // the Architect bonus, applied the way the insert applies it
         const T = ['wood', 'stone', 'iron'], base = { wood: 80, stone: 180, iron: 360 };
         dsp7({ cls: 'Knight' });
@@ -13009,19 +13218,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         dsp7({ cls: 'Architect' });
         const archMine = T.map(t => window.basePieceMaxHp({ tier: t, owner: uname })), archStranger = window.basePieceMaxHp({ tier: 'wood', owner: 'Stranger' });
         const archFlag = window.basePieceMaxHp({ tier: 'wood', owner: 'Stranger', arch: true });
-        const msgArch = sum(3);                                       // l1/l2/l3 sit at 80/180/360: the NON-Architect full values
-        deliverBroadcast('base_hit', { id: 's7:l1', hp: 96 }); deliverBroadcast('base_hit', { id: 's7:l2', hp: 216 }); deliverBroadcast('base_hit', { id: 's7:l3', hp: 432 });
-        const msgArchFull = sum(3);                                   // the Architect's own full values: nothing damaged
         dsp7({ cls: cls0 });
-        results.push([`S7 C: basePieceMaxHp follows the insert's Architect bonus — wood/stone/iron: knight-owner ${knight.join('/')}, stranger ${stranger.join('/')}; as an Architect my pieces ${archMine.join('/')} (wood = round(80 x ${C7.ARCHITECT_HP_BONUS}) = ${Math.round(80 * 1.2)}), a stranger's still ${archStranger}, a stranger's piece flagged arch ${archFlag}; as an Architect, pieces sitting at the plain 80/180/360 read as damaged ("${msgArch}") and at 96/216/432 as whole ("${msgArchFull}")`,
+        results.push([`S7 C: basePieceMaxHp follows the insert's Architect bonus — wood/stone/iron: knight-owner ${knight.join('/')}, stranger ${stranger.join('/')}; as an Architect my pieces ${archMine.join('/')} (wood = round(80 x ${C7.ARCHITECT_HP_BONUS}) = ${Math.round(80 * 1.2)}), a stranger's still ${archStranger}, a stranger's piece flagged arch ${archFlag}`,
           knight.join() === T.map(t => base[t]).join() && stranger.join() === knight.join() && archMine[0] === Math.round(80 * 1.2) &&
           archMine.join() === T.map(t => Math.round(base[t] * 1.2)).join() && archStranger === 80 && archFlag === Math.round(80 * 1.2) &&
-          C7.ARCHITECT_HP_BONUS === 1.2 && msgArch === 'While you were away: 3 base pieces were damaged' && msgArchFull === '']);
+          C7.ARCHITECT_HP_BONUS === 1.2]);
         // the insert uses the same factor (the number a piece is stored with is the number the summary compares against)
         results.push(['S7 C: the insert and the summary share one rule — placeBasePiece stores hp = round(BASE_TIER_HP[tier] x ARCHITECT_HP_BONUS for an Architect), basePieceMaxHp = the same expression',
           gameScript.indexOf('hp: Math.round((BASE_TIER_HP[tier] || BASE_TIER_HP.wood) * (isArch34 ? ARCHITECT_HP_BONUS : 1)) };') > 0 &&
           gameScript.indexOf('return Math.round((BASE_TIER_HP[p.tier] || BASE_TIER_HP.wood) * (arch ? ARCHITECT_HP_BONUS : 1));') > 0]);
-        for (const id of ['s7:l1', 's7:l2', 's7:l3', 's7:l4']) rmPiece(id);
         clearStakes7(); setMusic0();
       }
 
@@ -13058,7 +13263,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // ---- put everything back ----
       for (const id of ['s7:own1', 's7:own2', 's7:str1', 's7:l1', 's7:l2', 's7:l3', 's7:l4']) rmPiece(id);
       for (const p of baseOwners0) window.debugSetBase({ ownerId: p.id, owner: p.owner });
-      try { if (ls0 === null) window.localStorage.removeItem(lsKey7); else window.localStorage.setItem(lsKey7, ls0); } catch (e) {}
+      try {
+        for (const k of Object.keys(window.localStorage)) if (k.indexOf('rh_base_') === 0) window.localStorage.removeItem(k);
+        for (const [k, v] of lsBase0) window.localStorage.setItem(k, v);
+      } catch (e) {}
+      redeemMissing.delete('base_pieces');
+      tableData.base_pieces = bpRows0; await window.loadBasePieces();      // the stub's own rows back into the world
+      if (window.debugSettingsInfo().SETTINGS.reduceMotion !== rm0) window.setSetting('reduceMotion', rm0);
       tableData.ground_items.length = 0; tableData.ground_items.push(...gi0);
       dss7({ pack: st0.pack, raidMark: st0.raidMark, lastRaidToastAt: st0.lastRaidToastAt, raidToasts: st0.raidToasts, raidCountReady: st0.raidCountReady, clearBeacons: true });
       for (const b of st0.beacons) deliverBroadcast('pile_beacon', b);
