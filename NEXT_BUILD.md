@@ -1,1 +1,1 @@
-Build exactly per "Confirmed, locked spec for a future version (World Encounters — Roaming Boss & Bounty Board)" in README.md.
+Build exactly per "Confirmed, locked spec for a future version (Real Stakes — Weather, Death Weight & Raid Alerts)" in README.md.
