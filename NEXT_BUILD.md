@@ -1,1 +1,1 @@
-Build exactly per "Confirmed, locked spec for the next build (Front Page Rework — Title Screen, Character Select & Settings)" in README.md.
+Nothing to build tonight — report a "nothing to build" night (README step 9). The owner asked (2026-10-22, 22:19) for the Front Page Rework to be built in the evening session instead of this morning's run; it is in progress there. The owner will point this file at the next spec.
