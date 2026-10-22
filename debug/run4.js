@@ -4283,8 +4283,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // ...but four continuous seconds does
       stage({});
       const sentBefore = sentBroadcasts.length;
+      /* The deadline is bracketed by the clock just before and just after the
+         two arming ticks: the countdown must be exactly 10 s from the moment it
+         armed, wherever in that bracket that was. (Comparing against a later
+         Date.now() also counted the slow harness ticks that follow, ~1.1 s each,
+         and failed intermittently while the countdown itself was right.) */
+      const tArm0 = Date.now();
       set39({ tick: 2000 }); set39({ tick: 2000 });
       const fired = v39();
+      const tArm1 = Date.now();
       results.push(['four continuous seconds arms it', fired.worldResetArmed === true]);
       {
         const pend = sentBroadcasts.slice(sentBefore)
@@ -4295,9 +4302,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           sentBroadcasts.slice(sentBefore)
             .filter(m => m && m.event === 'world_reset_pending').length === 1]);
       }
-      results.push(['and starts a countdown of exactly ten seconds',
+      results.push([`and starts a countdown of exactly ten seconds (deadline - arm time = between ${fired.worldResetAt - tArm1} and ${fired.worldResetAt - tArm0} ms)`,
         fired.worldResetAt > 0 &&
-        Math.abs(fired.worldResetAt - Date.now() - 10000) < 1500]);
+        fired.worldResetAt >= tArm0 + 10000 && fired.worldResetAt <= tArm1 + 10000]);
       // the countdown is actually on screen, and it is the only thing that is
       if (window.updateUnmakingHud) {
         window.updateUnmakingHud();
@@ -9874,10 +9881,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             const p = window.debugWorldInfo().player;
             return Math.hypot(p.x - SPOT58.x, p.y - SPOT58.y);
           };
+          /* S7 weather is part of `spd` too (snow, x0.85): it can commit between
+             the two ticks below, which made this read 1.0625 (= 1.25 x 0.85).
+             Held clear for the measurement, like every other factor. */
+          if (window.debugSetWeather) window.debugSetWeather({ force: 'clear' });
           setC({ speed: 0 });
           const distPlain = walk58(700000);
           setC({ speed: Date.now() + 60000 });
           const distFast = walk58(800000);
+          if (window.debugSetWeather) window.debugSetWeather({ force: null });
           /* Deliberately left RUNNING: the guild sweep directly below reads
              speedPotionMult() and needs a live effect to read. Turning it off
              here is what made that sweep see a flat 1 under every guild and
@@ -12677,7 +12689,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push([`S7 A: the aggro multipliers — rain ${mults.rain}, fog ${mults.fog}, snow ${mults.snow}, ash ${mults.ash}, clear ${mults.clear}`,
           mults.rain === 0.75 && mults.fog === 0.6 && mults.snow === 1 && mults.ash === 1 && mults.clear === 1]);
         // the live check: a goblin (not tameable) with the player at a fraction of its aggro radius
-        const gob = HB7.mobs.find(q => q.kind === 'goblin' && !q.dead && !(q.space && q.space !== 'main'));
+        /* Which goblin is alive first depends on earlier gates' kills and their
+           wall-clock respawns, so pick one whose whole probe line stands outside
+           every safe zone — the test is about weather, not about safe zones. */
+        const R7g = W7.MOBS.goblin.aggroRadius * ((window.bloodMoonActive && window.bloodMoonActive()) ? 1.5 : 1);
+        const gob = HB7.mobs.find(q => q.kind === 'goblin' && !(q.space && q.space !== 'main') &&
+          !window.inSafeZone(q.hx, q.hy) && !window.inSafeZone(q.hx + 0.8 * R7g, q.hy) &&
+          !window.inSafeZone(q.hx + 0.58 * R7g, q.hy));
         if (gob) {
           const def = W7.MOBS.goblin, snap = Object.assign({}, gob);
           HB7.others.clear();
