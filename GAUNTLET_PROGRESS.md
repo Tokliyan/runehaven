@@ -62,5 +62,12 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
 - run4 1987 -> **2015 PASS** (28 S8 gates, 22 mutations each caught); one v58 gate made deterministic (S7 weather held clear during its one-tick speed measurement).
 - Independent Opus review: 2 bugs + 8 risks fixed (see the changelog).
 
+## Front Page Rework ("The Reforging Update"): SHIPPED to `main` (owner add-on, 2026-10-22 evening)
+- Title screen (logo, italic menu with gold "– Play –", update banner, world status, What's new), character select with tooltip-style class cards and round badges, Thronefall-style full-screen Settings with square checkboxes; Grenze Gotisch + Cormorant Garamond; `--menu-*` tokens; menu layer only.
+- **YELLOW judgment call:** the backdrop is painted key art in the locked flat-shaded style (ridges, the Eternal Tower, moon, motes), not the live world — the world is only generated inside ENTER, so a live render before login could break login.
+- run4 2015 -> **2039 PASS / 0 FAIL** (24 front-page gates, 14 mutations each caught); v46 B setItem count 6 -> 7 with its reason. Two older gates were made deterministic (world-reset countdown bracketed by the arm time; S7 goblin probe chosen outside safe zones).
+- Independent Opus review: 4 bugs fixed (unready ENTER clickable; Esc didn't close Settings; Enter during the intro pressed Play; the setItem count) + risks fixed.
+- The 5am "RuneHaven Version Build" task: NEXT_BUILD says nothing to build (it could not be paused from this session).
+
 ## Remaining stages
-S9 Final report. (Owner add-on 2026-10-22: Front Page Rework — built in the evening session, see README.)
+S9 Final report.
