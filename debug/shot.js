@@ -31,7 +31,9 @@ const STUB = `
 
 (async () => {
   const b = await pw.chromium.launch({ executablePath: process.env.PW_CHROMIUM || '/opt/pw-browsers/chromium', args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required'] });
-  const p = await b.newPage({ viewport: { width: 1280, height: 720 } });
+  const p = await b.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: +process.env.DPR || 1 });
+  /* Living World S1: SHOT_ZOOM pins the camera zoom for a tour (else the game's default). */
+  if (process.env.SHOT_ZOOM) await p.addInitScript(z => { try { localStorage.setItem('rh_zoom', z); } catch (e) {} }, process.env.SHOT_ZOOM);
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERR ' + e.message));
   await p.route('**/*', r => {
