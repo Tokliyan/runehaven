@@ -1800,204 +1800,195 @@ does not pop.
 **After this version ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated.
 
-## DRAFT — NOT LOCKED. Owner decisions needed before any build (see "Decisions").
-## Spec for a future version (The Living World — Scale, Motion & Action)
+## DRAFT v2 — decisions made 2026-10-23, waiting for the owner's "lock it".
+## Spec for a future version (The Living World — Pixel Art, Scale, Motion & Action)
 
 **Owner request (2026-10-23):** "I like what's in it, but it's just not
 speaking to me. Something's missing; overall it isn't grand enough for such
-a sick adventure game." The owner's own guesses at the fix: constant motion
-everywhere, bigger and more expressive characters and buildings that show
-what they are doing, and "more realistic".
+a sick adventure game." The owner wants constant motion, characters and
+buildings big enough to be alive and show what they're doing, and a pixel
+look.
 
-**Diagnosis (from the live build at `d404630` and the RT-pass screenshots):**
-1. **Everything is small.** Actors stand about 40 px tall in a 1280×720 view
-   that shows roughly 60 tiles across. The world reads like a map, not a
-   place. Nothing can be expressive at 40 px.
-2. **The canvas is soft on Retina.** It renders at CSS pixels, not at
-   `devicePixelRatio` (see the note near line 14285). On the owner's Mac the
-   browser stretches every frame 2×, so all the flat-shaded edges blur.
-3. **Characters move but do not act.** There is a walk cycle (`walkStep`),
-   a bob, and weapon swings. There is no anticipation or follow-through, no
-   idle life, no visible gather, cast or tame action, and no death.
-4. **Settlements are empty.** Spawn, the Bazaar and the Forge are buildings
-   with no people in them. The only humans in the world are players.
-5. **The world waits for you.** Trees sway and leaves fall, but nothing
-   happens at world scale: no wind moving across fields, no cloud shadows,
-   no herds, no life you come across by chance.
-6. **Big moments aren't framed.** Finding a landmark, meeting a boss and
-   levelling up all use the same toast and the same fixed camera.
+**Diagnosis (live build `d404630`):**
+- **Everything is tiny.** Actors are about 40 px tall in a 1280×720 view
+  that shows about 60 tiles across.
+- **It's soft on Retina.** The canvas is drawn at CSS pixels, not
+  `devicePixelRatio`.
+- **Characters move but don't act.** There is a walk cycle, but no wind-ups,
+  gather, cast, idle or death animations.
+- **Towns are empty.**
+- **The world doesn't move on its own.**
+- **Big moments are unframed.**
 
-### Decisions (owner, before locking)
+### Owner decisions (2026-10-23)
 
-- **D1: the "pixelating" question.** Two ways to read it:
-  - **D1-A, recommended: keep the locked flat-shaded look, render it at real
-    detail.** Characters are baked from the existing procedural `drawUnit`
-    into sprite sheets at 3–4× resolution with many more animation frames,
-    and the game draws at full Retina resolution. They stay recognisably
-    RuneHaven, can be shown big, and stay crisp at any zoom.
-  - **D1-B: true pixel art (an "HD-2D" mix).** Characters and buildings are
-    hand-authored low-res pixel sprites, scaled up with nearest-neighbour.
-    The flat-shaded terrain stays, so two art styles share one screen. This
-    is a far bigger job: every class, tier, weapon, armour, cosmetic, pet
-    and mob has to be redrawn by hand. It also breaks the locked art-style
-    skill (Thronefall / Bad North / Islanders) and its must-not-regress list.
-  - D1-A gets almost everything the owner asked for ("bigger, alive, show
-    actions") without throwing away the style or the 2067 gates built on
-    it. D1-B is a new game's art direction.
-- **D2: the default zoom.** The proposal is 1.6× by default, adjustable from
-  1.0× to 2.2× with the scroll wheel or a pinch. At 1.6× an actor is about
-  65 px tall and the view shows roughly 37 tiles across.
-- **D3: settlement NPCs.** Should Spawn, the Bazaar and the Forge get
-  non-player townsfolk? They would be local-only and purely visual, with no
-  dialogue or quests.
-- **D4: a quality setting.** Should Settings offer *Quality: Low / High*?
-  Low would turn off the extra ambient life, use 1× resolution and halve the
-  particle caps.
+- **D1: art style is pixel art, "B+".** That means finer pixels (about 80×100
+  art pixels for a full-height character), up to 40 colours per sprite, and
+  no outline. The no-outline rule stands. Reference images, both made from
+  the real game code:
+  - `docs/pixel-style-reference.png`, row "B+";
+  - `docs/style-options-reference.png`.
+- **D1 scope: the whole game goes pixel, in stages, with the owner's sign-off
+  at each step.** Player characters and pets come first. Then mobs. Then the
+  world one biome at a time; **each biome is merged only after the owner
+  approves its before/after shots.**
+- **D2:** default zoom 1.6×, adjustable from 1.0× to 2.2×.
+- **D3:** yes to townsfolk NPCs, visual only.
+- **D4:** no quality setting. Everyone gets the full version, so every stage
+  has to hold frame rate on its own.
 
-### Stages (each built and verified in one sitting, gauntlet-style)
+### How the pixel look is made: the Pixel Forge (no hand-drawing)
 
-**L1: Camera, zoom and crisp rendering. The biggest single lever.**
-- **World zoom.** One scale transform is applied to the world layer
-  (`ctx.setTransform`) around the player. `worldToScreen`, IW2 / IH2 / HZ,
-  depth sorting and every gate on the projection stay exactly as they are.
-  - Scroll and pinch zoom work between `ZOOM_MIN` 1.0 and `ZOOM_MAX` 2.2,
-    easing to the target (no snapping).
-  - The default is `ZOOM_DEFAULT` (D2), saved per viewer.
-  - Mouse picking and click-to-attack divide by the zoom.
-  - The HUD, plates and labels stay at screen scale. They are not zoomed.
-- **HD canvas.** The backing store becomes `innerWidth × dpr` (dpr capped at
-  2) and every draw is scaled by dpr.
-  - The S4 ground-chunk cache bakes at `zoom × dpr`, in buckets (1, 1.5, 2,
-    3, 4) so it isn't rebaked every frame.
-  - The run6 pixel-match gate runs at each bucket.
-- **Smooth camera.** A slight look-ahead in the direction you're moving.
-  The whole-pixel camera snap from S4 is kept, but at the device pixel.
-- **Performance.** A closer view means fewer tiles, so frame rate should
-  rise at 1.6×. It must be measured, not assumed, against run6's interleaved
-  harness at 1.0×, 1.6× and 2.2×.
+Everything already has procedural drawing code (`drawUnit`, `drawPet`,
+`drawMob` / `drawWild`, `drawBox`, the ground pass). The Pixel Forge renders
+that existing code, so every class, tier, weapon, armour, cosmetic and
+animation keeps working automatically:
+1. **Draw big.** The sprite is drawn into an offscreen canvas at 4× its
+   final art resolution.
+2. **Shrink to the pixel grid.** A box downsample takes it to the art grid.
+   `PIXEL_ART_SCALE` is the number of screen pixels per art pixel at 1.0×
+   zoom (B+ is about 1.25, so a 1.6× zoom gives about 2 px art pixels and a
+   2.2× zoom about 2.75 px).
+3. **Clean it up.** Alpha becomes either solid or clear (threshold 100/255),
+   so there are no half-transparent edges. Colours are reduced to at most
+   40, using a median-cut palette per sprite that is cached.
+4. **Cache it.** The result goes in an LRU sprite cache keyed by everything
+   that changes how it looks (class, tier, weapon kind, armour tier,
+   cosmetics, facing, animation state, frame). There is a hard memory cap. A
+   miss draws the old way that frame and bakes in the background, so nothing
+   ever blanks.
+5. **Draw crisp.** Sprites are drawn with `imageSmoothingEnabled = false` at
+   whole-art-pixel positions, so pixels stay square and never shimmer.
 
-**L2: the Sprite Forge (characters that act).**
-- A baking layer runs at load and whenever equipment changes.
-  - It calls the existing `drawUnit` into offscreen canvases at 4× and
-    stores the frames per (class, tier, weapon kind, armour tier, cosmetics,
-    facing, state, frame).
-  - It is an LRU cache with a hard memory cap. A cache miss falls back to
-    drawing live, so nothing can go blank.
-- **Animation states.** Each state has keyframes for the existing body parts
-  (torso, head, two arms, two legs, weapon, cape) with eased timing. A small
-  pose table replaces the current single sine.
+### Stages (each in one sitting, gauntlet rules; ★ = owner sign-off before merge)
 
-  | State | What it shows |
-  |---|---|
-  | `idle` | Breathing, a blink, an occasional look-around; a 2–4 s fidget |
-  | `walk` | 8 frames: arms counter-swing, head bob, cape lag |
-  | `run` | Sprinting: forward lean, longer stride |
-  | `attack_*` | One per weapon kind (sword, axe, spear, dagger, bow, crossbow, staff, fists): anticipation (wind-up), strike frame with a smear, follow-through, recover. The hit lands on the strike frame, and the combat timing on the server side is unchanged |
-  | `cast` | Staff raised, rune circle at the feet |
-  | `gather_chop` / `gather_mine` / `gather_pick` | The tool visibly in the hands, a hit on each resource tick |
-  | `hurt` | A flinch back, 120 ms |
-  | `block` | Shield up; replaces the static `blocking` pose |
-  | `tame` | Kneeling, hand out |
-  | `death` | Crumple and fade, which feeds the existing death recap |
-  | `mount` / `ride` | Uses the existing seat offsets |
-  | `emote_wave`, `emote_cheer`, `emote_sit` | Emotes, broadcast like movement |
+**P1: camera, zoom and a sharp canvas.**
+- **Zoom.** A world-layer transform: scroll or pinch between 1.0× and
+  2.2×, defaulting to 1.6×, eased, and saved per viewer.
+  - `worldToScreen`, IW2 / IH2 / HZ and depth by x + y stay untouched.
+  - Picking divides by the zoom.
+  - The HUD, plates and labels stay at screen scale.
+- **Device pixels.** The backing store is `innerWidth × dpr` (dpr capped at
+  2). The ground-chunk cache bakes per zoom bucket (1, 1.5, 2, 3, 4).
+  - run6's pixel match runs at each bucket.
+  - Frame rate is measured at 1.0×, 1.6× and 2.2× and must not drop at
+    1.0×.
+- **Camera.** A gentle look-ahead in the direction of movement.
 
-- **Remote players** use the same states. The state rides on the existing
-  move broadcast as one small field, so remote players are visibly fighting
-  and chopping too.
-- **Mobs and pets** get the same treatment in L3. L2 covers player classes
-  only.
+**P2 ★: the Pixel Forge plus player characters that act.**
+- The forge pipeline above, applied to `drawUnit` for every player, local
+  and remote.
+- New animation states, each with keyframed poses on the existing body
+  parts and eased timing:
+  - idle: breathing, a blink, a look-around, a fidget;
+  - walk (8 frames) and run;
+  - attacks per weapon kind, with a wind-up, the strike, a follow-through
+    and a recovery. Hits land on the strike frame; combat timing and damage
+    are unchanged;
+  - cast, gather (chop, mine, pick), hurt, block, tame and death;
+  - mount and ride;
+  - emotes: wave, cheer and sit.
+- The animation state rides on the move broadcast, so remote players
+  visibly fight and chop too.
+- The owner sees a GIF of every class doing every state before merge.
 
-**L3: creatures with weight.**
-- All 27 species get `idle`, `walk`, `attack` (with a wind-up the player can
-  read), `hurt` and `death`, using the same bake-and-cache path.
-- Large creatures move differently from small ones. The Drake, golems and
-  the Demon Knight get slower, heavier timing and a ground-shake on impact
-  that respects the shake setting. Small critters skitter.
-- Pets react: a happy hop on a feed, a sit when you idle, a look toward
-  danger.
+**P3 ★: pets in pixel.**
+- `drawPet` and pet accessories go through the forge.
+- Pets get idle, walk, happy hop (on feed), sit (when you idle) and alert
+  (looking toward danger).
 
-**L4: living settlements (if D3 is yes).**
-- Local-only NPC townsfolk walk scripted loops. Nobody else sees the same
-  ones, so there's no network cost.
-  - **Spawn:** a blacksmith hammering at the Spawn Forge with sparks on each
-    strike, a guard patrol, two villagers walking between houses, and a
+**P4 ★: mobs and wild creatures in pixel.**
+- `drawMob` and `drawWild` go through the forge for all 27 species.
+- They get idle, walk, attack with a readable wind-up, hurt and death.
+- Big creatures (the Drake, golems, the Demon Knight) get heavy timing and
+  an impact shake that respects the shake switch.
+
+**P5 ★: the world, one biome per sign-off.**
+- **How it works.** The S4 ground-chunk cache bakes the biome's tiles
+  through the forge (draw at 4×, downsample, cap the colours). Trees, rocks
+  and props in that biome are forge sprites. A `PIXEL_BIOMES` set records
+  which biomes are converted, so a mixed world is a supported state at
+  every step.
+- **Order:**
+  1. Plains and Meadow (what you see at spawn);
+  2. Forest and Dark Forest;
+  3. Sand and coast, with water;
+  4. Enchanted Forest and Sacred Meadow;
+  5. Snow and peaks;
+  6. Volcano;
+  7. caves and interiors.
+- **For each biome**, the owner gets before/after shots of day, night and a
+  border with an unconverted biome, plus a frame-rate figure. **Nothing
+  merges without the owner's OK.**
+- Then the buildings and landmarks (Spawn, Tower, Bazaar, Forge, Colosseum,
+  Shrine), also ★.
+
+**P6: living settlements.**
+- NPCs through the forge, walking local-only scripted loops. Nobody else
+  sees the same ones, so there's no network cost.
+  - **Spawn:** a blacksmith with sparks, a guard patrol, villagers, and a
     child chasing a chicken.
-  - **Bazaar:** a merchant behind each tent, customers browsing, and a crier
-    at the banner pole.
-  - **Ancient Forge:** a robed smith working the quench pool, with steam
-    bursting on each dunk.
-- **Buildings move:**
-  - chimney smoke on every house (the ambient spawner already exists);
-  - doors that swing open as anyone passes;
-  - window glow that flickers at night;
-  - windmill sails and a water wheel where they fit, as new props;
-  - laundry lines and banners in the wind.
-- NPCs use the L2 sprite path, sit under the occluder rules, and never block
-  movement.
+  - **Bazaar:** merchants, browsers and a crier.
+  - **Ancient Forge:** a smith quenching blades.
+- **Buildings come alive:**
+  - chimney smoke on every house;
+  - doors that open as anyone passes;
+  - windows that flicker at night;
+  - windmill and water-wheel props;
+  - laundry and banners in the wind.
 
-**L5: a world in motion.**
-- **Wind.** One global wind field: a direction plus gusts that travel across
-  the map. Everything that sways reads it, so a gust visibly rolls across a
-  meadow, tree after tree, then grass, then flags. This is the "constant
-  motion" the owner asked for, made coherent instead of random jitter.
-- **Grass tufts and flowers** on grassy tiles, drawn as cheap flat blades
-  after the ground cache and bending with the wind. They're capped per
-  chunk, and Low quality turns them off.
-- **Cloud shadows.** Large flat translucent shapes drift over the ground in
-  the wind direction. It's one cheap layer that makes the world feel huge.
-- **Wildlife.**
-  - Deer and rabbit herds graze and flee when you get close; they're
-    harmless and give a new hide drop if the owner wants one.
-  - Fish jump in lakes, birds rise from trees as you pass, and butterflies
-    and fireflies are tied to time of day.
-- **Water.** Ripples spread where anything walks into shallows, the surf
-  breathes, and boats bob at the docks.
-- **Footprints and dust.** Puffs as you run on sand and snow, and short-lived
-  prints.
+**P7: a world in motion.**
+- **Wind.** One wind field: a direction plus gusts that travel across the
+  map. Everything that sways reads it, so a gust rolls across a meadow.
+- **Ground cover.** Pixel grass and flowers on grassy tiles, bending with
+  the wind.
+- **Sky and wildlife.**
+  - Cloud shadows drift over the ground.
+  - Deer and rabbits graze and flee.
+  - Fish jump, and birds rise from trees as you pass.
+  - Butterflies come out by day and fireflies at night.
+- **Small touches.** Ripples where anything walks into shallow water, and
+  dust or footprints on sand and snow.
 
-**L6: action feel (making hits and work visible).**
-- **Resources.** Each chop makes a tree shake and throws chips. The final
-  chop topples it with a fall animation and a stump. Ore cracks in stages
-  and bursts on the last hit.
+**P8: action feel.**
+- **Resources.**
+  - Each chop shakes the tree and throws chips; the last chop topples it,
+    leaving a stump.
+  - Ore cracks in stages.
 - **Combat.**
-  - Hits knock back and briefly flash white (flat fill, no gradient).
-  - Damage numbers pop, arc and scale with the size of the hit; crits are
-    gold and bigger.
-  - Blood or sparks match the target: sparks for golems and armour, motes
-    for spirits.
-  - Mob telegraphs: a ground marker during the wind-up, so dodging becomes
-    a skill.
-- **Loot.** Drops fountain out and bounce once, and pickups fly to you.
-- **Level-up.** A pillar of light, a ring shockwave and a short slow-mo. It
-  uses the existing hit-stop machinery, carefully.
+  - Knockback and a white hit-flash (flat fill).
+  - Damage numbers pop and arc; crits are gold.
+  - Hit particles match the target.
+  - Mob attacks are telegraphed with a ground marker.
+- **Loot** fountains out and bounces, and pickups fly to you.
+- **Level-up:** a pillar of light, a ring shockwave and a short slow-mo.
 
-**L7: grand moments.**
-- **Landmark discovery.** On your first visit (stored per player in the
-  existing `cosmetics` JSON, so no new column), the camera eases out, a
-  blackletter title card fades in ("THE GRAND BAZAAR"), and a short music
-  stinger plays. You can skip it, and it plays once per landmark.
-- **Boss intro.** When the Elder Drake starts a fight, the camera frames it,
-  the name card slams in, and the existing boss HP bar rises.
-- **Dawn and dusk.** A short warm or cool sweep of colour across the ground,
-  with birdsong at dawn and torches lighting one by one at dusk.
+**P9: grand moments.**
+- **Landmark discovery.** The first visit eases the camera out, shows a
+  blackletter title card and plays a stinger. You can skip it, and it plays
+  once per landmark (stored in the existing `cosmetics` JSON).
+- **Boss intro.** The Elder Drake gets framing and a name-card slam.
+- **Dawn and dusk.** A colour sweep, birdsong at dawn, and torches lighting
+  one by one at dusk.
 
-### Constraints (unchanged)
-- Flat fills only: no new gradients, no outlines. PAL stays locked, and the
-  0.72 / 0.55 face shading stays.
-- `worldToScreen`, IW2 / IH2 / HZ and depth by x + y are untouched, since
-  zoom is a transform on top of them.
-- The S4 ground cache must still match pixel-for-pixel (run6) at every zoom
-  bucket.
-- Gameplay numbers don't change. Animation is presentation only: hit timing,
-  damage, ranges and cooldowns stay exactly as they are.
-- Frame rate must not regress at 1.0×. With D4 on Low it must beat today's
-  numbers.
-- Gates only go up; each stage adds its own gates and mutation checks.
+### Constraints
+- **Art style.** The locked art-style skill gets a new "Pixel layer" section
+  when P2 ships; the owner approved this direction on 2026-10-23.
+  - No outlines (B+ is outline-free).
+  - No new gradients.
+  - PAL stays the colour source; the forge only reduces colours, it never
+    invents new hues.
+- **Projection.** It stays as it is; zoom is a transform on top.
+- **Gameplay.** Every number stays the same; animation is presentation only.
+- **Frame rate.** It may not drop below today's run6 figures at 1.0× at any
+  stage (no quality toggle to fall back on).
+- **Gates.** They only go up, and every stage adds its own gates and
+  mutation checks.
 
 ### Estimated effort
-L1 is one session, and the owner should see it first. L2 is two sessions,
-L3 two, L4 one, L5 one, L6 one, and L7 one. That's about 9 sessions in
-total. Build order is L1 → L2 → L6 → L5 → L3 → L4 → L7: the camera and
-characters first because they change the feel the most, and the cinematic
-polish last.
+About 13–15 sessions. P1 takes 1 session, P2 takes 2–3, P3 takes 1 and P4
+takes 2. P5 takes about 7 short biome sessions plus 1 for buildings. P6, P7
+and P8 take 1 each, and P9 takes 1.
+
+**After this version ships successfully, do not start any further version
+automatically.** Wait for `NEXT_BUILD.md` to be updated.
