@@ -1939,16 +1939,40 @@ let gcFrameNo = 0;
    are drawn resampled for those few frames, and once it settles stale chunks
    are re-baked GC_BAKE_PER_FRAME at a time. Memory is the real limit at 2x+:
    GC_BUDGET_PX caps the backing pixels the cache may hold. */
-const GC_BUDGET_PX = 40e6;          // backing pixels the chunk cache may hold (≈160 MB) — TUNABLE
-const GC_MIN_CHUNKS = 12;           // never fewer than this, whatever the scale
-const GC_POOL_KEEP = 6;             // spare canvases kept for reuse; the rest are released
+const GC_BUDGET_PX = 40e6;          // backing pixels the cache may hold, chunks AND spares (≈160 MB) — TUNABLE
+const GC_MIN_CHUNKS = 4;            // the floor the budget may not push below
+const GC_POOL_KEEP = 2;             // spare canvases kept for reuse; the rest are released
+/* Review (S1): a chunk is never baked finer than GC_BAKE_SCALE_MAX backing px
+   per logical px. 3.2 is a Retina screen at the 1.6x default — pixel-exact
+   there; past it (2x Retina zoomed further in) the ground is drawn slightly
+   upscaled while sprites stay sharp, and one chunk stays under ~12 MB. */
+const GC_BAKE_SCALE_MAX = 3.2;
+function gcBakeScale() { return Math.min(VIEW_SCALE, GC_BAKE_SCALE_MAX); }
 function gcMaxNow() {
-  const per = GC_W * GC_H * VIEW_SCALE * VIEW_SCALE;
+  const Sb = gcBakeScale(), per = GC_W * GC_H * Sb * Sb;
   return Math.max(GC_MIN_CHUNKS, Math.min(GC_MAX, Math.floor(GC_BUDGET_PX / per)));
 }
+function gcPixelsHeld() {
+  let px = 0;
+  for (const cv of gcChunks.values()) px += cv.width * cv.height;
+  for (const cv of gcPool) px += cv.width * cv.height;
+  return px;
+}
 function gcRelease(cv) {
-  if (gcPool.length < GC_POOL_KEEP) gcPool.push(cv);
+  if (gcPool.length < GC_POOL_KEEP && gcPixelsHeld() + cv.width * cv.height <= GC_BUDGET_PX) gcPool.push(cv);
   else { cv.width = 0; cv.height = 0; gcStats.released = (gcStats.released || 0) + 1; }
+}
+/* Evict least-recently-used chunks (never one drawn this frame) until both the
+   count cap and the pixel budget hold — called after every bake and re-bake. */
+function gcTrim(frame) {
+  const cap = gcMaxNow();
+  while (gcChunks.size > 0) {
+    const old = gcChunks.keys().next().value, ocv = gcChunks.get(old);
+    const over = gcChunks.size > cap || gcPixelsHeld() > GC_BUDGET_PX;
+    if (!over || ocv.__gcUsed === frame) break;
+    gcChunks.delete(old); gcRelease(ocv); gcStats.evictions++;
+  }
+  while (gcPool.length && gcPixelsHeld() > GC_BUDGET_PX) { const pc = gcPool.pop(); pc.width = 0; pc.height = 0; }
 }
 const gcBandCache = new Map();      // per scale: the trimmed bands in backing pixels
 function gcBandsAt(S, cw, ch) {
@@ -1976,7 +2000,7 @@ function groundCacheReset() {
   tileCache.clear = function () { clearTiles(); groundCacheReset(); };
 }
 function gcBake(cx, cy, into) {
-  const S = VIEW_SCALE;
+  const S = gcBakeScale();
   const cv = into || gcPool.pop() || document.createElement("canvas");
   const CW = Math.ceil(GC_W * S) + 2, CH = Math.ceil(GC_H * S) + 2;
   if (cv.width !== CW || cv.height !== CH) { cv.width = CW; cv.height = CH; }
@@ -1986,7 +2010,8 @@ function gcBake(cx, cy, into) {
        Safari past its canvas memory cap returns null) would otherwise be asked
        again for a fresh canvas every frame. Keep the canvas, and stop caching:
        the direct path draws the same pixels. */
-    gcPool.push(cv); gcStats.bakeFailures++; GROUND_CACHE = false;
+    if (!into) gcPool.push(cv);       // review (S1): a re-bake target is still in gcChunks — never pool it twice
+    gcStats.bakeFailures++; GROUND_CACHE = false;
     return null;
   }
   c.setTransform(1, 0, 0, 1, 0, 0);
@@ -2031,9 +2056,9 @@ function drawGroundCached(gMinX, gMaxX, gMinY, gMaxY, w, h, camIX, camIY) {
       const zooming = zoomIsMoving(), gcCap = gcMaxNow();
       if (cv) {
         gcChunks.delete(key); gcChunks.set(key, cv); cv.__gcUsed = frame;
-        if (cv.__gcS !== VIEW_SCALE && !zooming && bakes < GC_BAKE_PER_FRAME && GROUND_CACHE) {
+        if (cv.__gcS !== gcBakeScale() && !zooming && bakes < GC_BAKE_PER_FRAME && GROUND_CACHE) {
           bakes++;                                  // Living World S1: stale scale, re-bake in place
-          if (gcBake(cx, cy, cv)) gcStats.rebakes = (gcStats.rebakes || 0) + 1;
+          if (gcBake(cx, cy, cv)) { gcStats.rebakes = (gcStats.rebakes || 0) + 1; gcTrim(frame); }
         }
       }
       else if (!zooming && bakes < GC_BAKE_PER_FRAME && GROUND_CACHE) {
@@ -2051,10 +2076,7 @@ function drawGroundCached(gMinX, gMaxX, gMinY, gMaxY, w, h, camIX, camIY) {
           if (cv) {
             cv.__gcUsed = frame;
             gcChunks.set(key, cv);
-            while (gcChunks.size > gcCap) {
-              const old = gcChunks.keys().next().value;
-              gcRelease(gcChunks.get(old)); gcChunks.delete(old); gcStats.evictions++;
-            }
+            gcTrim(frame);
             if (gcChunks.size > gcStats.maxSize) gcStats.maxSize = gcChunks.size;
           }
         }
@@ -2068,7 +2090,7 @@ function drawGroundCached(gMinX, gMaxX, gMinY, gMaxY, w, h, camIX, camIY) {
           if (dy + dh < 0 || dy > h) continue;
           ctx.drawImage(cv, B4[0], B4[1], B4[2], B4[3], lx + B4[0] / S0, dy, B4[2] / S0, dh);
         }
-        if (S0 !== VIEW_SCALE) gcStats.staleBlits = (gcStats.staleBlits || 0) + 1;
+        if (S0 !== gcBakeScale()) gcStats.staleBlits = (gcStats.staleBlits || 0) + 1;
         gcStats.blits++; blitN++; continue;
       }
       // not baked yet: the direct path, in this chunk's slot, with the live cull
@@ -7677,15 +7699,22 @@ const ZOOM_WHEEL_K = 0.0016;     // zoom factor per wheel delta unit (exp), TUNA
 const ZOOM_PINCH_K = 0.012;      // trackpad pinch arrives as ctrl+wheel, much smaller deltas
 const ZOOM_EASE_MS = 90;         // time constant of the ease toward the target
 const ZOOM_SETTLE = 0.0015;      // closer than this counts as arrived (snaps)
+const ZOOM_QUANT = 0.05;         // the target lands on these steps, so the ground re-bakes per step, not per wheel tick
+const ZOOM_EVENT_MAX = 1.25;     // the most one wheel / pinch event can change the zoom by
 const RENDER_DPR_MAX = 2;        // a 3x phone draws at 2x: the flat style does not need 9x the pixels
-let RENDER_DPR = 1, zoomTarget = ZOOM_DEFAULT, zoomNow = ZOOM_DEFAULT, VIEW_SCALE = ZOOM_DEFAULT, zoomLastT = 0;
-try { const zs = parseFloat(localStorage.getItem("rh_zoom")); if (zs >= ZOOM_MIN && zs <= ZOOM_MAX) zoomTarget = zoomNow = zs; } catch (e) {}
+let RENDER_DPR = 1, zoomTarget = ZOOM_DEFAULT, zoomNow = ZOOM_DEFAULT, zoomWant = ZOOM_DEFAULT, VIEW_SCALE = ZOOM_DEFAULT, zoomLastT = 0, zoomSaved = ZOOM_DEFAULT;
+try { const zs = parseFloat(localStorage.getItem("rh_zoom")); if (zs >= ZOOM_MIN && zs <= ZOOM_MAX) zoomTarget = zoomNow = zoomWant = zoomSaved = zs; } catch (e) {}
 function renderDpr() { return Math.min(RENDER_DPR_MAX, Math.max(1, (typeof window !== "undefined" && window.devicePixelRatio) || 1)); }
 function viewW() { return canvas.width / VIEW_SCALE; }
 function viewH() { return canvas.height / VIEW_SCALE; }
 function zoomIsMoving() { return zoomNow !== zoomTarget; }
 function setZoom(z) {
-  zoomTarget = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+  zoomWant = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));                 // the raw accumulator a trackpad nudges
+  zoomTarget = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(zoomWant / ZOOM_QUANT) * ZOOM_QUANT));
+}
+function saveZoom() {                       // review (S1): once, when the ease arrives — not every wheel event
+  if (zoomTarget === zoomSaved) return;
+  zoomSaved = zoomTarget;
   try { localStorage.setItem("rh_zoom", zoomTarget.toFixed(3)); } catch (e) {}
 }
 function updateZoom(now) {
@@ -7693,7 +7722,7 @@ function updateZoom(now) {
   zoomLastT = now;
   if (zoomNow !== zoomTarget) {
     zoomNow += (zoomTarget - zoomNow) * (1 - Math.exp(-dt / ZOOM_EASE_MS));
-    if (Math.abs(zoomTarget - zoomNow) < ZOOM_SETTLE) zoomNow = zoomTarget;
+    if (Math.abs(zoomTarget - zoomNow) < ZOOM_SETTLE) { zoomNow = zoomTarget; saveZoom(); }
   }
   VIEW_SCALE = RENDER_DPR * zoomNow;
 }
@@ -7794,7 +7823,7 @@ function underTileMid(tx, ty) {           // the midpoint of the tile's two chec
 }
 function drawGroundUnderlay() {
   const W = viewW(), H = viewH();
-  const k = worldSeed + "," + Math.floor(cam.x) + "," + Math.floor(cam.y) + "," + W + "x" + H;
+  const k = worldSeed + "," + Math.floor(cam.x) + "," + Math.floor(cam.y) + "," + Math.round(W) + "x" + Math.round(H);
   if (k !== underCellKey) {
     underCellKey = k; underBuilds++;
     underCells = [];
@@ -14375,8 +14404,17 @@ canvas.addEventListener("mousedown", e => {
 canvas.addEventListener("wheel", e => {
   if (!me) return;
   e.preventDefault();
-  setZoom(zoomTarget * Math.exp(-e.deltaY * (e.ctrlKey ? ZOOM_PINCH_K : ZOOM_WHEEL_K)));
+  /* Review (S1): only a SMALL ctrl+wheel delta is a trackpad pinch; a real
+     ctrl+mouse notch (~100) uses the wheel rate. Either way one event moves
+     the zoom by at most ZOOM_EVENT_MAX. */
+  const pinch = e.ctrlKey && Math.abs(e.deltaY) < 10;
+  const f = Math.exp(-e.deltaY * (pinch ? ZOOM_PINCH_K : ZOOM_WHEEL_K));
+  setZoom(zoomWant * Math.min(ZOOM_EVENT_MAX, Math.max(1 / ZOOM_EVENT_MAX, f)));
 }, { passive: false });
+/* Safari's trackpad pinch is a gesture event, not a wheel. */
+let zoomGestureBase = 1;
+canvas.addEventListener("gesturestart", e => { if (!me) return; e.preventDefault(); zoomGestureBase = zoomWant; });
+canvas.addEventListener("gesturechange", e => { if (!me) return; e.preventDefault(); setZoom(zoomGestureBase * (e.scale || 1)); });
 
 /* =========================================================
    GAME LOOP
@@ -14401,10 +14439,21 @@ let RENDER_SCALE = 1;    // backing-store pixels per CSS pixel (= RENDER_DPR)
 function resize() {
   RENDER_DPR = RENDER_SCALE = renderDpr();
   canvas.width = Math.round(innerWidth * RENDER_DPR); canvas.height = Math.round(innerHeight * RENDER_DPR);
-  lightCanvas.width = canvas.width; lightCanvas.height = canvas.height;
+  /* Review (S1): the darkness is soft gradients — it is built at CSS
+     resolution and stretched, not at the device ratio (4x the fill on Retina). */
+  lightCanvas.width = Math.round(innerWidth); lightCanvas.height = Math.round(innerHeight);
   VIEW_SCALE = RENDER_DPR * zoomNow;
 }
 addEventListener("resize", resize); resize();
+/* Review (S1): dragging the window to a screen with a different pixel ratio
+   does not always fire resize; this does. Re-armed for each new ratio. */
+function watchDpr() {
+  try {
+    const mq = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    mq.addEventListener("change", () => { resize(); watchDpr(); }, { once: true });
+  } catch (e) {}
+}
+watchDpr();
 
 let lastT = 0;
 let loopErrCount = 0;
@@ -14671,7 +14720,8 @@ function update(dt, t) {
   {
     const jx = me.x - camLookPX, jy = me.y - camLookPY;
     camLookPX = me.x; camLookPY = me.y;
-    if (dt > 0 && Math.abs(jx) + Math.abs(jy) < CAM_LOOK_JUMP) {
+    if (kbAnim) { /* review (S1): a shove is not where you are heading — hold the lead */ }
+    else if (dt > 0 && Math.abs(jx) + Math.abs(jy) < CAM_LOOK_JUMP) {
       const k = Math.min(1, dt * CAM_LOOK_RATE);
       camLookVX += (jx / dt - camLookVX) * k; camLookVY += (jy / dt - camLookVY) * k;
     } else { camLookVX = 0; camLookVY = 0; }
@@ -20596,7 +20646,7 @@ function labelClearOfPlate(x, y, w, mine) {
      just the plate. Lifting the mob tag in R2 cleared the HP bar but, in a
      fight, landed it across the player's torso — scored on 44-fight. */
   if (mine && x - w / 2 - 4 < mine.sx + PLATE_HALF_W && x + w / 2 + 4 > mine.sx - PLATE_HALF_W &&
-      y - 10 < mine.sy + 2 && y + 3 > mine.sy - 72) return mine.sy - 76;
+      y - 10 < (mine.feetY !== undefined ? mine.feetY : mine.sy) + 2 && y + 3 > mine.sy - 72) return mine.sy - 76;   // S1 review: the real feet at any zoom
   return y;
 }
 function queueWorldLabel(text, x, y, font, color) {
@@ -20625,7 +20675,7 @@ function flushOverlayPass(t) {
                false, g.wkind, g.atier, g.blocking, g.cos, g.step);
       ctx.save();
       ctx.globalAlpha = PLAYER_GHOST_A;
-      ctx.drawImage(ghostCanvas, ix - GHOST_AX, iy - GHOST_AY, GHOST_W, GHOST_H);
+      ctx.drawImage(ghostCanvas, ix - GHOST_AX, iy - GHOST_AY, GCW / GS, GCH / GS);   // review (S1): the exact size it was drawn at, no stretch
       ctx.restore();
       overlayStats.ghosts++;
     }
@@ -20639,7 +20689,7 @@ function flushOverlayPass(t) {
      ratio alone. At zoom 1 every number below is the old one. */
   const Zp = zoomNow;
   for (const L of labelQueue) { L.x = (L.x + renderShX) * Zp; L.y = (L.y + 3 + renderShY) * Zp - 3; }
-  for (const q of plateQueue) { q.sx = (q.sx + renderShX) * Zp; q.sy = (q.sy - 25 + renderShY) * Zp + 25; }
+  for (const q of plateQueue) { q.feetY = (q.sy + renderShY) * Zp; q.sx = (q.sx + renderShX) * Zp; q.sy = (q.sy - 25 + renderShY) * Zp + 25; }
   ctx.save();
   ctx.setTransform(RENDER_DPR, 0, 0, RENDER_DPR, 0, 0);
   const mine = plateQueue.find(q => q.isMe);
@@ -20668,14 +20718,14 @@ function debugSetGroundCache(on) { GROUND_CACHE = !!on; }
 /* ⚠️ HARNESS ONLY (Living World S1): jump the zoom without easing (both the
    target and the live value), so a gate can measure one scale exactly. */
 function debugSetZoom(z) {
-  zoomTarget = zoomNow = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+  zoomTarget = zoomNow = zoomWant = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
   VIEW_SCALE = RENDER_DPR * zoomNow;
   return { zoomNow, zoomTarget, VIEW_SCALE, RENDER_DPR, ZOOM_MIN, ZOOM_MAX, ZOOM_DEFAULT, viewW: viewW(), viewH: viewH() };
 }
 function debugGroundCache() {
   return { on: GROUND_CACHE, size: gcChunks.size, pool: gcPool.length, GC_TILES, GC_MAX, GC_BAKE_PER_FRAME,
            GC_W, GC_H, ...gcStats, ground: Object.assign({}, groundStats),
-           VIEW_SCALE, gcMaxNow: gcMaxNow(), pool: gcPool.length };
+           VIEW_SCALE, bakeScale: gcBakeScale(), gcMaxNow: gcMaxNow(), pool: gcPool.length, pixelsHeld: gcPixelsHeld(), GC_BUDGET_PX };
 }
 /* ⚠️ HARNESS ONLY (S4 pixel gate): draw ONE ground-only frame — underlay and
    ground pass, nothing else — at the current camera, with the cache on or
@@ -21157,7 +21207,8 @@ function render(t) {
 
   /* S8: tunable (SHAKE_MS / SHAKE_PX, harder on a heavy hit) and switchable
      off in Settings — same random jitter, same linear decay as before. */
-  const [shX, shY] = shakeOffset(performance.now());
+  const [shX0, shY0] = shakeOffset(performance.now());
+  const shX = shX0 / zoomNow, shY = shY0 / zoomNow;           // Living World S1 review: the shake is SCREEN pixels at any zoom
   renderShX = shX; renderShY = shY;                            // Living World S1: the overlay pass re-applies it in screen space
 
   ctx.save();
@@ -22126,7 +22177,7 @@ function render(t) {
   const dayT = getDayT();
   const na = nightAlpha(dayT);
   if (na > 0.02) {
-    lctx.setTransform(VIEW_SCALE, 0, 0, VIEW_SCALE, 0, 0);    // Living World S1: same logical space as the world
+    lctx.setTransform(lightCanvas.width / w, 0, 0, lightCanvas.height / h, 0, 0);    // Living World S1: logical space onto the CSS-size light canvas
     lctx.clearRect(0, 0, w, h);
     lctx.fillStyle = `rgba(9, 13, 32, ${na * NIGHT_DARK_A})`;
     lctx.fillRect(0, 0, w, h);
@@ -22292,7 +22343,13 @@ function render(t) {
       ctx.fillRect(0, 0, w, h);
     }
   }
-  drawWeather(w, h);   // S7 PART A: after the world and its darkness, before the HUD
+  /* S7 PART A: after the world and its darkness, before the HUD. Living
+     World S1 review: rain, snow and ash are screen-space, so they keep their
+     size at any zoom — drawn in CSS pixels with the frame's shake. */
+  ctx.save();
+  ctx.setTransform(RENDER_DPR, 0, 0, RENDER_DPR, shX0 * RENDER_DPR, shY0 * RENDER_DPR);
+  drawWeather(w * zoomNow, h * zoomNow);
+  ctx.restore();
 
   ctx.restore();
   drawTowerArrow();
@@ -22361,9 +22418,12 @@ function collectLights() {
 }
 
 function drawTowerArrow() {
-  const [tx, ty] = worldToScreen(TOWER.x, TOWER.y, 150);
+  /* Living World S1 review: a screen-edge marker, so it lives in CSS pixels. */
+  const [tx0, ty0] = worldToScreen(TOWER.x, TOWER.y, 150);
+  const tx = tx0 * zoomNow, ty = ty0 * zoomNow;
   const margin = 60;
-  const vw = viewW(), vh = viewH();
+  const vw = viewW() * zoomNow, vh = viewH() * zoomNow;
+  ctx.setTransform(RENDER_DPR, 0, 0, RENDER_DPR, 0, 0);
   if (tx > -margin && tx < vw + margin && ty > -margin && ty < vh + margin) return;
   const cx = vw / 2, cy = vh / 2;
   const ang = Math.atan2(ty - cy, tx - cx);
