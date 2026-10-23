@@ -978,7 +978,7 @@
      one hardcoded copy of it in the file. #helpFull ships in the DOM rather
      than being built on first click, so a grep, a screen reader and the JS
      all see the same complete reference whatever the toggle is doing. -->
-<div class="hud" id="hudHelp"><span id="helpCore">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; I inventory</span><button id="helpToggle" aria-expanded="false" aria-controls="helpFull" title="Show all controls">[?]</button><span id="helpFull">SHIFT block &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character &nbsp;•&nbsp; M fast travel &nbsp;•&nbsp; G give item</span></div>
+<div class="hud" id="hudHelp"><span id="helpCore">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; I inventory</span><button id="helpToggle" aria-expanded="false" aria-controls="helpFull" title="Show all controls">[?]</button><span id="helpFull">SHIFT block &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character &nbsp;•&nbsp; M fast travel &nbsp;•&nbsp; G give item &nbsp;•&nbsp; SCROLL zoom</span></div>
 <div id="hpBarWrap"><div id="hpBar"></div></div>
 
 <div class="panel" id="invPanel">
@@ -1821,6 +1821,8 @@ let VOID_RIFT = null;                // v50 PART A: the one Void Rift, settled a
 let channel = null;
 let keys = {};
 let cam = { x: 0, y: 0 };
+const CAM_LOOK_SEC = 0.28, CAM_LOOK_MAX = 1.6, CAM_LOOK_RATE = 3, CAM_LOOK_JUMP = 2.5;   // Living World S1 look-ahead (TUNABLE)
+let camLookPX = 0, camLookPY = 0, camLookVX = 0, camLookVY = 0;
 let tileCache = new Map();
 let elevCache = new Map();
 let rawHCache = new Map();     // v11: pre-erosion heights
@@ -1926,8 +1928,70 @@ const gcStats = { bakes: 0, bakesThisFrame: 0, maxBakesPerFrame: 0, blits: 0, di
                   resets: 0, evictions: 0, maxSize: 0, interiorTouches: 0, overflow: 0, bakeFailures: 0,
                   frameVisible: 0, frameBlits: 0, frameDirect: 0 };
 let gcFrameNo = 0;
+/* Living World S1 — THE CACHE AT THE VIEW'S OWN SCALE. A chunk is baked at
+   the current VIEW_SCALE (backing pixels per logical pixel) so it lands on
+   the canvas 1:1 with no resampling, at any zoom and on Retina. The chunk's
+   canvas origin is snapped DOWN to a whole backing pixel (__gcAX / __gcAY)
+   and the bake's transform carries the remainder, so a tile inside the chunk
+   sits at exactly the sub-pixel position the direct path would draw it — the
+   run6 pixel match holds at every scale, not just 1. While the zoom is
+   easing, no new bakes happen (they would be stale next frame): baked chunks
+   are drawn resampled for those few frames, and once it settles stale chunks
+   are re-baked GC_BAKE_PER_FRAME at a time. Memory is the real limit at 2x+:
+   GC_BUDGET_PX caps the backing pixels the cache may hold. */
+const GC_BUDGET_PX = 40e6;          // backing pixels the cache may hold, chunks AND spares (≈160 MB) — TUNABLE
+const GC_MIN_CHUNKS = 4;            // the floor the budget may not push below
+const GC_POOL_KEEP = 2;             // spare canvases kept for reuse; the rest are released
+/* Review (S1): a chunk is never baked finer than GC_BAKE_SCALE_MAX backing px
+   per logical px. 3.2 is a Retina screen at the 1.6x default — pixel-exact
+   there; past it (2x Retina zoomed further in) the ground is drawn slightly
+   upscaled while sprites stay sharp, and one chunk stays under ~12 MB. */
+const GC_BAKE_SCALE_MAX = 3.2;
+function gcBakeScale() { return Math.min(VIEW_SCALE, GC_BAKE_SCALE_MAX); }
+function gcMaxNow() {
+  const Sb = gcBakeScale(), per = GC_W * GC_H * Sb * Sb;
+  return Math.max(GC_MIN_CHUNKS, Math.min(GC_MAX, Math.floor(GC_BUDGET_PX / per)));
+}
+function gcPixelsHeld() {
+  let px = 0;
+  for (const cv of gcChunks.values()) px += cv.width * cv.height;
+  for (const cv of gcPool) px += cv.width * cv.height;
+  return px;
+}
+function gcRelease(cv) {
+  if (gcPool.length < GC_POOL_KEEP && gcPixelsHeld() + cv.width * cv.height <= GC_BUDGET_PX) gcPool.push(cv);
+  else { cv.width = 0; cv.height = 0; gcStats.released = (gcStats.released || 0) + 1; }
+}
+/* Evict least-recently-used chunks (never one drawn this frame) until both the
+   count cap and the pixel budget hold — called after every bake and re-bake. */
+function gcTrim(frame) {
+  const cap = gcMaxNow();
+  while (gcChunks.size > 0) {
+    const old = gcChunks.keys().next().value, ocv = gcChunks.get(old);
+    const over = gcChunks.size > cap || gcPixelsHeld() > GC_BUDGET_PX;
+    if (!over || ocv.__gcUsed === frame) break;
+    gcChunks.delete(old); gcRelease(ocv); gcStats.evictions++;
+  }
+  while (gcPool.length && gcPixelsHeld() > GC_BUDGET_PX) { const pc = gcPool.pop(); pc.width = 0; pc.height = 0; }
+}
+const gcBandCache = new Map();      // per scale: the trimmed bands in backing pixels
+function gcBandsAt(S, cw, ch) {
+  const k = S + "|" + cw + "|" + ch;
+  let b = gcBandCache.get(k);
+  if (b) return b;
+  b = [];
+  for (let i = 0; i < gcBands.length; i++) {
+    const B = gcBands[i], last = i === gcBands.length - 1;
+    const x0 = Math.max(0, Math.floor(B[0] * S)), x1 = Math.min(cw, Math.ceil((B[0] + B[2]) * S) + 2);
+    const y0 = Math.max(0, Math.floor(B[1] * S)), y1 = last ? ch : Math.min(ch, Math.floor((B[1] + B[3]) * S));
+    if (x1 > x0 && y1 > y0) b.push([x0, y0, x1 - x0, y1 - y0]);
+  }
+  if (gcBandCache.size > 16) gcBandCache.clear();
+  gcBandCache.set(k, b);
+  return b;
+}
 function groundCacheReset() {
-  for (const ch of gcChunks.values()) gcPool.push(ch);
+  for (const ch of gcChunks.values()) gcRelease(ch);
   gcChunks.clear();
   gcStats.resets++;
 }
@@ -1935,22 +1999,30 @@ function groundCacheReset() {
   const clearTiles = tileCache.clear.bind(tileCache);
   tileCache.clear = function () { clearTiles(); groundCacheReset(); };
 }
-function gcBake(cx, cy) {
-  const cv = gcPool.pop() || document.createElement("canvas");
-  if (cv.width !== GC_W || cv.height !== GC_H) { cv.width = GC_W; cv.height = GC_H; }
+function gcBake(cx, cy, into) {
+  const S = gcBakeScale();
+  const cv = into || gcPool.pop() || document.createElement("canvas");
+  const CW = Math.ceil(GC_W * S) + 2, CH = Math.ceil(GC_H * S) + 2;
+  if (cv.width !== CW || cv.height !== CH) { cv.width = CW; cv.height = CH; }
   const c = cv.getContext("2d");
   if (!c) {
     /* Review (S4): a browser that refuses another canvas context (iPhone
        Safari past its canvas memory cap returns null) would otherwise be asked
        again for a fresh canvas every frame. Keep the canvas, and stop caching:
        the direct path draws the same pixels. */
-    gcPool.push(cv); gcStats.bakeFailures++; GROUND_CACHE = false;
+    if (!into) gcPool.push(cv);       // review (S1): a re-bake target is still in gcChunks — never pool it twice
+    gcStats.bakeFailures++; GROUND_CACHE = false;
     return null;
   }
   c.setTransform(1, 0, 0, 1, 0, 0);
-  c.clearRect(0, 0, GC_W, GC_H);
-  const [ox, oy] = worldToScreen(cx * GC_TILES, cy * GC_TILES, 0);
-  c.setTransform(1, 0, 0, 1, GC_PADX - ox, GC_PADY - oy);
+  c.clearRect(0, 0, CW, CH);
+  camOffset();
+  const ax = Math.floor((isoX(cx * GC_TILES, cy * GC_TILES) - GC_PADX) * S);
+  const ay = Math.floor((isoY(cx * GC_TILES, cy * GC_TILES) - GC_PADY) * S);
+  /* worldToScreen(p) = camOX + isoX(p), so this puts p at S * isoX(p) - ax:
+     the camera cancels out and the chunk is the same whatever it was baked
+     under. At S = 1 it is the S4 transform (GC_PADX - ox) to the pixel. */
+  c.setTransform(S, 0, 0, S, -ax - camOX * S, -ay - camOY * S);
   const x0 = cx * GC_TILES, y0 = cy * GC_TILES;
   const x1 = Math.min(N - 1, x0 + GC_TILES - 1), y1 = Math.min(N - 1, y0 + GC_TILES - 1);
   for (let s2 = x0 + y0; s2 <= x1 + y1; s2++) {
@@ -1958,6 +2030,7 @@ function gcBake(cx, cy) {
     for (let tx = lo; tx <= hi; tx++) drawGroundTile(c, tx, s2 - tx);
   }
   c.setTransform(1, 0, 0, 1, 0, 0);
+  cv.__gcS = S; cv.__gcAX = ax; cv.__gcAY = ay;
   gcStats.bakes++;
   return cv;
 }
@@ -1980,15 +2053,22 @@ function drawGroundCached(gMinX, gMaxX, gMinY, gMaxY, w, h, camIX, camIY) {
       vis++;
       const key = cx * 65536 + cy;
       let cv = gcChunks.get(key);
-      if (cv) { gcChunks.delete(key); gcChunks.set(key, cv); cv.__gcUsed = frame; }
-      else if (bakes < GC_BAKE_PER_FRAME && GROUND_CACHE) {
+      const zooming = zoomIsMoving(), gcCap = gcMaxNow();
+      if (cv) {
+        gcChunks.delete(key); gcChunks.set(key, cv); cv.__gcUsed = frame;
+        if (cv.__gcS !== gcBakeScale() && !zooming && bakes < GC_BAKE_PER_FRAME && GROUND_CACHE) {
+          bakes++;                                  // Living World S1: stale scale, re-bake in place
+          if (gcBake(cx, cy, cv)) { gcStats.rebakes = (gcStats.rebakes || 0) + 1; gcTrim(frame); }
+        }
+      }
+      else if (!zooming && bakes < GC_BAKE_PER_FRAME && GROUND_CACHE) {
         /* Review (S4): when more than GC_MAX chunks are visible (a 1440p or 4K
            screen, a zoomed-out browser), evicting the least recently used
            chunk would throw away one this very frame still needs, and the
            cache would bake two chunks every frame forever. Chunks used this
            frame sit at the back of the LRU, so if the FRONT one was used this
            frame, every chunk is in use: draw this one directly instead. */
-        const front = gcChunks.size >= GC_MAX ? gcChunks.get(gcChunks.keys().next().value) : null;
+        const front = gcChunks.size >= gcCap ? gcChunks.get(gcChunks.keys().next().value) : null;
         if (front && front.__gcUsed === frame) gcStats.overflow++;
         else {
           bakes++;                                  // an attempt counts against the budget, success or not
@@ -1996,21 +2076,21 @@ function drawGroundCached(gMinX, gMaxX, gMinY, gMaxY, w, h, camIX, camIY) {
           if (cv) {
             cv.__gcUsed = frame;
             gcChunks.set(key, cv);
-            while (gcChunks.size > GC_MAX) {
-              const old = gcChunks.keys().next().value;
-              gcPool.push(gcChunks.get(old)); gcChunks.delete(old); gcStats.evictions++;
-            }
+            gcTrim(frame);
             if (gcChunks.size > gcStats.maxSize) gcStats.maxSize = gcChunks.size;
           }
         }
       }
-      if (cv) {                                   // whole pixels: the camera offset is snapped
-        for (let bi = 0; bi < gcBands.length; bi++) {
-          const B4 = gcBands[bi];
-          const dy = top + B4[1];
-          if (dy + B4[3] < 0 || dy > h) continue;
-          ctx.drawImage(cv, B4[0], B4[1], B4[2], B4[3], left + B4[0], dy, B4[2], B4[3]);
+      if (cv) {                                   // whole BACKING pixels: the camera offset is snapped to 1 / VIEW_SCALE
+        const S0 = cv.__gcS, lx = camOX + cv.__gcAX / S0, ly = camOY + cv.__gcAY / S0;
+        const bands = gcBandsAt(S0, cv.width, cv.height);
+        for (let bi = 0; bi < bands.length; bi++) {
+          const B4 = bands[bi];
+          const dy = ly + B4[1] / S0, dh = B4[3] / S0;
+          if (dy + dh < 0 || dy > h) continue;
+          ctx.drawImage(cv, B4[0], B4[1], B4[2], B4[3], lx + B4[0] / S0, dy, B4[2] / S0, dh);
         }
+        if (S0 !== gcBakeScale()) gcStats.staleBlits = (gcStats.staleBlits || 0) + 1;
         gcStats.blits++; blitN++; continue;
       }
       // not baked yet: the direct path, in this chunk's slot, with the live cull
@@ -3099,7 +3179,7 @@ function debugSetV35(patch) {
    nothing and writes nothing: no entity is drawn, no state is touched.
    HARNESS ONLY, like every hook beside it. */
 function debugWildGatherOrder() {
-  const w = canvas.width, h = canvas.height;
+  const w = viewW(), h = viewH();
   const corners = [screenToWorld(0, 0), screenToWorld(w, 0), screenToWorld(0, h), screenToWorld(w, h)];
   const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
   const minX = Math.max(0, Math.floor(Math.min(...xs)) - 2);
@@ -7142,7 +7222,7 @@ function rebuildFeatureLists() {
    hard on a chunk edge gets only `r` WHOLE chunks of cover on that side, so
    that is the quantity that has to clear it. */
 function featureWindowRadius() {
-  const cw = canvas.width || 1280, chh = canvas.height || 720;
+  const cw = (canvas.width / RENDER_DPR) || 1280, chh = (canvas.height / RENDER_DPR) || 720;   // Living World S1: the view at ZOOM_MIN, the widest it can get
   const half = cw / (4 * IW2) + chh / (4 * IH2) + 8;
   return Math.max(FEATURE_LOAD_R, Math.ceil(half / FEATURE_CHUNK));
 }
@@ -7601,12 +7681,58 @@ function isoY(wx, wy) { return (wx + wy) * IH2; }
    pixel-identical to drawing the tiles directly (run6's pixel gate), and
    characters stay locked to the ground instead of drifting up to half a
    pixel against it. Cached per camera so the hot path is four compares. */
-let _camKX = NaN, _camKY = NaN, _camKW = -1, _camKH = -1, camOX = 0, camOY = 0;
+/* ============ LIVING WORLD S1 — CAMERA ZOOM & DEVICE PIXELS ============
+   README "The Living World", P1 (owner, 2026-10-23: default zoom 1.6x).
+   The world is drawn in WORLD-LOGICAL pixels exactly as before — IW2 / IH2 /
+   HZ, worldToScreen and depth by x + y are untouched — and ONE transform puts
+   them on the canvas: VIEW_SCALE = RENDER_DPR x zoomNow backing pixels per
+   logical pixel. RENDER_DPR is the screen's devicePixelRatio (capped at
+   RENDER_DPR_MAX), so a Retina Mac finally gets a sharp frame instead of a
+   CSS-pixel one stretched 2x; zoomNow eases toward zoomTarget (scroll wheel /
+   trackpad pinch, ZOOM_MIN..ZOOM_MAX, saved per viewer). viewW()/viewH() are
+   the canvas measured in logical pixels — what every "how big is the view"
+   question in the world code now asks, instead of canvas.width / height.
+   The camera offset snaps to whole BACKING pixels (1 / VIEW_SCALE logical),
+   which at a scale of 1 is the S4 whole-pixel camera exactly. */
+const ZOOM_MIN = 1.0, ZOOM_MAX = 2.2, ZOOM_DEFAULT = 1.6;   // TUNABLE (owner D2: 1.6)
+const ZOOM_WHEEL_K = 0.0016;     // zoom factor per wheel delta unit (exp), TUNABLE
+const ZOOM_PINCH_K = 0.012;      // trackpad pinch arrives as ctrl+wheel, much smaller deltas
+const ZOOM_EASE_MS = 90;         // time constant of the ease toward the target
+const ZOOM_SETTLE = 0.0015;      // closer than this counts as arrived (snaps)
+const ZOOM_QUANT = 0.05;         // the target lands on these steps, so the ground re-bakes per step, not per wheel tick
+const ZOOM_EVENT_MAX = 1.25;     // the most one wheel / pinch event can change the zoom by
+const RENDER_DPR_MAX = 2;        // a 3x phone draws at 2x: the flat style does not need 9x the pixels
+let RENDER_DPR = 1, zoomTarget = ZOOM_DEFAULT, zoomNow = ZOOM_DEFAULT, zoomWant = ZOOM_DEFAULT, VIEW_SCALE = ZOOM_DEFAULT, zoomLastT = 0, zoomSaved = ZOOM_DEFAULT;
+try { const zs = parseFloat(localStorage.getItem("rh_zoom")); if (zs >= ZOOM_MIN && zs <= ZOOM_MAX) zoomTarget = zoomNow = zoomWant = zoomSaved = zs; } catch (e) {}
+function renderDpr() { return Math.min(RENDER_DPR_MAX, Math.max(1, (typeof window !== "undefined" && window.devicePixelRatio) || 1)); }
+function viewW() { return canvas.width / VIEW_SCALE; }
+function viewH() { return canvas.height / VIEW_SCALE; }
+function zoomIsMoving() { return zoomNow !== zoomTarget; }
+function setZoom(z) {
+  zoomWant = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));                 // the raw accumulator a trackpad nudges
+  zoomTarget = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(zoomWant / ZOOM_QUANT) * ZOOM_QUANT));
+}
+function saveZoom() {                       // review (S1): once, when the ease arrives — not every wheel event
+  if (zoomTarget === zoomSaved) return;
+  zoomSaved = zoomTarget;
+  try { localStorage.setItem("rh_zoom", zoomTarget.toFixed(3)); } catch (e) {}
+}
+function updateZoom(now) {
+  const dt = zoomLastT ? Math.min(100, Math.max(0, now - zoomLastT)) : 16;
+  zoomLastT = now;
+  if (zoomNow !== zoomTarget) {
+    zoomNow += (zoomTarget - zoomNow) * (1 - Math.exp(-dt / ZOOM_EASE_MS));
+    if (Math.abs(zoomTarget - zoomNow) < ZOOM_SETTLE) { zoomNow = zoomTarget; saveZoom(); }
+  }
+  VIEW_SCALE = RENDER_DPR * zoomNow;
+}
+let _camKX = NaN, _camKY = NaN, _camKW = -1, _camKH = -1, _camKS = -1, camOX = 0, camOY = 0;
 function camOffset() {
-  if (cam.x !== _camKX || cam.y !== _camKY || canvas.width !== _camKW || canvas.height !== _camKH) {
-    _camKX = cam.x; _camKY = cam.y; _camKW = canvas.width; _camKH = canvas.height;
-    camOX = Math.round(canvas.width / 2 - isoX(cam.x, cam.y));
-    camOY = Math.round(canvas.height / 2 - isoY(cam.x, cam.y));
+  if (cam.x !== _camKX || cam.y !== _camKY || canvas.width !== _camKW || canvas.height !== _camKH || VIEW_SCALE !== _camKS) {
+    _camKX = cam.x; _camKY = cam.y; _camKW = canvas.width; _camKH = canvas.height; _camKS = VIEW_SCALE;
+    const S = VIEW_SCALE;
+    camOX = Math.round(canvas.width / 2 - isoX(cam.x, cam.y) * S) / S;
+    camOY = Math.round(canvas.height / 2 - isoY(cam.x, cam.y) * S) / S;
   }
 }
 function worldToScreen(wx, wy, zpx = 0) {
@@ -7696,8 +7822,8 @@ function underTileMid(tx, ty) {           // the midpoint of the tile's two chec
   return v;
 }
 function drawGroundUnderlay() {
-  const W = canvas.width, H = canvas.height;
-  const k = worldSeed + "," + Math.floor(cam.x) + "," + Math.floor(cam.y) + "," + W + "x" + H;
+  const W = viewW(), H = viewH();
+  const k = worldSeed + "," + Math.floor(cam.x) + "," + Math.floor(cam.y) + "," + Math.round(W) + "x" + Math.round(H);
   if (k !== underCellKey) {
     underCellKey = k; underBuilds++;
     underCells = [];
@@ -14270,9 +14396,25 @@ addEventListener("keyup", e => {
 const canvas = document.getElementById("game");
 canvas.addEventListener("mousedown", e => {
   if (!me || dead) return;
-  const [wx, wy] = screenToWorld(e.clientX, e.clientY);
+  const [wx, wy] = screenToWorld(e.clientX / zoomNow, e.clientY / zoomNow);   // Living World S1: CSS px -> logical
   tryAttack(wx, wy);
 });
+/* Living World S1: scroll to zoom; a trackpad pinch arrives as ctrl+wheel,
+   which would otherwise zoom the whole browser page. */
+canvas.addEventListener("wheel", e => {
+  if (!me) return;
+  e.preventDefault();
+  /* Review (S1): only a SMALL ctrl+wheel delta is a trackpad pinch; a real
+     ctrl+mouse notch (~100) uses the wheel rate. Either way one event moves
+     the zoom by at most ZOOM_EVENT_MAX. */
+  const pinch = e.ctrlKey && Math.abs(e.deltaY) < 10;
+  const f = Math.exp(-e.deltaY * (pinch ? ZOOM_PINCH_K : ZOOM_WHEEL_K));
+  setZoom(zoomWant * Math.min(ZOOM_EVENT_MAX, Math.max(1 / ZOOM_EVENT_MAX, f)));
+}, { passive: false });
+/* Safari's trackpad pinch is a gesture event, not a wheel. */
+let zoomGestureBase = 1;
+canvas.addEventListener("gesturestart", e => { if (!me) return; e.preventDefault(); zoomGestureBase = zoomWant; });
+canvas.addEventListener("gesturechange", e => { if (!me) return; e.preventDefault(); setZoom(zoomGestureBase * (e.scale || 1)); });
 
 /* =========================================================
    GAME LOOP
@@ -14288,12 +14430,30 @@ let lctx = lightCanvas.getContext("2d");
    can be raised later; at 1 the canvas is exactly what it has always been.
    (Raising it also needs the pointer mapping and the drawing scale to follow
    it; nothing reads it but resize() today.) */
-const RENDER_SCALE = 1;   // TUNABLE — backing-store pixels per CSS pixel
+/* Living World S1 (owner decision, 2026-10-23): SUPERSEDED. The backing
+   store is now innerWidth x RENDER_DPR (devicePixelRatio, capped at
+   RENDER_DPR_MAX = 2, so a 3x phone still draws 4x, never 9x), and the one
+   view transform in render() scales the logical world onto it. RENDER_SCALE
+   is kept as the name the S4 harness reads; it now reports the live ratio. */
+let RENDER_SCALE = 1;    // backing-store pixels per CSS pixel (= RENDER_DPR)
 function resize() {
-  canvas.width = Math.round(innerWidth * RENDER_SCALE); canvas.height = Math.round(innerHeight * RENDER_SCALE);
-  lightCanvas.width = canvas.width; lightCanvas.height = canvas.height;
+  RENDER_DPR = RENDER_SCALE = renderDpr();
+  canvas.width = Math.round(innerWidth * RENDER_DPR); canvas.height = Math.round(innerHeight * RENDER_DPR);
+  /* Review (S1): the darkness is soft gradients — it is built at CSS
+     resolution and stretched, not at the device ratio (4x the fill on Retina). */
+  lightCanvas.width = Math.round(innerWidth); lightCanvas.height = Math.round(innerHeight);
+  VIEW_SCALE = RENDER_DPR * zoomNow;
 }
 addEventListener("resize", resize); resize();
+/* Review (S1): dragging the window to a screen with a different pixel ratio
+   does not always fire resize; this does. Re-armed for each new ratio. */
+function watchDpr() {
+  try {
+    const mq = matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+    mq.addEventListener("change", () => { resize(); watchDpr(); }, { once: true });
+  } catch (e) {}
+}
+watchDpr();
 
 let lastT = 0;
 let loopErrCount = 0;
@@ -14551,8 +14711,27 @@ function update(dt, t) {
   checkSalamanderRampage();  // v25: the one species with a happiness clock
   for (const [, o] of others) if (!o.dead) updatePet(o, o.pe || null, dt, t, (o.speed || 0) > 0.02);
 
-  cam.x += (me.x - cam.x) * Math.min(1, dt * 6);
-  cam.y += (me.y - cam.y) * Math.min(1, dt * 6);
+  /* Living World S1: a gentle look-ahead — the camera leads you by up to
+     CAM_LOOK_MAX tiles in the direction you are travelling, so you see where
+     you are going rather than where you have been. Velocity is measured from
+     your own position each tick and smoothed; a jump (teleport, respawn,
+     fast travel) is not a velocity and resets it. Standing still, it decays
+     to nothing and the camera settles exactly on you, as before. */
+  {
+    const jx = me.x - camLookPX, jy = me.y - camLookPY;
+    camLookPX = me.x; camLookPY = me.y;
+    if (kbAnim) { /* review (S1): a shove is not where you are heading — hold the lead */ }
+    else if (dt > 0 && Math.abs(jx) + Math.abs(jy) < CAM_LOOK_JUMP) {
+      const k = Math.min(1, dt * CAM_LOOK_RATE);
+      camLookVX += (jx / dt - camLookVX) * k; camLookVY += (jy / dt - camLookVY) * k;
+    } else { camLookVX = 0; camLookVY = 0; }
+    let lx = camLookVX * CAM_LOOK_SEC, ly = camLookVY * CAM_LOOK_SEC;
+    const ll = Math.hypot(lx, ly);
+    if (ll > CAM_LOOK_MAX) { lx *= CAM_LOOK_MAX / ll; ly *= CAM_LOOK_MAX / ll; }
+    if (ll < 0.02) { lx = 0; ly = 0; }
+    cam.x += (me.x + lx - cam.x) * Math.min(1, dt * 6);
+    cam.y += (me.y + ly - cam.y) * Math.min(1, dt * 6);
+  }
 
   const now = performance.now();
   for (const [name, o] of others) {
@@ -20467,7 +20646,7 @@ function labelClearOfPlate(x, y, w, mine) {
      just the plate. Lifting the mob tag in R2 cleared the HP bar but, in a
      fight, landed it across the player's torso — scored on 44-fight. */
   if (mine && x - w / 2 - 4 < mine.sx + PLATE_HALF_W && x + w / 2 + 4 > mine.sx - PLATE_HALF_W &&
-      y - 10 < mine.sy + 2 && y + 3 > mine.sy - 72) return mine.sy - 76;
+      y - 10 < (mine.feetY !== undefined ? mine.feetY : mine.sy) + 2 && y + 3 > mine.sy - 72) return mine.sy - 76;   // S1 review: the real feet at any zoom
   return y;
 }
 function queueWorldLabel(text, x, y, font, color) {
@@ -20482,24 +20661,37 @@ function flushOverlayPass(t) {
   if (meGhost && occProbe && occProbe.hit) {
     if (!ghostCanvas) {
       ghostCanvas = document.createElement("canvas");
-      ghostCanvas.width = GHOST_W; ghostCanvas.height = GHOST_H;
       ghostCtx = ghostCanvas.getContext("2d");
     }
+    const GS = VIEW_SCALE, GCW = Math.ceil(GHOST_W * GS), GCH = Math.ceil(GHOST_H * GS);   // Living World S1: drawn at the view's scale
+    if (ghostCanvas.width !== GCW || ghostCanvas.height !== GCH) { ghostCanvas.width = GCW; ghostCanvas.height = GCH; }
     if (ghostCtx) {
       const g = meGhost;
       const ix = Math.floor(g.x), iy = Math.floor(g.y);
-      ghostCtx.clearRect(0, 0, GHOST_W, GHOST_H);
+      ghostCtx.setTransform(1, 0, 0, 1, 0, 0);
+      ghostCtx.clearRect(0, 0, GCW, GCH);
+      ghostCtx.setTransform(GS, 0, 0, GS, 0, 0);
       drawUnit(ghostCtx, GHOST_AX + (g.x - ix), GHOST_AY + (g.y - iy), g.cls, g.S, g.tier, g.face, t,
                false, g.wkind, g.atier, g.blocking, g.cos, g.step);
       ctx.save();
       ctx.globalAlpha = PLAYER_GHOST_A;
-      ctx.drawImage(ghostCanvas, ix - GHOST_AX, iy - GHOST_AY);
+      ctx.drawImage(ghostCanvas, ix - GHOST_AX, iy - GHOST_AY, GCW / GS, GCH / GS);   // review (S1): the exact size it was drawn at, no stretch
       ctx.restore();
       overlayStats.ghosts++;
     }
   }
   meGhost = null;
   occProbe = null;
+  /* Living World S1: names and labels stay at SCREEN size whatever the zoom
+     — positions follow the world, letters do not grow. Each queued anchor is
+     moved into CSS pixels (plus the frame's shake), keeping the BOTTOM of its
+     plate where the zoomed world puts it, and the pass draws at the device
+     ratio alone. At zoom 1 every number below is the old one. */
+  const Zp = zoomNow;
+  for (const L of labelQueue) { L.x = (L.x + renderShX) * Zp; L.y = (L.y + 3 + renderShY) * Zp - 3; }
+  for (const q of plateQueue) { q.feetY = (q.sy + renderShY) * Zp; q.sx = (q.sx + renderShX) * Zp; q.sy = (q.sy - 25 + renderShY) * Zp + 25; }
+  ctx.save();
+  ctx.setTransform(RENDER_DPR, 0, 0, RENDER_DPR, 0, 0);
   const mine = plateQueue.find(q => q.isMe);
   let lifted = 0;                                   // doubt pass: lifted labels stack, never print on each other
   for (const L of labelQueue) {
@@ -20518,13 +20710,22 @@ function flushOverlayPass(t) {
   labelQueue.length = 0;
   for (const q of plateQueue) { drawPlayerPlate(q); overlayStats.plates++; }
   plateQueue.length = 0;
+  ctx.restore();
 }
 
 /* ⚠️ HARNESS ONLY (S4): flip the ground cache and read its counters. */
 function debugSetGroundCache(on) { GROUND_CACHE = !!on; }
+/* ⚠️ HARNESS ONLY (Living World S1): jump the zoom without easing (both the
+   target and the live value), so a gate can measure one scale exactly. */
+function debugSetZoom(z) {
+  zoomTarget = zoomNow = zoomWant = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+  VIEW_SCALE = RENDER_DPR * zoomNow;
+  return { zoomNow, zoomTarget, VIEW_SCALE, RENDER_DPR, ZOOM_MIN, ZOOM_MAX, ZOOM_DEFAULT, viewW: viewW(), viewH: viewH() };
+}
 function debugGroundCache() {
   return { on: GROUND_CACHE, size: gcChunks.size, pool: gcPool.length, GC_TILES, GC_MAX, GC_BAKE_PER_FRAME,
-           GC_W, GC_H, ...gcStats, ground: Object.assign({}, groundStats) };
+           GC_W, GC_H, ...gcStats, ground: Object.assign({}, groundStats),
+           VIEW_SCALE, bakeScale: gcBakeScale(), gcMaxNow: gcMaxNow(), pool: gcPool.length, pixelsHeld: gcPixelsHeld(), GC_BUDGET_PX };
 }
 /* ⚠️ HARNESS ONLY (S4 pixel gate): draw ONE ground-only frame — underlay and
    ground pass, nothing else — at the current camera, with the cache on or
@@ -20532,7 +20733,7 @@ function debugGroundCache() {
    budget is honoured; it just repeats the pass until nothing is drawn by the
    direct path), so the frame compared is the fully cached one. */
 function debugGroundFrame(on) {
-  const w = canvas.width, h = canvas.height, was = GROUND_CACHE;
+  const w = viewW(), h = viewH(), was = GROUND_CACHE;
   GROUND_CACHE = !!on;
   const corners = [screenToWorld(0, 0), screenToWorld(w, 0), screenToWorld(0, h), screenToWorld(w, h)];
   const xs = corners.map(c => c[0]), ys = corners.map(c => c[1]);
@@ -20541,7 +20742,7 @@ function debugGroundFrame(on) {
   let passes = 0;
   for (;;) {
     passes++;
-    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+    ctx.setTransform(VIEW_SCALE, 0, 0, VIEW_SCALE, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";   // Living World S1: the live view transform
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, w, h);
     const d0 = gcStats.directChunks;
     drawGroundPass(w, h, minX, maxX, minY, maxY);
@@ -20610,7 +20811,7 @@ function debugLifeAt(x, y, secs, night) {
   particles.length = 0; flocks.length = 0; flockNextAt = 0;
   const t0 = 1e7;
   for (let i = 0; i < secs * 30; i++) updateParticles(1 / 30, t0 + i * (1000 / 30));
-  const W = canvas.width, H = canvas.height;
+  const W = viewW(), H = viewH();
   const inView = (wx, wy, z) => { const [sx, sy] = worldToScreen(wx, wy, z || 0); return sx >= 0 && sy >= 0 && sx <= W && sy <= H; };
   const byKind = {};
   let parts = 0;
@@ -20816,7 +21017,7 @@ function renderInteriorGround(t) {
     for (let tx = 0; tx < INTERIOR_N; tx++) {
       const v = rec.grid[ty * INTERIOR_N + tx];
       const [sx, sy] = worldToScreen(tx, ty, 0);
-      if (sx < -80 || sx > canvas.width + 80 || sy < -80 || sy > canvas.height + 120) continue;
+      if (sx < -80 || sx > viewW() + 80 || sy < -80 || sy > viewH() + 120) continue;
       const ph = hash2(tx, ty, 55);
       /* v32: Abyssal Hollow is the deepest point in the world — it reads
          colder and near-black against the cave's blue-grey rock. */
@@ -20990,10 +21191,16 @@ function drawGroundPass(w, h, minX, maxX, minY, maxY) {
   /* The camera and viewport this pass actually ran at, so a proof gate can
      recompute the same screen positions instead of assuming them. */
   groundStats.camX = cam.x; groundStats.camY = cam.y;
-  groundStats.w = w; groundStats.h = h;
+  groundStats.w = w; groundStats.h = h; groundStats.scale = VIEW_SCALE;   // Living World S1: the projection rounds to 1 / scale
 }
+let renderShX = 0, renderShY = 0;
 function render(t) {
-  const w = canvas.width, h = canvas.height;
+  updateZoom(performance.now());                               // Living World S1
+  /* The view transform, in two steps: the device ratio here, then — after
+     the shake's translate, which is in SCREEN (CSS) pixels — the zoom, so a
+     hit shakes the same few pixels at any zoom. Net: VIEW_SCALE per logical px. */
+  ctx.setTransform(RENDER_DPR, 0, 0, RENDER_DPR, 0, 0);
+  const w = viewW(), h = viewH();
   SUN = sunShadow(getDayT());
   // v8: passing high cloud occasionally dims the sun (daytime only)
   const cloudDim = nightAlpha(getDayT()) < 0.1
@@ -21004,9 +21211,11 @@ function render(t) {
   /* S8: tunable (SHAKE_MS / SHAKE_PX, harder on a heavy hit) and switchable
      off in Settings — same random jitter, same linear decay as before. */
   const [shX, shY] = shakeOffset(performance.now());
+  renderShX = shX / zoomNow; renderShY = shY / zoomNow;        // Living World S1: the shake in logical px, for the overlay pass
 
   ctx.save();
   ctx.translate(shX, shY);
+  ctx.scale(zoomNow, zoomNow);                                 // Living World S1: the zoom, after the screen-space shake
 
   /* ============ World Check Fixes PART F — CAVES HAVE NO SKY ==========
      Inside both interiors the screenshots showed the cave floor as a diamond
@@ -21971,6 +22180,7 @@ function render(t) {
   const dayT = getDayT();
   const na = nightAlpha(dayT);
   if (na > 0.02) {
+    lctx.setTransform(lightCanvas.width / w, 0, 0, lightCanvas.height / h, 0, 0);    // Living World S1: logical space onto the CSS-size light canvas
     lctx.clearRect(0, 0, w, h);
     lctx.fillStyle = `rgba(9, 13, 32, ${na * NIGHT_DARK_A})`;
     lctx.fillRect(0, 0, w, h);
@@ -22033,7 +22243,7 @@ function render(t) {
       }
     }
     lctx.globalCompositeOperation = "source-over";
-    ctx.drawImage(lightCanvas, 0, 0);
+    ctx.drawImage(lightCanvas, 0, 0, w, h);
 
     ctx.globalCompositeOperation = "lighter";
     for (const L of collectLights()) {
@@ -22136,7 +22346,16 @@ function render(t) {
       ctx.fillRect(0, 0, w, h);
     }
   }
-  drawWeather(w, h);   // S7 PART A: after the world and its darkness, before the HUD
+  /* S7 PART A: after the world and its darkness, before the HUD. Living
+     World S1 review: rain, snow and ash are screen-space, so they keep their
+     size at any zoom — drawn in CSS pixels with the frame's shake. */
+  ctx.save();
+  ctx.scale(1 / zoomNow, 1 / zoomNow);                         // back to CSS pixels, keeping the shake
+  {
+    const [w, h] = [viewW() * zoomNow, viewH() * zoomNow];      // the view in CSS pixels
+    drawWeather(w, h);
+  }
+  ctx.restore();
 
   ctx.restore();
   drawTowerArrow();
@@ -22205,10 +22424,14 @@ function collectLights() {
 }
 
 function drawTowerArrow() {
-  const [tx, ty] = worldToScreen(TOWER.x, TOWER.y, 150);
+  /* Living World S1 review: a screen-edge marker, so it lives in CSS pixels. */
+  const [tx0, ty0] = worldToScreen(TOWER.x, TOWER.y, 150);
+  const tx = tx0 * zoomNow, ty = ty0 * zoomNow;
   const margin = 60;
-  if (tx > -margin && tx < canvas.width + margin && ty > -margin && ty < canvas.height + margin) return;
-  const cx = canvas.width / 2, cy = canvas.height / 2;
+  const vw = viewW() * zoomNow, vh = viewH() * zoomNow;
+  ctx.setTransform(RENDER_DPR, 0, 0, RENDER_DPR, 0, 0);
+  if (tx > -margin && tx < vw + margin && ty > -margin && ty < vh + margin) return;
+  const cx = vw / 2, cy = vh / 2;
   const ang = Math.atan2(ty - cy, tx - cx);
   const ex = cx + Math.cos(ang) * (Math.min(cx, cy) - 46);
   const ey = cy + Math.sin(ang) * (Math.min(cx, cy) - 46);
@@ -23648,6 +23871,9 @@ const HELP_ENTRIES = [
   { core: false, keys: ["character"], text: "character" },   // v35
   { core: false, keys: ["travel"],    text: "fast travel" },
   { core: false, keys: ["give"],      text: "give item" },   // v51 PART J
+  /* Living World S1: the one control that is not a key binding — so it
+     carries its own label instead of a KEYBINDS action. */
+  { core: false, keys: [], label: "SCROLL", text: "zoom" },
 ];
 /* Session-local, exactly like which panel is open: a preference this small
    does not earn a row in the settings store or a column in the database. */
@@ -23721,7 +23947,7 @@ addEventListener("resize", () => { if (helpExpanded) applyHelpLift(); });
 function helpLineHtml(core) {
   const dot = " &nbsp;&bull;&nbsp; ";
   return HELP_ENTRIES.filter(e => !!e.core === core)
-    .map(e => e.keys.map(a => keyLabel(KEYBINDS[a])).join("") + " " + e.text)
+    .map(e => (e.label || e.keys.map(a => keyLabel(KEYBINDS[a])).join("")) + " " + e.text)
     .join(dot);
 }
 function refreshHelpLine() {
@@ -23766,7 +23992,7 @@ function debugHelpInfo() {
     coreLabels: HELP_ENTRIES.filter(e => e.core)
       .map(e => e.keys.map(a => keyLabel(KEYBINDS[a])).join("")),
     fullLabels: HELP_ENTRIES.filter(e => !e.core)
-      .map(e => e.keys.map(a => keyLabel(KEYBINDS[a])).join("")),
+      .map(e => e.label || e.keys.map(a => keyLabel(KEYBINDS[a])).join("")),   // Living World S1: SCROLL carries its own label
     coreText: core ? core.textContent : null,
     fullText: full ? full.textContent : null,
     fullShown: !!full && full.style.display !== "none",

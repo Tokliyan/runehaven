@@ -1800,7 +1800,7 @@ does not pop.
 **After this version ships successfully, do not start any further version
 automatically** — wait for `NEXT_BUILD.md` to be updated.
 
-## DRAFT v2 — decisions made 2026-10-23, waiting for the owner's "lock it".
+## LOCKED 2026-10-24 — the owner approved the 6-session plan below ("start with 1 now").
 ## Spec for a future version (The Living World — Pixel Art, Scale, Motion & Action)
 
 **Owner request (2026-10-23):** "I like what's in it, but it's just not
@@ -1859,6 +1859,25 @@ animation keeps working automatically:
    ever blanks.
 5. **Draw crisp.** Sprites are drawn with `imageSmoothingEnabled = false` at
    whole-art-pixel positions, so pixels stay square and never shimmer.
+
+### The 6-session plan (owner-approved 2026-10-24; this supersedes the P-stage order below)
+
+| Session | Contents | Status |
+|---|---|---|
+| **1** | P1: zoom, device pixels, camera | **SHIPPED** (see the changelog) |
+| **2** ★ | P2: Pixel Forge plus player characters and all their actions | next |
+| **3** ★ | P3 + P4: pets and all 27 mobs, through the same forge | |
+| **4** ★ | P5 batch 1: Plains, Meadow, Forest, Dark Forest, sand and coast | |
+| **5** ★ | P5 batch 2: Enchanted, Sacred, Snow, Volcano, caves, buildings and landmarks | |
+| **6** | P6–P9 trimmed: townsfolk, wind and wildlife, action feel, landmark title cards, boss intro | |
+
+- **Batch approval.** In sessions 4 and 5 each biome is its own `PIXEL_BIOMES` switch. The owner approves or rejects each one from before/after GIFs during the session, and only approved ones merge.
+- **Cut to fit:** windmills and water wheels, footprints, the dawn/dusk colour sweep, and run frames separate from walk frames.
+- **Token discipline:**
+  - A fresh chat per session.
+  - Opus builds; Haiku explores; Sonnet writes gates and scores.
+  - One Opus review per session.
+  - One screenshot check per stage.
 
 ### Stages (each in one sitting, gauntlet rules; ★ = owner sign-off before merge)
 
