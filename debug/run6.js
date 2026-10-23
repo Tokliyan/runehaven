@@ -102,6 +102,12 @@ const STUB = `
   }
 
   /* ---- 2. frame rate -------------------------------------------------- */
+  /* Living World S1: the S4 frame-rate gate is measured at zoom 1, the 1:1
+     camera it was calibrated at — at the 1.6x default far fewer tiles are on
+     screen and headless Chrome sits on its 60 fps vsync cap with the cache on
+     AND off, so a ratio there measures the cap, not the cache. The zoom's own
+     frame-rate gates follow below. */
+  await p.evaluate(() => debugSetZoom(1));
   for (const [name, expr] of [['Colosseum', 'COLOSSEUM'], ['Bazaar', 'BAZAAR']]) {
     const r = await p.evaluate(async (expr) => {
       const P = eval(expr);

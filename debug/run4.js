@@ -3660,6 +3660,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
        across coast, mountain, volcano, forest, dark forest and ruins, 17,853
        tiles, 203,433 draw ops, zero mismatches. What is pinned HERE is
        everything that can still be checked from the shipped file alone. */
+    /* Living World S1: this block's numbers (the 2100 ceiling, the 1.35x ratio)
+       were calibrated at a 1:1 camera, so it runs at zoom 1 — exactly the
+       configuration it was written for. The same no-tile-skipped proof at the
+       1.6x default and at 2.2x is in the Living World S1 block. */
+    const zoom2aWas = window.debugSetZoom ? window.debugSetZoom(1) : null;
     if (typeof window.drawGroundTile === 'function' && window.debugWorldInfo) {
       /* S4: everything in this block measures the DIRECT ground path (its
          per-tile cull, its tile count, its scan). The spec says such gates run
@@ -3757,7 +3762,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
            This model follows the same projection — offset rounded, then
            exact — so the comparison stays exact rather than drifting by the
            half pixel the old fractional model would disagree on. */
-        const offX = Math.round(w2 / 2 - isoXa(g.camX, g.camY)), offY = Math.round(h2 / 2 - isoYa(g.camX, g.camY));
+        /* Living World S1: the offset rounds to whole BACKING pixels, 1 / scale
+           of a logical one (scale 1 is the S4 rounding exactly). */
+        const sc2a = g.scale || 1;
+        const offX = Math.round((w2 / 2 - isoXa(g.camX, g.camY)) * sc2a) / sc2a, offY = Math.round((h2 / 2 - isoYa(g.camX, g.camY)) * sc2a) / sc2a;
         const drawn = new Set();
         for (let s = g.minX + g.minY; s <= g.maxX + g.maxY; s++) {
           for (let tx = Math.max(g.minX, s - g.maxY); tx <= Math.min(g.maxX, s - g.minY); tx++) {
@@ -3890,6 +3898,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     } else {
       results.push(['Expansion 2a ground hooks are reachable', false]);
     }
+    if (zoom2aWas) window.debugSetZoom(1.6);
 
     /* ===================== v39: the Elder trio + the secret event ========= */
     if (typeof window.debugV39Info === 'function') {
@@ -6431,9 +6440,13 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           /* Front Page Rework adds a seventh, ordered by its spec: What's new is
              shown once per device per update, keyed rh_news_seen = the update's
              name — never a PIN or credential (pinned below). */
-          (gameScript.match(/localStorage\.setItem\(/g) || []).length === 7 &&
+          /* Living World S1 adds an eighth, ordered by its spec: the camera
+             zoom is "saved per viewer", under rh_zoom — a number between
+             ZOOM_MIN and ZOOM_MAX, never a PIN or credential (pinned here). */
+          (gameScript.match(/localStorage\.setItem\(/g) || []).length === 8 &&
           gameScript.indexOf('localStorage.setItem(baseCountKey(), JSON.stringify({ count: mine.length, hp }))') > 0 &&
-          gameScript.indexOf('localStorage.setItem(FP_NEWS_KEY, UPDATE_NAME)') > 0]);
+          gameScript.indexOf('localStorage.setItem(FP_NEWS_KEY, UPDATE_NAME)') > 0 &&
+          gameScript.indexOf('localStorage.setItem("rh_zoom", zoomTarget.toFixed(3))') > 0]);
         enterEl46.onclick = realClick;
         nameEl46.value = 'BootTest';
         try { window.localStorage.removeItem('rh_last_user'); } catch (e) {}
@@ -7773,7 +7786,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             const g = code52.indexOf('drawGroundPass(w, h, minX, maxX, minY, maxY);', r);
             const gp = code52.indexOf('function drawGroundPass(');
             const gpBody = code52.slice(gp, code52.indexOf('\n}', gp));
-            const bk = code52.indexOf('function gcBake(cx, cy)');
+            const bk = code52.indexOf('function gcBake(cx, cy, into)');   // Living World S1: + the optional re-bake canvas
             const bkBody = code52.slice(bk, code52.indexOf('\n}', bk));
             const e = code52.indexOf('const ents = [];', r);
             const gt = code52.indexOf('function drawGroundTile(c, tx, ty)');
@@ -11612,6 +11625,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     /* ===================== S4 Performance — ground cache, quiet HUD ===========
        README "Performance — Ground Cache & Quiet HUD", Proof gates (jsdom half;
        the pixel match and the frame rate are debug/run6.js, in a real browser). */
+    /* Living World S1: the S4 cache gates were calibrated at a 1:1 camera
+       (24 visible chunks at 2560x1440, whole-pixel offsets, GC_MAX 48), so the
+       block runs at zoom 1, exactly as written; the Living World S1 block
+       proves the same cache properties at 1.6x and 2.2x. */
+    const zoomS4Was = window.debugSetZoom ? window.debugSetZoom(1) : null;
     if (window.debugGroundCache && window.debugSetGroundCache && window.debugHudStats && window.debugSetCam) {
       const G0 = window.debugGroundCache(), info4 = window.debugWorldInfo(), B4 = info4.B, N4 = info4.N;
       results.push([`S4 A: the cache is on by default with the spec's tunables — GC_TILES ${G0.GC_TILES}, GC_MAX ${G0.GC_MAX}, GC_BAKE_PER_FRAME ${G0.GC_BAKE_PER_FRAME}`,
@@ -11704,10 +11722,17 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
       results.push(['S4 A: a chunk is baked by the same drawGroundTile, in the live pass\'s diagonal order, translated to a fixed origin',
         (() => {
-          const f = gameScript.indexOf('function gcBake(cx, cy)');
+          /* Living World S1: UPDATED, not relaxed. gcBake gained an optional
+             `into` canvas (re-baking a stale chunk in place at a new scale) and
+             its fixed origin is now carried in backing pixels at the view's
+             scale — ax / ay, the chunk's GC_PADX / GC_PADY corner snapped down
+             to a whole backing pixel; at scale 1 it is the old translate to
+             the pixel. Same function, same tile loop, same order. */
+          const f = gameScript.indexOf('function gcBake(cx, cy, into)');
           const body = gameScript.slice(f, gameScript.indexOf('\n}', f));
           return f > 0 && body.indexOf('for (let tx = lo; tx <= hi; tx++) drawGroundTile(c, tx, s2 - tx);') > 0 &&
-                 body.indexOf('c.setTransform(1, 0, 0, 1, GC_PADX - ox, GC_PADY - oy);') > 0;
+                 body.indexOf('const ax = Math.floor((isoX(cx * GC_TILES, cy * GC_TILES) - GC_PADX) * S);') > 0 &&
+                 body.indexOf('c.setTransform(S, 0, 0, S, -ax - camOX * S, -ay - camOY * S);') > 0;
         })()]);
       results.push(['S4 A: chunks are composited back to front by cx + cy',
         (() => {
@@ -11761,9 +11786,16 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push([`S4 B: and the compass rebuilds when the bearings change (${h3.compassBuilds - h2.compassBuilds} after a 360-tile move)`,
           h3.compassBuilds - h2.compassBuilds === 1]);
       }
-      results.push(['S4 C: the canvas stays at CSS pixels — resize() reads RENDER_SCALE, which is 1',
+      /* Living World S1: UPDATED by owner decision (README "The Living World",
+         P1, 2026-10-23) — the S4 "CSS pixels" decision is superseded: the
+         backing store follows devicePixelRatio, capped at 2 so a 3x phone
+         draws 4x the pixels, never 9x. The gate pins the cap and the sizing
+         line exactly as tightly as it pinned the old ones; jsdom's ratio is 1. */
+      results.push(['S4 C (Living World S1): the canvas follows devicePixelRatio, capped at RENDER_DPR_MAX 2 — resize() sets RENDER_SCALE to it',
         window.debugHudStats().RENDER_SCALE === 1 &&
-        gameScript.indexOf('canvas.width = Math.round(innerWidth * RENDER_SCALE); canvas.height = Math.round(innerHeight * RENDER_SCALE);') > 0 &&
+        gameScript.indexOf('canvas.width = Math.round(innerWidth * RENDER_DPR); canvas.height = Math.round(innerHeight * RENDER_DPR);') > 0 &&
+        gameScript.indexOf('const RENDER_DPR_MAX = 2;') > 0 &&
+        gameScript.indexOf('return Math.min(RENDER_DPR_MAX, Math.max(1,') > 0 &&
         /THE PIXEL-RATIO DECISION, RECORDED/.test(gameScript)]);
       /* Review (S4): proved on the geometry, not the source. For every tile in
          the bounds rectangle, its REACH is worked out from what the pass
@@ -11802,6 +11834,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['S4: the ground-cache and HUD hooks exist', false]);
     }
 
+    if (zoomS4Was) window.debugSetZoom(1.6);     // Living World S1: back to the default after the 1:1 S4 block
     /* ===================== S6 World Encounters — the roaming Elder Drake and the Bounty Board =====
        README "World Encounters", Proof gates. PART A: the Drake's HOME travels (a pure
        function of wall-clock time, worldEpoch and worldSeed) and the existing idle / leash

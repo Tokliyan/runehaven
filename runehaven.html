@@ -978,7 +978,7 @@
      one hardcoded copy of it in the file. #helpFull ships in the DOM rather
      than being built on first click, so a grep, a screen reader and the JS
      all see the same complete reference whatever the toggle is doing. -->
-<div class="hud" id="hudHelp"><span id="helpCore">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; I inventory</span><button id="helpToggle" aria-expanded="false" aria-controls="helpFull" title="Show all controls">[?]</button><span id="helpFull">SHIFT block &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character &nbsp;•&nbsp; M fast travel &nbsp;•&nbsp; G give item</span></div>
+<div class="hud" id="hudHelp"><span id="helpCore">WASD move &nbsp;•&nbsp; SPACE / click attack &nbsp;•&nbsp; E gather / pick up &nbsp;•&nbsp; I inventory</span><button id="helpToggle" aria-expanded="false" aria-controls="helpFull" title="Show all controls">[?]</button><span id="helpFull">SHIFT block &nbsp;•&nbsp; F dive (deep water) &nbsp;•&nbsp; R mount &nbsp;•&nbsp; C craft &nbsp;•&nbsp; P companions &nbsp;•&nbsp; Q class ability &nbsp;•&nbsp; B build &nbsp;•&nbsp; K character &nbsp;•&nbsp; M fast travel &nbsp;•&nbsp; G give item &nbsp;•&nbsp; SCROLL zoom</span></div>
 <div id="hpBarWrap"><div id="hpBar"></div></div>
 
 <div class="panel" id="invPanel">
@@ -20665,9 +20665,17 @@ function flushOverlayPass(t) {
 
 /* ⚠️ HARNESS ONLY (S4): flip the ground cache and read its counters. */
 function debugSetGroundCache(on) { GROUND_CACHE = !!on; }
+/* ⚠️ HARNESS ONLY (Living World S1): jump the zoom without easing (both the
+   target and the live value), so a gate can measure one scale exactly. */
+function debugSetZoom(z) {
+  zoomTarget = zoomNow = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+  VIEW_SCALE = RENDER_DPR * zoomNow;
+  return { zoomNow, zoomTarget, VIEW_SCALE, RENDER_DPR, ZOOM_MIN, ZOOM_MAX, ZOOM_DEFAULT, viewW: viewW(), viewH: viewH() };
+}
 function debugGroundCache() {
   return { on: GROUND_CACHE, size: gcChunks.size, pool: gcPool.length, GC_TILES, GC_MAX, GC_BAKE_PER_FRAME,
-           GC_W, GC_H, ...gcStats, ground: Object.assign({}, groundStats) };
+           GC_W, GC_H, ...gcStats, ground: Object.assign({}, groundStats),
+           VIEW_SCALE, gcMaxNow: gcMaxNow(), pool: gcPool.length };
 }
 /* ⚠️ HARNESS ONLY (S4 pixel gate): draw ONE ground-only frame — underlay and
    ground pass, nothing else — at the current camera, with the cache on or
@@ -20684,7 +20692,7 @@ function debugGroundFrame(on) {
   let passes = 0;
   for (;;) {
     passes++;
-    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+    ctx.setTransform(VIEW_SCALE, 0, 0, VIEW_SCALE, 0, 0); ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";   // Living World S1: the live view transform
     ctx.fillStyle = "#000"; ctx.fillRect(0, 0, w, h);
     const d0 = gcStats.directChunks;
     drawGroundPass(w, h, minX, maxX, minY, maxY);
@@ -21133,7 +21141,7 @@ function drawGroundPass(w, h, minX, maxX, minY, maxY) {
   /* The camera and viewport this pass actually ran at, so a proof gate can
      recompute the same screen positions instead of assuming them. */
   groundStats.camX = cam.x; groundStats.camY = cam.y;
-  groundStats.w = w; groundStats.h = h;
+  groundStats.w = w; groundStats.h = h; groundStats.scale = VIEW_SCALE;   // Living World S1: the projection rounds to 1 / scale
 }
 let renderShX = 0, renderShY = 0;
 function render(t) {
