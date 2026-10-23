@@ -21196,7 +21196,10 @@ function drawGroundPass(w, h, minX, maxX, minY, maxY) {
 let renderShX = 0, renderShY = 0;
 function render(t) {
   updateZoom(performance.now());                               // Living World S1
-  ctx.setTransform(VIEW_SCALE, 0, 0, VIEW_SCALE, 0, 0);       // the one view transform
+  /* The view transform, in two steps: the device ratio here, then — after
+     the shake's translate, which is in SCREEN (CSS) pixels — the zoom, so a
+     hit shakes the same few pixels at any zoom. Net: VIEW_SCALE per logical px. */
+  ctx.setTransform(RENDER_DPR, 0, 0, RENDER_DPR, 0, 0);
   const w = viewW(), h = viewH();
   SUN = sunShadow(getDayT());
   // v8: passing high cloud occasionally dims the sun (daytime only)
@@ -21207,12 +21210,12 @@ function render(t) {
 
   /* S8: tunable (SHAKE_MS / SHAKE_PX, harder on a heavy hit) and switchable
      off in Settings — same random jitter, same linear decay as before. */
-  const [shX0, shY0] = shakeOffset(performance.now());
-  const shX = shX0 / zoomNow, shY = shY0 / zoomNow;           // Living World S1 review: the shake is SCREEN pixels at any zoom
-  renderShX = shX; renderShY = shY;                            // Living World S1: the overlay pass re-applies it in screen space
+  const [shX, shY] = shakeOffset(performance.now());
+  renderShX = shX / zoomNow; renderShY = shY / zoomNow;        // Living World S1: the shake in logical px, for the overlay pass
 
   ctx.save();
   ctx.translate(shX, shY);
+  ctx.scale(zoomNow, zoomNow);                                 // Living World S1: the zoom, after the screen-space shake
 
   /* ============ World Check Fixes PART F — CAVES HAVE NO SKY ==========
      Inside both interiors the screenshots showed the cave floor as a diamond
@@ -22347,8 +22350,11 @@ function render(t) {
      World S1 review: rain, snow and ash are screen-space, so they keep their
      size at any zoom — drawn in CSS pixels with the frame's shake. */
   ctx.save();
-  ctx.setTransform(RENDER_DPR, 0, 0, RENDER_DPR, shX0 * RENDER_DPR, shY0 * RENDER_DPR);
-  drawWeather(w * zoomNow, h * zoomNow);
+  ctx.scale(1 / zoomNow, 1 / zoomNow);                         // back to CSS pixels, keeping the shake
+  {
+    const [w, h] = [viewW() * zoomNow, viewH() * zoomNow];      // the view in CSS pixels
+    drawWeather(w, h);
+  }
   ctx.restore();
 
   ctx.restore();
