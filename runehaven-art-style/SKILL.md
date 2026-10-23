@@ -53,6 +53,31 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-24 (Living World S1 — camera zoom & device pixels)
+
+README "The Living World", session 1 (owner D2: default zoom 1.6×).
+- **Zoom.**
+  - The world is still drawn in LOGICAL pixels; IW2/IH2/HZ, `worldToScreen` and depth by x + y are untouched.
+  - One view transform does the scaling: `RENDER_DPR` (devicePixelRatio, capped at 2), then the shake in CSS px, then `zoomNow`.
+  - Scroll or pinch (and Safari gestures) zooms from 1.0 to 2.2 in 0.05 steps, eased, saved as `rh_zoom` when it settles.
+  - Use `viewW()`/`viewH()`, never `canvas.width`, for "how big is the view".
+- **Sharp on Retina.** The backing store is `innerWidth × dpr`. The camera snaps to whole BACKING pixels.
+- **Ground cache.**
+  - Chunks bake at `min(VIEW_SCALE, 3.2)`, with the origin snapped to a backing pixel, so the run6 pixel match holds at 1×, 1.6×, 2.2× and Retina.
+  - Nothing is baked while the zoom eases: stale chunks are drawn resampled, then re-baked 2 per frame.
+  - A 40 Mpx budget covers chunks and spares together.
+- **Screen-size things stay screen-size:**
+  - nameplates and world labels (positions follow the zoom, letters don't grow);
+  - the hit shake;
+  - weather;
+  - the tower edge-arrow.
+- The night light canvas is CSS-sized.
+- **Camera look-ahead:** up to 1.6 tiles in your direction of travel. Knockback and teleports aren't counted as travel.
+- **Don't reintroduce:**
+  - drawing the world assuming an identity transform;
+  - a 1:1 offscreen blit (bake offscreen canvases at `VIEW_SCALE`);
+  - `canvas.width` used as the logical view size.
+
 ### 2026-10-23 (RT pass — Readability, Transitions, Landmarks, "be extravagant")
 
 Owner asked to lift the three weakest S9 axes. Same rules: flat fills, PAL

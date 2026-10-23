@@ -23871,6 +23871,9 @@ const HELP_ENTRIES = [
   { core: false, keys: ["character"], text: "character" },   // v35
   { core: false, keys: ["travel"],    text: "fast travel" },
   { core: false, keys: ["give"],      text: "give item" },   // v51 PART J
+  /* Living World S1: the one control that is not a key binding — so it
+     carries its own label instead of a KEYBINDS action. */
+  { core: false, keys: [], label: "SCROLL", text: "zoom" },
 ];
 /* Session-local, exactly like which panel is open: a preference this small
    does not earn a row in the settings store or a column in the database. */
@@ -23944,7 +23947,7 @@ addEventListener("resize", () => { if (helpExpanded) applyHelpLift(); });
 function helpLineHtml(core) {
   const dot = " &nbsp;&bull;&nbsp; ";
   return HELP_ENTRIES.filter(e => !!e.core === core)
-    .map(e => e.keys.map(a => keyLabel(KEYBINDS[a])).join("") + " " + e.text)
+    .map(e => (e.label || e.keys.map(a => keyLabel(KEYBINDS[a])).join("")) + " " + e.text)
     .join(dot);
 }
 function refreshHelpLine() {

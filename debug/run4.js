@@ -15255,13 +15255,17 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             })();
             results.push([`Living World S1 L: walking the world at view scale 4.4 keeps the cache inside the count cap (peak ${Math.max(...w4.sizes)} <= ${capAt(4.4)}) and the pixel budget (peak ${(Math.max(...w4.held) / 1e6).toFixed(1)}M <= ${K.GC_BUDGET_PX / 1e6}M)`,
               w4.sizes.every(s => s <= capAt(4.4)) && w4.held.every(h => h <= K.GC_BUDGET_PX) && Math.max(...w4.sizes) >= 2]);
-            window.debugSetZoom(1.6); setDpr(1); window.resize(); const r1 = window.featureWindowRadius();
+            /* a view big enough that the radius is set by the VIEW and not by the FEATURE_LOAD_R floor (a 1024-wide window is under the floor) */
+            window.innerWidth = 6000; window.innerHeight = 3500;
+            setDpr(1); window.resize(); window.debugSetZoom(1.6); const r1 = window.featureWindowRadius();
             window.debugSetZoom(2.2); const r1b = window.featureWindowRadius();
             setDpr(2); window.resize(); window.debugSetZoom(1.6); const rr2 = window.featureWindowRadius();
             window.debugSetZoom(2.2); const rr2b = window.featureWindowRadius();
+            window.innerWidth = iw; window.innerHeight = ih;
+            setDpr(1); window.resize(); const rSmall = window.featureWindowRadius();
             setDpr(3); window.resize(); const w3 = lwCanvas.width;
-            results.push([`Living World S1 L: the feature-load window is sized from the view at ZOOM_MIN in LOGICAL pixels — radius ${r1} at DPR 1 = ${rr2} at DPR 2 (and ${r1b} / ${rr2b} at 2.2x); DPR 3 is capped to a ${w3 / iw}x canvas`,
-              r1 === rr2 && r1b === rr2b && r1 === r1b && w3 === 2 * iw]);
+            results.push([`Living World S1 L: the feature-load window is sized from the view at ZOOM_MIN in LOGICAL pixels — on a 6000-wide window radius ${r1} (floor ${rSmall}) at DPR 1 = ${rr2} at DPR 2 (and ${r1b} / ${rr2b} at 2.2x); DPR 3 is capped to a ${w3 / iw}x canvas`,
+              r1 > rSmall && r1 === rr2 && r1b === rr2b && r1 === r1b && w3 === 2 * iw]);
             setDpr(1); window.resize(); window.debugSetZoom(1.6);
             results.push([`Living World S1 L: back at devicePixelRatio 1 the canvas is innerWidth again (${lwCanvas.width} x ${lwCanvas.height}) and VIEW_SCALE is ${dgc().VIEW_SCALE}`,
               lwCanvas.width === iw && lwCanvas.height === ih && hud().RENDER_SCALE === 1 && dgc().VIEW_SCALE === 1.6]);
@@ -15305,7 +15309,6 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           Object.defineProperty(window, 'localStorage', lwSaved.ls);
           window.performance.now = lwSaved.perfNow;
           window.updateZoom(window.performance.now());          // the zoom clock back on the real clock
-          rafQ.length = 0;
         }
         results.push(['Living World S1: the block leaves the zoom at its default, the ground cache on, the clock real, and no error thrown by any frame',
           near(zNow(), lwSaved.zoom, 1e-12) && !window.zoomIsMoving() && dgc().on === true && window.performance.now === lwSaved.perfNow &&
