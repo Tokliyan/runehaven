@@ -14630,6 +14630,689 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     }
 
 
+    /* ===================== Living World S1 — camera zoom & device pixels =====================
+       README "The Living World", P1 (owner, 2026-10-23). The world is still drawn in WORLD-LOGICAL pixels;
+       ONE transform (VIEW_SCALE = RENDER_DPR x zoomNow backing pixels per logical pixel) puts it on the canvas.
+       Pinned here is everything a jsdom run can prove from the shipped file: the constants and defaults, the
+       zoom state machine (clamp, quantise, ease, snap, save once on arrival, load validation), the view geometry
+       at every scale and at device-pixel ratios 1 / 2 / 3, the whole-BACKING-pixel camera, the no-ground-tile-
+       skipped proof at 1.6x and 2.2x, the ground cache at the view's own (capped) scale — bake, stale draw,
+       in-place rebake, count cap and pixel budget — the overlay's screen-size anchors, the pointer / wheel /
+       pinch mapping, the look-ahead camera and the gradient budget. The pixel match against the direct path
+       (1.0, 2.2, Retina) and the frame rate are debug/run6.js, in a real browser.
+       The game's own `let` / `const` names live inside window.eval(gameScript) and cannot be named from here, so
+       the tunables are read back out of the source text, and state is read only through hooks that already exist
+       (debugGroundCache, debugWorldInfo, debugHudStats, debugS2Info) and through the global functions. The block
+       installs a fake clock, a recording localStorage and a canvas-context recorder; the zoom, device-pixel ratio,
+       clock, localStorage, player, camera and every spy are put back in the finally. */
+    {
+      const lwHooks = ['debugSetZoom', 'setZoom', 'updateZoom', 'zoomIsMoving', 'viewW', 'viewH', 'renderDpr', 'camOffset',
+        'worldToScreen', 'screenToWorld', 'gcMaxNow', 'debugGroundCache', 'debugSetGroundCache', 'debugSetCam', 'debugSetPlayer',
+        'debugWorldInfo', 'debugWorldSeedSet', 'debugS2Info', 'debugHudStats', 'render', 'update', 'resize', 'queueWorldLabel',
+        'labelClearOfPlate', 'drawPlayerPlate', 'tryAttack', 'featureWindowRadius', 'variedZ', 'heightAt', 'biomeAt'];
+      const lwMissing = lwHooks.filter(k => typeof window[k] !== 'function');
+      if (lwMissing.length) {
+        results.push([`Living World S1: the hooks exist (missing: ${lwMissing.join(', ')})`, false]);
+      } else {
+        const lwWI = window.debugWorldInfo(), lwSP = lwWI.SPAWN, lwN = lwWI.N, lwB = lwWI.B;
+        const lwIW2 = 22, lwIH2 = 11, lwHZ = 16, lwPAD = 22;
+        const lwCanvas = window.document.getElementById('game');
+        const dgc = () => window.debugGroundCache();
+        const hud = () => window.debugHudStats();
+        const zNow = () => dgc().VIEW_SCALE / hud().RENDER_SCALE;          // the live zoom, read through the hooks
+        const playerNow = () => window.debugWorldInfo().player;
+        const srcNum = (name) => {
+          const m = gameScript.match(new RegExp('(?:\\bconst |,\\s*)' + name + '\\s*=\\s*([0-9.]+(?:e[0-9]+)?)\\s*[,;]'));
+          return m ? parseFloat(m[1]) : NaN;
+        };
+        const src = (name) => { const i = gameScript.indexOf('function ' + name + '('); return i < 0 ? '' : gameScript.slice(i, gameScript.indexOf('\n}', i)); };
+        const K = {};
+        for (const n of ['ZOOM_MIN', 'ZOOM_MAX', 'ZOOM_DEFAULT', 'ZOOM_WHEEL_K', 'ZOOM_PINCH_K', 'ZOOM_EASE_MS', 'ZOOM_SETTLE', 'ZOOM_QUANT', 'ZOOM_EVENT_MAX',
+          'RENDER_DPR_MAX', 'CAM_LOOK_SEC', 'CAM_LOOK_MAX', 'CAM_LOOK_RATE', 'CAM_LOOK_JUMP', 'GC_BUDGET_PX', 'GC_MIN_CHUNKS', 'GC_POOL_KEEP',
+          'GC_BAKE_SCALE_MAX', 'GHOST_W', 'GHOST_H']) K[n] = srcNum(n);
+        const G0 = dgc();
+        K.GC_TILES = G0.GC_TILES; K.GC_MAX = G0.GC_MAX; K.GC_BAKE_PER_FRAME = G0.GC_BAKE_PER_FRAME; K.GC_W = G0.GC_W; K.GC_H = G0.GC_H;
+        const lwSaved = {
+          zoom: zNow(), dpr: Object.getOwnPropertyDescriptor(window, 'devicePixelRatio'), ls: Object.getOwnPropertyDescriptor(window, 'localStorage'), perfNow: window.performance.now,
+          getContext: window.HTMLCanvasElement.prototype.getContext, player: Object.assign({}, playerNow()),
+          tryAttack: window.tryAttack, labelClear: window.labelClearOfPlate, plate: window.drawPlayerPlate
+        };
+        const lwWrites = [], lwStore = {};
+        /* jsdom's localStorage is a getter-only accessor: a plain assignment is silently ignored, so it is swapped with defineProperty and put back from its descriptor */
+        const lwMine = { getItem: k => (Object.prototype.hasOwnProperty.call(lwStore, k) ? lwStore[k] : null),
+          setItem: (k, v) => { lwStore[k] = String(v); lwWrites.push([k, String(v)]); }, removeItem: k => { delete lwStore[k]; } };
+        Object.defineProperty(window, 'localStorage', { value: lwMine, configurable: true, writable: true });
+        let clock = lwSaved.perfNow.call(window.performance) + 20000;       // a fake clock, far past any shake in flight, advanced only by the gates
+        window.performance.now = () => clock;
+        const captured = new Set(); let capturing = false;
+        window.HTMLCanvasElement.prototype.getContext = function () { if (capturing) captured.add(this); return lwSaved.getContext.apply(this, arguments); };
+        const setDpr = (v) => Object.defineProperty(window, 'devicePixelRatio', { value: v, configurable: true, writable: true });
+        const rf = () => { clock += 16; window.render(clock); };                                     // one 16 ms frame: the zoom eases by exactly that
+        const tickZoom = () => { clock += 16; window.updateZoom(clock); return zNow(); };
+        const primeZoom = () => { clock += 16; window.updateZoom(clock); };                          // anchors the zoom clock so the NEXT step is exactly 16 ms
+        const settle = () => { primeZoom(); for (let i = 0; i < 400 && window.zoomIsMoving(); i++) tickZoom(); return zNow(); };   // drive the ease home; the result IS the target
+        const placeAt = (x, y) => window.debugSetPlayer({ x, y, diving: false, hp: 100 });
+        const pumpL = (from, n) => {
+          for (let f = from; f < from + (n || 3); f++) {
+            const q = rafQ; rafQ = [];
+            for (const cb of q) { try { cb(f * 50); } catch (e) { if (!caught) caught = e; } }
+          }
+        };
+        const spawnX = lwSP.x + 0.37, spawnY = lwSP.y + 0.61;       // fractional on purpose: the camera snap has to do real work
+        const near = (a, b, e) => Math.abs(a - b) <= (e === undefined ? 1e-6 : e);
+        const quant = (z) => Math.min(K.ZOOM_MAX, Math.max(K.ZOOM_MIN, Math.round(Math.min(K.ZOOM_MAX, Math.max(K.ZOOM_MIN, z)) / K.ZOOM_QUANT) * K.ZOOM_QUANT));
+        const bakeS = (S) => Math.min(S, K.GC_BAKE_SCALE_MAX);
+        const capAt = (S) => Math.max(K.GC_MIN_CHUNKS, Math.min(K.GC_MAX, Math.floor(K.GC_BUDGET_PX / (K.GC_W * K.GC_H * bakeS(S) * bakeS(S)))));
+        const mkWheel = (o) => new window.WheelEvent('wheel', Object.assign({ bubbles: true, cancelable: true }, o));
+        try {
+          /* ---------- A. constants, defaults, persistence ---------- */
+          results.push([`Living World S1 A: the zoom range and defaults — ZOOM_MIN ${K.ZOOM_MIN}, ZOOM_MAX ${K.ZOOM_MAX}, ZOOM_DEFAULT ${K.ZOOM_DEFAULT}, RENDER_DPR_MAX ${K.RENDER_DPR_MAX}, ZOOM_QUANT ${K.ZOOM_QUANT}`,
+            K.ZOOM_MIN === 1 && K.ZOOM_MAX === 2.2 && K.ZOOM_DEFAULT === 1.6 && K.RENDER_DPR_MAX === 2 && K.ZOOM_QUANT === 0.05]);
+          results.push([`Living World S1 A: the feel tunables are sane — wheel ${K.ZOOM_WHEEL_K}, pinch ${K.ZOOM_PINCH_K} (a pinch sends far smaller deltas), per-event cap x${K.ZOOM_EVENT_MAX}, ease ${K.ZOOM_EASE_MS} ms, settle ${K.ZOOM_SETTLE}`,
+            K.ZOOM_WHEEL_K > 0 && K.ZOOM_PINCH_K > K.ZOOM_WHEEL_K * 3 && K.ZOOM_EVENT_MAX > 1 && K.ZOOM_EVENT_MAX <= 1.5 && K.ZOOM_EASE_MS >= 30 && K.ZOOM_EASE_MS <= 300 &&
+            K.ZOOM_SETTLE > 0 && K.ZOOM_SETTLE < 0.01 && K.ZOOM_QUANT > K.ZOOM_SETTLE * 4 && K.ZOOM_QUANT <= 0.1]);
+          {
+            const zi = gameScript.indexOf('let RENDER_DPR = 1, zoomTarget'), zj = gameScript.indexOf('function renderDpr()');
+            const zsrc = zi > 0 && zj > zi ? gameScript.slice(zi, zj) : '';
+            const loadZoom = (ls) => { try { return new Function('ZOOM_MIN', 'ZOOM_MAX', 'ZOOM_DEFAULT', 'localStorage',
+              zsrc + '\nreturn [zoomTarget, zoomNow, VIEW_SCALE, zoomWant, zoomSaved];')(K.ZOOM_MIN, K.ZOOM_MAX, K.ZOOM_DEFAULT, ls); } catch (e) { return null; } };
+            const stored = (v) => loadZoom({ getItem: () => v });
+            const eq = (r, a) => !!r && r[0] === a && r[1] === a && r[3] === a && r[4] === a;
+            const none = stored(null), good = stored('1.25'), lo = stored('1'), hi = stored('2.2');
+            results.push([`Living World S1 A: with nothing stored the zoom starts at ZOOM_DEFAULT (${none && none.join('/')}); a stored rh_zoom of 1.25 / 1 / 2.2 is read back as target, live zoom, wanted zoom and last-saved (${good && good[0]}, ${lo && lo[0]}, ${hi && hi[0]})`,
+              zsrc.length > 0 && eq(none, 1.6) && none[2] === 1.6 && eq(good, 1.25) && eq(lo, 1) && eq(hi, 2.2)]);
+            const bad = ['0.5', '9', '2.2001', '0.999', 'abc', 'NaN', '', '-1', 'Infinity'].map(v => [v, stored(v)]);
+            const thrown = loadZoom({ getItem: () => { throw new Error('blocked'); } });
+            results.push([`Living World S1 A: an invalid stored rh_zoom (${bad.map(b => JSON.stringify(b[0])).join(' ')}) is ignored, and a localStorage that throws leaves the default`,
+              bad.every(b => eq(b[1], 1.6)) && eq(thrown, 1.6)]);
+          }
+          {
+            window.debugSetZoom(1.6); primeZoom(); lwWrites.length = 0;
+            const out = {};
+            window.setZoom(9);       out.hi = settle();
+            window.setZoom(0.1);     out.lo = settle();
+            window.setZoom(-5);      out.neg = settle();
+            window.setZoom(1.8);     out.mid = settle();
+            window.setZoom(1.234);   out.q1 = settle();
+            window.setZoom(1.2749);  out.q2 = settle();
+            window.setZoom(1.2751);  out.q3 = settle();
+            results.push([`Living World S1 A: setZoom clamps to [ZOOM_MIN, ZOOM_MAX] (9 -> ${out.hi}, 0.1 -> ${out.lo}, -5 -> ${out.neg}) and leaves an on-step value exact (1.8 -> ${out.mid})`,
+              out.hi === 2.2 && out.lo === 1 && out.neg === 1 && near(out.mid, 1.8, 1e-12)]);
+            results.push([`Living World S1 A: and it quantises the target to ZOOM_QUANT steps, so a trackpad's tiny nudges re-bake the ground per step, not per tick (1.234 -> ${out.q1}, 1.2749 -> ${out.q2}, 1.2751 -> ${out.q3})`,
+              near(out.q1, 1.25, 1e-12) && near(out.q2, 1.25, 1e-12) && near(out.q3, 1.3, 1e-12)]);
+          }
+          {
+            /* persistence: ONE write, when the ease ARRIVES — never in setZoom, never mid-ease, never per wheel event */
+            window.debugSetZoom(2.0); primeZoom(); window.setZoom(2.0); settle();
+            lwWrites.length = 0;
+            window.setZoom(2.2);
+            const afterSet = lwWrites.length, movingNow = window.zoomIsMoving();
+            primeZoom();
+            let midWrites = 0, steps = 0;
+            while (window.zoomIsMoving() && steps < 400) { tickZoom(); steps++; if (window.zoomIsMoving()) midWrites += lwWrites.length; }
+            const arrived = lwWrites.slice();
+            for (let i = 0; i < 10; i++) tickZoom();
+            window.setZoom(2.2); settle();                                            // the same target again: nothing new to save
+            const afterRepeat = lwWrites.length;
+            lwWrites.length = 0;
+            for (let i = 0; i < 25; i++) lwCanvas.dispatchEvent(mkWheel({ deltaY: 40 }));           // 25 wheel events, one settle
+            const duringWheel = lwWrites.length;
+            const end = settle();
+            const wheelWrites = lwWrites.slice();
+            results.push([`Living World S1 A: setZoom itself writes nothing (${afterSet} writes, ease started ${movingNow}), nothing is written mid-ease (${steps} steps), the arrival writes rh_zoom ONCE (${JSON.stringify(arrived)}), and a repeat of the same target writes nothing more (${afterRepeat} write in total)`,
+              afterSet === 0 && movingNow === true && midWrites === 0 && steps > 10 && arrived.length === 1 && arrived[0][0] === 'rh_zoom' && arrived[0][1] === '2.200' && afterRepeat === 1]);
+            results.push([`Living World S1 A: 25 wheel events write nothing while they ease (${duringWheel}) and ONE rh_zoom once settled (${JSON.stringify(wheelWrites)}, zoom ${end.toFixed(3)})`,
+              duringWheel === 0 && wheelWrites.length === 1 && wheelWrites[0][0] === 'rh_zoom' && wheelWrites[0][1] === end.toFixed(3) && end < 2.2]);
+            const sz = src('setZoom');
+            results.push(['Living World S1 A: source — setZoom never touches localStorage; saveZoom is the one writer and is only called from the ease\'s arrival',
+              sz.length > 0 && sz.indexOf('localStorage') < 0 && gameScript.indexOf('localStorage.setItem("rh_zoom", zoomTarget.toFixed(3))') > 0 &&
+              (gameScript.match(/\bsaveZoom\(\)/g) || []).length === 2 && src('updateZoom').indexOf('{ zoomNow = zoomTarget; saveZoom(); }') > 0]);
+          }
+          results.push(['Living World S1 A: debugSetZoom jumps BOTH the target and the live zoom (clamped), VIEW_SCALE follows, and the zoom is not moving',
+            (() => {
+              const a = window.debugSetZoom(1.3), s1 = zNow() === 1.3 && !window.zoomIsMoving() && dgc().VIEW_SCALE === hud().RENDER_SCALE * 1.3;
+              const b = window.debugSetZoom(7), c = window.debugSetZoom(-3);
+              return s1 && a.zoomNow === 1.3 && a.zoomTarget === 1.3 && b.zoomNow === 2.2 && b.zoomTarget === 2.2 && b.VIEW_SCALE === hud().RENDER_SCALE * 2.2 && c.zoomNow === 1 && c.zoomTarget === 1 && !window.zoomIsMoving();
+            })()]);
+          results.push(['Living World S1 A: the Help panel documents the control — "SCROLL zoom" is in the rendered control list after the settings pass has regenerated it from HELP_ENTRIES',
+            /SCROLL zoom/.test(window.document.getElementById('helpFull').textContent)]);
+
+          /* ---------- B. the ease ---------- */
+          {
+            const run = (from, to) => {
+              window.debugSetZoom(from); primeZoom(); window.setZoom(to);
+              const seq = [];
+              for (let i = 0; i < 200; i++) {
+                seq.push(tickZoom());
+                if (dgc().VIEW_SCALE !== hud().RENDER_SCALE * seq[seq.length - 1]) return null;
+                if (!window.zoomIsMoving()) break;
+              }
+              return seq;
+            };
+            const up = run(1.6, 2.2), dn = run(2.2, 1.0), step = run(1.6, 1.65);
+            const mono = (s, to, dir) => !!s && s.every((v, i) => (i === 0 || (v - s[i - 1]) * dir > 0) && (v - to) * dir <= 0);
+            results.push([`Living World S1 B: the live zoom eases toward the target monotonically, never overshooting, up (${up && up.length} steps) and down (${dn && dn.length} steps), and arrives EXACTLY on it`,
+              !!up && !!dn && mono(up, 2.2, 1) && mono(dn, 1, -1) && up[up.length - 1] === 2.2 && dn[dn.length - 1] === 1 &&
+              up.length > 15 && up.length < 90 && dn.length > 15 && dn.length < 90 && !window.zoomIsMoving()]);
+            const first = up ? up[0] - 1.6 : NaN, want = 0.6 * (1 - Math.exp(-16 / K.ZOOM_EASE_MS));
+            results.push([`Living World S1 B: the ease is exponential with time constant ZOOM_EASE_MS — a 16 ms step covers ${(first / 0.6).toFixed(4)} of the gap (expected ${(want / 0.6).toFixed(4)})`,
+              near(first, want, 1e-9)]);
+            const gapOk = (s, to) => !!s && s.slice(0, -1).every(v => Math.abs(to - v) >= K.ZOOM_SETTLE);
+            const lastGap = up ? Math.abs(2.2 - up[up.length - 2]) : NaN;
+            results.push([`Living World S1 B: it snaps only once within ZOOM_SETTLE (${K.ZOOM_SETTLE}) — every earlier step is still further out, the snapping step would have landed inside it, and a one-notch (0.05) change still takes ${step && step.length} steps`,
+              gapOk(up, 2.2) && gapOk(dn, 1) && lastGap * Math.exp(-16 / K.ZOOM_EASE_MS) < K.ZOOM_SETTLE && !!step && step.length > 3 && near(step[step.length - 1], 1.65, 1e-12)]);
+            window.debugSetZoom(1.6); primeZoom(); window.setZoom(2.2);
+            const movingAfterSet = window.zoomIsMoving();
+            clock += 5000; window.updateZoom(clock);                                  // a 5 s hitch: dt is clamped to 100 ms
+            const hitch = zNow() - 1.6, hitchWant = 0.6 * (1 - Math.exp(-100 / K.ZOOM_EASE_MS));
+            const z1 = zNow(); window.updateZoom(clock - 3000);                       // the clock running backwards moves nothing
+            const backOk = zNow() === z1;
+            settle();
+            const settledNow = !window.zoomIsMoving();
+            results.push([`Living World S1 B: zoomIsMoving is true right after setZoom (${movingAfterSet}) and false once settled (${settledNow}); a 5 s hitch advances the ease by 100 ms at most (${hitch.toFixed(4)}) and a backwards clock by nothing`,
+              movingAfterSet === true && settledNow && near(hitch, hitchWant, 1e-9) && backOk]);
+          }
+
+          /* ---------- C. view geometry ---------- */
+          {
+            const rows = [];
+            for (const z of [1, 1.6, 2.2]) {
+              window.debugSetZoom(z);
+              const S = dgc().VIEW_SCALE, W = window.viewW(), H = window.viewH(), cw = lwCanvas.width, ch = lwCanvas.height;
+              rows.push({ z, ok: near(W * S, cw, 1e-9) && near(H * S, ch, 1e-9) && near(W, window.innerWidth / z, 1e-9) && near(H, window.innerHeight / z, 1e-9) });
+            }
+            window.debugSetZoom(1.6);
+            results.push([`Living World S1 C: viewW() x VIEW_SCALE is exactly the backing width and viewH() the backing height at zoom 1 / 1.6 / 2.2 (canvas ${lwCanvas.width}x${lwCanvas.height}); at 1.6 the view is canvas / 1.6 = ${window.viewW().toFixed(2)} x ${window.viewH().toFixed(2)}`,
+              rows.every(r => r.ok) && near(window.viewW(), lwCanvas.width / 1.6, 1e-9) && near(window.viewH(), lwCanvas.height / 1.6, 1e-9)]);
+          }
+
+          /* ---------- D. the camera lands on whole BACKING pixels ---------- */
+          {
+            let worst = 0, n = 0, bad = 0;
+            for (const z of [1.6, 2.2]) {
+              window.debugSetZoom(z);
+              const S = dgc().VIEW_SCALE;
+              for (const [cx, cy] of [[1234.37, 987.61], [700.5013, 2200.9987], [3001.123, 40.777], [spawnX, spawnY], [1500.25, 1500.75]]) {
+                window.debugSetCam(cx, cy);
+                const o = window.worldToScreen(0, 0, 0);                    // = camOX, camOY exactly (the iso of the origin is 0)
+                worst = Math.max(worst, Math.abs(o[0] * S - Math.round(o[0] * S)), Math.abs(o[1] * S - Math.round(o[1] * S))); n++;
+                const [sx, sy] = window.worldToScreen(cx + 3.3, cy - 1.7, 0);
+                const [bx, by] = window.screenToWorld(sx, sy);
+                if (Math.abs(bx - cx - 3.3) > 1e-6 || Math.abs(by - cy + 1.7) > 1e-6) bad++;
+                const [ax, ay] = window.worldToScreen(cx, cy, 0);            // the camera's own point sits within half a backing pixel of the canvas centre
+                if (Math.abs(ax - window.viewW() / 2) * S > 0.5 + 1e-6 || Math.abs(ay - window.viewH() / 2) * S > 0.5 + 1e-6) bad++;
+              }
+            }
+            results.push([`Living World S1 D: at 1.6x and 2.2x the camera offset is a whole number of BACKING pixels (off an integer by at most ${worst.toExponential(1)} over ${n} fractional cameras), the camera sits within half a backing pixel of the centre, and worldToScreen / screenToWorld invert (${bad} bad)`,
+              worst < 1e-6 && n === 10 && bad === 0]);
+            window.debugSetZoom(1.6); window.debugSetCam(1234.37, 987.61); window.worldToScreen(0, 0, 0);
+            window.debugSetZoom(2.2);                                        // the scale changed and the camera did not: the offset has to be re-snapped
+            const o2 = window.worldToScreen(0, 0, 0), S2 = dgc().VIEW_SCALE;
+            window.debugSetZoom(1.0);
+            const o1 = window.worldToScreen(0, 0, 0);
+            results.push([`Living World S1 D: a zoom change with the camera standing still re-snaps the offset (2.2x: ${(o2[0] * S2 % 1).toFixed(6)} off whole; 1x: whole logical pixels ${Number.isInteger(o1[0]) && Number.isInteger(o1[1])})`,
+              near(o2[0] * S2, Math.round(o2[0] * S2)) && near(o2[1] * S2, Math.round(o2[1] * S2)) && Number.isInteger(o1[0]) && Number.isInteger(o1[1])]);
+            const co = src('camOffset');
+            results.push(['Living World S1 D: the snap is the source\'s own — Math.round(canvas.width / 2 - isoX * S) / S, never a round of logical pixels, and a scale change invalidates it',
+              co.indexOf('Math.round(canvas.width / 2 - isoX(cam.x, cam.y) * S) / S') > 0 && co.indexOf('Math.round(canvas.height / 2 - isoY(cam.x, cam.y) * S) / S') > 0 &&
+              co.indexOf('VIEW_SCALE !== _camKS') > 0]);
+            window.debugSetZoom(1.6);
+          }
+
+          /* ---------- E. no ground tile is skipped at 1.6x and 2.2x ---------- */
+          {
+            window.debugSetGroundCache(false);                               // the DIRECT path, as the Expansion 2a proof does
+            const g2a = () => window.debugWorldInfo().ground;
+            const missed = () => {
+              const g = g2a(), w2 = g.w, h2 = g.h, sc = g.scale;
+              if (!(sc > 0)) return { bad: -1, note: 'no scale reported' };
+              const isoXa = (x, y) => (x - y) * lwIW2, isoYa = (x, y) => (x + y) * lwIH2;
+              const offX = Math.round((w2 / 2 - isoXa(g.camX, g.camY)) * sc) / sc, offY = Math.round((h2 / 2 - isoYa(g.camX, g.camY)) * sc) / sc;
+              const drawn = new Set();
+              for (let s = g.minX + g.minY; s <= g.maxX + g.maxY; s++) {
+                for (let tx = Math.max(g.minX, s - g.maxY); tx <= Math.min(g.maxX, s - g.minY); tx++) {
+                  const ty = s - tx, bcx = offX + isoXa(tx + 0.5, ty + 0.5);
+                  if (bcx + lwIW2 < 0 || bcx - lwIW2 > w2) continue;
+                  const bcy = offY + isoYa(tx + 0.5, ty + 0.5);
+                  if (bcy + lwWI.GROUND_DOWN < 0 || bcy - lwWI.GROUND_UP > h2) continue;
+                  drawn.add(tx + ',' + ty);
+                }
+              }
+              if (drawn.size !== g.tiles) return { bad: -1, note: 'recomputed set ' + drawn.size + ' != reported ' + g.tiles };
+              let bad = 0, first = null;
+              for (let tx = Math.max(0, g.minX - lwPAD); tx <= Math.min(lwN - 1, g.maxX + lwPAD); tx++) {
+                for (let ty = Math.max(0, g.minY - lwPAD); ty <= Math.min(lwN - 1, g.maxY + lwPAD); ty++) {
+                  if (drawn.has(tx + ',' + ty)) continue;
+                  const zTop = window.variedZ(tx, ty), cx = offX + isoXa(tx + 0.5, ty + 0.5), cy = offY + isoYa(tx + 0.5, ty + 0.5) - zTop;
+                  const hh = window.heightAt(tx, ty), hS = window.heightAt(tx, ty + 1), hE = window.heightAt(tx + 1, ty);
+                  let bot = cy + lwIH2;
+                  if (hh > Math.max(-1, hS)) bot = Math.max(bot, cy + lwIH2 + (zTop - Math.max(-1, hS) * lwHZ));
+                  if (hh > Math.max(-1, hE)) bot = Math.max(bot, cy + lwIH2 + (zTop - Math.max(-1, hE) * lwHZ));
+                  const top = cy - Math.max(lwIH2, window.biomeAt(tx, ty) === lwB.PEAK ? 15 : 0);
+                  if (cx + lwIW2 < 0 || cx - lwIW2 > w2 || bot < 0 || top > h2) continue;
+                  bad++;
+                  if (!first) first = tx + ',' + ty;
+                }
+              }
+              return { bad, note: first, tiles: g.tiles, scale: sc };
+            };
+            const spots = [['spawn', lwSP.x + 0.37, lwSP.y + 0.61]];
+            const pickB = (label, key) => {
+              if (!(key in lwB)) return;
+              for (let y = 0; y < lwN; y++) for (let x = 0; x < lwN; x++) if (window.biomeAt(x, y) === lwB[key]) { spots.push([label, x + 0.43, y + 0.57]); return; }
+            };
+            pickB('coast', 'SAND'); pickB('mountain', 'PEAK'); pickB('volcano', 'VOLROCK'); pickB('forest', 'FOREST');
+            spots.push(['volcano centre', lwWI.VOLCANO.x + 0.2, lwWI.VOLCANO.y + 0.8]);
+            const tilesAt = {};
+            for (const z of [1, 1.6, 2.2]) {
+              window.debugSetZoom(z);
+              let worst = 0, note = null, pan = 0, panNote = null, scaleOk = true;
+              spots.forEach(([label, sx, sy], i) => {
+                placeAt(sx, sy); pumpL(2000 + i * 10);
+                const m = missed();
+                if (m.bad !== 0 && !note) note = label + ': ' + (m.note || '?');
+                worst = Math.max(worst, m.bad < 0 ? 1e6 : m.bad);
+                scaleOk = scaleOk && m.scale === dgc().VIEW_SCALE;
+              });
+              const p0 = spots[1] || spots[0];
+              for (let i = 0; i < 12; i++) {
+                placeAt(p0[1] + i / 3, p0[2] + (i % 2 ? i / 3 : 0)); pumpL(2200 + i * 10);
+                const m = missed();
+                if (m.bad !== 0) { pan += Math.max(1, m.bad); if (!panNote) panNote = 'step ' + i + ': ' + m.note; }
+              }
+              placeAt(spawnX, spawnY); pumpL(2400); tilesAt[z] = g2a().tiles;
+              if (z === 1) continue;
+              results.push([`Living World S1 E: at ${z}x no visible ground tile is ever skipped — ${spots.length} camera positions${note ? ' (first miss ' + note + ')' : ''}, the recomputed tile set equals the reported one, and the pass reports its scale (${scaleOk})`,
+                worst === 0 && scaleOk]);
+              results.push([`Living World S1 E: and none is skipped across a 12-step camera pan at ${z}x${panNote ? ' (' + panNote + ')' : ''}`, pan === 0]);
+            }
+            results.push([`Living World S1 E: zooming in draws fewer ground tiles at the spawn — ${tilesAt[1]} at 1x, ${tilesAt[1.6]} at 1.6x, ${tilesAt[2.2]} at 2.2x`,
+              tilesAt[1.6] < tilesAt[1] * 0.6 && tilesAt[2.2] < tilesAt[1.6] * 0.8 && tilesAt[2.2] > 0]);
+            window.debugSetGroundCache(true);
+          }
+
+          /* ---------- F. the cache stands still at 1.6x ---------- */
+          {
+            window.debugSetZoom(1.6); window.debugSetGroundCache(true);
+            const sd = window.debugWorldSeedSet(424242); window.debugWorldSeedSet(sd);      // a world reset empties the cache: every chunk below is baked inside the recorder
+            captured.clear(); capturing = true;
+            placeAt(spawnX, spawnY);
+            for (let f = 0; f < 40; f++) rf();
+            capturing = false;
+            const a = dgc(); rf(); const b = dgc();
+            results.push([`Living World S1 F: at 1.6x standing still the ground is all blits — ${b.frameVisible} visible chunks = ${b.frameBlits} blitted + ${b.frameDirect} direct, ${b.ground.tiles} tiles drawn directly, ${b.bakes - a.bakes} bakes and ${(b.staleBlits || 0) - (a.staleBlits || 0)} stale blits in the settled frame`,
+              b.frameVisible > 0 && b.frameDirect === 0 && b.frameBlits === b.frameVisible && b.ground.tiles === 0 && b.bakes === a.bakes &&
+              (b.staleBlits || 0) === (a.staleBlits || 0) && b.VIEW_SCALE === 1.6 && b.bakeScale === 1.6]);
+            const chunks = [...captured].filter(c => c.__gcS !== undefined && c.width > 0);
+            const bad = [];
+            for (const cv of chunks) {
+              const S = 1.6, id = cv.__gcAX + ',' + cv.__gcAY;
+              if (cv.__gcS !== S) bad.push(id + ' scale ' + cv.__gcS);
+              else if (cv.width !== Math.ceil(K.GC_W * S) + 2 || cv.height !== Math.ceil(K.GC_H * S) + 2) bad.push(id + ' size ' + cv.width + 'x' + cv.height);
+              else if (!Number.isInteger(cv.__gcAX) || !Number.isInteger(cv.__gcAY)) bad.push(id + ' origin not whole');
+            }
+            results.push([`Living World S1 F: all ${chunks.length} cached chunks (the cache holds ${b.size}) were baked at scale 1.6 — backing canvas ceil(GC_W x S)+2 = ${Math.ceil(K.GC_W * 1.6) + 2} wide, origin snapped to a whole backing pixel${bad.length ? ' (first bad: ' + bad[0] + ')' : ''}`,
+              chunks.length > 0 && chunks.length === b.size && bad.length === 0]);
+          }
+
+          /* ---------- G. zooming: no bakes while moving, stale chunks drawn, then in-place rebakes ---------- */
+          {
+            window.debugSetZoom(1.6); window.debugSetGroundCache(true);
+            placeAt(spawnX, spawnY);
+            for (let f = 0; f < 40; f++) rf();
+            const g0 = dgc(), size0 = g0.size;
+            primeZoom(); window.setZoom(2.2);
+            const mid = [], post = [], farX = spawnX + 400, farY = spawnY - 300;
+            let settledAt = -1;
+            for (let f = 0; f < 160; f++) {
+              if (f === 2) window.debugSetCam(farX, farY);                    // mid-ease, over chunks nobody has baked
+              if (f === 4) window.debugSetCam(spawnX, spawnY);
+              const b0 = dgc(); rf(); const b1 = dgc(), moving = window.zoomIsMoving();
+              const row = { f, moving, dBakes: b1.bakes - b0.bakes, dStale: (b1.staleBlits || 0) - (b0.staleBlits || 0), vis: b1.frameVisible,
+                direct: b1.frameDirect, blits: b1.frameBlits, per: b1.bakesThisFrame, dRe: (b1.rebakes || 0) - (b0.rebakes || 0) };
+              if (moving) mid.push(row); else post.push(row);
+              if (!moving && row.direct === 0 && row.dStale === 0) { settledAt = f; break; }
+            }
+            const far = mid.find(r => r.f === 2), plain = mid.filter(r => r.f !== 2 && r.f !== 3);
+            results.push([`Living World S1 G: while the zoom is moving NO chunk is baked — ${mid.length} mid-ease frames, ${mid.reduce((a, r) => a + r.dBakes, 0)} bakes, even over ${far ? far.vis : '?'} never-seen chunks the camera was thrown at (${far ? far.direct : '?'} drawn directly)`,
+              mid.length > 15 && mid.every(r => r.dBakes === 0 && r.per === 0) && !!far && far.vis > 0 && far.direct === far.vis && far.blits === 0]);
+            results.push([`Living World S1 G: mid-ease the stale chunks are still drawn, resampled — every blit is a stale blit (${plain.reduce((a, r) => a + r.dStale, 0)} stale blits over ${plain.length} frames) and none falls to the direct path`,
+              plain.length > 10 && plain.every(r => r.dStale > 0 && r.dStale === r.blits && r.direct === 0)]);
+            const rebakes = post.reduce((a, r) => a + r.dRe, 0), gEnd = dgc();
+            results.push([`Living World S1 G: once settled the stale chunks are re-baked in place, at most GC_BAKE_PER_FRAME (${K.GC_BAKE_PER_FRAME}) a frame — ${rebakes} rebakes over ${post.length} frames, peak ${Math.max(0, ...post.map(r => r.per))}/frame, cache ${size0} -> ${gEnd.size} chunks`,
+              settledAt > 0 && rebakes > 0 && rebakes <= size0 && post.every(r => r.per <= K.GC_BAKE_PER_FRAME && r.dBakes === r.dRe) &&
+              post.some(r => r.per === K.GC_BAKE_PER_FRAME) && gEnd.size === size0 && post.length >= 2]);
+            const last = post[post.length - 1] || {};
+            results.push([`Living World S1 G: and eventually there are no stale blits and nothing is drawn directly (settled after ${post.length} frames; last frame: ${last.dStale} stale, ${last.direct} direct of ${last.vis} visible)`,
+              settledAt > 0 && last.dStale === 0 && last.direct === 0 && last.vis > 0 && gEnd.VIEW_SCALE === 2.2 && gEnd.bakeScale === 2.2]);
+            /* a jump (no ease) goes through the same rule: stale -> drawn, then re-baked */
+            window.debugSetZoom(1.6);
+            const j0 = dgc(); rf(); const j1 = dgc();
+            for (let f = 0; f < 40; f++) rf();
+            const j2 = dgc(); rf(); const j3 = dgc();
+            results.push([`Living World S1 G: a zoom jump (debugSetZoom) is handled the same way — ${j1.bakesThisFrame} re-baked on the first frame, all settled (${j3.frameDirect === 0 && (j3.staleBlits || 0) === (j2.staleBlits || 0)})`,
+              j1.bakesThisFrame >= 1 && j1.bakesThisFrame <= K.GC_BAKE_PER_FRAME && (j1.staleBlits || 0) > (j0.staleBlits || 0) && j3.frameDirect === 0 && (j3.staleBlits || 0) === (j2.staleBlits || 0)]);
+          }
+
+          /* ---------- H. the memory cap ---------- */
+          {
+            window.debugSetZoom(1); const c1 = window.gcMaxNow();
+            window.debugSetZoom(1.6); const c16 = window.gcMaxNow();
+            window.debugSetZoom(2.2); const c22 = window.gcMaxNow(), d22 = dgc();
+            results.push([`Living World S1 H: gcMaxNow is GC_MAX (${K.GC_MAX}) at scale 1 and shrinks with the bake scale (${c16} at 1.6, ${c22} at 2.2) by the pixel budget — never above GC_MAX, never below GC_MIN_CHUNKS (${K.GC_MIN_CHUNKS}); debugGroundCache reports it`,
+              c1 === K.GC_MAX && K.GC_MAX === 48 && c16 === capAt(1.6) && c22 === capAt(2.2) && c1 > c16 && c16 > c22 && c22 >= K.GC_MIN_CHUNKS && d22.gcMaxNow === c22 &&
+              K.GC_MIN_CHUNKS === 4 && K.GC_BUDGET_PX === 40e6 && d22.GC_BUDGET_PX === K.GC_BUDGET_PX]);
+            window.debugSetGroundCache(true);
+            const walk = () => {
+              const sizes = [], caps = [], held = [];
+              const e0 = dgc();
+              for (let f = 0; f < 160; f++) {
+                if (f % 4 === 0) {
+                  const x = 60 + ((f * 7919) % (lwN - 120)), y = 60 + ((f * 104729) % (lwN - 120));
+                  placeAt(x + 0.5, y + 0.5);
+                }
+                rf(); const d = dgc(); sizes.push(d.size); caps.push(window.gcMaxNow()); held.push(d.pixelsHeld);
+              }
+              return { sizes, caps, held, e0, e1: dgc() };
+            };
+            const w1 = walk();
+            results.push([`Living World S1 H: walking the camera over the world at 2.2x the LRU never holds more than gcMaxNow (peak ${Math.max(...w1.sizes)} / ${Math.max(...w1.caps)}, ${w1.e1.evictions - w1.e0.evictions} evictions) and the backing pixels held (chunks + spares) never pass GC_BUDGET_PX (peak ${(Math.max(...w1.held) / 1e6).toFixed(1)}M of ${K.GC_BUDGET_PX / 1e6}M)`,
+              w1.sizes.every((s, i) => s <= w1.caps[i]) && Math.max(...w1.sizes) === c22 && w1.e1.evictions - w1.e0.evictions > 0 && w1.e1.maxSize <= K.GC_MAX &&
+              w1.held.every(h => h <= K.GC_BUDGET_PX) && Math.max(...w1.held) > K.GC_BUDGET_PX * 0.3]);
+            results.push([`Living World S1 H: spare canvases are pooled only up to GC_POOL_KEEP (${K.GC_POOL_KEEP}) — pool ${w1.e1.pool}; the rest are released (${w1.e1.released || 0})`,
+              w1.e1.pool <= K.GC_POOL_KEEP && K.GC_POOL_KEEP === 2 && (w1.e1.released || 0) > 0]);
+            const wasSeed = window.debugWorldSeedSet(424242);
+            const afterReset = dgc();
+            window.debugWorldSeedSet(wasSeed);
+            results.push([`Living World S1 H: a world reset empties the cache and keeps at most GC_POOL_KEEP spares (size ${afterReset.size}, pool ${afterReset.pool}, ${afterReset.pixelsHeld} px held)`,
+              afterReset.size === 0 && afterReset.pool <= K.GC_POOL_KEEP && afterReset.pixelsHeld <= K.GC_POOL_KEEP * (Math.ceil(K.GC_W * 2.2) + 2) * (Math.ceil(K.GC_H * 2.2) + 2)]);
+            const gt = src('gcTrim'), gb = src('gcRelease');
+            results.push(['Living World S1 H: source — every bake and re-bake is followed by gcTrim(frame), which enforces BOTH the chunk cap and the pixel budget and never evicts a chunk drawn this frame',
+              gt.indexOf('gcChunks.size > cap || gcPixelsHeld() > GC_BUDGET_PX') > 0 && gt.indexOf('ocv.__gcUsed === frame') > 0 &&
+              gameScript.indexOf('{ gcStats.rebakes = (gcStats.rebakes || 0) + 1; gcTrim(frame); }') > 0 && src('drawGroundCached').indexOf('gcTrim(frame);') > 0 &&
+              gb.indexOf('gcPixelsHeld() + cv.width * cv.height <= GC_BUDGET_PX') > 0]);
+            window.debugSetZoom(1.6);
+          }
+
+          /* ---------- I. the overlay stays at screen size ---------- */
+          {
+            const f = gameScript.indexOf('function flushOverlayPass('), body = gameScript.slice(f, gameScript.indexOf('\n}\n', f));
+            const iZ = body.indexOf('const Zp = zoomNow;'), iT = body.indexOf('ctx.setTransform(RENDER_DPR, 0, 0, RENDER_DPR, 0, 0);');
+            const iSave = body.lastIndexOf('ctx.save();', iT), iLab = body.indexOf('for (const L of labelQueue) {', iT);
+            const iPl = body.indexOf('drawPlayerPlate(q)'), iRest = body.lastIndexOf('ctx.restore();');
+            results.push(['Living World S1 I: flushOverlayPass converts every anchor to screen space (x\' = (x + shake) * Z; label y\' = (y + 3 + shake) * Z - 3; plate sy\' = (sy - 25 + shake) * Z + 25, feet kept as (sy + shake) * Z) BEFORE it draws',
+              f > 0 && iZ > 0 && body.indexOf('L.x = (L.x + renderShX) * Zp; L.y = (L.y + 3 + renderShY) * Zp - 3;') > iZ &&
+              body.indexOf('q.feetY = (q.sy + renderShY) * Zp; q.sx = (q.sx + renderShX) * Zp; q.sy = (q.sy - 25 + renderShY) * Zp + 25;') > iZ &&
+              body.indexOf('L.x = (L.x') < iT && body.indexOf('q.feetY = (q.sy') < iT]);
+            results.push(['Living World S1 I: the labels and plates are drawn under setTransform(RENDER_DPR) — the device ratio alone, no zoom — inside a save / restore, and the plate code never reads the zoom',
+              iT > iZ && iSave > 0 && iSave < iT && iT < iLab && iLab < iPl && iRest > iPl && body.slice(iT, iRest).indexOf('VIEW_SCALE') < 0 &&
+              body.slice(iT, iRest).indexOf('zoomNow') < 0 && src('drawPlayerPlate').indexOf('zoomNow') < 0 && src('drawPlayerPlate').indexOf('VIEW_SCALE') < 0]);
+            const labelHits = [], plateHits = [];
+            window.labelClearOfPlate = (x, y, w, mine) => { labelHits.push([x, y, mine && mine.feetY]); return lwSaved.labelClear(x, y, w, mine); };
+            window.drawPlayerPlate = (q) => { plateHits.push({ sx: q.sx, sy: q.sy, feetY: q.feetY, name: q.name, isMe: q.isMe }); };
+            const rows = []; let sy1 = NaN;
+            for (const z of [1, 1.6, 2.2]) {
+              window.debugSetZoom(z); placeAt(spawnX, spawnY); rf();
+              labelHits.length = 0; plateHits.length = 0;
+              window.queueWorldLabel('S1Probe', 250, 200, "11px 'Barlow', sans-serif", '#fff');
+              rf();
+              const lx = 250 * z, ly = (200 + 3) * z - 3;
+              const lh = labelHits.find(h => near(h[0], lx, 1e-9) && near(h[1], ly, 1e-9));
+              const me = plateHits.find(h => h.isMe);
+              const syOrig = me ? me.feetY / z : NaN;                              // the plate's logical feet, recovered from the screen-space feet
+              if (z === 1) sy1 = syOrig;
+              const syWant = window.viewH() / 2 + (sy1 - window.innerHeight / 2);  // same world point, camera on it: same offset from the centre at any zoom
+              rows.push({ z, label: !!lh, relation: !!me && near(me.sy, (syOrig - 25) * z + 25, 1e-9) && near(me.feetY - me.sy, 25 * (z - 1), 1e-9),
+                anchor: !!me && Math.abs(syOrig - syWant) <= 1.5 && Math.abs(me.sx - window.innerWidth / 2) <= 1 + z, got: me ? me.sx.toFixed(1) + ',' + me.sy.toFixed(1) : 'none' });
+            }
+            window.labelClearOfPlate = lwSaved.labelClear; window.drawPlayerPlate = lwSaved.plate;
+            const q = window.debugS2Info();
+            results.push([`Living World S1 I: a queued label lands at ((x + shake) * Z, (y + 3 + shake) * Z - 3) at 1x / 1.6x / 2.2x, and the queues are left empty`,
+              rows.every(r => r.label) && q.plateQueue === 0 && q.labelQueue === 0]);
+            results.push([`Living World S1 I: the local player's real plate (${rows.map(r => r.got).join(' | ')}) satisfies sy' = (sy - 25) * Z + 25 and feet - sy' = 25 * (Z - 1), and its feet and centre column stay where the zoomed world puts them`,
+              rows.every(r => r.relation && r.anchor)]);
+          }
+          {
+            const TW = window.debugWorldInfo().TOWER;
+            window.debugSetZoom(2.2);
+            placeAt(TW.x - 2.2, TW.y - 2.2); rf();
+            const ov = window.debugS2Info().overlay;
+            results.push([`Living World S1 I: behind the Eternal Tower at 2.2x the see-through ghost still draws (${ov.ghosts} ghost, ${ov.plates} plates), at the view's scale with no stretch`,
+              ov.ghosts === 1 && ov.plates >= 1 &&
+              gameScript.indexOf('const GS = VIEW_SCALE, GCW = Math.ceil(GHOST_W * GS), GCH = Math.ceil(GHOST_H * GS);') > 0 &&
+              gameScript.indexOf('ctx.drawImage(ghostCanvas, ix - GHOST_AX, iy - GHOST_AY, GCW / GS, GCH / GS);') > 0]);
+            placeAt(spawnX, spawnY);
+            window.debugSetZoom(1.6);
+          }
+          results.push(['Living World S1 I: render starts with updateZoom, applies the device ratio, then the SCREEN-space shake translate, THEN the zoom scale; the night light canvas is CSS-sized and mapped onto the logical view; weather is drawn in CSS px and the tower arrow in screen px',
+            (() => {
+              const r = src('render'), rs = src('resize'), ta = src('drawTowerArrow');
+              const iU = r.indexOf('updateZoom(performance.now());'), iD = r.indexOf('ctx.setTransform(RENDER_DPR, 0, 0, RENDER_DPR, 0, 0);');
+              const iTr = r.indexOf('ctx.translate(shX, shY);'), iSc = r.indexOf('ctx.scale(zoomNow, zoomNow);');
+              const iW = r.indexOf('drawWeather(w, h);'), iUn = r.lastIndexOf('ctx.scale(1 / zoomNow, 1 / zoomNow);', iW);
+              return iU > 0 && iD > iU && iTr > iD && iSc > iTr && r.indexOf('const w = viewW(), h = viewH();') > 0 &&
+                     r.indexOf('renderShX = shX / zoomNow; renderShY = shY / zoomNow;') > 0 &&
+                     r.indexOf('lctx.setTransform(lightCanvas.width / w, 0, 0, lightCanvas.height / h, 0, 0);') > 0 && r.indexOf('ctx.drawImage(lightCanvas, 0, 0, w, h);') > 0 &&
+                     rs.indexOf('lightCanvas.width = Math.round(innerWidth); lightCanvas.height = Math.round(innerHeight);') > 0 &&
+                     iW > 0 && iUn > iSc && r.slice(iUn, iW).indexOf('viewW() * zoomNow') > 0 && ta.indexOf('viewW() * zoomNow') > 0;
+            })()]);
+          {
+            /* a hit shakes the same few SCREEN pixels at any zoom: pin the random to its top and start a shake this very frame */
+            const wm = window.Math.random, hits = [];
+            window.Math.random = () => 1;
+            window.labelClearOfPlate = (x, y, w, mine) => { hits.push([x, y]); return lwSaved.labelClear(x, y, w, mine); };
+            const rows = [];
+            for (const z of [1, 1.6, 2.2]) {
+              window.debugSetZoom(z); placeAt(spawnX, spawnY); rf();
+              hits.length = 0;
+              window.debugSetFeel({ shakeT: clock + 16, shakeHeavyUntil: 0 });
+              window.queueWorldLabel('S1Shake', 250, 200, "11px 'Barlow', sans-serif", '#fff');
+              const on = window.debugFeelInfo().screenShake;
+              rf();
+              const h = hits.find(q => near(q[1], (200 + 3) * z - 3 + 2.5, 1e-9) || near(q[1], (200 + 3 + 2.5) * z - 3, 1e-9));
+              rows.push({ z, on, dx: h ? h[0] - 250 * z : NaN, dy: h ? h[1] - ((200 + 3) * z - 3) : NaN });
+            }
+            window.Math.random = wm; window.debugSetFeel({ shakeT: 0 }); window.labelClearOfPlate = lwSaved.labelClear;
+            results.push([`Living World S1 I: a hit shakes the same SCREEN pixels at any zoom — the overlay moves by (${rows.map(r => r.dx.toFixed(2) + ',' + r.dy.toFixed(2)).join(' | ')}) at 1x / 1.6x / 2.2x, SHAKE_PX/2 = 2.5 each`,
+              rows.every(r => r.on && near(r.dx, 2.5, 1e-9) && near(r.dy, 2.5, 1e-9))]);
+          }
+
+          /* ---------- J. pointer, wheel, pinch ---------- */
+          {
+            const hits = [];
+            window.tryAttack = (x, y) => { hits.push([x, y]); };
+            const rows = [];
+            for (const z of [1, 1.6, 2.2]) {
+              window.debugSetZoom(z); placeAt(spawnX, spawnY); rf();
+              const cxc = spawnX, cyc = spawnY;
+              for (const dxCss of [0, 100]) {
+                hits.length = 0;
+                lwCanvas.dispatchEvent(new window.MouseEvent('mousedown', { clientX: window.innerWidth / 2 + dxCss, clientY: window.innerHeight / 2, bubbles: true }));
+                const h = hits[0];
+                rows.push(!!h && hits.length === 1 && Math.abs(((h[0] - h[1]) - (cxc - cyc)) - (dxCss / z) / lwIW2) < 0.1 && Math.abs((h[0] + h[1]) - (cxc + cyc)) < 0.1);
+              }
+            }
+            window.tryAttack = lwSaved.tryAttack;
+            results.push([`Living World S1 J: a click at CSS pixel (centre + 100, centre) hits the world point (100 / zoom) logical pixels right of the camera at 1x, 1.6x and 2.2x, and the centre hits the camera — mousedown divides by zoomNow (${rows.map(r => r ? 'ok' : 'BAD').join(' ')})`,
+              rows.length === 6 && rows.every(Boolean)]);
+            results.push(['Living World S1 J: source — mousedown converts with screenToWorld(e.clientX / zoomNow, e.clientY / zoomNow)',
+              gameScript.indexOf('screenToWorld(e.clientX / zoomNow, e.clientY / zoomNow)') > 0]);
+            const wheelTo = (ev, start) => { window.debugSetZoom(start === undefined ? 1.6 : start); const r = lwCanvas.dispatchEvent(ev); return [r, settle()]; };
+            const [upPrevented, up] = wheelTo(mkWheel({ deltaY: -100 }));
+            const [, down] = wheelTo(mkWheel({ deltaY: 100 }));
+            const [, atMax] = wheelTo(mkWheel({ deltaY: -400 }), 2.2);
+            const [, huge] = wheelTo(mkWheel({ deltaY: -1000 }));
+            const [, hugeDn] = wheelTo(mkWheel({ deltaY: 1000 }));
+            results.push([`Living World S1 J: the wheel zooms (1.6 -> ${up.toFixed(2)} up, ${down.toFixed(2)} down, ${atMax} at the top, quantised) and PREVENTS the browser's own scroll`,
+              upPrevented === false && near(up, quant(1.6 * Math.exp(100 * K.ZOOM_WHEEL_K)), 1e-9) && near(down, quant(1.6 * Math.exp(-100 * K.ZOOM_WHEEL_K)), 1e-9) && atMax === 2.2 && up > 1.6 && down < 1.6]);
+            results.push([`Living World S1 J: one event moves the zoom by at most x${K.ZOOM_EVENT_MAX} — a 1000-unit notch takes 1.6 to ${huge.toFixed(2)} (not 2.2) and back down to ${hugeDn.toFixed(2)} (not 1)`,
+              near(huge, quant(1.6 * K.ZOOM_EVENT_MAX), 1e-9) && near(hugeDn, quant(1.6 / K.ZOOM_EVENT_MAX), 1e-9)]);
+            const [pinchPrevented, pinch] = wheelTo(mkWheel({ deltaY: -5, ctrlKey: true }));
+            const [, ctrlNotch] = wheelTo(mkWheel({ deltaY: -100, ctrlKey: true }));
+            results.push([`Living World S1 J: a SMALL ctrl+wheel is a trackpad pinch and uses the pinch rate (-5 -> ${pinch.toFixed(2)}); a real ctrl+mouse notch (|delta| >= 10) uses the wheel rate (-100 -> ${ctrlNotch.toFixed(2)}); both prevent the browser zoom`,
+              pinchPrevented === false && near(pinch, quant(1.6 * Math.exp(5 * K.ZOOM_PINCH_K)), 1e-9) && near(ctrlNotch, quant(1.6 * Math.exp(100 * K.ZOOM_WHEEL_K)), 1e-9) && pinch !== ctrlNotch]);
+            window.debugSetZoom(1.6);
+            const gs = new window.Event('gesturestart', { bubbles: true, cancelable: true });
+            const gc = new window.Event('gesturechange', { bubbles: true, cancelable: true }); gc.scale = 1.2;
+            const gsOk = lwCanvas.dispatchEvent(gs) === false, gcOk = lwCanvas.dispatchEvent(gc) === false, gz = settle();
+            results.push([`Living World S1 J: Safari's trackpad pinch (gesturestart / gesturechange with a scale) zooms from where the gesture began and prevents the page zoom (1.6 x 1.2 -> ${gz.toFixed(2)})`,
+              gsOk && gcOk && near(gz, quant(1.6 * 1.2), 1e-9)]);
+            results.push(['Living World S1 J: source — the wheel listener is registered on the canvas as { passive: false }, calls e.preventDefault(), and treats only |deltaY| < 10 with ctrl as a pinch',
+              /canvas\.addEventListener\("wheel", e => \{\s*if \(!me\) return;\s*e\.preventDefault\(\);[\s\S]*?\}, \{ passive: false \}\);/.test(gameScript) &&
+              gameScript.indexOf('const pinch = e.ctrlKey && Math.abs(e.deltaY) < 10;') > 0 &&
+              gameScript.indexOf('setZoom(zoomWant * Math.min(ZOOM_EVENT_MAX, Math.max(1 / ZOOM_EVENT_MAX, f)));') > 0]);
+            window.debugSetZoom(1.6);
+          }
+
+          /* ---------- K. the look-ahead camera ---------- */
+          {
+            window.debugSetZoom(1.6); placeAt(spawnX, spawnY);
+            let camX = spawnX, camY = spawnY, mx = spawnX, my = spawnY;
+            const tick = (dx, dy) => {
+              mx += dx; my += dy;
+              placeAt(mx, my); window.debugSetCam(camX, camY);                   // debugSetPlayer snaps the camera; hand it back so only update() moves it
+              window.update(0.05, clock += 50);
+              rf(); const g = window.debugWorldInfo().ground; camX = g.camX; camY = g.camY;
+            };
+            const run = (dx, dy, n) => { for (let i = 0; i < n; i++) tick(dx, dy); };
+            run(0, 0, 4); run(0, 0, 100);
+            const rest0 = Math.hypot(camX - mx, camY - my);
+            const kc = Math.min(1, 0.05 * 6);
+            const expect = (v, step) => Math.min(K.CAM_LOOK_MAX, v * K.CAM_LOOK_SEC) - step * (1 - kc) / kc;
+            run(0.25, 0, 100);                                                   // 5 tiles/s east
+            const lead = camX - mx, leadY = camY - my;
+            results.push([`Living World S1 K: walking steadily at 5 tiles/s the camera LEADS the player along the travel direction by ${lead.toFixed(3)} tiles (expected ${expect(5, 0.25).toFixed(3)}; it would trail by 0.583 without the look-ahead), sideways ${leadY.toExponential(1)}`,
+              lead > 0.4 && near(lead, expect(5, 0.25), 0.03) && Math.abs(leadY) < 0.03]);
+            run(0.3, 0.4, 100);                                                  // 10 tiles/s diagonally: the raw look would be 2.8 tiles
+            const ux = 0.6, uy = 0.8, along = (camX - mx) * ux + (camY - my) * uy, across = (camX - mx) * uy - (camY - my) * ux;
+            results.push([`Living World S1 K: a fast run is clamped — the raw look-ahead would be ${(10 * K.CAM_LOOK_SEC).toFixed(2)} tiles, the camera leads by ${along.toFixed(3)} (expected ${expect(10, 0.5).toFixed(3)} from CAM_LOOK_MAX ${K.CAM_LOOK_MAX}), straight along the heading (${across.toExponential(1)} across)`,
+              10 * K.CAM_LOOK_SEC > K.CAM_LOOK_MAX * 1.5 && near(along, expect(10, 0.5), 0.03) && Math.abs(across) < 0.03 && Math.hypot(camX - mx, camY - my) <= K.CAM_LOOK_MAX]);
+            const camBefore = [camX, camY];
+            mx += 40; my -= 25;                                                  // a teleport / respawn / fast travel: not a velocity
+            placeAt(mx, my); window.debugSetCam(camBefore[0], camBefore[1]);
+            window.update(0.05, clock += 50); rf(); { const g = window.debugWorldInfo().ground; camX = g.camX; camY = g.camY; }
+            const wantX = camBefore[0] + 0.3 * (mx - camBefore[0]), wantY = camBefore[1] + 0.3 * (my - camBefore[1]);
+            results.push([`Living World S1 K: a jump (65 tiles in a tick, over CAM_LOOK_JUMP ${K.CAM_LOOK_JUMP}) resets the look-ahead velocity — the camera eases toward the player and NOT toward a flung lead (off by ${Math.hypot(camX - wantX, camY - wantY).toExponential(1)} tiles)`,
+              Math.hypot(camX - wantX, camY - wantY) < 1e-6]);
+            run(0.25, 0, 40); run(0, 0, 200);
+            const rest = Math.hypot(camX - mx, camY - my);
+            results.push([`Living World S1 K: standing still the camera settles exactly on the player (${rest0.toExponential(1)} tiles off before a run, ${rest.toExponential(1)} after one)`,
+              rest0 < 1e-3 && rest < 1e-3]);
+            const u = src('update'), li = u.indexOf('CAM_LOOK_JUMP');
+            results.push(['Living World S1 K: source — the look-ahead is clamped to CAM_LOOK_MAX, ignores a knockback shove (kbAnim), and the camera eases toward the player PLUS the look',
+              li > 0 && u.indexOf('if (ll > CAM_LOOK_MAX) { lx *= CAM_LOOK_MAX / ll; ly *= CAM_LOOK_MAX / ll; }') > li && u.indexOf('if (kbAnim) {') > 0 &&
+              u.indexOf('cam.x += (me.x + lx - cam.x) * Math.min(1, dt * 6);') > li && u.indexOf('cam.y += (me.y + ly - cam.y) * Math.min(1, dt * 6);') > li]);
+            placeAt(spawnX, spawnY);
+          }
+
+          /* ---------- L. device pixels (Retina) ---------- */
+          {
+            const dprCases = [[undefined, 1], [0.5, 1], [1, 1], [1.5, 1.5], [2, 2], [3, 2], [4, 2]];
+            const got = dprCases.map(([v]) => { setDpr(v); return window.renderDpr(); });
+            results.push([`Living World S1 L: renderDpr follows devicePixelRatio, floored at 1 and capped at RENDER_DPR_MAX 2 (${dprCases.map(([v], i) => v + '->' + got[i]).join(', ')})`,
+              dprCases.every(([, want], i) => got[i] === want)]);
+            const iw = window.innerWidth, ih = window.innerHeight;
+            setDpr(2); window.resize(); window.debugSetZoom(1.6);
+            const w2 = lwCanvas.width, h2 = lwCanvas.height;
+            const r2 = { S: dgc().VIEW_SCALE, vw: window.viewW(), vh: window.viewH(), hud: hud().RENDER_SCALE };
+            results.push([`Living World S1 L: at devicePixelRatio 2 the canvas is 2x innerWidth (${w2} = 2 x ${iw}) and the view is still innerWidth / zoom logical pixels (${r2.vw.toFixed(2)}) at VIEW_SCALE ${r2.S}`,
+              w2 === 2 * iw && h2 === 2 * ih && r2.S === 3.2 && r2.hud === 2 && near(r2.vw, iw / 1.6, 1e-9) && near(r2.vh, ih / 1.6, 1e-9) && near(r2.vw * r2.S, w2, 1e-9)]);
+            const sd = window.debugWorldSeedSet(424242); window.debugWorldSeedSet(sd);
+            captured.clear(); capturing = true;
+            placeAt(spawnX, spawnY);
+            for (let f = 0; f < 40; f++) rf();
+            capturing = false;
+            let worst = 0;
+            for (const [cx, cy] of [[1234.37, 987.61], [spawnX, spawnY], [3001.123, 40.777]]) {
+              window.debugSetCam(cx, cy);
+              const o = window.worldToScreen(0, 0, 0);
+              worst = Math.max(worst, Math.abs(o[0] * 3.2 - Math.round(o[0] * 3.2)), Math.abs(o[1] * 3.2 - Math.round(o[1] * 3.2)));
+            }
+            placeAt(spawnX, spawnY); rf();
+            const d2 = dgc();
+            const chunks = [...captured].filter(c => c.__gcS !== undefined && c.width > 0);
+            const badScale = chunks.filter(cv => cv.__gcS !== 3.2 || cv.width !== Math.ceil(K.GC_W * 3.2) + 2).length;
+            results.push([`Living World S1 L: at devicePixelRatio 2 / zoom 1.6 the camera snaps to whole backing pixels (${worst.toExponential(1)} off) and the cache bakes at scale 3.2 (${chunks.length - badScale}/${chunks.length} chunks, ${d2.frameDirect} direct, cap ${d2.gcMaxNow})`,
+              worst < 1e-6 && chunks.length > 0 && chunks.length === d2.size && badScale === 0 && d2.frameDirect === 0 && d2.bakeScale === 3.2 && d2.gcMaxNow === capAt(3.2)]);
+            /* past the cap: zoom to 2.2 (view scale 4.4) — the ground stays baked at 3.2, so nothing goes stale and nothing re-bakes */
+            primeZoom(); window.setZoom(2.2);
+            const s0 = dgc(); let staleSeen = 0, bakesSeen = 0, directSeen = 0, frames = 0, prev = s0;
+            for (let f = 0; f < 80; f++) {
+              rf(); const d = dgc(); frames++;
+              staleSeen += (d.staleBlits || 0) - (prev.staleBlits || 0); bakesSeen += d.bakes - prev.bakes; directSeen += d.frameDirect; prev = d;
+              if (!window.zoomIsMoving() && f > 5) break;
+            }
+            const s1 = dgc();
+            results.push([`Living World S1 L: zooming from 1.6x to 2.2x at devicePixelRatio 2 crosses GC_BAKE_SCALE_MAX (${K.GC_BAKE_SCALE_MAX}) — view scale ${s0.VIEW_SCALE} -> ${s1.VIEW_SCALE}, but the bake scale stays ${s1.bakeScale}: ${staleSeen} stale blits, ${bakesSeen} bakes, ${directSeen} direct chunks over ${frames} frames`,
+              s0.VIEW_SCALE === 3.2 && s1.VIEW_SCALE === 4.4 && s1.bakeScale === 3.2 && K.GC_BAKE_SCALE_MAX === 3.2 && staleSeen === 0 && bakesSeen === 0 && directSeen === 0 && s1.gcMaxNow === capAt(4.4) && s1.gcMaxNow === capAt(3.2)]);
+            const w4 = (() => {
+              const sizes = [], held = [];
+              for (let f = 0; f < 120; f++) {
+                if (f % 4 === 0) { const x = 60 + ((f * 7919) % (lwN - 120)), y = 60 + ((f * 104729) % (lwN - 120)); placeAt(x + 0.5, y + 0.5); }
+                rf(); const d = dgc(); sizes.push(d.size); held.push(d.pixelsHeld);
+              }
+              return { sizes, held };
+            })();
+            results.push([`Living World S1 L: walking the world at view scale 4.4 keeps the cache inside the count cap (peak ${Math.max(...w4.sizes)} <= ${capAt(4.4)}) and the pixel budget (peak ${(Math.max(...w4.held) / 1e6).toFixed(1)}M <= ${K.GC_BUDGET_PX / 1e6}M)`,
+              w4.sizes.every(s => s <= capAt(4.4)) && w4.held.every(h => h <= K.GC_BUDGET_PX) && Math.max(...w4.sizes) >= 2]);
+            window.debugSetZoom(1.6); setDpr(1); window.resize(); const r1 = window.featureWindowRadius();
+            window.debugSetZoom(2.2); const r1b = window.featureWindowRadius();
+            setDpr(2); window.resize(); window.debugSetZoom(1.6); const rr2 = window.featureWindowRadius();
+            window.debugSetZoom(2.2); const rr2b = window.featureWindowRadius();
+            setDpr(3); window.resize(); const w3 = lwCanvas.width;
+            results.push([`Living World S1 L: the feature-load window is sized from the view at ZOOM_MIN in LOGICAL pixels — radius ${r1} at DPR 1 = ${rr2} at DPR 2 (and ${r1b} / ${rr2b} at 2.2x); DPR 3 is capped to a ${w3 / iw}x canvas`,
+              r1 === rr2 && r1b === rr2b && r1 === r1b && w3 === 2 * iw]);
+            setDpr(1); window.resize(); window.debugSetZoom(1.6);
+            results.push([`Living World S1 L: back at devicePixelRatio 1 the canvas is innerWidth again (${lwCanvas.width} x ${lwCanvas.height}) and VIEW_SCALE is ${dgc().VIEW_SCALE}`,
+              lwCanvas.width === iw && lwCanvas.height === ih && hud().RENDER_SCALE === 1 && dgc().VIEW_SCALE === 1.6]);
+            const rs = src('resize');
+            results.push(['Living World S1 L: source — resize() sizes the backing store by RENDER_DPR and a matchMedia watcher re-runs it when the window moves to a screen with another ratio',
+              rs.indexOf('canvas.width = Math.round(innerWidth * RENDER_DPR); canvas.height = Math.round(innerHeight * RENDER_DPR);') > 0 &&
+              gameScript.indexOf('mq.addEventListener("change", () => { resize(); watchDpr(); }, { once: true });') > 0]);
+          }
+
+          /* ---------- M. no new gradients ---------- */
+          {
+            const names = ['renderDpr', 'viewW', 'viewH', 'zoomIsMoving', 'setZoom', 'saveZoom', 'updateZoom', 'camOffset', 'gcMaxNow', 'gcBakeScale', 'gcPixelsHeld',
+              'gcRelease', 'gcTrim', 'gcBandsAt', 'gcBake', 'debugSetZoom', 'groundCacheReset', 'resize', 'watchDpr'];
+            const withGrad = names.filter(n => /Gradient/.test(src(n)) || src(n) === '');
+            const upd = src('update'), li = upd.indexOf('CAM_LOOK_SEC'), lookBlock = upd.slice(upd.lastIndexOf('{', li - 40), upd.indexOf('const now = performance.now();', li));
+            const fo = src('flushOverlayPass'), ftail = fo.slice(fo.indexOf('const Zp = zoomNow;'));
+            results.push([`Living World S1 M: none of the new zoom / cache / overlay / look-ahead code creates a gradient (${names.length} functions and the look-ahead block checked${withGrad.length ? '; offenders ' + withGrad.join(',') : ''})`,
+              withGrad.length === 0 && !/Gradient/.test(lookBlock) && lookBlock.length > 100 && !/Gradient/.test(ftail) && ftail.length > 100]);
+            const perFrame = (z) => {
+              window.debugSetZoom(z); placeAt(lwSP.x + 0.5, lwSP.y + 0.5);
+              for (let f = 0; f < 6; f++) rf();
+              const g0 = gradCalls; for (let f = 0; f < 6; f++) rf();
+              return (gradCalls - g0) / 6;
+            };
+            const g1 = perFrame(1), g16 = perFrame(1.6), g22 = perFrame(2.2);
+            results.push([`Living World S1 M: zooming in never adds gradients to a frame — ${g1} per frame at 1x, ${g16} at 1.6x, ${g22} at 2.2x`,
+              g16 <= g1 + 1e-9 && g22 <= g16 + 1e-9]);
+          }
+        } catch (e) {
+          results.push([`Living World S1: the gates threw — ${String(e && e.stack || e).split('\n').slice(0, 3).join(' | ')}`, false]);
+        } finally {
+          capturing = false;
+          window.tryAttack = lwSaved.tryAttack; window.labelClearOfPlate = lwSaved.labelClear; window.drawPlayerPlate = lwSaved.plate;
+          window.HTMLCanvasElement.prototype.getContext = lwSaved.getContext;
+          if (lwSaved.dpr) Object.defineProperty(window, 'devicePixelRatio', lwSaved.dpr); else setDpr(1);
+          window.resize();
+          window.debugSetGroundCache(true);
+          window.debugSetPlayer({ x: lwSaved.player.x, y: lwSaved.player.y, hp: lwSaved.player.hp });
+          window.debugSetZoom(lwSaved.zoom);
+          try { primeZoom(); window.setZoom(lwSaved.zoom); settle(); } catch (e) { /* the zoom is already back where it started */ }
+          Object.defineProperty(window, 'localStorage', lwSaved.ls);
+          window.performance.now = lwSaved.perfNow;
+          window.updateZoom(window.performance.now());          // the zoom clock back on the real clock
+          rafQ.length = 0;
+        }
+        results.push(['Living World S1: the block leaves the zoom at its default, the ground cache on, the clock real, and no error thrown by any frame',
+          near(zNow(), lwSaved.zoom, 1e-12) && !window.zoomIsMoving() && dgc().on === true && window.performance.now === lwSaved.perfNow &&
+          window.localStorage !== lwMine && !caught]);
+      }
+    }
+
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
     process.exit(allOk && !caught ? 0 : 1);

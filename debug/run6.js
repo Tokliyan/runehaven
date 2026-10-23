@@ -8,6 +8,11 @@
       second with the cache ON must be >= 1.2x the frames with it OFF (owner
       decision 2026-10-21; README has the measurements). The no-ground
       ceiling is printed beside it.
+   3. LIVING WORLD S1 (camera zoom + device pixels): the same pixel match at
+      zoom 1.0 and 2.2 at the spawn and a forest edge; a second page at
+      deviceScaleFactor 2 (canvas must be 2x the window, pixel match at the
+      1.6x default); and at the Bazaar the frame rate at 1.6x and 2.2x must be
+      >= 0.9x the 1.0x figure, measured interleaved in one session.
    Like shot.js, a machine without Playwright or Chromium prints "skipped"
    and exits 0 — every jsdom gate in run3/run4/run5 still runs. Stubbed
    Supabase; never touches the network or the live database. */
@@ -132,6 +137,121 @@ const STUB = `
        the bar is 1.2x. At build time drawing NO ground reached only 1.39x at
        the Colosseum, so 1.4x was out of reach for any ground cache there. */
     results.push([`S4 frame rate at ${name}: cache on ${r.on.toFixed(1)} fps >= 1.2x cache off ${r.off.toFixed(1)} fps (ceiling x${(r.none / r.off).toFixed(2)})`, r.on >= 1.2 * r.off]);
+  }
+
+  /* ---- 3. Living World S1: the pixel match at every scale ------------------
+     The same method as section 1 — one ground-only frame with the cache OFF
+     and one with it ON, pixels whose largest channel differs by more than 8,
+     at most 0.5% — but at the zoom range's two ends (1.0 and 2.2) at the
+     spawn and the forest edge. After each zoom the real loop is given 1.5 s to
+     re-bake every visible chunk at the new scale (the cache never bakes while
+     the zoom moves and re-bakes two a frame after), and the frame is only
+     compared if no stale chunk is left in it: a resampled chunk is a
+     different image by design. */
+  const cmpFrame = () => {
+    const w = canvas.width, h = canvas.height;
+    const s0 = debugGroundCache().staleBlits || 0;
+    debugGroundFrame(false);
+    const off = ctx.getImageData(0, 0, w, h).data;
+    const info = debugGroundFrame(true);
+    const on = ctx.getImageData(0, 0, w, h).data;
+    let diff = 0;
+    for (let i = 0; i < off.length; i += 4) {
+      const d = Math.max(Math.abs(off[i] - on[i]), Math.abs(off[i + 1] - on[i + 1]), Math.abs(off[i + 2] - on[i + 2]));
+      if (d > 8) diff++;
+    }
+    const g = debugGroundCache();
+    return { diff, total: w * h, passes: info.passes, chunks: info.size, cached: g.blits > 0, stale: (g.staleBlits || 0) - s0, scale: g.VIEW_SCALE, bakeScale: g.bakeScale, w, h };
+  };
+  const goTo = ([x, y, z]) => {
+    if (z) debugSetZoom(z);
+    me.x = x + 0.37; me.y = y + 0.61; cam.x = me.x; cam.y = me.y; me.diving = false;
+  };
+  for (const z of [1, 2.2]) {
+    for (const name of ['spawn', 'forestEdge']) {
+      const at = spots[name];
+      if (!at) { results.push([`Living World S1 pixel match at ${z}x: found a ${name} camera position`, false]); continue; }
+      await p.evaluate(goTo, [at[0], at[1], z]);
+      await p.waitForTimeout(1500);
+      const r = await p.evaluate(cmpFrame);
+      const pct = 100 * r.diff / r.total;
+      console.log(`pixel match ${z}x ${name} at ${at}: ${r.diff} of ${r.total} px differ by > 8 (${pct.toFixed(3)}%), scale ${r.scale}, ${r.passes} passes, ${r.chunks} chunks cached, ${r.stale} stale blits`);
+      results.push([`Living World S1 pixel match at ${z}x at the ${name}: ${pct.toFixed(3)}% of the frame differs by more than 8 (limit 0.5%), view scale ${r.scale}, ${r.stale} stale chunks in the frame`,
+        r.cached && r.stale === 0 && r.scale === z && pct <= 0.5]);
+    }
+  }
+
+  /* ---- 4. Living World S1: a Retina screen --------------------------------
+     A second page at deviceScaleFactor 2, set up exactly like the first. The
+     backing store must be 2x the CSS size (and the page must see ratio 2),
+     and the cached ground must still match the direct path pixel for pixel at
+     the 1.6x default — a backing scale of 3.2, the cap on the bake scale. */
+  const errs2 = [];
+  const p2 = await b.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 2 });
+  p2.on('pageerror', e => errs2.push(e.message));
+  await p2.route('**/*', r => {
+    const u = r.request().url();
+    if (u.startsWith('file:')) return r.continue();
+    if (/supabase-js/.test(u)) return r.fulfill({ contentType: 'application/javascript', body: STUB });
+    return r.abort();
+  });
+  await p2.goto('file://' + FILE);
+  await p2.waitForTimeout(1500);
+  await p2.evaluate(() => {
+    document.querySelectorAll('.class-card')[3].click();
+    document.getElementById('username').value = 'GateBot';
+    document.getElementById('pinInput').value = '2468';
+    const u = document.getElementById('sbUrl'), k = document.getElementById('sbKey');
+    if (u) u.value = 'https://stub.supabase.co'; if (k) k.value = 'stub-key';
+    document.getElementById('enterBtn').onclick();
+  });
+  await p2.waitForFunction(() => document.getElementById('login').style.display === 'none', null, { timeout: 120000 });
+  await p2.waitForTimeout(1500);
+  await p2.keyboard.press('Escape');
+  const ret = await p2.evaluate(() => ({ dpr: window.devicePixelRatio, iw: innerWidth, ih: innerHeight, cw: canvas.width, ch: canvas.height, zoom: zoomNow, scale: VIEW_SCALE,
+    lightW: lightCanvas.width, lightH: lightCanvas.height }));
+  console.log(`retina page: devicePixelRatio ${ret.dpr}, inner ${ret.iw}x${ret.ih}, canvas ${ret.cw}x${ret.ch}, zoom ${ret.zoom}, view scale ${ret.scale}, light canvas ${ret.lightW}x${ret.lightH}`);
+  results.push([`Living World S1 Retina: devicePixelRatio ${ret.dpr} gives a backing store of 2x the window — canvas ${ret.cw}x${ret.ch} = 2 x ${ret.iw}x${ret.ih}, at the 1.6x default (view scale ${ret.scale})`,
+    ret.dpr === 2 && ret.cw === 2 * ret.iw && ret.ch === 2 * ret.ih && ret.zoom === 1.6 && ret.scale === 3.2]);
+  results.push([`Living World S1 Retina: the night light canvas stays CSS-sized (${ret.lightW}x${ret.lightH}), not 4x the fill`, ret.lightW === ret.iw && ret.lightH === ret.ih]);
+  for (const name of ['spawn', 'forestEdge']) {
+    const at = spots[name];
+    if (!at) { results.push([`Living World S1 Retina pixel match: found a ${name} camera position`, false]); continue; }
+    await p2.evaluate(goTo, [at[0], at[1], 1.6]);
+    await p2.waitForTimeout(1500);
+    const r = await p2.evaluate(cmpFrame);
+    const pct = 100 * r.diff / r.total;
+    console.log(`pixel match retina 1.6x ${name} at ${at}: ${r.diff} of ${r.total} px differ by > 8 (${pct.toFixed(3)}%), scale ${r.scale}, bake scale ${r.bakeScale}, ${r.passes} passes, ${r.chunks} chunks cached, ${r.stale} stale blits`);
+    results.push([`Living World S1 Retina pixel match at 1.6x at the ${name}: ${pct.toFixed(3)}% of the ${r.w}x${r.h} frame differs by more than 8 (limit 0.5%), ${r.stale} stale chunks in the frame`,
+      r.cached && r.stale === 0 && r.w === 2 * ret.iw && r.scale === 3.2 && r.bakeScale === 3.2 && pct <= 0.5]);
+  }
+  await p2.close();
+  if (errs2.length) results.push(['Living World S1 run6: no page errors on the Retina page (' + errs2.slice(0, 3).join(' | ') + ')', false]);
+
+  /* ---- 5. Living World S1: zooming in must not cost frame rate -------------
+     At the Bazaar, in one session, interleaved (1.0, 1.6, 2.2, 1.0, ...), the
+     average frames per second at 1.6x and at 2.2x must each be at least 0.9x
+     the 1.0x figure. Each switch is a debugSetZoom (a jump, no ease) followed
+     by 1.5 s for the cache to re-bake every visible chunk at the new scale,
+     so what is timed is the settled frame, which is what a player sits in. */
+  {
+    const r = await p.evaluate(async () => {
+      const P = BAZAAR;
+      me.x = P.x + 0.5; me.y = P.y + 0.5; cam.x = me.x; cam.y = me.y; me.diving = false;
+      debugSetGroundCache(true);
+      const count = ms => new Promise(res => { let n = 0; const t0 = performance.now(); const f = () => { n++; if (performance.now() - t0 < ms) requestAnimationFrame(f); else res(n * 1000 / (performance.now() - t0)); }; requestAnimationFrame(f); });
+      const out = { 1: [], 1.6: [], 2.2: [] };
+      for (let rep = 0; rep < 4; rep++) for (const z of [1, 1.6, 2.2]) {
+        debugSetZoom(z); await new Promise(res => setTimeout(res, 1500));
+        out[z].push(await count(2000));
+      }
+      const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+      debugSetZoom(1.6);
+      return { f1: avg(out[1]), f16: avg(out[1.6]), f22: avg(out[2.2]), all: out };
+    });
+    console.log(`frame rate by zoom at the Bazaar: 1.0x ${r.f1.toFixed(1)} fps, 1.6x ${r.f16.toFixed(1)} fps (x${(r.f16 / r.f1).toFixed(2)}), 2.2x ${r.f22.toFixed(1)} fps (x${(r.f22 / r.f1).toFixed(2)}) — 1.0 ${r.all[1].map(v => v.toFixed(1))}, 1.6 ${r.all[1.6].map(v => v.toFixed(1))}, 2.2 ${r.all[2.2].map(v => v.toFixed(1))}`);
+    results.push([`Living World S1 frame rate at the Bazaar: 1.6x ${r.f16.toFixed(1)} fps >= 0.9 x the 1.0x figure ${r.f1.toFixed(1)} fps (x${(r.f16 / r.f1).toFixed(2)})`, r.f16 >= 0.9 * r.f1]);
+    results.push([`Living World S1 frame rate at the Bazaar: 2.2x ${r.f22.toFixed(1)} fps >= 0.9 x the 1.0x figure ${r.f1.toFixed(1)} fps (x${(r.f22 / r.f1).toFixed(2)})`, r.f22 >= 0.9 * r.f1]);
   }
 
   if (errs.length) results.push(['S4 run6: no page errors (' + errs.slice(0, 3).join(' | ') + ')', false]);
