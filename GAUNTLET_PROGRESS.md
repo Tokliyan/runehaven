@@ -94,5 +94,25 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
   
   The statue has no collision; that's by design.
 
+## Living World session 1 (camera zoom & device pixels): SHIPPED to `main` (2026-10-24)
+- **Zoom:** 1.6x by default, scroll or pinch from 1.0 to 2.2 (eased, quantised, saved). Retina-sharp, with the backing store at devicePixelRatio (capped at 2), and camera look-ahead.
+- **Ground cache:** baked at the view scale (capped at 3.2) within a 40 Mpx budget. It is pixel-exact at 1x, 1.6x, 2.2x and on Retina (worst case 0.008%).
+- **Screen-size items:** nameplates, labels, shake, weather and the tower arrow stay screen-size.
+- **Frame rate at the Bazaar:**
+
+  | Zoom | fps |
+  |---|---|
+  | 1.0x | 46.8 |
+  | 1.6x | 59.2 |
+  | 2.2x | 60.1 |
+
+  Zooming in is cheaper.
+- **Tests:**
+  - run4 went from 2067 to **2133 PASS / 0 FAIL** with 66 S1 gates; 20 mutations were each caught.
+  - 7 calibrated legacy gates were updated with written reasons: the 2a and S4 blocks now run at 1:1, the setItem count went from 7 to 8, the help count from 10 to 11, the bake signature changed, and DPR replaces CSS pixels.
+  - run6 has 18 PASS, including Retina.
+- **Opus review:** 9 findings, all fixed. The biggest was Retina memory at 2.2x.
+- **Flake to watch:** the S7 "walking player really is slower" gate once measured 1645 tiles moved (a teleport mid-walk). It passed on rerun, and the cause hasn't been found yet.
+
 ## Remaining stages
 None — the gauntlet is complete.

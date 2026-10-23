@@ -8993,8 +8993,11 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           h2.coreLabels.length === 4 &&
           h2.coreLabels.every(l => l && h2.coreText.indexOf(l) >= 0) &&
           h2.coreText.indexOf(h2.coreLabels[0]) === 0]);
+        /* Living World S1: 10 -> 11. The spec's new control ("scroll to zoom")
+           is the eleventh entry; it is not a key binding, so it carries its own
+           label, "SCROLL", and the same every-label-is-shown check covers it. */
         results.push(['v56 A: and so does every entry in the expanded half',
-          h2.fullLabels.length === 10 &&
+          h2.fullLabels.length === 11 && h2.fullLabels[10] === 'SCROLL' &&
           h2.fullLabels.every(l => l && h2.fullText.indexOf(l) >= 0)]);
         /* And it really does FOLLOW a rebind, proved by doing one. */
         const beforeInv = h2.coreLabels[3];

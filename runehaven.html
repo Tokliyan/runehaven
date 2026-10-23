@@ -23992,7 +23992,7 @@ function debugHelpInfo() {
     coreLabels: HELP_ENTRIES.filter(e => e.core)
       .map(e => e.keys.map(a => keyLabel(KEYBINDS[a])).join("")),
     fullLabels: HELP_ENTRIES.filter(e => !e.core)
-      .map(e => e.keys.map(a => keyLabel(KEYBINDS[a])).join("")),
+      .map(e => e.label || e.keys.map(a => keyLabel(KEYBINDS[a])).join("")),   // Living World S1: SCROLL carries its own label
     coreText: core ? core.textContent : null,
     fullText: full ? full.textContent : null,
     fullShown: !!full && full.style.display !== "none",
