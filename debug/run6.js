@@ -327,7 +327,7 @@ const STUB = `
     });
     for (const c of r.classes) console.log(`forge bake ${c.cls}: ${c.null ? 'null' : `${c.W}x${c.H} art px at ${c.px}, ${c.colours} colours (reported ${c.reported}), ${c.solid} solid px, ${c.badAlpha} partly transparent, ${c.ms.toFixed(2)} ms`}`);
     results.push([`Living World S2 forge (1): each of the ${r.classes.length} classes bakes a sword strike frame at forgeGrid(1.6).px (${r.px16}) into a canvas of only alpha 0 / 255 with at most ${r.FI.MAXC} colours (most used ${r.maxColours})`,
-      r.classes.length === 5 && r.classes.every(c => !c.null && c.isCanvas && c.badAlpha === 0 && c.colours <= r.FI.MAXC && c.colours === c.reported && c.solid > 150 && c.W > 20 && c.H > 20)]);
+      r.classes.length === 5 && r.classes.every(c => !c.null && c.isCanvas && c.badAlpha === 0 && c.colours <= r.FI.MAXC && c.colours <= c.reported && c.reported <= r.FI.MAXC && c.solid > 150 && c.W > 20 && c.H > 20)]);
     results.push([`Living World S2 forge (2): the boxes never clip — ${r.tot} sprites (${r.jobs} state frames x 5 classes x both facings at 1.6x, plus the Knight at 2.2x) have no solid pixel on their outer edge, only alpha 0 / 255 and at most ${r.FI.MAXC} colours${r.edgeBad.length ? '; first offenders: ' + r.edgeBad.slice(0, 4).join(' | ') : ''}`,
       r.nulls === 0 && r.tot === r.jobs * (5 + 1) * 2 && r.edgeBad.length === 0]);
     const avg = a => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);

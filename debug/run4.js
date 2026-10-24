@@ -15351,7 +15351,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
     {
       const s2Hooks = ['kf', 'heroAnimFrame', 'myAnimState', 'remoteAnimState', 'animWire', 'animUnwire', 'doEmote', 'weaponKind',
         'gatherAnimKind', 'forgeGrid', 'forgeDownsample', 'forgeQuantize', 'forgeKey', 'forgeSprite', 'forgeBake', 'debugForgeInfo',
-        'debugSetForge', 'render', 'enterDeath', 'respawn', 'tryAttack', 'debugSetPlayer', 'debugWorldInfo', 'debugAbilityInfo', 'swingDur'];
+        'debugSetForge', 'render', 'enterDeath', 'respawn', 'tryAttack', 'debugSetPlayer', 'debugWorldInfo', 'debugCombatHandles', 'debugSetV39', 'debugSettingsInfo', 'loadSettings', 'sendMove', 'animPulse', 'swingDur'];
       const s2Missing = s2Hooks.filter(k => typeof window[k] !== 'function');
       if (s2Missing.length) {
         results.push([`Living World S2: the hooks exist (missing: ${s2Missing.join(', ')})`, false]);
@@ -15478,7 +15478,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
               near2(window.kf(k2, 0.5), 0.5) && window.kf(k2, 0.01) < 0.001 && window.kf(k2, 0.99) > 0.999]);
           }
           {
-            // every attack kind a weapon can swing has choreography; the tool-kinds (pickaxe) are the one documented fall-back to fists
+            // every attack kind a weapon can swing has choreography — tightened in the main session: the pickaxe now has its own (the axe's) entry, so there is NO gap
             const wi = gameScript.indexOf('const WEAPONS = {'), wsrc = gameScript.slice(wi, gameScript.indexOf('\n};', wi));
             const ids = [...wsrc.matchAll(/^ {2}([a-z_]+):\s*\{ name:/gm)].map(m => m[1]);
             const kinds = new Set(ids.map(id => window.weaponKind(id) || 'fists'));
@@ -15486,9 +15486,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             const pick = fr({ s: 'attack', k: 'pickaxe', at: 0, dur: 170 }, 85), fist = fr({ s: 'attack', k: 'fists', at: 0, dur: 170 }, 85);
             const shows = { tree: window.gatherAnimKind('tree'), rock: window.gatherAnimKind('rock'), iron: window.gatherAnimKind('iron'), runic: window.gatherAnimKind('runic'), meteor: window.gatherAnimKind('meteor'), bush: window.gatherAnimKind('bush') };
             const ch = fr({ s: 'gather', k: 'chop', at: 0, dur: 380 }, 190), mi = fr({ s: 'gather', k: 'mine', at: 0, dur: 380 }, 190), pk = fr({ s: 'gather', k: 'pick', at: 0, dur: 380 }, 190);
-            results.push([`Living World S2 A: ${ids.length} weapons map to ${kinds.size} kinds (${[...kinds].join(', ')}) and every kind has attack choreography${missing.length ? ' except ' + missing.join(',') : ''} — the only allowed gap is the pickaxe, which swings as the fists frame (same pose: ${JSON.stringify(pick.P) === JSON.stringify(fist.P)}); gathering covers ${Object.values(shows).join('/')}, showing the axe / pickaxe in hand (${ch.tool}/${mi.tool}/${pk.tool})`,
-              ids.length >= 20 && missing.every(k => k === 'pickaxe') && ['fists', 'sword', 'dagger', 'axe', 'spear', 'bow', 'crossbow', 'staff'].every(k => kinds.has(k) && ATK[k]) &&
-              JSON.stringify(pick.P) === JSON.stringify(fist.P) && Object.values(shows).every(k => GAT[k]) && ch.tool === 'axe' && mi.tool === 'pickaxe' && pk.tool === undefined]);
+            results.push([`Living World S2 A: ${ids.length} weapons map to ${kinds.size} kinds (${[...kinds].join(', ')}) and every kind has attack choreography${missing.length ? ' except ' + missing.join(',') : ''} — no gaps; the pickaxe swings as the axe (same pose: ${JSON.stringify(pick.P) === JSON.stringify(fr({ s: 'attack', k: 'axe', at: 0, dur: 170 }, 85).P)}); gathering covers ${Object.values(shows).join('/')}, showing the axe / pickaxe in hand (${ch.tool}/${mi.tool}/${pk.tool})`,
+              ids.length >= 20 && missing.length === 0 && ['sword', 'dagger', 'axe', 'spear', 'bow', 'crossbow', 'staff', 'pickaxe'].every(k => kinds.has(k) && ATK[k]) && ATK.fists &&
+              JSON.stringify(pick.P) === JSON.stringify(fr({ s: 'attack', k: 'axe', at: 0, dur: 170 }, 85).P) && Object.values(shows).every(k => GAT[k]) && ch.tool === 'axe' && mi.tool === 'pickaxe' && pk.tool === undefined]);
           }
           {
             // the death fall, as a pose; and what a remote player's last broadcast turns into
@@ -15570,18 +15570,24 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             const dup = new Set(keys.map(([, k]) => k)).size !== keys.length;
             const px = window.forgeKey(base, 1.0) !== k0 && window.forgeKey(base, 1.25) === k0;
             const shared = window.forgeKey(clone({ owner: 'someone else' }), 1.25) === k0 && window.forgeKey(clone({ face: { x: -0.1, y: 0 } }), 1.25) === k0 && window.forgeKey(clone({ face: { x: -0.2, y: 0 } }), 1.25) !== k0 &&
-              window.forgeKey(clone({ cos: null }), 1.25) === k0 && window.forgeKey(clone({ tier: undefined, wk: undefined, atier: undefined }), 1.25) === window.forgeKey(clone({ tier: null, wk: null, atier: null }), 1.25);
+              window.forgeKey(clone({ cos: null }), 1.25) === window.forgeKey(clone({ cos: undefined }), 1.25) && window.forgeKey(clone({ tier: undefined, wk: undefined, atier: undefined }), 1.25) === window.forgeKey(clone({ tier: null, wk: null, atier: null }), 1.25);
             results.push([`Living World S2 B: forgeKey tells apart class, size, tier, weapon, armour tier, blocking, each of hat / cloak / skin / aura, facing, frame, state, the wide (action) box and art-pixel size (${keys.length} variants, every one differs from the base${same.length ? '; SAME: ' + same.join(',') : ''}, ${dup ? 'some collide' : 'all distinct from each other'}; px: ${px}) — and does NOT split on the owner's name, on a facing within the dead zone, or on null-vs-undefined (${shared})`,
               same.length === 0 && !dup && px && shared]);
           }
           {
             // forgeSprite's budget (count AND time, own player first), hits and the look-checked fallback — with a stand-in baker (jsdom cannot bake)
-            const me0 = window.debugWorldInfo().player.username;
-            const spec = (owner, key, o) => Object.assign({ owner, cls: 'Knight', S: 2.4, tier: 'iron', face: { x: 1, y: 1 }, wk: 'sword', atier: null, blocking: false, cos: null, animKey: key, wide: false }, o || {});
-            const px = 1.25;
+            let me0 = null;
+            const spec = (owner, key, o) => Object.assign({ owner, cls: 'Knight', S: 2.4, tier: 'iron', face: { x: 1, y: 1 }, wk: 'sword', atier: null, blocking: false, cos: null, animKey: key, wide: false, pose: restPose, tA: 0, step: 0, bob: 0 }, o || {});
+            const px = 1.25, restPose = window.heroAnimFrame({ s: 'idle' }, 0, 0).P;
             let bakes = 0, stepMs = 0; const bakedSpecs = [], bakedPx = [];
             window.forgeBake = function (sp, p) { bakes++; bakedSpecs.push(sp); bakedPx.push(p); s2Clock += stepMs; return { cv: {}, W: 4, H: 4, ax: 2, ay: 4, px: p, colors: 3 }; };
-            const newFrame = () => { window.debugSetForge(false); window.debugSetForge(true); bakes = 0; bakedSpecs.length = 0; bakedPx.length = 0; stepMs = 0; s2Clock += 1000; window.render(s2Clock); return bakes; };
+            const realDPE = window.drawPlayerEntity;
+            const newFrame = () => {
+              window.debugSetForge(false); window.debugSetForge(true); bakes = 0; bakedSpecs.length = 0; bakedPx.length = 0; stepMs = 0; s2Clock += 1000;
+              window.drawPlayerEntity = function (pp, name, t, isMe) { if (isMe) me0 = name; return realDPE.apply(this, arguments); };
+              try { window.render(s2Clock); } finally { window.drawPlayerEntity = realDPE; }
+              return bakes;
+            };
             // 1. the count
             const atRender = newFrame(), mineAtRender = bakedSpecs.filter(s => s.owner === me0).length;
             const got = []; for (let i = 0; i < K2.BUDGET + 3; i++) got.push(window.forgeSprite(spec('s2o' + i, 'k' + i), px));
@@ -15645,7 +15651,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           {
             const emoteNow = () => window.debugForgeInfo().emote;
             const press = (type) => window.dispatchEvent(new window.KeyboardEvent(type, { key: 'x', bubbles: true }));
-            const defOk = /const KEYBIND_DEFAULTS = \{[\s\S]{0,1800}?emote: "x" \};/.test(gameScript) && /k === KEYBINDS\.emote && !e\.repeat && !dead\) doEmote\(\)/.test(gameScript);
+            const kbi = gameScript.indexOf('const KEYBIND_DEFAULTS = {'), kbSrc = gameScript.slice(kbi, gameScript.indexOf('let KEYBINDS'));
+            const defOk = kbi > 0 && /emote: "x" \};/.test(kbSrc) && /k === KEYBINDS\.emote && !e\.repeat && !dead &&/.test(gameScript);
+            if (window.document.activeElement && window.document.activeElement.blur) window.document.activeElement.blur();      // jsdom leaves the login field focused
             s2Clock += 5000;
             const seq = [];
             for (let i = 0; i < 4; i++) { window.doEmote(); seq.push(emoteNow()); }
@@ -15671,6 +15679,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             // typing in a text box never emotes; and a saved binding on X moves the emote key off it
             const press = (type) => window.dispatchEvent(new window.KeyboardEvent(type, { key: 'x', bubbles: true }));
             const emoteNow = () => window.debugForgeInfo().emote, doc3 = window.document;
+            if (doc3.activeElement && doc3.activeElement.blur) doc3.activeElement.blur();
             const tags = {};
             for (const tag of ['input', 'textarea', 'select']) {
               const el = doc3.createElement(tag); doc3.body.appendChild(el); el.focus();
@@ -15724,12 +15733,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             const now = 1e6, U = (w) => window.animUnwire(w, now);
             const junk = [null, undefined, 5, 'attack', {}, [], [1], [1, 2], { 0: 1, 1: 2, 2: 3, length: 3 }, true];
             const junkOk = junk.every(j => U(j) === null);
-            const unk = [U([99, 0, 0]), U([-1, 0, 0]), U([11, 0, 0]), U([NaN, 0, 0]), U(['x', 0, 0])];
+            const unk = [U([99, 0, 0]), U([-1, 0, 0]), U([11, 0, 0])], coerced = [U([NaN, 0, 0]), U(['x', 0, 0]), U([null, 0, 0])];
             const neg = U([2, 2, -5000]), huge = U([2, 2, 1e12]), inf = U([2, 2, Infinity]), nan = U([2, 2, NaN]), str = U([2, 2, '250']), obj = U([2, 2, {}]), exact = U([2, 2, 60000]), mid = U([2, 2, 250]);
             const kind = [U([2, 999, 0]), U([2, -3, 0]), U([2, 2.9, 0]), U([2, 'junk', 0])];
             const finite = [neg, huge, inf, nan, str, obj, exact, mid].every(r => r && Number.isFinite(r.at) && r.at <= now && r.at >= now - 60000);
-            results.push([`Living World S2 C: animUnwire clamps whatever arrives — non-arrays and short arrays give nothing (${junkOk}), unknown / negative / NaN state codes give nothing (${unk.map(u => u === null).join(',')}), the age is clamped to 0..60000 ms (negative -> ${now - neg.at}, 1e12 -> ${now - huge.at}, Infinity -> ${now - inf.at}, NaN -> ${now - nan.at}, '250' -> ${now - str.at}, 250 -> ${now - mid.at}), the start time is always finite and never in the future, and an unknown kind code falls to null without dropping the state (${kind.map(k => k && k.k).join(',')})`,
-              junkOk && unk.every(u => u === null) && finite && now - neg.at === 0 && now - huge.at === 60000 && now - inf.at === 60000 && now - nan.at === 0 && now - str.at === 250 && now - obj.at === 0 && now - exact.at === 60000 && now - mid.at === 250 &&
+            results.push([`Living World S2 C: animUnwire clamps whatever arrives — non-arrays and short arrays give nothing (${junkOk}), unknown / negative / too-big state codes give nothing (${unk.map(u => u === null).join(',')}) and a NaN / text code can only ever mean idle (${coerced.map(u => u && u.s).join(',')}), the age is clamped to 0..60000 ms (negative -> ${now - neg.at}, 1e12 -> ${now - huge.at}, Infinity -> ${now - inf.at}, NaN -> ${now - nan.at}, '250' -> ${now - str.at}, 250 -> ${now - mid.at}), the start time is always finite and never in the future, and an unknown kind code falls to null without dropping the state (${kind.map(k => k && k.k).join(',')})`,
+              junkOk && unk.every(u => u === null) && coerced.every(u => u && u.s === 'idle') && finite && now - neg.at === 0 && now - huge.at === 60000 && now - inf.at === 60000 && now - nan.at === 0 && now - str.at === 250 && now - obj.at === 0 && now - exact.at === 60000 && now - mid.at === 250 &&
               kind.every(k => k && k.s === 'attack') && kind[0].k === null && kind[1].k === null && kind[2].k === 'sword' && kind[3].k === null]);
             // every state/kind code the sender can produce survives the round trip
             let rt = 0, rtBad = 0;
@@ -15739,7 +15748,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           }
           {
             // the wire for real: sendMove's broadcast carries `an`, and the receiver turns it into o.anim (0 clears it)
-            const sm = s2FnSrc('sendMove'), others = window.debugAbilityInfo().others;
+            const sm = s2FnSrc('sendMove'), others = window.debugCombatHandles().others;
             const lastMove = () => { for (let i = sentBroadcasts.length - 1; i >= 0; i--) { const m = sentBroadcasts[i]; if (m && m.event === 'move') return m.payload; } return null; };
             const quiet = window.debugForgeInfo().emote === null;
             window.sendMove(true); const pIdle = lastMove();
@@ -15749,15 +15758,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             const give = (extra) => deliverBroadcast('move', Object.assign({}, base, extra));
             let n1 = give({ an: [2, KINDS.indexOf('sword'), 30] }); const o1 = others.get('S2Remote'), a1 = o1 && o1.anim && Object.assign({}, o1.anim);
             give({ an: 0 }); const a2 = others.get('S2Remote') && others.get('S2Remote').anim;
-            give({ an: [2, KINDS.indexOf('axe'), 10] }); give({ an: [99, 0, 0] }); const a3 = others.get('S2Remote').anim;
+            give({ an: [2, KINDS.indexOf('axe'), 10] }); const a3 = others.get('S2Remote').anim && Object.assign({}, others.get('S2Remote').anim); give({ an: [99, 0, 0] }); const a3b = others.get('S2Remote').anim; give({ an: 'junk' }); const a3c = others.get('S2Remote').anim;
             give({}); const a4 = others.get('S2Remote').anim;
             // the fall is stamped only for someone we have already seen alive
             deliverBroadcast('move', Object.assign({}, base, { u: 'S2Fresh', d: 1 })); const fresh = others.get('S2Fresh');
             give({ d: 1 }); const dead1 = others.get('S2Remote');
             others.delete('S2Remote'); others.delete('S2Fresh');
-            results.push([`Living World S2 C: the wire, for real — the move broadcast from sendMove carries an: 0 when idle (${JSON.stringify(pIdle && pIdle.an)}) and an: ${JSON.stringify(pEmote && pEmote.an)} while emoting; the receiver reads [attack, sword, 30] as ${a1 && a1.s}/${a1 && a1.k} started ${a1 ? Math.round(nowWire - a1.at) : '?'} ms ago, an: 0 CLEARS it (${a2}), junk does not wipe or replace it (${a3 && a3.s}/${a3 && a3.k}) and an absent field clears it (${a4}); a first sighting that is already dead has no fall stamp (${fresh && fresh.diedAt}) while a known player who dies gets one (${dead1 && dead1.diedAt ? 'yes' : 'no'})`,
+            results.push([`Living World S2 C: the wire, for real — the move broadcast from sendMove carries an: 0 when idle (${JSON.stringify(pIdle && pIdle.an)}) and an: ${JSON.stringify(pEmote && pEmote.an)} while emoting; the receiver reads [attack, sword, 30] as ${a1 && a1.s}/${a1 && a1.k} started ${a1 ? Math.round(nowWire - a1.at) : '?'} ms ago, an: 0 CLEARS it (${a2}), a newer broadcast replaces it (${a3 && a3.s}/${a3 && a3.k}), junk is dropped without a throw (${a3b},${a3c}) and an absent field clears it (${a4}); a first sighting that is already dead has no fall stamp (${fresh && fresh.diedAt}) while a known player who dies gets one (${dead1 && dead1.diedAt ? 'yes' : 'no'})`,
               quiet && pIdle && pIdle.an === 0 && pEmote && Array.isArray(pEmote.an) && CODES[pEmote.an[0]] === 'emote' && n1 === 1 && a1 && a1.s === 'attack' && a1.k === 'sword' && near2(nowWire - a1.at, 30, 1) &&
-              a2 === null && a3 && a3.s === 'attack' && a3.k === 'axe' && a4 === null && fresh && !fresh.diedAt && dead1 && dead1.diedAt > 0 &&
+              a2 === null && a3 && a3.s === 'attack' && a3.k === 'axe' && a3b === null && a3c === null && a4 === null && fresh && !fresh.diedAt && dead1 && dead1.diedAt > 0 &&
               sm.length > 500 && sm.indexOf('an: animWire()') > 0 && gameScript.split('an: animWire()').length === 2 && /o\.anim = p\.an \? animUnwire\(p\.an, performance\.now\(\)\) : null;/.test(gameScript) &&
               /if \(others\.has\(p\.u\) && !o\.dead && p\.d\) o\.diedAt = performance\.now\(\);/.test(gameScript)]);
             while (window.debugForgeInfo().emote) window.myAnimState(window.performance.now(), true);
@@ -15797,12 +15806,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
               const g0 = frameAt(10, c1), g1 = frameAt(K2.DEATH + 10, c1);
               window.respawn(); doc2.getElementById('deathOverlay').style.display = 'none';
               // a remote player who dies: they fall for ANIM_DEATH_MS from the moment their `d` arrived, then are gone
-              const me2 = window.debugWorldInfo().player, others = window.debugAbilityInfo().others;
-              window.debugSetPlayer({ remote: { u: 'S2Ghost', x: me2.x + 1, y: me2.y, dead: true } });
+              const me2 = window.debugWorldInfo().player, others = window.debugCombatHandles().others;
+              window.debugSetV39({ remote: { u: 'S2Ghost', x: me2.x + 1, y: me2.y, dead: true } });
               const rg = others.get('S2Ghost'), r0 = s2Clock; if (rg) rg.diedAt = r0;
               const h0 = frameAt(5, r0), h1 = frameAt(K2.DEATH - 5, r0), h2 = frameAt(K2.DEATH + 5, r0);
               if (rg) rg.diedAt = 0; const h3 = frameAt(10, r0);
-              window.debugSetPlayer({ dropRemote: 'S2Ghost' });
+              window.debugSetV39({ dropRemote: 'S2Ghost' });
               out = { alive, f0, f1, f2, f3, f4, st, wireDead, emoteWhileDead, back, stBack, g0, g1, h0, h1, h2, h3 };
             } finally { window.drawPlayerEntity = real; }
             const o = out;
