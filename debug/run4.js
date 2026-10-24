@@ -15333,6 +15333,507 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       }
     }
 
+    /* ===================== Living World S2 — characters that act =====================
+       README "The Living World", session 2. Presentation only: every player has a STATE (idle / walk / attack per
+       weapon kind / cast / gather / hurt / block / tame / emote / death / ride) that picks keyframed POSES for the pose
+       rig, sampled at a fixed pixel-art frame rate; the Pixel Forge bakes each (class, tier, weapon, cosmetics, facing,
+       frame) once into a <= 40-colour, alpha-0-or-255 sprite on a whole-backing-pixel grid and caches it.
+       In jsdom the canvas context is a stub, so forgeBake returns null and FORGE_ON flips off by design: what is pinned
+       here is every PURE piece (kf, heroAnimFrame, remoteAnimState, forgeGrid, forgeDownsample, forgeQuantize, forgeKey,
+       forgeSprite's budget with a stand-in baker, animWire / animUnwire), the state hooks the game itself exposes
+       (doEmote, tryAttack, enterDeath, render), and source slices. Real pixels and the bake time are debug/run6.js.
+       The game's own `let` / `const` names cannot be named from here, so tables and constants are read back out of
+       the source text. A fake clock is installed (far past any timer an earlier gate left running) and everything is
+       put back in the finally. */
+    {
+      const s2Hooks = ['kf', 'heroAnimFrame', 'myAnimState', 'remoteAnimState', 'animWire', 'animUnwire', 'doEmote', 'weaponKind',
+        'gatherAnimKind', 'forgeGrid', 'forgeDownsample', 'forgeQuantize', 'forgeKey', 'forgeSprite', 'forgeBake', 'debugForgeInfo',
+        'debugSetForge', 'render', 'enterDeath', 'respawn', 'tryAttack', 'debugSetPlayer', 'debugWorldInfo', 'debugAbilityInfo', 'swingDur'];
+      const s2Missing = s2Hooks.filter(k => typeof window[k] !== 'function');
+      if (s2Missing.length) {
+        results.push([`Living World S2: the hooks exist (missing: ${s2Missing.join(', ')})`, false]);
+      } else {
+        const s2Num = (name) => {
+          const m = gameScript.match(new RegExp('(?:\\bconst |,\\s*)' + name + '\\s*=\\s*([0-9.]+)\\s*[,;]'));
+          return m ? parseFloat(m[1]) : NaN;
+        };
+        const s2Lit = (name) => {              // a `const NAME = { ... };` table, evaluated from the source text
+          const head = 'const ' + name + ' = ', i = gameScript.indexOf(head), j = gameScript.indexOf('\n};', i);
+          return i < 0 || j < 0 ? null : new Function('return (' + gameScript.slice(i + head.length, j + 2) + ')')();
+        };
+        const s2Arr = (name) => { const m = gameScript.match(new RegExp('const ' + name + ' = (\\[[^\\]]*\\]);')); return m ? JSON.parse(m[1]) : null; };
+        const s2FnSrc = (name) => { const i = gameScript.indexOf('function ' + name + '('); return i < 0 ? '' : gameScript.slice(i, gameScript.indexOf('\n}', i) + 2); };
+        const ATK = s2Lit('ATTACK_KEYS'), GAT = s2Lit('GATHER_KEYS'), CODES = s2Arr('ANIM_CODES'), KINDS = s2Arr('ANIM_KINDS');
+        const FI0 = window.debugForgeInfo();
+        const K2 = { FRAME: FI0.ANIM_FRAME_MS, IDLE: FI0.ANIM_IDLE_LOOP, WALK: FI0.ANIM_WALK_FRAMES, ACT: FI0.ANIM_ACTION_FRAMES, ATKF: s2Num('ANIM_ATTACK_FRAMES'), IDLE_MS: s2Num('ANIM_IDLE_MS'), MS3: s2Num('FORGE_BAKE_MS_PER_FRAME'),
+          DEATH: s2Num('ANIM_DEATH_MS'), WALK_MS: s2Num('WALK_MS'), WALK_SWING: s2Num('WALK_SWING'), CUT: FI0.FORGE_ALPHA_CUT, MAXC: FI0.FORGE_MAX_COLORS,
+          SS: FI0.FORGE_SS, BUDGET: FI0.FORGE_BAKES_PER_FRAME };
+        const near2 = (a, b, e) => Math.abs(a - b) <= (e === undefined ? 1e-9 : e);
+        const s2Saved = { perfNow: window.performance.now, player: Object.assign({}, window.debugWorldInfo().player), forge: FI0.FORGE_ON,
+          forgeBake: window.forgeBake, drawPlayerEntity: window.drawPlayerEntity, emote: FI0.emote };
+        let s2Clock = s2Saved.perfNow.call(window.performance) + 90000;      // a fake clock, advanced only by the gates
+        window.performance.now = () => s2Clock;
+        const fr = (an, now, t) => window.heroAnimFrame(an, now, t === undefined ? 0 : t);
+        const atkFrames = (k, dur) => { const o = []; for (let i = 0; i < K2.ATKF; i++) o.push(fr({ s: 'attack', k, at: 0, dur: dur || window.swingDur(k) }, (i + 0.5) / K2.ATKF * (dur || window.swingDur(k)))); return o; };
+        try {
+          /* ---------- A. the pose rig and the keyframes ---------- */
+          results.push([`Living World S2 A: the tunables are as specced — ${K2.FRAME} ms frames, idle loop ${K2.IDLE} frames of ${K2.IDLE_MS} ms, walk ${K2.WALK}, cast/gather/death ${K2.ACT}, attack ${K2.ATKF}, death ${K2.DEATH} ms, <= ${K2.MAXC} colours, alpha cut ${K2.CUT}, ${K2.SS}x supersample, ${K2.BUDGET} bakes a frame`,
+            K2.FRAME === 100 && K2.IDLE === 24 && K2.IDLE_MS === 200 && K2.MS3 === 3 && K2.WALK === 8 && K2.ACT === 6 && K2.ATKF === 8 && K2.DEATH === 900 && K2.MAXC === 40 && K2.CUT === 100 && K2.SS === 4 && K2.BUDGET === 4 &&
+            ATK && GAT && CODES && KINDS && CODES.length === 11 && K2.WALK_MS === 110]);
+          {
+            const rest = (gameScript.match(/const HERO_POSE_REST = Object\.freeze\((\{[^}]*\})\)/) || [])[1];
+            const R = rest ? new Function('return (' + rest + ')')() : null;
+            const zeros = R && ['armL', 'armR', 'lean', 'sqY', 'lift', 'wAng', 'wDX', 'dx', 'legF', 'legBk', 'dust', 'flash', 'sparks'].every(k => R[k] === 0) && R.smear === null;
+            const a = fr({ s: 'idle' }, 0, 0), b0 = JSON.stringify(a.P);
+            a.P.armR = 99; a.P.smear = [1, 2, 3];
+            const b = fr({ s: 'idle' }, 0, 0);
+            results.push(['Living World S2 A: HERO_POSE_REST is every field zero (smear null), is Object.freeze\'d, and a frame\'s pose is a fresh object each call — nothing can ever write the shared rest pose',
+              !!zeros && JSON.stringify(b.P) === b0 && b.P.smear === undefined && gameScript.indexOf('let HERO_POSE = HERO_POSE_REST;') > 0 &&
+              gameScript.indexOf('finally { HERO_POSE = was; }') > 0 && gameScript.indexOf('finally { HERO_POSE = HERO_POSE_REST; }') > 0]);
+          }
+          {
+            const seen = new Set(); let worst = { sq: 0, arm: 0, lean: 0 }, bad = 0, lookFrames = [];
+            for (let k = 0; k < K2.IDLE * 2; k++) {
+              const r = fr({ s: 'idle' }, 0, k * K2.IDLE_MS + 3);
+              seen.add(r.frame); if (!(r.frame >= 0 && r.frame < K2.IDLE)) bad++;
+              worst.sq = Math.max(worst.sq, Math.abs(r.P.sqY)); worst.arm = Math.max(worst.arm, Math.abs(r.P.armL), Math.abs(r.P.armR)); worst.lean = Math.max(worst.lean, Math.abs(r.P.lean));
+              if (r.P.lean !== 0 && k < K2.IDLE) lookFrames.push(k);
+            }
+            const f0 = fr({ s: 'idle' }, 0, 0), loop = fr({ s: 'idle' }, 0, K2.IDLE * K2.IDLE_MS);
+            results.push([`Living World S2 A: idle breathes — ${seen.size} distinct frames, all in [0, ${K2.IDLE}), pose peaks sqY ${worst.sq.toFixed(3)} / arm ${worst.arm.toFixed(3)} / lean ${worst.lean.toFixed(3)} (tiny), frame 0 IS the rest pose, the look-around leans on frames ${lookFrames.join(',')} (15-19), and the loop closes at ${K2.IDLE * K2.IDLE_MS} ms`,
+              seen.size === K2.IDLE && bad === 0 && worst.sq <= 0.03 && worst.arm <= 0.06 && worst.lean <= 0.07 && Math.abs(f0.P.sqY) === 0 && Math.abs(f0.P.armL) === 0 &&
+              Math.abs(f0.P.armR) === 0 && f0.P.lean === 0 && f0.P.wAng === 0 && loop.frame === f0.frame && loop.key === f0.key && lookFrames.length > 0 && lookFrames.every(k => k >= 15 && k <= 19)]);
+          }
+          {
+            const stride = 2 * Math.PI * K2.WALK_MS, frames = new Set(), keys = new Set(), steps = [];
+            let bad = 0, armsOpp = true, maxStep = 0, maxBob = 0, minBob = 9;
+            for (let f = 0; f < K2.WALK * 3; f++) {
+              const t = (f % K2.WALK + 0.5) / K2.WALK * stride + Math.floor(f / K2.WALK) * stride;
+              const r = fr({ s: 'walk' }, 0, t);
+              frames.add(r.frame); keys.add(r.key); steps.push(r.step);
+              if (!(r.frame >= 0 && r.frame < K2.WALK) || r.frame !== f % K2.WALK) bad++;
+              if (!near2(r.P.armL, r.step * 0.5) || !near2(r.P.armR, -r.step * 0.5)) armsOpp = false;
+              maxStep = Math.max(maxStep, Math.abs(r.step)); maxBob = Math.max(maxBob, r.bob); minBob = Math.min(minBob, r.bob);
+            }
+            results.push([`Living World S2 A: a stride is ${K2.WALK} distinct frames in order (${frames.size} frames, ${keys.size} keys, ${bad} out of place), repeating every 2*PI*WALK_MS, the feet swap sides (step ${Math.min(...steps).toFixed(2)}..${Math.max(...steps).toFixed(2)} <= WALK_SWING ${K2.WALK_SWING}), the arms counter-swing and the bob stays >= 0 (${minBob.toFixed(2)}..${maxBob.toFixed(2)})`,
+              frames.size === K2.WALK && keys.size === K2.WALK && bad === 0 && Math.min(...steps) < -0.3 && Math.max(...steps) > 0.3 && maxStep <= K2.WALK_SWING + 1e-9 && armsOpp && minBob >= 0 && maxBob <= 2.3]);
+          }
+          for (const kind of ['sword', 'axe']) {
+            const F = atkFrames(kind);
+            const wind = F.findIndex(r => r.P.armR > 0 && r.P.wAng < 0), strike = F.findIndex(r => r.P.wAng > 0.5 && r.P.legF > 0.5);
+            const lastP = F[F.length - 1].P, peak = Math.max(...F.map(r => r.P.wAng));
+            const windAll = F.slice(0, strike).every(r => r.P.armR >= -0.01 || r.P.wAng <= 0.3);
+            results.push([`Living World S2 A: the ${kind} attack follows its keyframes — wind-up at frame ${wind} (arm back armR ${wind >= 0 ? F[wind].P.armR.toFixed(2) : '?'} > 0, weapon tipped back wAng ${wind >= 0 ? F[wind].P.wAng.toFixed(2) : '?'} < 0), strike at frame ${strike} (wAng > 0 and the lead foot lunges, legF ${strike >= 0 ? F[strike].P.legF.toFixed(2) : '?'}), recover on frame ${F.length - 1} back near rest (wAng ${lastP.wAng.toFixed(2)}, armR ${lastP.armR.toFixed(2)}, legF ${(lastP.legF || 0).toFixed(2)})`,
+              F.length === K2.ATKF && wind >= 0 && strike > wind && windAll && Math.abs(lastP.wAng) < 0.5 && Math.abs(lastP.wAng) <= peak * 0.25 && Math.abs(lastP.armR) < 0.3 && Math.abs(lastP.legF || 0) < 0.8 &&
+              F.every(r => r.key === 'attack:' + kind + ':' + r.frame) && new Set(F.map(r => r.key)).size === K2.ATKF]);
+          }
+          {
+            const report = [];
+            let forward = true, anySmear = {}, noSmear = true;
+            for (const kind of ['sword', 'axe', 'dagger', 'staff', 'fists', 'spear', 'bow', 'crossbow']) {
+              const F = atkFrames(kind);
+              F.forEach((r, i) => {
+                if (!r.P.smear) return;
+                anySmear[kind] = (anySmear[kind] || 0) + 1;
+                const prevW = i ? F[i - 1].P.wAng : 0, sm = r.P.smear;
+                // only the FORWARD swing: the weapon angle must be rising into this frame, past upright, and the arc runs forward and fast
+                if (!(r.P.wAng > prevW && r.P.wAng > 0 && sm[1] > sm[0] && sm[1] - sm[0] > 0.9 - 1e-9)) { forward = false; report.push(kind + '@' + i); }
+              });
+              if (['fists', 'spear', 'bow', 'crossbow'].includes(kind) && anySmear[kind]) noSmear = false;
+            }
+            const G = [];
+            for (const gk of ['chop', 'mine', 'pick']) for (let i = 0; i < K2.ACT; i++) {
+              const r = fr({ s: 'gather', k: gk, at: 0, dur: 380 }, (i + 0.5) / K2.ACT * 380);
+              const prev = i ? fr({ s: 'gather', k: gk, at: 0, dur: 380 }, (i - 0.5) / K2.ACT * 380).P.wAng : 0;
+              if (r.P.smear && !(r.P.wAng > prev && r.P.wAng > 0 && r.P.smear[1] > r.P.smear[0])) forward = false;
+              if (r.P.smear) G.push(gk + '@' + i);
+              if (gk === 'pick' && r.P.smear) noSmear = false;
+            }
+            results.push([`Living World S2 A: the smear trails only the FORWARD swing — never the wind-up (a frame with the weapon still tipped back or going back has none; offenders: ${report.join(',') || 'none'}), the sword, axe and dagger each smear at least once (${JSON.stringify(anySmear)}), and fists / spear / bow / crossbow / picking never do; chop and mine smear on ${G.join(', ')}`,
+              forward && noSmear && anySmear.sword >= 1 && anySmear.axe >= 1 && anySmear.dagger >= 1 && G.some(g => g.startsWith('chop')) && G.some(g => g.startsWith('mine'))]);
+          }
+          {
+            // the keyframe tables themselves: each field starts at x = 0, ends at x = 1 AT REST (0), strictly increasing, and kf hits every key
+            let tables = 0, badShape = [], badHit = 0, badMono = 0;
+            for (const [tn, T] of [['ATTACK_KEYS', ATK], ['GATHER_KEYS', GAT]]) for (const kind in T) for (const f in T[kind]) {
+              const keys = T[kind][f]; tables++;
+              let ok = keys[0][0] === 0 && keys[keys.length - 1][0] === 1 && keys[keys.length - 1][1] === 0 && keys[0][1] === 0;
+              for (let i = 1; i < keys.length; i++) if (!(keys[i][0] > keys[i - 1][0])) ok = false;
+              if (!ok) badShape.push(`${tn}.${kind}.${f}`);
+              for (const [x, v] of keys) if (!near2(window.kf(keys, x), v, 1e-9)) badHit++;
+              for (let i = 1; i < keys.length; i++) {
+                const [x0, v0] = keys[i - 1], [x1, v1] = keys[i]; let prev = v0;
+                for (let s = 1; s <= 20; s++) { const v = window.kf(keys, x0 + (x1 - x0) * s / 20); if ((v1 >= v0 ? v < prev - 1e-9 : v > prev + 1e-9) || v < Math.min(v0, v1) - 1e-9 || v > Math.max(v0, v1) + 1e-9) badMono++; prev = v; }
+              }
+            }
+            const k2 = [[0, 0], [1, 1]];
+            results.push([`Living World S2 A: ${tables} keyframe lists (attack + gather) are well-formed — start and end at rest (x 0..1, value 0), keys ascending (bad: ${badShape.slice(0, 3).join(',') || 'none'}) — and kf passes through every key (${badHit} misses) and is monotone and bounded between each pair (${badMono} violations)`,
+              tables > 40 && badShape.length === 0 && badHit === 0 && badMono === 0]);
+            const kk = [[0.2, 3], [0.6, -1], [1, 5]];
+            results.push([`Living World S2 A: kf — the endpoints are exact and clamp outside 0..1 (${window.kf(kk, -5)}, ${window.kf(kk, 0)}, ${window.kf(kk, 1)}, ${window.kf(kk, 9)}), a [0,0]-[1,1] pair is a smoothstep (kf(.25) = ${window.kf(k2, 0.25)}, kf(.5) = ${window.kf(k2, 0.5)}, flat at both ends: kf(.01) = ${window.kf(k2, 0.01).toExponential(1)})`,
+              window.kf(kk, -5) === 3 && window.kf(kk, 0) === 3 && window.kf(kk, 0.2) === 3 && window.kf(kk, 1) === 5 && window.kf(kk, 9) === 5 && near2(window.kf(k2, 0.25), 0.15625) &&
+              near2(window.kf(k2, 0.5), 0.5) && window.kf(k2, 0.01) < 0.001 && window.kf(k2, 0.99) > 0.999]);
+          }
+          {
+            // every attack kind a weapon can swing has choreography; the tool-kinds (pickaxe) are the one documented fall-back to fists
+            const wi = gameScript.indexOf('const WEAPONS = {'), wsrc = gameScript.slice(wi, gameScript.indexOf('\n};', wi));
+            const ids = [...wsrc.matchAll(/^ {2}([a-z_]+):\s*\{ name:/gm)].map(m => m[1]);
+            const kinds = new Set(ids.map(id => window.weaponKind(id) || 'fists'));
+            const missing = [...kinds].filter(k => !ATK[k]);
+            const pick = fr({ s: 'attack', k: 'pickaxe', at: 0, dur: 170 }, 85), fist = fr({ s: 'attack', k: 'fists', at: 0, dur: 170 }, 85);
+            const shows = { tree: window.gatherAnimKind('tree'), rock: window.gatherAnimKind('rock'), iron: window.gatherAnimKind('iron'), runic: window.gatherAnimKind('runic'), meteor: window.gatherAnimKind('meteor'), bush: window.gatherAnimKind('bush') };
+            const ch = fr({ s: 'gather', k: 'chop', at: 0, dur: 380 }, 190), mi = fr({ s: 'gather', k: 'mine', at: 0, dur: 380 }, 190), pk = fr({ s: 'gather', k: 'pick', at: 0, dur: 380 }, 190);
+            results.push([`Living World S2 A: ${ids.length} weapons map to ${kinds.size} kinds (${[...kinds].join(', ')}) and every kind has attack choreography${missing.length ? ' except ' + missing.join(',') : ''} — the only allowed gap is the pickaxe, which swings as the fists frame (same pose: ${JSON.stringify(pick.P) === JSON.stringify(fist.P)}); gathering covers ${Object.values(shows).join('/')}, showing the axe / pickaxe in hand (${ch.tool}/${mi.tool}/${pk.tool})`,
+              ids.length >= 20 && missing.every(k => k === 'pickaxe') && ['fists', 'sword', 'dagger', 'axe', 'spear', 'bow', 'crossbow', 'staff'].every(k => kinds.has(k) && ATK[k]) &&
+              JSON.stringify(pick.P) === JSON.stringify(fist.P) && Object.values(shows).every(k => GAT[k]) && ch.tool === 'axe' && mi.tool === 'pickaxe' && pk.tool === undefined]);
+          }
+          {
+            // the death fall, as a pose; and what a remote player's last broadcast turns into
+            const D = []; for (let i = 0; i < K2.ACT; i++) D.push(fr({ s: 'death', at: 0, dur: K2.DEATH }, (i + 0.5) / K2.ACT * K2.DEATH));
+            const rs = window.remoteAnimState;
+            const T0 = 5000, sw = window.swingDur('sword');
+            const r1 = rs({ dead: true, diedAt: 4200 }, false, T0), r2 = rs({ anim: { s: 'attack', k: 'sword', at: T0 } }, false, T0 + sw - 1), r3 = rs({ anim: { s: 'attack', k: 'sword', at: T0 } }, false, T0 + sw + 1),
+              r4 = rs({ anim: { s: 'emote', k: 'sit', at: T0 } }, false, T0 + 50000), r5 = rs({ anim: { s: 'emote', k: 'sit', at: T0 } }, true, T0 + 50000), r6 = rs({ anim: { s: 'emote', k: 'sit', at: T0 } }, false, T0 + 61000),
+              rst = [rs({ anim: { s: 'attack', k: 'staff', at: T0 } }, false, T0 + 300).s, rs({ anim: { s: 'attack', k: 'staff', at: T0 } }, false, T0 + 345).s, rs({ anim: { s: 'attack', k: 'bow', at: T0 } }, false, T0 + 300).s, rs({ anim: { s: 'attack', k: 'crossbow', at: T0 } }, false, T0 + 345).s], r7 = rs({ bl: 1 }, false, T0), r8 = rs({ mo: 1 }, true, T0), r9 = rs({}, true, T0), r10 = rs({}, false, T0);
+            results.push([`Living World S2 A: the death fall buckles then topples back (lean ${D[0].P.lean.toFixed(2)} -> ${D[K2.ACT - 1].P.lean.toFixed(2)}, sqY ${D[K2.ACT - 1].P.sqY.toFixed(2)}, flash on the first frame only), and a remote player's state follows their last broadcast — dead (${r1.s} since ${r1.at}), an attack while it lasts then not (${r2.s} -> ${r3.s}), a held sit until they move or a minute passes (${r4.s}/${r5.s}/${r6.s}), block, ride, walk, idle (${r7.s}/${r8.s}/${r9.s}/${r10.s}), and a remote staff / bow / crossbow shot lasts the shoot time, not the melee swing (${rst.join('/')} at 300 / 345 ms)`,
+              D[K2.ACT - 1].P.lean < -1.3 && D[K2.ACT - 1].P.sqY < -0.1 && D[0].P.flash > 0 && D.slice(1).every(r => !r.P.flash) && D.every((r, i) => !i || r.P.lean <= D[1].P.lean + 1e-9 || i < 2) &&
+              r1.s === 'death' && r1.at === 4200 && r1.dur === K2.DEATH && r2.s === 'attack' && r2.k === 'sword' && r3.s === 'idle' && r4.s === 'emote' && r4.k === 'sit' && r5.s === 'walk' && r6.s === 'idle' &&
+              rst.join() === 'attack,idle,attack,idle' && window.swingDur('staff') < 300 && r7.s === 'block' && r8.s === 'ride' && r9.s === 'walk' && r10.s === 'idle']);
+          }
+
+          /* ---------- B. the Pixel Forge: pure functions ---------- */
+          {
+            const g = (S) => window.forgeGrid(S);
+            let worst = 0, bad = 0;
+            for (let S = 1; S <= 4.4001; S += 0.05) { const o = g(S); worst = Math.max(worst, Math.abs(o.px * S - o.n)); if (!(Number.isInteger(o.n) && o.n >= 1)) bad++; }
+            results.push([`Living World S2 B: forgeGrid makes an art pixel a WHOLE number of backing pixels at every scale 1..4.4 (n integer >= 1: ${bad} bad, px*S off by at most ${worst.toExponential(1)}) — 1.6x -> ${g(1.6).n} backing px = ${g(1.6).px}, 2.2x -> ${g(2.2).n}, 1x -> ${g(1).n}, retina 3.2 -> ${g(3.2).n}`,
+              bad === 0 && worst < 1e-9 && g(1.6).n === 2 && near2(g(1.6).px, 1.25) && g(1).n === 1 && g(1).px === 1 && g(2.2).n === 2 && g(3.2).n === 3]);
+          }
+          {
+            const blk = (a, nOpaque, rgb) => {          // one 4x4 block: `nOpaque` pixels of alpha 255, the rest clear
+              const src = new Uint8ClampedArray(64);
+              for (let p = 0; p < 16; p++) { if (p < nOpaque) { src[p * 4] = rgb[0]; src[p * 4 + 1] = rgb[1]; src[p * 4 + 2] = rgb[2]; src[p * 4 + 3] = a; } }
+              return window.forgeDownsample(src, 4, 1, 1, 4, K2.CUT);
+            };
+            const uniform = (a) => { const src = new Uint8ClampedArray(64); for (let p = 0; p < 16; p++) { src[p * 4] = 10; src[p * 4 + 1] = 200; src[p * 4 + 2] = 30; src[p * 4 + 3] = a; } return src; };
+            const o99 = window.forgeDownsample(uniform(K2.CUT - 1), 4, 1, 1, 4, K2.CUT), o101 = window.forgeDownsample(uniform(K2.CUT + 1), 4, 1, 1, 4, K2.CUT), o100 = window.forgeDownsample(uniform(K2.CUT), 4, 1, 1, 4, K2.CUT);
+            const loose = window.forgeDownsample(uniform(99), 4, 1, 1, 4, 50);
+            const six = blk(255, 6, [9, 9, 9]), seven = blk(255, 7, [9, 9, 9]), none = window.forgeDownsample(new Uint8ClampedArray(64), 4, 1, 1, 4, K2.CUT), zeroCut = window.forgeDownsample(new Uint8ClampedArray(64), 4, 1, 1, 4, 0);
+            results.push([`Living World S2 B: forgeDownsample's alpha cut — a 4x4 block averaging alpha ${K2.CUT - 1} is transparent (${[...o99].join(',')}), ${K2.CUT} and ${K2.CUT + 1} are solid (a ${o100[3]}, ${o101[3]}), 6 of 16 opaque (average 95.6) is clear and 7 of 16 (111.6) is solid, an empty block stays clear even at cut 0, and the cut is the argument (cut 50 keeps the alpha-99 block: ${loose[3]})`,
+              o99.every(v => v === 0) && o100[3] === 255 && o101[3] === 255 && o101[0] === 10 && o101[1] === 200 && o101[2] === 30 && six[3] === 0 && seven[3] === 255 && none[3] === 0 && zeroCut[3] === 0 && loose[3] === 255]);
+            // premultiplied colour: clear pixels contribute nothing, partly clear ones are weighted by their alpha, and x / y index the right block
+            const src = new Uint8ClampedArray(64);
+            for (let p = 0; p < 16; p++) { const o = p * 4; if (p < 8) { src[o] = 255; src[o + 3] = 255; } else { src[o + 2] = 255; src[o + 3] = 0; } }
+            const red = window.forgeDownsample(src, 4, 1, 1, 4, K2.CUT);
+            const s2 = new Uint8ClampedArray(64);
+            for (let p = 0; p < 16; p++) { const o = p * 4; if (p < 8) { s2[o] = 255; s2[o + 3] = 200; } else { s2[o + 1] = 255; s2[o + 3] = 100; } }
+            const wtd = window.forgeDownsample(s2, 4, 1, 1, 4, K2.CUT);
+            const two = new Uint8ClampedArray(2 * 2 * 2 * 2 * 4);          // 2x1 art pixels of 2x2 source: left white and solid, right clear
+            for (let y = 0; y < 2; y++) for (let x = 0; x < 4; x++) { const o = (y * 4 + x) * 4; if (x < 2) { two[o] = two[o + 1] = two[o + 2] = two[o + 3] = 255; } }
+            const lr = window.forgeDownsample(two, 4, 2, 1, 2, K2.CUT);
+            results.push([`Living World S2 B: forgeDownsample is premultiplied — half-clear blue contributes nothing to a red block (${[...red].join(',')}), alphas 200 red + 100 green average to ${wtd[0]}/${wtd[1]} (expected 170/85), and a 2x1 grid puts the solid half left and the clear half right (${[...lr].join(',')})`,
+              red[0] === 255 && red[1] === 0 && red[2] === 0 && red[3] === 255 && near2(wtd[0], 170, 1) && near2(wtd[1], 85, 1) && wtd[3] === 255 &&
+              lr[0] === 255 && lr[1] === 255 && lr[2] === 255 && lr[3] === 255 && lr[4] === 0 && lr[5] === 0 && lr[6] === 0 && lr[7] === 0]);
+          }
+          {
+            const mk = (n, alphaEvery) => {                // n distinct colours, one pixel each, with a clear pixel (junk colour) after every alphaEvery solid ones
+              const px = [];
+              for (let i = 0; i < n; i++) { px.push([(i * 37) % 256, (i * 91 + 13) % 256, (i * 151 + 71) % 256, 255]); if (alphaEvery && i % alphaEvery === 0) px.push([9, 8, 7, 0]); }
+              const b = new Uint8ClampedArray(px.length * 4); px.forEach((p, i) => b.set(p, i * 4)); return b;
+            };
+            const distinct = (b) => { const s = new Set(); for (let i = 0; i < b.length; i += 4) if (b[i + 3]) s.add((b[i] << 16) | (b[i + 1] << 8) | b[i + 2]); return s.size; };
+            const alphas = (b) => Array.from(b).filter((v, i) => i % 4 === 3).join(',');
+            const big = mk(300, 10), bigA = alphas(big), n0 = distinct(big), q = window.forgeQuantize(big, K2.MAXC), n1 = distinct(big);
+            let junkOk = true; for (let i = 0; i < big.length; i += 4) if (!big[i + 3] && (big[i] !== 9 || big[i + 1] !== 8 || big[i + 2] !== 7)) junkOk = false;
+            const big16 = mk(600, 0), q16 = window.forgeQuantize(big16, 16), n16 = distinct(big16);
+            results.push([`Living World S2 B: forgeQuantize reduces ${n0} distinct colours to <= ${K2.MAXC} — returns ${q}, ${n1} colours really left in the buffer (it uses the budget: >= ${K2.MAXC / 2}), alpha untouched, clear pixels untouched; 600 colours at maxC 16 -> returns ${q16}, ${n16} left`,
+              n0 > 250 && q <= K2.MAXC && q === n1 && n1 >= K2.MAXC / 2 && alphas(big) === bigA && junkOk && q16 <= 16 && q16 === n16 && n16 >= 8]);
+            const small = mk(12, 0), small0 = Array.from(small), qs = window.forgeQuantize(small, K2.MAXC);
+            const exact = mk(K2.MAXC, 0), exact0 = Array.from(exact), qe = window.forgeQuantize(exact, K2.MAXC);
+            const over = mk(K2.MAXC + 1, 0), qo = window.forgeQuantize(over, K2.MAXC);
+            results.push([`Living World S2 B: forgeQuantize leaves a palette that already fits alone — 12 colours -> ${qs}, exactly ${K2.MAXC} -> ${qe}, both byte-identical — while ${K2.MAXC + 1} is reduced (${qo} left, ${distinct(over)} in the buffer)`,
+              qs === 12 && JSON.stringify(Array.from(small)) === JSON.stringify(small0) && qe === K2.MAXC && JSON.stringify(Array.from(exact)) === JSON.stringify(exact0) &&
+              qo <= K2.MAXC && distinct(over) <= K2.MAXC && window.forgeQuantize(new Uint8ClampedArray(16), K2.MAXC) === 0]);
+          }
+          {
+            const base = { owner: 'a', cls: 'Knight', S: 2.4, tier: 'iron', face: { x: 1, y: 1 }, wk: 'sword', atier: 'iron', blocking: false, cos: { hat: '', cloak: '', skin: '', aura: '' }, animKey: 'idle::3' };
+            const clone = (o) => Object.assign({}, base, { cos: Object.assign({}, base.cos) }, o);
+            const k0 = window.forgeKey(base, 1.25);
+            const variants = { cls: clone({ cls: 'Mystic' }), S: clone({ S: 2.1 }), tier: clone({ tier: 'dragonsteel' }), noTier: clone({ tier: null }), wk: clone({ wk: 'axe' }), atier: clone({ atier: 'runic' }), blocking: clone({ blocking: true }),
+              hat: clone({ cos: { hat: 'crown', cloak: '', skin: '', aura: '' } }), cloak: clone({ cos: { hat: '', cloak: 'red', skin: '', aura: '' } }), skin: clone({ cos: { hat: '', cloak: '', skin: 'gold', aura: '' } }),
+              aura: clone({ cos: { hat: '', cloak: '', skin: '', aura: 'ember' } }), face: clone({ face: { x: -1, y: 1 } }), wide: clone({ wide: true }), frame: clone({ animKey: 'idle::4' }), state: clone({ animKey: 'walk::3' }) };
+            const keys = Object.entries(variants).map(([n, s]) => [n, window.forgeKey(s, 1.25)]);
+            const same = keys.filter(([n, k]) => k === k0).map(([n]) => n);
+            const dup = new Set(keys.map(([, k]) => k)).size !== keys.length;
+            const px = window.forgeKey(base, 1.0) !== k0 && window.forgeKey(base, 1.25) === k0;
+            const shared = window.forgeKey(clone({ owner: 'someone else' }), 1.25) === k0 && window.forgeKey(clone({ face: { x: -0.1, y: 0 } }), 1.25) === k0 && window.forgeKey(clone({ face: { x: -0.2, y: 0 } }), 1.25) !== k0 &&
+              window.forgeKey(clone({ cos: null }), 1.25) === k0 && window.forgeKey(clone({ tier: undefined, wk: undefined, atier: undefined }), 1.25) === window.forgeKey(clone({ tier: null, wk: null, atier: null }), 1.25);
+            results.push([`Living World S2 B: forgeKey tells apart class, size, tier, weapon, armour tier, blocking, each of hat / cloak / skin / aura, facing, frame, state, the wide (action) box and art-pixel size (${keys.length} variants, every one differs from the base${same.length ? '; SAME: ' + same.join(',') : ''}, ${dup ? 'some collide' : 'all distinct from each other'}; px: ${px}) — and does NOT split on the owner's name, on a facing within the dead zone, or on null-vs-undefined (${shared})`,
+              same.length === 0 && !dup && px && shared]);
+          }
+          {
+            // forgeSprite's budget (count AND time, own player first), hits and the look-checked fallback — with a stand-in baker (jsdom cannot bake)
+            const me0 = window.debugWorldInfo().player.username;
+            const spec = (owner, key, o) => Object.assign({ owner, cls: 'Knight', S: 2.4, tier: 'iron', face: { x: 1, y: 1 }, wk: 'sword', atier: null, blocking: false, cos: null, animKey: key, wide: false }, o || {});
+            const px = 1.25;
+            let bakes = 0, stepMs = 0; const bakedSpecs = [], bakedPx = [];
+            window.forgeBake = function (sp, p) { bakes++; bakedSpecs.push(sp); bakedPx.push(p); s2Clock += stepMs; return { cv: {}, W: 4, H: 4, ax: 2, ay: 4, px: p, colors: 3 }; };
+            const newFrame = () => { window.debugSetForge(false); window.debugSetForge(true); bakes = 0; bakedSpecs.length = 0; bakedPx.length = 0; stepMs = 0; s2Clock += 1000; window.render(s2Clock); return bakes; };
+            // 1. the count
+            const atRender = newFrame(), mineAtRender = bakedSpecs.filter(s => s.owner === me0).length;
+            const got = []; for (let i = 0; i < K2.BUDGET + 3; i++) got.push(window.forgeSprite(spec('s2o' + i, 'k' + i), px));
+            const iB = got.findIndex(Boolean), ownerB = 's2o' + iB, sprB = got[iB], bakesOthers = bakes - atRender;
+            const info1 = window.debugForgeInfo(), hits0 = info1.stats.hits, fb0 = info1.stats.fallbacks;
+            const bakesB = bakes;
+            const again = window.forgeSprite(spec(ownerB, 'k' + iB), px);
+            const fbSprite = window.forgeSprite(spec(ownerB, 'next-frame'), px);
+            const fbTier = window.forgeSprite(spec(ownerB, 'next-frame-2', { tier: 'runic' }), px), fbFace = window.forgeSprite(spec(ownerB, 'next-frame-3', { face: { x: -1, y: 1 } }), px),
+              fbCos = window.forgeSprite(spec(ownerB, 'next-frame-4', { cos: { hat: 'crown' } }), px), fbPx = window.forgeSprite(spec(ownerB, 'next-frame-5'), px * 2), fbWk = window.forgeSprite(spec(ownerB, 'next-frame-6', { wk: 'axe' }), px);
+            const unseen = window.forgeSprite(spec('s2-never-seen', 'k'), px);
+            const info2 = window.debugForgeInfo();
+            const bakesAfter = bakes;
+            // your own player may take one bake past the count; the next one waits
+            const mineA = window.forgeSprite(spec(me0, 'mine-1'), px), bakesMine1 = bakes, mineB = window.forgeSprite(spec(me0, 'mine-2'), px);
+            results.push([`Living World S2 B: forgeSprite bakes at most FORGE_BAKES_PER_FRAME (${K2.BUDGET}) a frame — render itself baked ${atRender} (${mineAtRender} yours), ${bakesOthers} more went through for ${K2.BUDGET + 3} fresh keys (the rest wait), a cached key is a hit with no bake (${again === sprB}), an owner with a sprite keeps showing their last ONLY while the look is the same (frame lag: ${fbSprite === sprB}; a new tier / facing / cosmetic / weapon / art-pixel size draws live instead: ${fbTier},${fbFace},${fbCos},${fbWk},${fbPx}), an unseen owner draws live (${unseen}), and yours takes ONE bake past the count (${bakesMine1 - bakesAfter}) and then waits for a fallback (${mineB === mineA}, no further bake: ${bakes === bakesMine1})`,
+              !!me0 && atRender >= 1 && mineAtRender >= 1 && bakes === bakesMine1 && bakesB === Math.max(atRender, K2.BUDGET) && bakesOthers === Math.max(0, K2.BUDGET - atRender) && iB >= 0 &&
+              got.filter(Boolean).length === bakesOthers && again === sprB && info2.stats.hits === hits0 + 1 && bakesAfter === bakesB && fbSprite === sprB && info2.stats.fallbacks === fb0 + 1 &&
+              fbTier === null && fbFace === null && fbCos === null && fbWk === null && fbPx === null && unseen === null && bakesMine1 === bakesAfter + 1 && !!mineA && mineB === mineA && info2.FORGE_ON === true &&
+              /forgeBakesLeft = FORGE_BAKES_PER_FRAME; forgeBakeMsLeft = FORGE_BAKE_MS_PER_FRAME;/.test(gameScript)]);
+            // 2. the time: every bake costs 2 ms of a 3 ms frame budget, so only two get through, and yours still goes
+            const atRender2 = newFrame(); stepMs = 2;
+            const got2 = []; for (let i = 0; i < 8; i++) got2.push(window.forgeSprite(spec('t2o' + i, 'k' + i), px));
+            const timeBakes = bakes - atRender2, bakes2 = bakes;
+            const mine2 = window.forgeSprite(spec(me0, 'mine-time'), px);
+            const want2 = Math.min(Math.max(0, K2.BUDGET - atRender2), Math.ceil(K2.MS3 / 2));
+            results.push([`Living World S2 B: the bake budget is TIME as well as count — at 2 ms a bake against FORGE_BAKE_MS_PER_FRAME (${K2.MS3}) ${timeBakes} other players' bakes went through (expected ${want2}, the count alone would allow ${Math.max(0, K2.BUDGET - atRender2)}), and your own player is not starved by it (${bakes - bakes2} more, sprite ${!!mine2})`,
+              timeBakes === want2 && want2 === 2 && got2.filter(Boolean).length === want2 && bakes - bakes2 === 1 && !!mine2 && K2.MS3 > 0]);
+            // 3. what render bakes: at the TARGET scale (the zoom's destination, so easing never re-bakes), in the narrow box at rest
+            newFrame();
+            const vs = window.debugGroundCache().VIEW_SCALE, want = window.forgeGrid(vs).px;
+            results.push([`Living World S2 B: render bakes your sprite at forgeGrid(RENDER_DPR x zoomTarget) — ${bakedPx[0]} against forgeGrid(${vs}).px = ${want} — and standing still it is the narrow box (wide ${bakedSpecs[0] && bakedSpecs[0].wide})`,
+              bakedPx.length >= 1 && near2(bakedPx[0], want, 1e-9) && bakedSpecs[0].wide === false && gameScript.indexOf('forgeSprite(spec, forgeGrid(RENDER_DPR * zoomTarget).px)') > 0]);
+            window.forgeBake = s2Saved.forgeBake;
+            window.debugSetForge(false); window.debugSetForge(true);
+            // 4. the box: action states bake into the wide box (a spear strike and a dust cloud are wider than the standing hero)
+            const bx = (n) => { const m = gameScript.match(new RegExp('const ' + n + ' = (\\{[^}]*\\})')); return m ? new Function('return (' + m[1] + ')')() : null; };
+            const B1 = bx('FORGE_BOX'), B2 = bx('FORGE_BOX_WIDE'), ws = (gameScript.match(/const FORGE_WIDE_STATES = new Set\((\[[^\]]*\])\)/) || [])[1];
+            const WS = ws ? JSON.parse(ws) : [];
+            results.push([`Living World S2 B: the wide box (${B2 && JSON.stringify(B2)}) contains the standing box (${B1 && JSON.stringify(B1)}) and is wider and taller; it is used for exactly ${WS.join(', ')} (every state that swings, shoots, falls or waves), forgeBake picks it from spec.wide and drawPlayerEntity sets spec.wide from the state`,
+              !!B1 && !!B2 && B2.l < B1.l && B2.r > B1.r && B2.t < B1.t && B2.b > B1.b && WS.slice().sort().join() === ['attack', 'cast', 'death', 'emote', 'gather', 'hurt'].join() &&
+              gameScript.indexOf('BX = spec.wide ? FORGE_BOX_WIDE : FORGE_BOX') > 0 && gameScript.indexOf('wide: FORGE_WIDE_STATES.has(an.s)') > 0]);
+            // 5. the real baker in jsdom: the canvas cannot be read back, so the very first bake failing switches the forge off; later failures only back off
+            s2Clock += 1000; window.render(s2Clock);
+            const off = window.debugForgeInfo();
+            results.push([`Living World S2 B: in jsdom (a canvas that cannot be read back) forgeBake yields nothing and, being the very first bake ever, switches the forge off (FORGE_ON ${off.FORGE_ON}, ${off.stats.failures} failure counted, ${off.stats.bakes} bakes, ${off.size} sprites cached) while the frame still renders; any LATER failure only backs off (source: if (forgeStats.bakes === 0) FORGE_ON = false; else forgeBackoffUntil = now + FORGE_BACKOFF_MS); debugSetForge(true) turns it back on with an empty cache`,
+              window.forgeBake(spec('x', 'y'), 1.25) === null && off.FORGE_ON === false && off.stats.failures >= 1 && off.stats.bakes === 0 && off.size === 0 &&
+              /if \(forgeStats\.bakes === 0\) FORGE_ON = false; else forgeBackoffUntil = now \+ FORGE_BACKOFF_MS;/.test(gameScript) && /const FORGE_BACKOFF_MS = [1-9]\d{3,};/.test(gameScript) &&
+              (window.debugSetForge(true), window.debugForgeInfo().FORGE_ON === true && window.debugForgeInfo().size === 0)]);
+          }
+
+          /* ---------- C. state, the wire, emotes, death ---------- */
+          window.debugSetForge(false);                                        // the rest of the block renders the live body
+          {
+            const info = window.debugForgeInfo();
+            s2Clock += 5000;
+            const idle = window.myAnimState(s2Clock, false), walk = window.myAnimState(s2Clock, true);
+            results.push([`Living World S2 C: the local player's state at rest is idle (${idle.s}), walking is walk (${walk.s}), and neither goes on the wire — animWire() is 0 (${JSON.stringify(window.animWire())}); no emote is running (${info.emote})`,
+              idle.s === 'idle' && walk.s === 'walk' && window.animWire() === 0 && !info.emote]);
+          }
+          {
+            const emoteNow = () => window.debugForgeInfo().emote;
+            const press = (type) => window.dispatchEvent(new window.KeyboardEvent(type, { key: 'x', bubbles: true }));
+            const defOk = /const KEYBIND_DEFAULTS = \{[\s\S]{0,1800}?emote: "x" \};/.test(gameScript) && /k === KEYBINDS\.emote && !e\.repeat && !dead\) doEmote\(\)/.test(gameScript);
+            s2Clock += 5000;
+            const seq = [];
+            for (let i = 0; i < 4; i++) { window.doEmote(); seq.push(emoteNow()); }
+            const start = ['wave', 'cheer', 'sit'].indexOf(seq[0]);
+            const cycle = start >= 0 && seq.every((k, i) => k === ['wave', 'cheer', 'sit'][(start + i) % 3]);
+            // the emote key itself: x -> doEmote
+            const before = emoteNow(); press('keydown'); press('keyup'); const afterKey = emoteNow();
+            const st = window.myAnimState(s2Clock, false);
+            const wire = window.animWire();
+            // sit holds until you move; moving cancels any emote
+            while (emoteNow() !== 'sit') window.doEmote();
+            s2Clock += 120000; const heldSit = window.myAnimState(s2Clock, false).s === 'emote' && emoteNow() === 'sit';
+            const movedState = window.myAnimState(s2Clock, true).s, afterMove = emoteNow();
+            window.doEmote(); while (emoteNow() !== 'wave') window.doEmote();
+            s2Clock += 1700; const waveGone = window.myAnimState(s2Clock, false).s === 'idle' && !emoteNow();
+            const poses = [['wave', 6], ['cheer', 3], ['sit', 0]].map(([k]) => fr({ s: 'emote', k, at: 0, dur: 1600 }, 0, 0).P);
+            results.push([`Living World S2 C: the emote key is x (KEYBIND_DEFAULTS.emote and the keydown handler: ${defOk}) and drives doEmote — it cycles ${seq.join(' -> ')}, the x key advances it (${before} -> ${afterKey}); the state while emoting is emote/${st.k} and it goes on the wire as ${JSON.stringify(wire)}; a sit is held for two minutes (${heldSit}), moving cancels any emote (${movedState}, emote ${afterMove}), a wave ends by itself (${waveGone}); poses: wave arm up ${poses[0].armR.toFixed(1)}, cheer both arms ${poses[1].armL.toFixed(1)}/${poses[1].armR.toFixed(1)}, sit crouched ${poses[2].sqY}`,
+              defOk && cycle && afterKey !== before && afterKey && st.s === 'emote' && Array.isArray(wire) && wire.length === 3 && CODES[wire[0]] === 'emote' && KINDS[wire[1]] === st.k && wire[2] >= 0 &&
+              heldSit && movedState === 'walk' && !afterMove && waveGone && poses[0].armR < -2 && poses[1].armL < -2 && poses[1].armR < -2 && poses[2].sqY < -0.2]);
+            while (emoteNow()) window.myAnimState(s2Clock, true);
+          }
+          {
+            // typing in a text box never emotes; and a saved binding on X moves the emote key off it
+            const press = (type) => window.dispatchEvent(new window.KeyboardEvent(type, { key: 'x', bubbles: true }));
+            const emoteNow = () => window.debugForgeInfo().emote, doc3 = window.document;
+            const tags = {};
+            for (const tag of ['input', 'textarea', 'select']) {
+              const el = doc3.createElement(tag); doc3.body.appendChild(el); el.focus();
+              const e0 = emoteNow(); press('keydown'); press('keyup'); tags[tag] = [doc3.activeElement === el, emoteNow() === e0];
+              el.blur(); el.remove();
+            }
+            const e1 = emoteNow(); press('keydown'); press('keyup'); const pressedFree = emoteNow() !== e1;
+            while (emoteNow()) window.myAnimState(s2Clock, true);
+            const lsDesc = Object.getOwnPropertyDescriptor(window, 'localStorage'), store = {};
+            const fake = { getItem: k => (Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } };
+            Object.defineProperty(window, 'localStorage', { value: fake, configurable: true, writable: true });
+            let clash, kept, plain;
+            try {
+              window.loadSettings(); plain = window.debugSettingsInfo().KEYBINDS.emote;
+              store.rh_keybinds = JSON.stringify({ attack: 'x' }); window.loadSettings(); clash = window.debugSettingsInfo().KEYBINDS;
+              store.rh_keybinds = JSON.stringify({ attack: 'x', emote: 'x' }); window.loadSettings(); kept = window.debugSettingsInfo().KEYBINDS;
+            } finally {
+              if (lsDesc) Object.defineProperty(window, 'localStorage', lsDesc);
+              window.loadSettings();
+            }
+            results.push([`Living World S2 C: typing never emotes — x with a focused input / textarea / select does nothing (${JSON.stringify(tags)}) and with nothing focused it does (${pressedFree}); an emote key left on X by default is ${plain}; if a saved binding already uses X (attack: x) and no emote was saved, the emote moves to the first free letter of z v n l j h u y o t (${clash && clash.emote}, attack stays ${clash && clash.attack}), while an emote the player saved is kept (${kept && kept.emote})`,
+              Object.values(tags).every(([focused, same]) => focused && same) && pressedFree && plain === 'x' && clash && clash.emote === 'z' && clash.attack === 'x' && kept && kept.emote === 'x' && kept.attack === 'x' &&
+              /!\(document\.activeElement && \/\^\(INPUT\|TEXTAREA\|SELECT\)\$\/\.test\(document\.activeElement\.tagName\)\)\) doEmote\(\);/.test(gameScript) && window.debugSettingsInfo().KEYBINDS.emote === 'x']);
+          }
+          {
+            // a real swing: tryAttack sets the timers the state reads, and the wire carries [attack, weapon kind, age]
+            window.debugSetPlayer({ equipped: 'iron_axe' });
+            s2Clock += 5000; window.tryAttack();
+            const swing = window.myAnimState(s2Clock + 40, false), w = window.animWire(), after = window.myAnimState(s2Clock + window.swingDur('axe') + 5, false);
+            s2Clock += 40; const w2 = window.animWire();
+            const back = window.animUnwire(w2, s2Clock);
+            results.push([`Living World S2 C: a real axe swing (tryAttack) reads as attack/${swing.k} for its ${window.swingDur('axe')} ms and then not (${after.s}), goes on the wire as ${JSON.stringify(w2)} = [${CODES[w2 && w2[0]]}, ${KINDS[w2 && w2[1]]}, age ms], and animUnwire rebuilds the same state back at the receiver (${back && back.s}/${back && back.k}, started ${back ? Math.round(s2Clock - back.at) : '?'} ms ago)`,
+              swing.s === 'attack' && swing.k === 'axe' && after.s !== 'attack' && Array.isArray(w2) && CODES[w2[0]] === 'attack' && KINDS[w2[1]] === 'axe' && w2[2] >= 39 && w2[2] <= 41 &&
+              back && back.s === 'attack' && back.k === 'axe' && near2(s2Clock - back.at, w2[2], 1) && Array.isArray(w)]);
+            // the action frame is baked in the wide box, and standing is not
+            const specs = [], bk = window.forgeBake;
+            window.forgeBake = function (sp, p) { specs.push(Object.assign({}, sp)); return { cv: {}, W: 4, H: 4, ax: 2, ay: 4, px: p, colors: 3 }; };
+            let wideSwing, narrowIdle;
+            try {
+              window.debugSetForge(false); window.debugSetForge(true);
+              s2Clock += 5000; window.tryAttack(); s2Clock += 40; window.render(s2Clock);
+              wideSwing = specs.filter(sp => /^attack:axe:/.test(sp.animKey)).map(sp => sp.wide);
+              specs.length = 0; s2Clock += 3000; window.render(s2Clock);
+              narrowIdle = specs.filter(sp => /^idle::/.test(sp.animKey)).map(sp => sp.wide);
+            } finally { window.forgeBake = bk; window.debugSetForge(false); }
+            results.push([`Living World S2 C: render asks the forge for the WIDE box on an axe swing frame (${JSON.stringify(wideSwing)}) and the narrow one standing still (${JSON.stringify(narrowIdle)})`,
+              wideSwing.length >= 1 && wideSwing.every(w => w === true) && narrowIdle.length >= 1 && narrowIdle.every(w => w === false)]);
+            s2Clock += 5000;
+          }
+          {
+            const now = 1e6, U = (w) => window.animUnwire(w, now);
+            const junk = [null, undefined, 5, 'attack', {}, [], [1], [1, 2], { 0: 1, 1: 2, 2: 3, length: 3 }, true];
+            const junkOk = junk.every(j => U(j) === null);
+            const unk = [U([99, 0, 0]), U([-1, 0, 0]), U([11, 0, 0]), U([NaN, 0, 0]), U(['x', 0, 0])];
+            const neg = U([2, 2, -5000]), huge = U([2, 2, 1e12]), inf = U([2, 2, Infinity]), nan = U([2, 2, NaN]), str = U([2, 2, '250']), obj = U([2, 2, {}]), exact = U([2, 2, 60000]), mid = U([2, 2, 250]);
+            const kind = [U([2, 999, 0]), U([2, -3, 0]), U([2, 2.9, 0]), U([2, 'junk', 0])];
+            const finite = [neg, huge, inf, nan, str, obj, exact, mid].every(r => r && Number.isFinite(r.at) && r.at <= now && r.at >= now - 60000);
+            results.push([`Living World S2 C: animUnwire clamps whatever arrives — non-arrays and short arrays give nothing (${junkOk}), unknown / negative / NaN state codes give nothing (${unk.map(u => u === null).join(',')}), the age is clamped to 0..60000 ms (negative -> ${now - neg.at}, 1e12 -> ${now - huge.at}, Infinity -> ${now - inf.at}, NaN -> ${now - nan.at}, '250' -> ${now - str.at}, 250 -> ${now - mid.at}), the start time is always finite and never in the future, and an unknown kind code falls to null without dropping the state (${kind.map(k => k && k.k).join(',')})`,
+              junkOk && unk.every(u => u === null) && finite && now - neg.at === 0 && now - huge.at === 60000 && now - inf.at === 60000 && now - nan.at === 0 && now - str.at === 250 && now - obj.at === 0 && now - exact.at === 60000 && now - mid.at === 250 &&
+              kind.every(k => k && k.s === 'attack') && kind[0].k === null && kind[1].k === null && kind[2].k === 'sword' && kind[3].k === null]);
+            // every state/kind code the sender can produce survives the round trip
+            let rt = 0, rtBad = 0;
+            for (let c = 0; c < CODES.length; c++) for (let k = 0; k < KINDS.length; k++) { rt++; const r = U([c, k, 100]); if (!r || r.s !== CODES[c] || r.k !== (KINDS[k] || null) || r.at !== now - 100) rtBad++; }
+            results.push([`Living World S2 C: all ${CODES.length} state codes x ${KINDS.length} kind codes (${rt}) unwire to exactly their names with the age applied (${rtBad} wrong), and each ATTACK_KEYS / GATHER_KEYS kind has a wire code`,
+              rtBad === 0 && Object.keys(ATK).every(k => KINDS.includes(k)) && Object.keys(GAT).every(k => KINDS.includes(k)) && CODES.includes('death') && KINDS.includes('wave')]);
+          }
+          {
+            // the wire for real: sendMove's broadcast carries `an`, and the receiver turns it into o.anim (0 clears it)
+            const sm = s2FnSrc('sendMove'), others = window.debugAbilityInfo().others;
+            const lastMove = () => { for (let i = sentBroadcasts.length - 1; i >= 0; i--) { const m = sentBroadcasts[i]; if (m && m.event === 'move') return m.payload; } return null; };
+            const quiet = window.debugForgeInfo().emote === null;
+            window.sendMove(true); const pIdle = lastMove();
+            window.doEmote(); window.sendMove(true); const pEmote = lastMove();
+            const nowWire = window.performance.now();
+            const base = { u: 'S2Remote', x: 3, y: 3, c: 'Knight', l: 1, h: 100, m: 100, d: 0, sp: 'main', fx: 0, fy: 1 };
+            const give = (extra) => deliverBroadcast('move', Object.assign({}, base, extra));
+            let n1 = give({ an: [2, KINDS.indexOf('sword'), 30] }); const o1 = others.get('S2Remote'), a1 = o1 && o1.anim && Object.assign({}, o1.anim);
+            give({ an: 0 }); const a2 = others.get('S2Remote') && others.get('S2Remote').anim;
+            give({ an: [2, KINDS.indexOf('axe'), 10] }); give({ an: [99, 0, 0] }); const a3 = others.get('S2Remote').anim;
+            give({}); const a4 = others.get('S2Remote').anim;
+            // the fall is stamped only for someone we have already seen alive
+            deliverBroadcast('move', Object.assign({}, base, { u: 'S2Fresh', d: 1 })); const fresh = others.get('S2Fresh');
+            give({ d: 1 }); const dead1 = others.get('S2Remote');
+            others.delete('S2Remote'); others.delete('S2Fresh');
+            results.push([`Living World S2 C: the wire, for real — the move broadcast from sendMove carries an: 0 when idle (${JSON.stringify(pIdle && pIdle.an)}) and an: ${JSON.stringify(pEmote && pEmote.an)} while emoting; the receiver reads [attack, sword, 30] as ${a1 && a1.s}/${a1 && a1.k} started ${a1 ? Math.round(nowWire - a1.at) : '?'} ms ago, an: 0 CLEARS it (${a2}), junk does not wipe or replace it (${a3 && a3.s}/${a3 && a3.k}) and an absent field clears it (${a4}); a first sighting that is already dead has no fall stamp (${fresh && fresh.diedAt}) while a known player who dies gets one (${dead1 && dead1.diedAt ? 'yes' : 'no'})`,
+              quiet && pIdle && pIdle.an === 0 && pEmote && Array.isArray(pEmote.an) && CODES[pEmote.an[0]] === 'emote' && n1 === 1 && a1 && a1.s === 'attack' && a1.k === 'sword' && near2(nowWire - a1.at, 30, 1) &&
+              a2 === null && a3 && a3.s === 'attack' && a3.k === 'axe' && a4 === null && fresh && !fresh.diedAt && dead1 && dead1.diedAt > 0 &&
+              sm.length > 500 && sm.indexOf('an: animWire()') > 0 && gameScript.split('an: animWire()').length === 2 && /o\.anim = p\.an \? animUnwire\(p\.an, performance\.now\(\)\) : null;/.test(gameScript) &&
+              /if \(others\.has\(p\.u\) && !o\.dead && p\.d\) o\.diedAt = performance\.now\(\);/.test(gameScript)]);
+            while (window.debugForgeInfo().emote) window.myAnimState(window.performance.now(), true);
+          }
+          {
+            // an action inside the 120 ms window is sent when the window ends, not dropped
+            const ap = s2FnSrc('animPulse');
+            let sends = 0; const sentBefore = sentBroadcasts.length;
+            s2Clock += 1000; window.animPulse(); const first = sentBroadcasts.length - sentBefore;
+            s2Clock += 40; window.animPulse(); window.animPulse(); const inside = sentBroadcasts.length - sentBefore;
+            results.push([`Living World S2 C: animPulse sends at once when the last pulse was over 120 ms ago (${first} send), and a second action inside the window is not dropped — it is scheduled for the window's end, once however many arrive (source: ${/if \(!animPulseTimer\) animPulseTimer = setTimeout\(\(\) => \{ animPulseTimer = 0; animPulse\(\); \}, wait\);/.test(ap)}), with nothing extra sent inside it (${inside - first})`,
+              first === 1 && inside === first && /120 - \(now - animPulseAt\)/.test(ap) && /if \(!animPulseTimer\) animPulseTimer = setTimeout\(\(\) => \{ animPulseTimer = 0; animPulse\(\); \}, wait\);/.test(ap) && sends === 0]);
+          }
+          {
+            // the death fall: through the real death path, the player is still pushed for ANIM_DEATH_MS and then not; a remote's too
+            const doc2 = window.document;
+            let mine = 0, ghost = 0;
+            const real = window.drawPlayerEntity;
+            window.drawPlayerEntity = function (p, name, t, isMe) { if (isMe) mine++; else if (name === 'S2Ghost') ghost++; return real.apply(this, arguments); };
+            const frameAt = (dt, base) => { mine = 0; ghost = 0; s2Clock = base + dt; window.render(s2Clock); return [mine, ghost]; };
+            let out;
+            try {
+              const pl = window.debugWorldInfo().player;
+              window.debugSetPlayer({ hp: 100, x: pl.x, y: pl.y });
+              const alive = frameAt(0, s2Clock + 1000);
+              const c0 = s2Clock;
+              window.enterDeath('a proof gate', false);
+              const wireDead = window.animWire();
+              window.doEmote();
+              const f0 = frameAt(0, c0), st = window.myAnimState(c0 + 100, false), f1 = frameAt(K2.DEATH / 2, c0), f2 = frameAt(K2.DEATH - 2, c0), f3 = frameAt(K2.DEATH + 2, c0), f4 = frameAt(K2.DEATH * 3, c0);
+              const emoteWhileDead = window.debugForgeInfo().emote;
+              window.respawn(); doc2.getElementById('deathOverlay').style.display = 'none';
+              const back = frameAt(500, c0);
+              const stBack = window.myAnimState(s2Clock, false);
+              // a second death plays the fall again (the render notices the flip back to alive)
+              const c1 = s2Clock; window.enterDeath('again', false);
+              const g0 = frameAt(10, c1), g1 = frameAt(K2.DEATH + 10, c1);
+              window.respawn(); doc2.getElementById('deathOverlay').style.display = 'none';
+              // a remote player who dies: they fall for ANIM_DEATH_MS from the moment their `d` arrived, then are gone
+              const me2 = window.debugWorldInfo().player, others = window.debugAbilityInfo().others;
+              window.debugSetPlayer({ remote: { u: 'S2Ghost', x: me2.x + 1, y: me2.y, dead: true } });
+              const rg = others.get('S2Ghost'), r0 = s2Clock; if (rg) rg.diedAt = r0;
+              const h0 = frameAt(5, r0), h1 = frameAt(K2.DEATH - 5, r0), h2 = frameAt(K2.DEATH + 5, r0);
+              if (rg) rg.diedAt = 0; const h3 = frameAt(10, r0);
+              window.debugSetPlayer({ dropRemote: 'S2Ghost' });
+              out = { alive, f0, f1, f2, f3, f4, st, wireDead, emoteWhileDead, back, stBack, g0, g1, h0, h1, h2, h3 };
+            } finally { window.drawPlayerEntity = real; }
+            const o = out;
+            results.push([`Living World S2 C: the local death fall — drawn alive (${o.alive[0]}), then through enterDeath it is still drawn at +0 / +${K2.DEATH / 2} / +${K2.DEATH - 2} ms (${o.f0[0]}/${o.f1[0]}/${o.f2[0]}) and gone from +${K2.DEATH + 2} ms on (${o.f3[0]}, still ${o.f4[0]} at +${K2.DEATH * 3}); the state is death since the moment of the fall (${o.st.s}, at the render that noticed it: ${o.st.at ? 'yes' : 'no'}), it is never on the wire (${o.wireDead}), an emote cannot start while dead (${o.emoteWhileDead}), respawn draws you again (${o.back[0]}, state ${o.stBack.s}), a second death plays the fall again (${o.g0[0]} then ${o.g1[0]})`,
+              o.alive[0] === 1 && o.f0[0] === 1 && o.f1[0] === 1 && o.f2[0] === 1 && o.f3[0] === 0 && o.f4[0] === 0 && o.st.s === 'death' && o.st.dur === K2.DEATH && o.st.at > 0 && o.wireDead === 0 && !o.emoteWhileDead &&
+              o.back[0] === 1 && o.stBack.s !== 'death' && o.g0[0] === 1 && o.g1[0] === 0]);
+            results.push([`Living World S2 C: a remote player who dies falls for ${K2.DEATH} ms from when their \`d\` arrived and is then gone — drawn at +5 / +${K2.DEATH - 5} ms (${o.h0[1]}/${o.h1[1]}), not at +${K2.DEATH + 5} (${o.h2[1]}), and one with no fall timestamp is gone at once (${o.h3[1]})`,
+              o.h0[1] === 1 && o.h1[1] === 1 && o.h2[1] === 0 && o.h3[1] === 0]);
+          }
+          {
+            // no gradients in anything S2 added: the whole Characters-that-act + Pixel Forge section, the pose rig header, drawPlayerEntity, and every line the build marked
+            const a = gameScript.indexOf('LIVING WORLD S2 — CHARACTERS THAT ACT'), b = gameScript.indexOf('function drawUnitShadow(');
+            const r1 = gameScript.indexOf('LIVING WORLD S2 — THE POSE RIG'), r2 = gameScript.indexOf('function drawUnit(c, sx, sy');
+            const dpe = s2FnSrc('drawPlayerEntity'), marked = gameScript.split('\n').filter(l => /Living World S2/.test(l) && !/^\s*(\/\*|\*)/.test(l));
+            const gradRe = /create(Linear|Radial)Gradient/;
+            results.push([`Living World S2 C: no gradient is created by the new code — the state / frame / forge section (${b - a} chars), the pose rig (${r2 - r1}), drawPlayerEntity (${dpe.length}) and ${marked.length} marked lines have none`,
+              a > 0 && b > a && r1 > 0 && r2 > r1 && dpe.length > 500 && !gradRe.test(gameScript.slice(a, b)) && !gradRe.test(gameScript.slice(r1, r2)) && !gradRe.test(dpe) && marked.length > 5 && !marked.some(l => gradRe.test(l))]);
+          }
+        } catch (e) {
+          results.push([`Living World S2: the gates threw — ${String(e && e.stack || e).split('\n').slice(0, 3).join(' | ')}`, false]);
+        } finally {
+          window.drawPlayerEntity = s2Saved.drawPlayerEntity; window.forgeBake = s2Saved.forgeBake;
+          window.performance.now = s2Saved.perfNow;
+          window.debugSetForge(false); if (s2Saved.forge) window.debugSetForge(true);
+          try {
+            window.debugSetPlayer({ x: s2Saved.player.x, y: s2Saved.player.y, hp: s2Saved.player.hp, inv: s2Saved.player.inv, equipped: s2Saved.player.equipped, armor: s2Saved.player.armor });
+            window.document.getElementById('deathOverlay').style.display = 'none';
+          } catch (e) { /* best effort */ }
+        }
+        results.push(['Living World S2: the block leaves the clock real, the forge as it found it, no emote running, the draw hooks restored, and no error thrown by any frame',
+          window.performance.now === s2Saved.perfNow && window.debugForgeInfo().FORGE_ON === s2Saved.forge && !window.debugForgeInfo().emote && window.drawPlayerEntity === s2Saved.drawPlayerEntity && window.forgeBake === s2Saved.forgeBake && !caught]);
+      }
+    }
+
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
     process.exit(allOk && !caught ? 0 : 1);
