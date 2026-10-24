@@ -9311,7 +9311,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
              is what makes it a walk rather than two legs doing the same
              thing. Asserted in all three places a leg pair is drawn. */
           results.push(['ANIM B: every leg pair is one value with opposite signs — hero, creature and dragon',
-            codeA.indexOf('const legA = step, legB = -step;') > 0 &&
+            /* Living World S2: UPDATED, not relaxed — the hero's pair is still
+               ONE step value with opposite signs; the pose rig adds its lunge
+               offsets (legBk / legF, 0 at rest and when walking) on top. */
+            codeA.indexOf('const legA = step + (HERO_POSE.legBk || 0), legB = -step + (HERO_POSE.legF || 0);') > 0 &&
             codeA.indexOf('const legA = beastStep, legB = -beastStep;') > 0 &&
             codeA.indexOf('const legA = step * S, legB = -step * S;') > 0]);
           /* ⚠️ THE FIND: drawSpecies has taken `moving` since v15 and never
