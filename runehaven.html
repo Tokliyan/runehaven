@@ -12360,7 +12360,6 @@ function updateBreath(dt) {
 
 function enterDeath(killer, resumed) {
   dead = true;
-  if (!resumed) deathAnimAt = performance.now();    // Living World S2: the fall plays once, not on a login that resumes a death
   if (!resumed) {
     /* v51 PART E: the Hollow Choir's instant respawn. The wait is the only
        thing that changes — the drop below, the overlay, the broadcast and
@@ -20553,6 +20552,7 @@ const EMOTE_LIST = ["wave", "cheer", "sit"];
 const EMOTE_MS = { wave: 1600, cheer: 1400, sit: 0 };   // 0 = held until you move
 const ANIM_CODES = ["idle", "walk", "attack", "cast", "gather", "hurt", "block", "tame", "emote", "death", "ride"];
 const ANIM_KINDS = ["", "fists", "sword", "dagger", "axe", "spear", "bow", "crossbow", "staff", "chop", "mine", "pick", "wave", "cheer", "sit"];
+let animDeadSeen = false;
 let lastGatherKind = "chop", emoteKind = null, emoteT = 0, emoteIdx = -1, shootT = 0, shootKind = null, deathAnimAt = 0, animPulseAt = 0;
 function gatherAnimKind(type) {
   return type === "tree" ? "chop" : (type === "rock" || type === "iron" || type === "runic" || type === "meteor") ? "mine" : "pick";
@@ -22363,6 +22363,9 @@ function render(t) {
     ents.push({ s: it.x + it.y, kind: "item", it });
   }
   const nowEnt = performance.now();
+  /* Living World S2: the moment you fall is when `dead` turns true — noticed
+     here rather than in enterDeath(), whose length a v24 gate pins. */
+  if (dead !== animDeadSeen) { animDeadSeen = dead; deathAnimAt = dead ? nowEnt : 0; }
   for (const [name, o] of others) {
     if (o.dead && !(o.diedAt && nowEnt - o.diedAt < ANIM_DEATH_MS)) continue;   // Living World S2: the fall plays, then they are gone
     /* v29: a player standing in a different space is not here — not drawn,

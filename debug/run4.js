@@ -1728,7 +1728,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
                        'build',    // v33: the BUILD panel key
                        'character',// v35: the CHARACTER panel key
                        'travel',   // v39: the FAST TRAVEL panel key
-                       'give'];    // v51 PART J: the direct give shortcut
+                       'give', 'emote'];    // v51 PART J: the direct give shortcut
       const info23 = dsi();
 
       // ---- PART A: the config object itself
@@ -1740,12 +1740,15 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       // v51 PART J: 16 -> 17, updated and not relaxed — the count, the
       // default table and the remapping-screen row count all move together,
       // so a future pass cannot lose a binding without failing here.
-      results.push(['KEYBINDS carries all 17 bindable actions',
-        Object.keys(info23.KEYBINDS).length === 17 &&
+      // Living World S2: 17 -> 18, updated and not relaxed — the emote key
+      // (X: wave / cheer / sit) joins the count, the default table and the
+      // remapping-screen row count together.
+      results.push(['KEYBINDS carries all 18 bindable actions',
+        Object.keys(info23.KEYBINDS).length === 18 &&
         ACTIONS.every(a => typeof info23.KEYBINDS[a] === 'string')]);
       results.push(['KEYBIND defaults are exactly the locked spec',
         ACTIONS.map(a => info23.KEYBIND_DEFAULTS[a]).join('|') ===
-        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift', 'q', 'r', 'b', 'k', 'm', 'g'].join('|')]);
+        ['w', 's', 'a', 'd', 'e', ' ', 'i', 'c', 'p', 'f', 'shift', 'q', 'r', 'b', 'k', 'm', 'g', 'x'].join('|')]);
       /* v51 PART J's own proof gate, and the reason G was chosen rather than
          the Q that was asked for: Q is still the class ability, untouched,
          and giving got a key that collided with nothing. */
@@ -1924,8 +1927,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       results.push(['the credits tab is the one showing',
         doc.getElementById('secCredits').classList.contains('shown') &&
         !doc.getElementById('secGraphics').classList.contains('shown')]);
-      results.push(['the remapping screen lists all 17 labelled actions, giving included',
-        doc.getElementById('keybindList').children.length === 17]);
+      results.push(['the remapping screen lists all 18 labelled actions, giving and emote included',   // Living World S2: 17 -> 18
+        doc.getElementById('keybindList').children.length === 18]);
       results.push(['credits render from the CREDITS array',
         doc.getElementById('creditsList').children.length === dsi().CREDITS.length &&
         dsi().CREDITS.length === 2]);
@@ -6403,11 +6406,18 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           gameScript.indexOf('rememberSession(username);') &&
           gameScript.indexOf('rememberSession(username);') <
           gameScript.indexOf('startTutorialIfNeeded();')]);
-        /* An existing name with no PIN: filled AND submitted. */
+        /* OWNER BUG FIX 2026-10-24 — UPDATED by owner decision: "when you open
+           the game it ... auto enters so you can't go into settings and the front
+           page". An existing name with no PIN is now filled in and greeted on
+           the title, and NEVER submitted for the player — the claim inverts,
+           pinned exactly as tightly (filled, not submitted, zero submits, the
+           "ready" reason, and the welcome line showing the name). */
         const r1 = await runResume('OldTimer2');
-        results.push(['v46 B: a stored name with no PIN is filled in and entered for you',
+        const wel1 = doc.getElementById('fpWelcome');
+        results.push(['v46 B (owner fix): a stored name with no PIN is filled in and greeted — never entered for you',
           r1.info.nameField === 'OldTimer2' && r1.info.resume.filled === true &&
-          r1.info.resume.submitted === true && r1.submits === 1]);
+          r1.info.resume.submitted === false && r1.submits === 0 && r1.info.resume.reason === 'ready' &&
+          !!wel1 && wel1.textContent.indexOf('OldTimer2') >= 0]);
         /* A protected name: filled, PIN asked for, NOT submitted. */
         const r2 = await runResume('OldTimer');
         results.push(['v46 B: a stored name WITH a PIN is filled in but still has to produce it',
@@ -8996,8 +9006,9 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         /* Living World S1: 10 -> 11. The spec's new control ("scroll to zoom")
            is the eleventh entry; it is not a key binding, so it carries its own
            label, "SCROLL", and the same every-label-is-shown check covers it. */
+        /* Living World S2: 11 -> 12 — the emote binding (X) joins the expanded half. */
         results.push(['v56 A: and so does every entry in the expanded half',
-          h2.fullLabels.length === 11 && h2.fullLabels[10] === 'SCROLL' &&
+          h2.fullLabels.length === 12 && h2.fullLabels[11] === 'SCROLL' &&
           h2.fullLabels.every(l => l && h2.fullText.indexOf(l) >= 0)]);
         /* And it really does FOLLOW a rebind, proved by doing one. */
         const beforeInv = h2.coreLabels[3];
@@ -11565,7 +11576,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           gameScript.indexOf('drawActorDisc(gx, gy, "foe", Math.min(Math.max(mk, 0.8), 2.4));') > 0 &&
           gameScript.indexOf('const [gx, gy] = worldToScreen(m.x, m.y, groundZ(m.x, m.y));') > 0 &&
           // drawn BEFORE the sprite, so the sprite and its sun shadow sit on it
-          gameScript.indexOf('if (!mountedNow) drawActorDisc(') < gameScript.indexOf('drawUnit(ctx, sx + rx, sy - bob + ry + seatLift')]);
+          /* Living World S2: the unit is now drawn as its pixel sprite (or, on a
+             miss, live) — the disc must still come before both. */
+          gameScript.indexOf('if (!mountedNow) drawActorDisc(') < gameScript.indexOf('if (spr) drawForgeSprite(ctx, spr, gx0, gy0);') &&
+          gameScript.indexOf('if (!mountedNow) drawActorDisc(') < gameScript.indexOf('try { drawUnit(ctx, gx0, gy0 - fr.bob,')]);
         results.push(['S2 R4: and the disc is a flat fill — no outline, no gradient',
           (() => {
             const f = gameScript.indexOf('function drawActorDisc(');
