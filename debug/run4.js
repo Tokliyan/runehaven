@@ -14666,6 +14666,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
        installs a fake clock, a recording localStorage and a canvas-context recorder; the zoom, device-pixel ratio,
        clock, localStorage, player, camera and every spy are put back in the finally. */
     {
+      /* Main session (S2): this block assumes a LIVE player. Until the owner's
+         2026-10-24 no-auto-enter fix, the v46 resume gates re-entered the world
+         (a fresh, living character) after PART F's enterDeath() test; they no
+         longer submit, so whether the player had respawned by here depended on
+         the wall clock. Revive explicitly — the same respawn() the game uses. */
+      if (typeof window.respawn === 'function') window.respawn();
       const lwHooks = ['debugSetZoom', 'setZoom', 'updateZoom', 'zoomIsMoving', 'viewW', 'viewH', 'renderDpr', 'camOffset',
         'worldToScreen', 'screenToWorld', 'gcMaxNow', 'debugGroundCache', 'debugSetGroundCache', 'debugSetCam', 'debugSetPlayer',
         'debugWorldInfo', 'debugWorldSeedSet', 'debugS2Info', 'debugHudStats', 'render', 'update', 'resize', 'queueWorldLabel',

@@ -20554,7 +20554,7 @@ const ANIM_GATHER_MS = 380, ANIM_CAST_MS = 480, ANIM_HURT_MS = 260, ANIM_DEATH_M
 const EMOTE_LIST = ["wave", "cheer", "sit"];
 const EMOTE_MS = { wave: 1600, cheer: 1400, sit: 0 };   // 0 = held until you move
 const ANIM_CODES = ["idle", "walk", "attack", "cast", "gather", "hurt", "block", "tame", "emote", "death", "ride"];
-const ANIM_KINDS = ["", "fists", "sword", "dagger", "axe", "spear", "bow", "crossbow", "staff", "chop", "mine", "pick", "wave", "cheer", "sit"];
+const ANIM_KINDS = ["", "fists", "sword", "dagger", "axe", "spear", "bow", "crossbow", "staff", "chop", "mine", "pick", "wave", "cheer", "sit", "pickaxe"];   // new kinds append, so old codes keep their meaning
 let animDeadSeen = false;
 let lastGatherKind = "chop", emoteKind = null, emoteT = 0, emoteIdx = -1, shootT = 0, shootKind = null, deathAnimAt = 0, animPulseAt = 0;
 function gatherAnimKind(type) {
@@ -20714,7 +20714,7 @@ function heroAnimFrame(an, now, t) {
         const Q = { armL: 0, armR: 0, wAng: 0 }; applyKeys(Q, keys, Math.max(0, x - 1 / ANIM_ATTACK_FRAMES));
         const a0 = weaponAngle(Q), a1 = weaponAngle(P);
         /* only the FORWARD swing smears (never the wind-up), and only a fast one */
-        if (a1 - a0 > 0.9 && an.k !== "fists") P.smear = [a0, a1, an.k === "axe" ? 7.5 : an.k === "dagger" ? 4.5 : an.k === "staff" ? 8 : 7];
+        if (a1 - a0 > 0.9 && an.k !== "fists") P.smear = [a0, a1, an.k === "axe" || an.k === "pickaxe" ? 7.5 : an.k === "dagger" ? 4.5 : an.k === "staff" ? 8 : 7];
       }
       tA = frame * ANIM_FRAME_MS; break;
     }
