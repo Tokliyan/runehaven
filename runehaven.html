@@ -10858,7 +10858,9 @@ async function joinRealtime() {
     if (p.u === me.username) return;
     const o = others.get(p.u) || { x: p.x, y: p.y };
     o.tx = p.x; o.ty = p.y; o.cls = p.c; o.level = p.l;
+    if (!o.dead && p.d) o.diedAt = performance.now();   // Living World S2: when they fell, for the fall
     o.hp = p.h; o.maxHp = p.m || 100; o.tier = p.t || null; o.dead = !!p.d;
+    if (p.an) { const a2 = animUnwire(p.an, performance.now()); if (a2) o.anim = a2; }   // Living World S2
     o.wk = p.wk || null; o.at = p.at || null; o.ps = !!p.ps; o.bl = !!p.bl;
     o.pe = p.pe || null; o.mo = !!p.mo;
     o.cb = !!p.cb;              // v39: is this player in combat right now
@@ -11183,6 +11185,7 @@ function sendMove(force) {
       tc: acceptsTeleports(me) ? 0 : 1,
       sp: me.space || "main",   // v29: which space we are in — the whole filter
       ps: myPoison ? 1 : 0, bl: isBlocking() ? 1 : 0,
+      an: animWire(),           // Living World S2: what you are doing — 0, or [state, kind, age ms]
       fx: +facing.x.toFixed(2), fy: +facing.y.toFixed(2),
     },
   });
@@ -11893,6 +11896,7 @@ function tryAttack(aimX, aimY) {
   if (w.type === "melee") {
     swingT = now;
     swingKind = wk || "fists";
+    animPulse();                                                   // Living World S2
     /* v27 PART B: a spear is a line, not a point. Every player AND mob inside
        the weapon's own range and within SPEAR_CONE_DEG of the aim direction is
        run through the SAME crit and knockback logic the single-target path
@@ -11981,6 +11985,7 @@ function tryAttack(aimX, aimY) {
   } else {
     // v9: staff casts show a pulse at the caster; every projectile carries a shape
     if (wk === "staff") pulseT = now;
+    shootT = now; shootKind = wk || "bow"; animPulse();          // Living World S2: the draw / the raise
     const pk = wk === "crossbow" ? "bolt" : wk === "staff" ? "orb" : "arrow";
     const col = tierColor(w.tier) || "#fff";
     // v27 PART C: the orb has to remember it came off a staff, so its impact
@@ -12182,6 +12187,7 @@ function tryAbility() {
   const now = performance.now();
   if (now - lastAbility < ab.cdMs) return false;    // same shape as lastAttack
   lastAbility = now;
+  animPulse();                                       // Living World S2: the cast pose
   switch (me.cls) {
     case "Knight":
       /* Defensive, not damage — the frontline read. The reduction itself
@@ -12354,6 +12360,7 @@ function updateBreath(dt) {
 
 function enterDeath(killer, resumed) {
   dead = true;
+  if (!resumed) deathAnimAt = performance.now();    // Living World S2: the fall plays once, not on a login that resumes a death
   if (!resumed) {
     /* v51 PART E: the Hollow Choir's instant respawn. The wait is the only
        thing that changes — the drop below, the overlay, the broadcast and
@@ -12642,7 +12649,7 @@ async function doInteract() {
     /* v29: an interior node — local to this cave's generated space, so no
        mined_nodes row and no broadcast; it simply empties for whoever
        reaches it first in that space. */
-    lastGather = now;
+    lastGather = now; lastGatherKind = "pick"; animPulse();   // Living World S2
     g._node.taken = true;
     const got32 = g._node.type || "aquatic_essence";   // v32
     /* Dungeons PART E: a node may now carry a quantity. Every node that
@@ -12671,10 +12678,12 @@ async function doInteract() {
        stat, unchanged) rather than being a hard requirement — matches the
        actual intent ("better tools mine faster") without the lockout. */
     const kind30 = weaponKind(me.equipped);
+    lastGatherKind = gatherAnimKind(g.type);                     // Living World S2: chop, mine or pick
     const maxHp30 = NODE_HP[g.type] || 30;
     const nkey30 = g.key || ("t:" + Math.floor(g.x) + "," + Math.floor(g.y));
     const cur30 = (nodeHP.get(nkey30) ?? maxHp30) - Math.max(4, (WEAPONS[me.equipped] || {}).dmg || 6);
     lastGather = now;
+    animPulse();
     if (cur30 > 0) {
       nodeHP.set(nkey30, cur30);
       burst(g.x, g.y, "#c9bfa4", 3, 1);
@@ -14395,6 +14404,7 @@ addEventListener("keydown", e => {
      open/close discipline as every other panel key — it simply skips the
      precedence chain in doInteract(), which is the whole point of having it:
      E gives you whatever is nearest, G always means "hand something over". */
+  if (k === KEYBINDS.emote && !e.repeat && !dead) doEmote();   // Living World S2: wave -> cheer -> sit
   if (k === KEYBINDS.give && !e.repeat && !dead) {
     const gw = nearestGiveTarget();
     if (gw) openGivePanel(gw);
@@ -16467,6 +16477,24 @@ function walkStep(t, moving, per) {
   return moving ? Math.sin(t / (per || WALK_MS)) * WALK_SWING : 0;
 }
 
+/* ============ LIVING WORLD S2 — THE POSE RIG ============================
+   README "The Living World", session 2. The approved v15 hero bodies are not
+   redrawn: their ARMS are wrapped in a rotation about each shoulder
+   (poseArm, in sheet space), the whole figure can lean / squash / lift about
+   its feet, and the held weapon follows the front arm (plus its own extra
+   twist and thrust). HERO_POSE is set by whoever draws a unit and is the
+   all-zero REST pose otherwise — at rest every pixel is exactly v15's.
+   Angles: canvas rotation, so for an arm hanging down a NEGATIVE angle
+   swings the hand FORWARD (+x, the facing side) and up; -PI is straight up. */
+const HERO_POSE_REST = Object.freeze({ armL: 0, armR: 0, lean: 0, sqY: 0, lift: 0, wRot: 0, wDX: 0 });
+let HERO_POSE = HERO_POSE_REST;
+/* the front (weapon) shoulder of each body, in sheet units — the weapon's pivot */
+const HERO_SHOULDER_R = { Mystic: [3.6, -17], Knight: [6.1, -14], Ranger: [4.2, -17.4], Beastmaster: [4.8, -17.4], Architect: [5, -15.4] };
+function poseArm(c, side, px, py) {
+  c.save();
+  const a = side < 0 ? HERO_POSE.armL : HERO_POSE.armR;
+  if (a) { c.translate(px, py); c.rotate(a); c.translate(-px, -py); }
+}
 function drawUnit(c, sx, sy, cls, s, tier, face, t, withShadow = true, wkind = null, atier = null, blocking = false, cos = null, step = 0) {
   const C = CLASSES[cls] || CLASSES.Knight;
   const flip = face.x < -0.15 ? -1 : 1;
@@ -16480,6 +16508,11 @@ function drawUnit(c, sx, sy, cls, s, tier, face, t, withShadow = true, wkind = n
   c.save();
   c.translate(sx, sy);
   c.scale(flip * s, s);
+  /* Living World S2: the whole-body part of the pose, about the feet. */
+  const HP = HERO_POSE;
+  if (HP.lift) c.translate(0, -HP.lift);
+  if (HP.lean) c.rotate(HP.lean);
+  if (HP.sqY) c.scale(1 - HP.sqY * 0.5, 1 + HP.sqY);
   // v15: Direction A "Heroic" class bodies (reference sheet v3.1) — five
   // distinct silhouettes with class props baked in, replacing the old
   // triangle+head. Locked class palettes unchanged.
@@ -16509,7 +16542,17 @@ function drawUnit(c, sx, sy, cls, s, tier, face, t, withShadow = true, wkind = n
      silhouette, same weapon, same damage. "Cosmetic only, no stat changes." */
   if (wkind) {
     const skin = (cos && cos.skin && COSMETICS[cos.skin]) ? COSMETICS[cos.skin].color : null;
-    drawHeldWeapon(c, wkind, skin || tierColor(tier) || "#cdd2da");
+    /* Living World S2: the weapon rides the front arm — same pivot, same
+       angle — plus its own twist (wRot) and thrust (wDX). Rest: untouched. */
+    const wr = HP.armR + HP.wRot;
+    if (wr || HP.wDX) {
+      const sh = HERO_SHOULDER_R[cls] || HERO_SHOULDER_R.Knight;
+      const px = sh[0] * HERO_K, py = sh[1] * HERO_K;
+      c.save();
+      c.translate(px + HP.wDX, py); c.rotate(wr); c.translate(-px, -py);
+      drawHeldWeapon(c, wkind, skin || tierColor(tier) || "#cdd2da");
+      c.restore();
+    } else drawHeldWeapon(c, wkind, skin || tierColor(tier) || "#cdd2da");
   }
   // v10: block pose — shield raised big on the facing side
   if (blocking) {
@@ -16534,6 +16577,7 @@ function swingDur(kind) {
 
 /* v9: the melee swing sweeps the weapon's own silhouette — not just a glow arc.
    sx,sy = hand pivot in screen space. Uses swingKind + swingT + facing. */
+const SWING_TRAIL_ONLY = true;   // Living World S2: the weapon swings in the hand; this draws only the trail
 function drawSwing(sx, sy, t) {
   const kind = swingKind;
   const dur = swingDur(kind);
@@ -16541,6 +16585,7 @@ function drawSwing(sx, sy, t) {
   const baseA = Math.atan2(facing.y * 0.5, facing.x);   // iso-squashed facing angle
   const col = tierColor(equippedWeapon().tier) || "#e8e2d2";
 
+  if (kind === "spear" && SWING_TRAIL_ONLY) return;           // Living World S2: the spear thrusts in the hand
   if (kind === "spear") {
     // straight thrust: extend then retract along facing, no curve
     const ext = prog < 0.5 ? prog * 2 : (1 - prog) * 2;
@@ -16576,7 +16621,7 @@ function drawSwing(sx, sy, t) {
   ctx.arc(sx, sy, r + prog * 6, baseA - halfArc, a);
   ctx.stroke();
 
-  if (kind === "fists") return;                 // bare knuckles: trail only
+  if (kind === "fists" || SWING_TRAIL_ONLY) return;   // bare knuckles: trail only (Living World S2: every weapon now)
 
   // the weapon silhouette at the leading edge of the arc
   const wx2 = sx + Math.cos(a) * (r + prog * 6);
@@ -16653,6 +16698,10 @@ function drawHeldWeapon(c, kind, col) {
     c.beginPath(); c.moveTo(6.4, -9.4); c.lineTo(2.4, -5.8); c.lineTo(6.4, -2.2); c.stroke();
     c.fillStyle = dark; c.fillRect(2, -6.6, 1, 1.6);                    // nut
     c.fillStyle = lit; c.fillRect(3.4, -6.2, 4, 0.5);                   // bolt
+  } else if (kind === "pickaxe") {                                         // Living World S2: the mining tool
+    c.fillStyle = "#6e5230"; c.fillRect(4, -12.4, 1, 13.6);             // haft
+    P(c, [0.4, -11.8, 4.5, -13.6, 8.6, -11.8, 8.2, -11, 4.5, -12.4, 0.8, -11], col);
+    P(c, [4.5, -13.6, 8.6, -11.8, 8.2, -11, 4.5, -12.4], dark);
   } else if (kind === "staff") {
     c.fillStyle = "#6e5230"; c.fillRect(4, -12.4, 1, 13.6);             // shaft
     c.fillStyle = "#4a3722"; c.fillRect(3.8, -6.4, 1.4, 1.8);           // grip wrap
@@ -17331,10 +17380,14 @@ function drawHeroBody(c, cls, t, step = 0) {
     R(c, [(0) - 8 + sway, (0) - 1.8, (0) - 2.4, (0) - 18], K.accent, 0.7);  // rune-trim hem
     R(c, [(0) + 8 + sway, (0) - 1.8, (0) + 2.4, (0) - 18], K.accent, 0.7);
     // wide bell sleeves — narrow shoulders, no armour
+    poseArm(c, -1, -3.6, -17);
     P(c, [(0) - 3.2, (0) - 17.4, (0) - 6.6, (0) - 16.4, (0) - 8.4, (0) - 7.4, (0) - 4.4, (0) - 8.4], C.lit);
+    c.fillStyle = K.accent; c.fillRect((0) - 8.6, (0) - 8.6, 4.4, 1.2);
+    c.restore();
+    poseArm(c, 1, 3.6, -17);
     P(c, [(0) + 3.2, (0) - 17.4, (0) + 6.6, (0) - 16.4, (0) + 8.4, (0) - 7.4, (0) + 4.4, (0) - 8.4], C.dark);
-    c.fillStyle = K.accent;
-    c.fillRect((0) - 8.6, (0) - 8.6, 4.4, 1.2); c.fillRect((0) + 4.2, (0) - 8.6, 4.4, 1.2);
+    c.fillStyle = K.accent; c.fillRect((0) + 4.2, (0) - 8.6, 4.4, 1.2);
+    c.restore();
     // sash
     c.fillStyle = K.cloth; c.fillRect((0) - 3, (0) - 12.4, 6, 2);
     P(c, [(0) + 2.6, (0) - 12.4, (0) + 4.4, (0) - 6.4, (0) + 2, (0) - 10.4], K.cloth);
@@ -17387,10 +17440,14 @@ function drawHeroBody(c, cls, t, step = 0) {
     R(c, [(0) - 8.4, (0) - 19.4, (0) - 3.4, (0) - 20.4], K.accent, 0.7);
     R(c, [(0) + 3.4, (0) - 20.4, (0) + 8.4, (0) - 19.4], K.accent, 0.7);
     // gauntleted arms
+    poseArm(c, -1, -6.1, -14);
     P(c, [(0) - 7.4, (0) - 14, (0) - 4.8, (0) - 14, (0) - 4.6, (0) - 8.4, (0) - 7.2, (0) - 8.4], C.body);
+    c.fillStyle = K.trim; c.fillRect((0) - 7.6, (0) - 9, 3, 1.6);
+    c.restore();
+    poseArm(c, 1, 6.1, -14);
     P(c, [(0) + 4.8, (0) - 14, (0) + 7.4, (0) - 14, (0) + 7.2, (0) - 8.4, (0) + 4.6, (0) - 8.4], C.dark);
-    c.fillStyle = K.trim;
-    c.fillRect((0) - 7.6, (0) - 9, 3, 1.6); c.fillRect((0) + 4.6, (0) - 9, 3, 1.6);
+    c.fillStyle = K.trim; c.fillRect((0) + 4.6, (0) - 9, 3, 1.6);
+    c.restore();
     // closed helm + crest — no face at all
     P(c, [(0) - 3.2, (0) - 20.4, (0) - 2.8, (0) - 25.4, (0) + 3, (0) - 25.4, (0) + 3.4, (0) - 20.4], K.trim);
     P(c, [(0) + 1, (0) - 25.4, (0) + 3, (0) - 25.4, (0) + 3.4, (0) - 20.4, (0) + 1.2, (0) - 20.4], "#39424e");
@@ -17431,8 +17488,12 @@ function drawHeroBody(c, cls, t, step = 0) {
     c.moveTo((0) + 3.2, (0) - 17.4); c.lineTo((0) - 3, (0) - 11.4); c.stroke();
     c.fillStyle = K.trim; c.fillRect((0) - 3, (0) - 10.4, 6, 1.6);
     // slim arms
+    poseArm(c, -1, -4.2, -17.4);
     P(c, [(0) - 5, (0) - 17.4, (0) - 3.4, (0) - 17.4, (0) - 3.2, (0) - 9.6, (0) - 4.8, (0) - 9.6], C.body);
+    c.restore();
+    poseArm(c, 1, 4.2, -17.4);
     P(c, [(0) + 3.4, (0) - 17.4, (0) + 5, (0) - 17.4, (0) + 4.8, (0) - 9.6, (0) + 3.2, (0) - 9.6], C.dark);
+    c.restore();
     // hood, face partly lit — the only class showing a jaw
     drawBlobLocal(c, (0), (0) - 21.6, 2.4, "#d8b48c");
     P(c, [(0) - 3.4, (0) - 19.6, (0) - 1.4, (0) - 25.6, (0) + 3, (0) - 24.4, (0) + 3.6, (0) - 20], C.dark);
@@ -17475,10 +17536,14 @@ function drawHeroBody(c, cls, t, step = 0) {
     P(c, [(0) + 3, (0) - 10.6, (0) + 6.4, (0) - 10.2, (0) + 6, (0) - 5.4, (0) + 2.8, (0) - 5.8], K.cloth);
     c.fillStyle = K.accent; c.fillRect((0) + 3.8, (0) - 8.6, 1.8, 1.2);
     // bare arms
+    poseArm(c, -1, -4.8, -17.4);
     P(c, [(0) - 5.6, (0) - 17.4, (0) - 4, (0) - 17.4, (0) - 3.8, (0) - 9, (0) - 5.4, (0) - 9], "#c89a68");
+    c.fillStyle = K.cloth; c.fillRect((0) - 5.8, (0) - 14.4, 2.2, 1.4);
+    c.restore();
+    poseArm(c, 1, 4.8, -17.4);
     P(c, [(0) + 4, (0) - 17.4, (0) + 5.6, (0) - 17.4, (0) + 5.4, (0) - 9, (0) + 3.8, (0) - 9], "#9c7448");
-    c.fillStyle = K.cloth;
-    c.fillRect((0) - 5.8, (0) - 14.4, 2.2, 1.4); c.fillRect((0) + 3.8, (0) - 14.4, 2.2, 1.4);
+    c.fillStyle = K.cloth; c.fillRect((0) + 3.8, (0) - 14.4, 2.2, 1.4);
+    c.restore();
     // claw necklace
     c.strokeStyle = K.accent; c.lineWidth = 0.6;
     c.beginPath(); c.arc((0), (0) - 18.6, 3, 0.15, Math.PI - 0.15); c.stroke();
@@ -17529,10 +17594,14 @@ function drawHeroBody(c, cls, t, step = 0) {
     // square shoulders + rolled sleeves
     P(c, [(0) - 6.6, (0) - 18.8, (0) - 3.6, (0) - 19.4, (0) - 3.4, (0) - 15.4, (0) - 6.4, (0) - 14.8], C.lit);
     P(c, [(0) + 3.6, (0) - 19.4, (0) + 6.6, (0) - 18.8, (0) + 6.4, (0) - 14.8, (0) + 3.4, (0) - 15.4], C.dark);
+    poseArm(c, -1, -5, -15.4);
     P(c, [(0) - 6.2, (0) - 15.4, (0) - 4, (0) - 15.4, (0) - 3.8, (0) - 12.4, (0) - 6, (0) - 12.4], C.body);
-    P(c, [(0) + 4, (0) - 15.4, (0) + 6.2, (0) - 15.4, (0) + 6, (0) - 12.4, (0) + 3.8, (0) - 12.4], C.dark);
     P(c, [(0) - 6, (0) - 12.6, (0) - 4, (0) - 12.6, (0) - 3.9, (0) - 9, (0) - 5.9, (0) - 9], "#d8b48c");  // bare forearms
+    c.restore();
+    poseArm(c, 1, 5, -15.4);
+    P(c, [(0) + 4, (0) - 15.4, (0) + 6.2, (0) - 15.4, (0) + 6, (0) - 12.4, (0) + 3.8, (0) - 12.4], C.dark);
     P(c, [(0) + 4, (0) - 12.6, (0) + 6, (0) - 12.6, (0) + 5.9, (0) - 9, (0) + 3.9, (0) - 9], "#b8946c");
+    c.restore();
     // head + flat cap
     drawBlobLocal(c, (0), (0) - 21.4, 2.5, "#d8b48c");
     c.fillStyle = "#2e2418"; c.fillRect((0) + 0.8, (0) - 21.6, 1, 0.9);
@@ -20414,6 +20483,336 @@ function debugGuildBadges(patch) {
                                               col: p.col, pts: p.pts.slice() })) };
 }
 
+
+/* ============ LIVING WORLD S2 — CHARACTERS THAT ACT ======================
+   README "The Living World", session 2. Every player now has a STATE —
+   idle, walk, attack (per weapon kind), cast, gather (chop / mine / pick),
+   hurt, block, tame, emote (wave / cheer / sit), death, ride — read from the
+   timers the game already keeps (swingT, lastAbility, lastGather, staggerT,
+   taming, isBlocking, me.mounted) plus two new ones (the bow's draw and the
+   emote). The state picks keyframed POSES for the rig above, sampled at a
+   fixed pixel-art frame rate. Animation is presentation only: the hit lands
+   when it always did, and no timing, range or damage moved. */
+const ANIM_FRAME_MS = 100;          // pixel-art frame time (10 fps) — TUNABLE
+const ANIM_IDLE_LOOP = 48;          // idle frames per loop: 4.8 s, so breathing and the Mystic's runes both close
+const ANIM_WALK_FRAMES = 8;
+const ANIM_ACTION_FRAMES = 6;       // attack / cast / gather / death
+const ANIM_GATHER_MS = 380, ANIM_CAST_MS = 480, ANIM_HURT_MS = 260, ANIM_DEATH_MS = 900, ANIM_SHOOT_MS = 340;
+const EMOTE_LIST = ["wave", "cheer", "sit"];
+const EMOTE_MS = { wave: 1600, cheer: 1400, sit: 0 };   // 0 = held until you move
+const ANIM_CODES = ["idle", "walk", "attack", "cast", "gather", "hurt", "block", "tame", "emote", "death", "ride"];
+const ANIM_KINDS = ["", "fists", "sword", "dagger", "axe", "spear", "bow", "crossbow", "staff", "chop", "mine", "pick", "wave", "cheer", "sit"];
+let lastGatherKind = "chop", emoteKind = null, emoteT = 0, emoteIdx = -1, shootT = 0, shootKind = null, deathAnimAt = 0, animPulseAt = 0;
+function gatherAnimKind(type) {
+  return type === "tree" ? "chop" : (type === "rock" || type === "iron" || type === "runic" || type === "meteor") ? "mine" : "pick";
+}
+/* the local player's state, highest priority first */
+function myAnimState(now, moving) {
+  if (dead) return { s: "death", at: deathAnimAt, dur: ANIM_DEATH_MS };
+  if (swingKind && now - swingT < swingDur(swingKind)) return { s: "attack", k: swingKind, at: swingT, dur: swingDur(swingKind) };
+  if (shootKind && now - shootT < ANIM_SHOOT_MS) return { s: "attack", k: shootKind, at: shootT, dur: ANIM_SHOOT_MS };
+  if (lastAbility && now - lastAbility < ANIM_CAST_MS) return { s: "cast", at: lastAbility, dur: ANIM_CAST_MS };
+  if (lastGather && now - lastGather < ANIM_GATHER_MS) return { s: "gather", k: lastGatherKind, at: lastGather, dur: ANIM_GATHER_MS };
+  if (staggerT && now - staggerT < ANIM_HURT_MS) return { s: "hurt", at: staggerT, dur: ANIM_HURT_MS };
+  if (taming) return { s: "tame", at: 0 };
+  if (isBlocking()) return { s: "block" };
+  if (me && me.mounted) return { s: "ride" };
+  if (emoteKind) {
+    if (moving || (EMOTE_MS[emoteKind] && now - emoteT > EMOTE_MS[emoteKind])) emoteKind = null;
+    else return { s: "emote", k: emoteKind, at: emoteT, dur: EMOTE_MS[emoteKind] };
+  }
+  return { s: moving ? "walk" : "idle" };
+}
+/* a remote player's state: what their last broadcast said, while it lasts */
+function remoteAnimState(o, moving, now) {
+  if (o.dead) return { s: "death", at: o.diedAt || 0, dur: ANIM_DEATH_MS };
+  const a = o.anim;
+  if (a) {
+    const dur = a.s === "attack" ? (a.k === "bow" || a.k === "crossbow" ? ANIM_SHOOT_MS : swingDur(a.k)) : a.s === "cast" ? ANIM_CAST_MS
+              : a.s === "gather" ? ANIM_GATHER_MS : a.s === "emote" ? (EMOTE_MS[a.k] || 0) : -1;
+    const held = a.s === "tame" || (a.s === "emote" && !EMOTE_MS[a.k]);
+    if ((dur > 0 && now - a.at < dur) || (held && !moving && now - a.at < 60000)) return { s: a.s, k: a.k, at: a.at, dur: dur > 0 ? dur : 0 };
+  }
+  if (o.bl) return { s: "block" };
+  if (o.mo) return { s: "ride" };
+  return { s: moving ? "walk" : "idle" };
+}
+/* What rides the move broadcast: 0, or [state code, kind code, age ms]. */
+function animWire() {
+  const st = me ? myAnimState(performance.now(), iAmMoving) : null;
+  if (!st || st.s === "idle" || st.s === "walk" || st.s === "block" || st.s === "ride" || st.s === "death") return 0;
+  return [ANIM_CODES.indexOf(st.s), Math.max(0, ANIM_KINDS.indexOf(st.k || "")), Math.round(performance.now() - (st.at || performance.now()))];
+}
+function animUnwire(w, now) {
+  if (!Array.isArray(w) || w.length < 3) return null;
+  const s2 = ANIM_CODES[w[0] | 0], k = ANIM_KINDS[w[1] | 0];
+  if (!s2) return null;
+  return { s: s2, k: k || null, at: now - Math.min(60000, Math.max(0, +w[2] || 0)) };
+}
+/* an action just started: tell everyone now, not at the next 10 Hz tick */
+function animPulse() {
+  const now = performance.now();
+  if (now - animPulseAt < 120) return;
+  animPulseAt = now;
+  try { if (channel && me) sendMove(true); } catch (e) {}
+}
+function doEmote() {
+  if (dead || !me) return;
+  emoteIdx = (emoteIdx + 1) % EMOTE_LIST.length;
+  emoteKind = EMOTE_LIST[emoteIdx];
+  emoteT = performance.now();
+  animPulse();
+}
+/* keyframes: [[x, v], ...], x in 0..1, smoothstep between keys */
+function kf(keys, x) {
+  if (x <= keys[0][0]) return keys[0][1];
+  for (let i = 1; i < keys.length; i++) {
+    if (x <= keys[i][0]) {
+      const [x0, v0] = keys[i - 1], [x1, v1] = keys[i];
+      const u = (x - x0) / Math.max(1e-6, x1 - x0), e = u * u * (3 - 2 * u);
+      return v0 + (v1 - v0) * e;
+    }
+  }
+  return keys[keys.length - 1][1];
+}
+/* Attack choreography per weapon kind: anticipation, strike, follow-through,
+   recover. Each is [armR, lean, sqY, wRot, wDX, armL] keyframe lists. */
+const ATTACK_KEYS = {
+  sword:    { armR: [[0, 0], [0.22, 1.9], [0.45, -1.3], [0.75, -1.5], [1, 0]], lean: [[0, 0], [0.22, -0.08], [0.45, 0.12], [1, 0]], wRot: [[0, 0], [0.45, 0.3], [1, 0]] },
+  fists:    { armR: [[0, 0], [0.2, 0.7], [0.42, -1.55], [0.7, -1.4], [1, 0]], lean: [[0, 0], [0.2, -0.05], [0.42, 0.14], [1, 0]], armL: [[0, 0], [0.42, 0.4], [1, 0]] },
+  dagger:   { armR: [[0, 0], [0.2, 0.9], [0.4, -1.55], [0.7, -1.3], [1, 0]], lean: [[0, 0], [0.4, 0.15], [1, 0]] },
+  axe:      { armR: [[0, 0], [0.3, 2.6], [0.55, -1.0], [0.8, -1.2], [1, 0]], lean: [[0, 0], [0.3, -0.12], [0.55, 0.16], [1, 0]], sqY: [[0, 0], [0.3, 0.04], [0.55, -0.07], [1, 0]] },
+  spear:    { armR: [[0, 0], [0.25, -1.2], [0.5, -1.45], [0.8, -1.35], [1, 0]], wDX: [[0, 0], [0.25, -2], [0.5, 4.5], [0.8, 3], [1, 0]], lean: [[0, 0], [0.25, -0.06], [0.5, 0.14], [1, 0]] },
+  bow:      { armR: [[0, 0], [0.25, -1.45], [0.8, -1.45], [1, 0]], wRot: [[0, 0], [0.25, 1.45], [0.8, 1.45], [1, 0]], armL: [[0, 0], [0.3, -1.25], [0.55, -0.7], [0.65, 0.2], [1, 0]], lean: [[0, 0], [0.6, -0.05], [1, 0]] },
+  crossbow: { armR: [[0, 0], [0.25, -1.4], [0.8, -1.4], [1, 0]], wRot: [[0, 0], [0.25, 1.4], [0.8, 1.4], [1, 0]], lean: [[0, 0], [0.45, -0.09], [1, 0]] },
+  staff:    { armR: [[0, 0], [0.35, -2.6], [0.6, -0.9], [1, 0]], wRot: [[0, 0], [0.35, 2.4], [0.6, 0.6], [1, 0]], lift: [[0, 0], [0.35, 1], [0.6, 0], [1, 0]] },
+};
+const GATHER_KEYS = {
+  chop: { armR: [[0, 0], [0.35, 2.4], [0.6, -1.0], [1, 0]], lean: [[0, 0], [0.35, -0.1], [0.6, 0.14], [1, 0]] },
+  mine: { armR: [[0, 0], [0.35, 2.2], [0.6, -0.7], [1, 0]], lean: [[0, 0], [0.35, -0.06], [0.6, 0.18], [1, 0]], sqY: [[0, 0], [0.6, -0.06], [1, 0]] },
+  pick: { armR: [[0, 0], [0.5, -0.9], [1, 0]], lean: [[0, 0], [0.5, 0.22], [1, 0]], sqY: [[0, 0], [0.5, -0.16], [1, 0]] },
+};
+function applyKeys(P, keys, x) { for (const f in keys) P[f] = kf(keys[f], x); }
+/* The frame for a state: the pose, the leg step, the bob, the animation time
+   the body's own effects read (the Mystic's runes), an optional tool shown
+   in hand, and a cache key that names the frame exactly. */
+function heroAnimFrame(an, now, t) {
+  const P = { armL: 0, armR: 0, lean: 0, sqY: 0, lift: 0, wRot: 0, wDX: 0 };
+  let frame = 0, step = 0, bob = 0, tA = 0, tool;
+  const prog = an.dur ? Math.min(0.999, Math.max(0, (now - an.at) / an.dur)) : 0;
+  const act = n => { frame = Math.min(n - 1, Math.floor(prog * n)); return (frame + 0.5) / n; };
+  switch (an.s) {
+    case "walk": {
+      const ph = ((t / WALK_MS) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+      frame = Math.floor(ph / (2 * Math.PI) * ANIM_WALK_FRAMES) % ANIM_WALK_FRAMES;
+      const q = (frame + 0.5) / ANIM_WALK_FRAMES * 2 * Math.PI;
+      step = Math.sin(q) * WALK_SWING; bob = Math.abs(Math.sin(q)) * 1.6;
+      P.armL = step * 0.32; P.armR = -step * 0.32; P.lean = 0.05;
+      tA = frame * ANIM_FRAME_MS * 6;
+      break;
+    }
+    case "attack": { const x = act(ANIM_ACTION_FRAMES); applyKeys(P, ATTACK_KEYS[an.k] || ATTACK_KEYS.fists, x); tA = frame * ANIM_FRAME_MS; break; }
+    case "cast": {
+      const x = act(ANIM_ACTION_FRAMES);
+      P.armL = kf([[0, 0], [0.3, -2.5], [0.7, -2.5], [1, 0]], x); P.armR = P.armL;
+      P.lift = kf([[0, 0], [0.4, 1.4], [0.7, 0.6], [1, 0]], x); P.sqY = kf([[0, 0], [0.15, -0.05], [0.4, 0.04], [1, 0]], x);
+      P.wRot = -P.armR * 0.95;                       // the weapon is raised, not hung upside down
+      tA = frame * ANIM_FRAME_MS; break;
+    }
+    case "gather": {
+      const x = act(ANIM_ACTION_FRAMES); applyKeys(P, GATHER_KEYS[an.k] || GATHER_KEYS.pick, x);
+      if (an.k === "pick") P.wRot = -P.armR * 0.8;   // stooping, the weapon stays carried
+      tool = an.k === "chop" ? "axe" : an.k === "mine" ? "pickaxe" : undefined;
+      tA = frame * ANIM_FRAME_MS; break;
+    }
+    case "hurt": { const x = act(3); P.lean = kf([[0, -0.22], [1, 0]], x); P.armL = kf([[0, 0.6], [1, 0]], x); P.armR = kf([[0, 0.5], [1, 0]], x); break; }
+    case "block": P.armL = -0.9; P.sqY = -0.04; P.lean = -0.03; break;
+    case "tame": {
+      frame = Math.floor(now / 200) % 4;
+      P.sqY = -0.16; P.lean = 0.12; P.armR = -1.3 + (frame % 2 ? 0.1 : -0.1); P.wRot = -P.armR; break;
+    }
+    case "ride": P.armL = -0.5; P.armR = -0.5; P.wRot = 0.5; break;
+    case "death": {
+      const x = act(ANIM_ACTION_FRAMES);
+      P.lean = kf([[0, 0], [0.15, 0.1], [0.6, -1.45], [1, -1.5]], x); P.sqY = kf([[0, 0], [0.6, -0.1], [1, -0.12]], x);
+      P.armL = kf([[0, 0], [0.6, -1.2], [1, -1.3]], x); P.armR = kf([[0, 0], [0.6, 0.8], [1, 0.9]], x);
+      break;
+    }
+    case "emote": {
+      if (an.k === "wave") { frame = Math.floor((now - an.at) / ANIM_FRAME_MS) % 8; P.armR = -2.6 + 0.4 * Math.sin(frame / 8 * 2 * Math.PI); P.lean = -0.03; }
+      else if (an.k === "cheer") { frame = Math.floor((now - an.at) / ANIM_FRAME_MS) % 6; const h = Math.abs(Math.sin(frame / 6 * Math.PI)); P.armL = P.armR = -2.8; P.lift = h * 2.2; P.sqY = h * 0.05; }
+      else { frame = 0; P.sqY = -0.3; P.lean = -0.05; P.armL = P.armR = -0.45; }
+      P.wRot = -P.armR;                              // a raised or resting hand keeps its weapon upright
+      break;
+    }
+    default: {   // idle: breathing, and a look-around every loop
+      frame = Math.floor(t / ANIM_FRAME_MS) % ANIM_IDLE_LOOP;
+      tA = frame * ANIM_FRAME_MS;
+      const br = Math.sin(tA / 2400 * 2 * Math.PI);
+      P.sqY = br * 0.025; P.armL = br * 0.05; P.armR = -br * 0.05;
+      if (frame >= 30 && frame < 40) P.lean = 0.06 * Math.sin((frame - 30) / 10 * Math.PI);
+    }
+  }
+  return { P, frame, step, bob, tA, tool, key: an.s + ":" + (an.k || "") + ":" + frame };
+}
+
+/* ============ LIVING WORLD S2 — THE PIXEL FORGE ==========================
+   Owner D1 (2026-10-23): pixel art "B+" — finer pixels, up to 40 colours per
+   sprite, no outline; reference docs/pixel-style-reference.png. Nothing is
+   hand-drawn: the existing procedural body is drawn at FORGE_SS x into a
+   scratch canvas, box-filtered down to the art grid (alpha either solid or
+   clear, at FORGE_ALPHA_CUT), its colours reduced to at most FORGE_MAX_COLORS
+   by median cut, and cached per everything that changes how it looks. The art
+   grid is a WHOLE number of backing pixels per art pixel (forgeGrid), so on
+   every screen and zoom the pixels are exact squares, and a sprite's corner is
+   snapped to a backing pixel so they never shimmer. A frame not baked yet
+   draws that player's last sprite, so nothing pops; bakes are budgeted. */
+const FORGE_SS = 4;                 // supersample for the bake
+const FORGE_MAX_COLORS = 40;        // B+
+const FORGE_ALPHA_CUT = 100;        // average alpha (0-255) at or above which an art pixel is solid
+const FORGE_ART_LOGICAL = 1;        // ~ logical px per art px (B+: ~43 art px for a standing hero)
+const FORGE_CACHE_MAX = 900;        // sprites kept (each a few KB)
+const FORGE_BAKES_PER_FRAME = 4;
+const FORGE_BOX = { l: -34, r: 34, t: -74, b: 8 };   // logical px about the feet at S 2.4, scaled with S
+let FORGE_ON = true;                // a context that cannot be read back (harness stub) turns it off
+const forgeCache = new Map(), forgeLast = new Map();
+const forgeStats = { bakes: 0, hits: 0, fallbacks: 0, live: 0, evictions: 0, failures: 0, maxColors: 0, lastBakeMs: 0 };
+let forgeBakesLeft = FORGE_BAKES_PER_FRAME, forgeHi = null, forgeHiCtx = null;
+function forgeGrid(scale) {
+  const S = scale || VIEW_SCALE;
+  const n = Math.max(1, Math.round(S * FORGE_ART_LOGICAL));
+  return { n, px: n / S };
+}
+/* box filter, premultiplied: SSxSS source pixels -> one art pixel */
+function forgeDownsample(src, HW, W, H, ss, cut) {
+  const out = new Uint8ClampedArray(W * H * 4), n = ss * ss;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    let sa = 0, sr = 0, sg = 0, sb = 0;
+    for (let j = 0; j < ss; j++) {
+      let i = ((y * ss + j) * HW + x * ss) * 4;
+      for (let k = 0; k < ss; k++, i += 4) { const a = src[i + 3]; sa += a; sr += src[i] * a; sg += src[i + 1] * a; sb += src[i + 2] * a; }
+    }
+    const o = (y * W + x) * 4;
+    if (sa / n >= cut && sa > 0) { out[o] = sr / sa; out[o + 1] = sg / sa; out[o + 2] = sb / sa; out[o + 3] = 255; }
+  }
+  return out;
+}
+/* median cut over the solid pixels; returns the number of colours left */
+function forgeQuantize(buf, maxC) {
+  const idx = [];
+  for (let i = 0; i < buf.length; i += 4) if (buf[i + 3]) idx.push(i);
+  const distinct = new Set();
+  for (const i of idx) { distinct.add((buf[i] << 16) | (buf[i + 1] << 8) | buf[i + 2]); if (distinct.size > maxC) break; }
+  if (distinct.size <= maxC) return distinct.size;
+  let boxes = [idx];
+  const range = b => { let lo = [255, 255, 255], hi = [0, 0, 0]; for (const i of b) for (let c = 0; c < 3; c++) { const v = buf[i + c]; if (v < lo[c]) lo[c] = v; if (v > hi[c]) hi[c] = v; } const r = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]]; const ch = r[0] >= r[1] && r[0] >= r[2] ? 0 : r[1] >= r[2] ? 1 : 2; return [r[ch], ch]; };
+  while (boxes.length < maxC) {
+    let best = -1, bestScore = 0, bestCh = 0;
+    for (let b = 0; b < boxes.length; b++) { if (boxes[b].length < 2) continue; const [r, ch] = range(boxes[b]); const sc = r * Math.sqrt(boxes[b].length); if (sc > bestScore) { bestScore = sc; best = b; bestCh = ch; } }
+    if (best < 0 || bestScore === 0) break;
+    const b = boxes[best].sort((p, q) => buf[p + bestCh] - buf[q + bestCh]);
+    const mid = b.length >> 1;
+    boxes.splice(best, 1, b.slice(0, mid), b.slice(mid));
+  }
+  for (const b of boxes) {
+    let r = 0, g = 0, bl = 0;
+    for (const i of b) { r += buf[i]; g += buf[i + 1]; bl += buf[i + 2]; }
+    r = Math.round(r / b.length); g = Math.round(g / b.length); bl = Math.round(bl / b.length);
+    for (const i of b) { buf[i] = r; buf[i + 1] = g; buf[i + 2] = bl; }
+  }
+  return boxes.length;
+}
+function forgeBake(spec, px) {
+  const k = spec.S / 2.4;
+  const L = FORGE_BOX.l * k, T = FORGE_BOX.t * k;
+  const W = Math.ceil((FORGE_BOX.r - FORGE_BOX.l) * k / px), H = Math.ceil((FORGE_BOX.b - FORGE_BOX.t) * k / px);
+  const HW = W * FORGE_SS, HH = H * FORGE_SS;
+  if (!forgeHi) {
+    forgeHi = document.createElement("canvas");
+    try { forgeHiCtx = forgeHi.getContext("2d", { willReadFrequently: true }); } catch (e) { forgeHiCtx = null; }
+  }
+  const hc = forgeHiCtx;
+  if (!hc) return null;
+  if (forgeHi.width < HW || forgeHi.height < HH) { forgeHi.width = Math.max(forgeHi.width, HW); forgeHi.height = Math.max(forgeHi.height, HH); }
+  const t0 = performance.now();
+  hc.setTransform(1, 0, 0, 1, 0, 0);
+  hc.clearRect(0, 0, HW, HH);
+  const sc = FORGE_SS / px;
+  hc.setTransform(sc, 0, 0, sc, -L * sc, -T * sc);
+  const was = HERO_POSE;
+  HERO_POSE = spec.pose;
+  try { drawUnit(hc, 0, -spec.bob, spec.cls, spec.S, spec.tier, spec.face, spec.tA, false, spec.wk, spec.atier, spec.blocking, spec.cos, spec.step); }
+  finally { HERO_POSE = was; }
+  hc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = hc.getImageData(0, 0, HW, HH);
+  if (!img || !img.data || img.data.length !== HW * HH * 4) return null;
+  const out = forgeDownsample(img.data, HW, W, H, FORGE_SS, FORGE_ALPHA_CUT);
+  const colors = forgeQuantize(out, FORGE_MAX_COLORS);
+  const cv = document.createElement("canvas");
+  cv.width = W; cv.height = H;
+  const oc = cv.getContext("2d");
+  if (!oc || typeof oc.createImageData !== "function") return null;
+  const id = oc.createImageData(W, H);
+  if (!id || !id.data || id.data.length !== out.length) return null;
+  id.data.set(out);
+  oc.putImageData(id, 0, 0);
+  forgeStats.bakes++;
+  if (colors > forgeStats.maxColors) forgeStats.maxColors = colors;
+  forgeStats.lastBakeMs = performance.now() - t0;
+  return { cv, W, H, ax: -L / px, ay: -T / px, px, colors };
+}
+function cosKeyOf(cos) { return cos ? [cos.hat || "", cos.cloak || "", cos.skin || "", cos.aura || ""].join(",") : ""; }
+function forgeKey(spec, px) {
+  return [spec.cls, spec.S, spec.tier || "", spec.wk || "", spec.atier || "", spec.blocking ? 1 : 0, cosKeyOf(spec.cos),
+          spec.face.x < -0.15 ? -1 : 1, spec.animKey, px.toFixed(5)].join("|");
+}
+/* the sprite for a spec, or null when the caller should draw live */
+function forgeSprite(spec, px) {
+  if (!FORGE_ON) { forgeStats.live++; return null; }
+  const key = forgeKey(spec, px);
+  let e = forgeCache.get(key);
+  if (e) { forgeCache.delete(key); forgeCache.set(key, e); forgeStats.hits++; forgeLast.set(spec.owner, e); return e; }
+  if (forgeBakesLeft > 0) {
+    forgeBakesLeft--;
+    try { e = forgeBake(spec, px); } catch (err) { e = null; }
+    if (!e) { FORGE_ON = false; forgeStats.failures++; forgeStats.live++; return null; }
+    forgeCache.set(key, e);
+    while (forgeCache.size > FORGE_CACHE_MAX) { forgeCache.delete(forgeCache.keys().next().value); forgeStats.evictions++; }
+    forgeLast.set(spec.owner, e);
+    return e;
+  }
+  const last = forgeLast.get(spec.owner);
+  if (last && last.px === px) { forgeStats.fallbacks++; return last; }
+  forgeStats.live++;
+  return null;
+}
+/* the sprite's top-left snapped to a whole backing pixel of the main canvas */
+function drawForgeSprite(c, e, sx, sy) {
+  let x = sx - e.ax * e.px, y = sy - e.ay * e.px;
+  if (c === ctx) {
+    x = Math.round((x + renderShX) * VIEW_SCALE) / VIEW_SCALE - renderShX;
+    y = Math.round((y + renderShY) * VIEW_SCALE) / VIEW_SCALE - renderShY;
+  }
+  const was = c.imageSmoothingEnabled;
+  c.imageSmoothingEnabled = false;
+  c.drawImage(e.cv, x, y, e.W * e.px, e.H * e.px);
+  c.imageSmoothingEnabled = was;
+}
+/* the unit's sun shadow on its own, so a sprite can stand on a live one */
+function drawUnitShadow(c, sx, sy, s) {
+  c.fillStyle = `rgba(20,32,44,${SUN.alpha})`;
+  const L = 7 * s * SUN.len * 0.5;
+  c.beginPath();
+  c.ellipse(sx + SUN.dx * L * 0.5, sy + 1 + SUN.dy * L * 0.25, 3.4 * s + L * 0.4, 1.6 * s, 0, 0, Math.PI * 2);
+  c.fill();
+}
+function debugForgeInfo() {
+  return { FORGE_ON, size: forgeCache.size, stats: Object.assign({}, forgeStats), FORGE_SS, FORGE_MAX_COLORS, FORGE_ALPHA_CUT,
+           FORGE_ART_LOGICAL, FORGE_CACHE_MAX, FORGE_BAKES_PER_FRAME, grid: forgeGrid(),
+           ANIM_FRAME_MS, ANIM_IDLE_LOOP, ANIM_WALK_FRAMES, ANIM_ACTION_FRAMES, emote: emoteKind };
+}
+function debugSetForge(on) { FORGE_ON = !!on; if (!on) { forgeCache.clear(); forgeLast.clear(); } }
+
 function drawPlayerEntity(p, name, t, isMe) {
   const z = groundZ(p.x, p.y);
   const [sx, sy] = worldToScreen(p.x, p.y, z);
@@ -20469,8 +20868,27 @@ function drawPlayerEntity(p, name, t, isMe) {
   const step = walkStep(t, moving && !mountedNow, WALK_MS);
   if (!mountedNow) drawActorDisc(sx, sy, isMe ? "me" : "friend", 1);   // S2 R4: on the ground, so no bob
   if (isMe && !mountedNow) drawMeBacklight(sx + rx, sy - bob + ry);    // RT pass
-  drawUnit(ctx, sx + rx, sy - bob + ry + seatLift, p.cls, S, tier, face, t,
-           !mountedNow, wkind, atier, blocking, cosNow, step);
+  /* Living World S2: the state, its frame, and the pixel sprite of it. The
+     walk's step and bob are now the FRAME's (sampled at 8 frames a stride),
+     so legs, bob and arms stay in step on the art grid. */
+  const nowA = performance.now();
+  const an = isMe ? myAnimState(nowA, moving && !mountedNow) : remoteAnimState(p, moving && !mountedNow, nowA);
+  const fr = heroAnimFrame(an, nowA, t);
+  const faceN = { x: face.x < -0.15 ? -1 : 1, y: 1 };
+  const spec = { owner: name, cls: p.cls, S, tier, face: faceN, wk: fr.tool || wkind, atier, blocking, cos: cosNow,
+                 step: fr.step, bob: fr.bob, pose: fr.P, tA: fr.tA, animKey: fr.key };
+  const gx0 = sx + rx, gy0 = sy + ry + seatLift;
+  const deathFade = an.s === "death" ? Math.max(0, 1 - Math.max(0, (nowA - an.at) / ANIM_DEATH_MS - 0.6) / 0.4) : 1;
+  if (deathFade < 1) ctx.globalAlpha = deathFade;
+  if (!mountedNow) drawUnitShadow(ctx, gx0, sy + ry, S);
+  const spr = forgeSprite(spec, forgeGrid().px);
+  if (spr) drawForgeSprite(ctx, spr, gx0, gy0);
+  else {
+    HERO_POSE = fr.P;
+    try { drawUnit(ctx, gx0, gy0 - fr.bob, p.cls, S, tier, faceN, fr.tA, false, spec.wk, atier, blocking, cosNow, fr.step); }
+    finally { HERO_POSE = HERO_POSE_REST; }
+  }
+  if (deathFade < 1) ctx.globalAlpha = 1;
 
   // v10: poison motes — small green flecks rising while the DoT runs
   if (poisoned) {
@@ -20514,7 +20932,9 @@ function drawPlayerEntity(p, name, t, isMe) {
     ctx.stroke();
   }
 
-  /* v9: melee swing sweeps the actual weapon silhouette, per-weapon motion */
+  /* v9: melee swing sweeps the actual weapon silhouette, per-weapon motion.
+     Living World S2: the weapon itself now swings in the hand, so only the
+     swing's motion TRAIL is drawn here (SWING_TRAIL_ONLY). */
   if (isMe && swingKind && performance.now() - swingT < swingDur(swingKind)) {
     drawSwing(sx, sy - 7, t);
   }
@@ -20546,7 +20966,8 @@ function drawPlayerEntity(p, name, t, isMe) {
   if (!weatherHidesPlate(p, isMe)) plateQueue.push({ p, name, isMe, sx, sy });   // S7 PART A: fog hides plates past 8 tiles
   if (isMe) {
     const gx = sx + rx, gy = sy - bob + ry + seatLift;
-    meGhost = { x: gx, y: gy, cls: p.cls, S, tier, face, wkind, atier, blocking, cos: cosNow, step };
+    meGhost = { x: gx, y: gy, cls: p.cls, S, tier, face, wkind, atier, blocking, cos: cosNow, step,
+                spr, sx: gx0, sy: gy0, pose: fr.P, bob: fr.bob, tA: fr.tA };   // Living World S2: the ghost is the same sprite
     occProbe = { x0: gx + OCC_CORE.l, x1: gx + OCC_CORE.r, y0: gy + OCC_CORE.t, y1: gy + OCC_CORE.b,
                  armed: false, hit: false };
   }
@@ -20674,7 +21095,14 @@ function occTest(x0, y0, x1, y1) {
 }
 function flushOverlayPass(t) {
   overlayStats = { ghosts: 0, plates: 0, labels: 0, occluded: !!(occProbe && occProbe.hit) };
-  if (meGhost && occProbe && occProbe.hit) {
+  if (meGhost && occProbe && occProbe.hit && meGhost.spr) {
+    /* Living World S2: the see-through ghost is the player's own pixel sprite */
+    ctx.save();
+    ctx.globalAlpha = PLAYER_GHOST_A;
+    drawForgeSprite(ctx, meGhost.spr, meGhost.sx, meGhost.sy);
+    ctx.restore();
+    overlayStats.ghosts++;
+  } else if (meGhost && occProbe && occProbe.hit) {
     if (!ghostCanvas) {
       ghostCanvas = document.createElement("canvas");
       ghostCtx = ghostCanvas.getContext("2d");
@@ -21212,6 +21640,7 @@ function drawGroundPass(w, h, minX, maxX, minY, maxY) {
 let renderShX = 0, renderShY = 0;
 function render(t) {
   updateZoom(performance.now());                               // Living World S1
+  forgeBakesLeft = FORGE_BAKES_PER_FRAME;                      // Living World S2: the per-frame bake budget
   /* The view transform, in two steps: the device ratio here, then — after
      the shake's translate, which is in SCREEN (CSS) pixels — the zoom, so a
      hit shakes the same few pixels at any zoom. Net: VIEW_SCALE per logical px. */
@@ -21827,14 +22256,15 @@ function render(t) {
     if (it.x < minX - 2 || it.x > maxX + 2 || it.y < minY - 2 || it.y > maxY + 2) continue;
     ents.push({ s: it.x + it.y, kind: "item", it });
   }
+  const nowEnt = performance.now();
   for (const [name, o] of others) {
-    if (o.dead) continue;
+    if (o.dead && !(o.diedAt && nowEnt - o.diedAt < ANIM_DEATH_MS)) continue;   // Living World S2: the fall plays, then they are gone
     /* v29: a player standing in a different space is not here — not drawn,
        and (via the same check in the collision/PvP paths) not touchable. */
     if ((o.space || "main") !== (me.space || "main")) continue;
     ents.push({ s: o.x + o.y, kind: "player", p: o, name, isMe: false });
   }
-  if (!dead) ents.push({ s: me.x + me.y, kind: "player", p: me, name: me.username, isMe: true });
+  if (!dead || (deathAnimAt && nowEnt - deathAnimAt < ANIM_DEATH_MS)) ents.push({ s: me.x + me.y, kind: "player", p: me, name: me.username, isMe: true });   // Living World S2: the fall
   if (!dead && me.pet && activePet) ents.push({ s: me.pet.x + me.pet.y, kind: "pet", h: me, sp: activePet.species });
   for (const [, o] of others) {
     if (o.dead || !o.pet || !o.pe) continue;
@@ -23201,7 +23631,11 @@ const KEYBIND_DEFAULTS = { up: "w", down: "s", left: "a", right: "d", interact: 
      It is an ADDITIONAL shortcut, not a replacement: the existing `E`
      proximity trigger in doInteract() is untouched and still opens the
      same panel. */
-  give: "g" };
+  give: "g",
+  /* Living World S2: emotes. X is free (w/a/s/d/e/space/i/c/p/f/shift/q/r/
+     b/k/m/g are the seventeen taken); each press steps wave -> cheer -> sit,
+     and moving ends one. Same remap / conflict / persist machinery. */
+  emote: "x" };
 /* display order + labels for the remapping screen */
 const KEYBIND_LABELS = [
   ["up", "Move up"], ["down", "Move down"], ["left", "Move left"], ["right", "Move right"],
@@ -23210,6 +23644,7 @@ const KEYBIND_LABELS = [
   ["ability", "Class ability"], ["mount", "Mount / dismount"],
   ["build", "Build"], ["character", "Character"], ["travel", "Fast travel"],
   ["give", "Give item to player"],                                    // v51 PART J
+  ["emote", "Emote (wave / cheer / sit)"],                            // Living World S2
 ];
 let KEYBINDS = Object.assign({}, KEYBIND_DEFAULTS);
 let kbCapture = null;           // action awaiting a keypress, or null
@@ -23889,6 +24324,7 @@ const HELP_ENTRIES = [
   { core: false, keys: ["give"],      text: "give item" },   // v51 PART J
   /* Living World S1: the one control that is not a key binding — so it
      carries its own label instead of a KEYBINDS action. */
+  { core: false, keys: ["emote"],     text: "emote" },   // Living World S2
   { core: false, keys: [], label: "SCROLL", text: "zoom" },
 ];
 /* Session-local, exactly like which panel is open: a preference this small
