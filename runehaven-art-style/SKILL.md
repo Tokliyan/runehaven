@@ -53,6 +53,38 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-24 (Living World S2 — pixel-art characters that act)
+
+Owner approved the GIFs on 2026-10-24. Owner D1 is B+: finer pixels, at most 40 colours per sprite, no outline.
+
+**The PIXEL FORGE.** This is now the rule for actors; nothing is hand-drawn.
+- **Bake.**
+  - `drawUnit` is drawn at 4× into a scratch canvas.
+  - It is box-filtered (premultiplied) down to the art grid, with alpha solid or clear at 100.
+  - Colours are reduced by median cut to at most 40, and the result is cached (LRU 900).
+- **Grid.** The art grid is a WHOLE number of backing pixels per art pixel: `forgeGrid(RENDER_DPR × zoomTarget)`. Sprites are drawn with smoothing off at a backing-pixel-snapped corner, so pixels are square and never shimmer.
+- **Boxes.** Standing states use a narrow box. Attack, gather, cast, hurt, death and emote use the WIDE box, so weapons are never clipped.
+
+**The POSE RIG.**
+- Each body's arms are wrapped in `poseArm` (rotation about the shoulder).
+- `HERO_POSE` (REST is frozen and all zero, so v15's pixels are unchanged at rest) adds:
+  - lean, squash/stretch (`sqY` + stretches), lift, body `dx`, and lunge feet (`legF`/`legBk`);
+  - dust, smear (a flat crescent on the FORWARD swing only), sparks, and a hit flash (source-atop, offscreen only).
+- The weapon's GRIP rides the front arm, and the blade keeps its own absolute angle (`wAng`, 0 = upright).
+
+**States.**
+- Idle has 24 frames at 200 ms; walk 8; attacks 8 (with a choreography per weapon kind); cast, gather and death 6; hurt 3.
+- Also block, tame, ride, and emotes (X: wave, cheer, sit).
+- Your state rides the move broadcast (`an`), so friends see you act.
+
+**Don't reintroduce:**
+- a weapon tied rigidly to the arm angle (it pointed at the ground on wind-ups);
+- a smear on the wind-up;
+- per-frame-scale sprite keys (they thrash while the zoom eases);
+- a single bake failure switching the forge off.
+
+**Not yet:** pets and mobs (session 3) and the world (sessions 4–5) are still smooth, so the mixed look is approved and temporary.
+
 ### 2026-10-24 (Living World S1 — camera zoom & device pixels)
 
 README "The Living World", session 1 (owner D2: default zoom 1.6×).

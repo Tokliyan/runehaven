@@ -254,6 +254,103 @@ const STUB = `
     results.push([`Living World S1 frame rate at the Bazaar: 2.2x ${r.f22.toFixed(1)} fps >= 0.9 x the 1.0x figure ${r.f1.toFixed(1)} fps (x${(r.f22 / r.f1).toFixed(2)})`, r.f22 >= 0.9 * r.f1]);
   }
 
+  /* ---- 6. Living World S2: the Pixel Forge in a real browser ---------------
+     jsdom's canvas is a stub, so the real bake is only provable here.
+     (1) Every class is baked through forgeBake at forgeGrid(1.6).px with a
+         sword strike frame: it must return a canvas whose pixels are only
+         alpha 0 or 255 and use at most FORGE_MAX_COLORS colours.
+     (2) The boxes are big enough: across every class and every state (all
+         attack kinds and frames, gathering, casting, hurt, the death fall,
+         the emotes — baked in the wide box; idle, walk, block, taming — in
+         the narrow one) no solid pixel touches the sprite's outer edge, so
+         nothing is clipped (a spear thrust, the dust cloud, a raised arm).
+     (3) Standing still, the cache goes quiet: after the idle loop has been
+         baked, 60 rendered frames add no bake, no live draw, no fallback, the
+         forge stays on and the sprites are served as hits.
+     (4) A bake costs less than 4 ms on average (the cost that is paid once
+         per new frame of a player, never per drawn frame). */
+  {
+    const r = await p.evaluate(() => {
+      const S = 2.4, FI = debugForgeInfo(), px16 = forgeGrid(1.6).px, px22 = forgeGrid(2.2).px;
+      const classes = Object.keys(CLASSES);
+      const mk = (cls, fr, o) => Object.assign({ owner: 'gate', cls, S, tier: 'iron', face: { x: 1, y: 1 }, wk: fr.tool || 'sword', atier: 'iron', blocking: false, cos: null,
+        step: fr.step, bob: fr.bob, pose: fr.P, tA: fr.tA, animKey: fr.key, wide: false }, o || {});
+      const scan = (e) => {
+        const d = e.cv.getContext('2d').getImageData(0, 0, e.W, e.H).data, cols = new Set();
+        let badAlpha = 0, solid = 0, edge = 0;
+        for (let y = 0; y < e.H; y++) for (let x = 0; x < e.W; x++) {
+          const i = (y * e.W + x) * 4, a = d[i + 3];
+          if (a !== 0 && a !== 255) badAlpha++;
+          if (a === 255) { solid++; cols.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]); if (x === 0 || y === 0 || x === e.W - 1 || y === e.H - 1) edge++; }
+        }
+        return { badAlpha, solid, colours: cols.size, edge };
+      };
+      const out = { px16, classes: [], tot: 0, edgeBad: [], times: [], maxColours: 0, nulls: 0, FI: { MAXC: FI.FORGE_MAX_COLORS } };
+      // (1) one strike frame of a sword for each class
+      const dur = swingDur('sword');
+      const strike = heroAnimFrame({ s: 'attack', k: 'sword', at: 0, dur }, 3.5 / 8 * dur, 0);
+      for (const cls of classes) {
+        const t0 = performance.now();
+        const e = forgeBake(mk(cls, strike, { wide: true }), px16);
+        const ms = performance.now() - t0;
+        if (!e) { out.nulls++; out.classes.push({ cls, null: true }); continue; }
+        const s = scan(e); e.cv.width = e.cv.height = 0;
+        out.classes.push({ cls, isCanvas: e.cv instanceof HTMLCanvasElement, W: e.W, H: e.H, px: e.px, colours: s.colours, reported: e.colors, badAlpha: s.badAlpha, solid: s.solid, ms });
+        out.maxColours = Math.max(out.maxColours, s.colours);
+      }
+      // (2) every state, every frame, every class: nothing touches the edge of its box
+      const jobs = [];
+      const atk = ['sword', 'axe', 'dagger', 'spear', 'staff', 'fists', 'bow', 'crossbow'];
+      for (const k of atk) { const d2 = k === 'bow' || k === 'crossbow' ? ANIM_SHOOT_MS : swingDur(k); for (let i = 0; i < 8; i++) jobs.push([heroAnimFrame({ s: 'attack', k, at: 0, dur: d2 }, (i + 0.5) / 8 * d2, 0), true, k === 'fists' ? null : k, 'attack ' + k + ' ' + i]); }
+      for (const k of ['chop', 'mine', 'pick']) for (let i = 0; i < 6; i++) jobs.push([heroAnimFrame({ s: 'gather', k, at: 0, dur: ANIM_GATHER_MS }, (i + 0.5) / 6 * ANIM_GATHER_MS, 0), true, null, 'gather ' + k + ' ' + i]);
+      for (let i = 0; i < 6; i++) { jobs.push([heroAnimFrame({ s: 'cast', at: 0, dur: ANIM_CAST_MS }, (i + 0.5) / 6 * ANIM_CAST_MS, 0), true, 'staff', 'cast ' + i]); jobs.push([heroAnimFrame({ s: 'death', at: 0, dur: ANIM_DEATH_MS }, (i + 0.5) / 6 * ANIM_DEATH_MS, 0), true, 'sword', 'death ' + i]); }
+      for (let i = 0; i < 3; i++) jobs.push([heroAnimFrame({ s: 'hurt', at: 0, dur: ANIM_HURT_MS }, (i + 0.5) / 3 * ANIM_HURT_MS, 0), true, 'sword', 'hurt ' + i]);
+      for (let i = 0; i < 8; i++) jobs.push([heroAnimFrame({ s: 'emote', k: 'wave', at: 0, dur: 1600 }, i * 100 + 10, 0), true, 'sword', 'wave ' + i]);
+      for (let i = 0; i < 6; i++) jobs.push([heroAnimFrame({ s: 'emote', k: 'cheer', at: 0, dur: 1400 }, i * 100 + 10, 0), true, 'sword', 'cheer ' + i]);
+      jobs.push([heroAnimFrame({ s: 'emote', k: 'sit', at: 0, dur: 0 }, 10, 0), true, 'sword', 'sit']);
+      for (let i = 0; i < 24; i++) jobs.push([heroAnimFrame({ s: 'idle' }, 0, i * 200 + 3), false, 'sword', 'idle ' + i]);
+      const stride = 2 * Math.PI * WALK_MS;
+      for (let i = 0; i < 8; i++) jobs.push([heroAnimFrame({ s: 'walk' }, 0, (i + 0.5) / 8 * stride), false, 'sword', 'walk ' + i]);
+      jobs.push([heroAnimFrame({ s: 'block' }, 0, 0), false, 'sword', 'block'], [heroAnimFrame({ s: 'tame', at: 0 }, 100, 0), false, 'sword', 'tame']);
+      out.jobs = jobs.length;
+      for (const px of [px16, px22]) for (const cls of (px === px16 ? classes : ['Knight'])) for (const [fr, wide, wk, label] of jobs) for (const face of [1, -1]) {
+        const t0 = performance.now();
+        const e = forgeBake(mk(cls, fr, { wide, wk, face: { x: face, y: 1 }, blocking: label === 'block' }), px);
+        const ms = performance.now() - t0;
+        out.times.push([wide, ms]);
+        if (!e) { out.nulls++; continue; }
+        const s = scan(e); out.tot++; e.cv.width = e.cv.height = 0;
+        out.maxColours = Math.max(out.maxColours, s.colours);
+        if (s.edge || s.badAlpha || s.colours > FI.FORGE_MAX_COLORS) out.edgeBad.push(`${cls} ${label} ${face} @${px.toFixed(3)}: edge ${s.edge} badAlpha ${s.badAlpha} colours ${s.colours}`);
+      }
+      return out;
+    });
+    for (const c of r.classes) console.log(`forge bake ${c.cls}: ${c.null ? 'null' : `${c.W}x${c.H} art px at ${c.px}, ${c.colours} colours (reported ${c.reported}), ${c.solid} solid px, ${c.badAlpha} partly transparent, ${c.ms.toFixed(2)} ms`}`);
+    results.push([`Living World S2 forge (1): each of the ${r.classes.length} classes bakes a sword strike frame at forgeGrid(1.6).px (${r.px16}) into a canvas of only alpha 0 / 255 with at most ${r.FI.MAXC} colours (most used ${r.maxColours})`,
+      r.classes.length === 5 && r.classes.every(c => !c.null && c.isCanvas && c.badAlpha === 0 && c.colours <= r.FI.MAXC && c.colours <= c.reported && c.reported <= r.FI.MAXC && c.solid > 150 && c.W > 20 && c.H > 20)]);
+    results.push([`Living World S2 forge (2): the boxes never clip — ${r.tot} sprites (${r.jobs} state frames x 5 classes x both facings at 1.6x, plus the Knight at 2.2x) have no solid pixel on their outer edge, only alpha 0 / 255 and at most ${r.FI.MAXC} colours${r.edgeBad.length ? '; first offenders: ' + r.edgeBad.slice(0, 4).join(' | ') : ''}`,
+      r.nulls === 0 && r.tot === r.jobs * (5 + 1) * 2 && r.edgeBad.length === 0]);
+    const avg = a => a.reduce((x, y) => x + y, 0) / Math.max(1, a.length);
+    const tn = r.times.filter(t => !t[0]).map(t => t[1]), tw = r.times.filter(t => t[0]).map(t => t[1]), ta = r.times.map(t => t[1]).concat(r.classes.map(c => c.ms));
+    const srt = ta.slice().sort((a, b) => a - b), p95 = srt[Math.floor(srt.length * 0.95)];
+    console.log(`forge bake time over ${ta.length} bakes: average ${avg(ta).toFixed(2)} ms (narrow ${avg(tn).toFixed(2)}, wide ${avg(tw).toFixed(2)}), p95 ${p95.toFixed(2)}, max ${srt[srt.length - 1].toFixed(2)}`);
+    results.push([`Living World S2 forge (4): a bake is cheap — over ${ta.length} bakes the average is ${avg(ta).toFixed(2)} ms (narrow ${avg(tn).toFixed(2)}, wide ${avg(tw).toFixed(2)}; limit 4 ms), p95 ${p95.toFixed(2)} ms`, avg(ta) < 4]);
+  }
+  {
+    /* (3) standing still: the idle loop is 24 frames of 200 ms, so give the real loop longer than one loop to bake them all */
+    await p.evaluate(() => { debugSetForge(false); debugSetForge(true); debugSetZoom(1.6); me.x = SPAWN.x + 0.5; me.y = SPAWN.y + 0.5; cam.x = me.x; cam.y = me.y; me.diving = false; });
+    await p.waitForTimeout(7000);
+    const r = await p.evaluate(async () => {
+      const a = debugForgeInfo();
+      await new Promise(res => { let n = 0; const f = () => { if (++n >= 60) res(); else requestAnimationFrame(f); }; requestAnimationFrame(f); });
+      const b = debugForgeInfo();
+      return { on: b.FORGE_ON, a: a.stats, b: b.stats, size: b.size, onBefore: a.FORGE_ON };
+    });
+    console.log(`standing still: bakes ${r.a.bakes} -> ${r.b.bakes}, hits ${r.a.hits} -> ${r.b.hits}, live ${r.a.live} -> ${r.b.live}, fallbacks ${r.a.fallbacks} -> ${r.b.fallbacks}, ${r.size} sprites cached, forge ${r.on ? 'on' : 'OFF'}`);
+    results.push([`Living World S2 forge (3): standing still for 60 rendered frames adds no bake (${r.a.bakes} -> ${r.b.bakes}), no live draw (${r.a.live} -> ${r.b.live}) and no fallback (${r.a.fallbacks} -> ${r.b.fallbacks}); every frame is a cache hit (${r.b.hits - r.a.hits} hits), FORGE_ON stays true and nothing failed (${r.b.failures} failures)`,
+      r.onBefore && r.on === true && r.b.bakes === r.a.bakes && r.b.live === r.a.live && r.b.fallbacks === r.a.fallbacks && r.b.hits - r.a.hits >= 55 && r.b.failures === 0 && r.size > 0]);
+  }
+
   if (errs.length) results.push(['S4 run6: no page errors (' + errs.slice(0, 3).join(' | ') + ')', false]);
   await b.close();
   let ok = true;

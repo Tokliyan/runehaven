@@ -114,5 +114,25 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
 - **Opus review:** 9 findings, all fixed. The biggest was Retina memory at 2.2x.
 - **Flake to watch:** the S7 "walking player really is slower" gate once measured 1645 tiles moved (a teleport mid-walk). It passed on rerun, and the cause hasn't been found yet.
 
+## Living World session 2 (pixel-art characters that act): SHIPPED to `main` (2026-10-24)
+- **Pixel Forge (owner D1 "B+"):** procedural hero bodies are baked at 4×, box-filtered to a whole-backing-pixel art grid, reduced to at most 40 colours, LRU-cached, and drawn crisp and snapped. Wide boxes are used for actions.
+- **Pose rig:** arm pivots, lean, squash/stretch, lunge footwork, body drive, and a weapon grip that follows the arm with the blade at its own angle; smears on forward swings, dust, hit flash and cast sparks.
+- **States:**
+  - idle (24 frames at 200 ms) and walk (8);
+  - an attack per weapon kind (8 frames: sword, axe, pickaxe, dagger, spear, bow, crossbow, staff, fists);
+  - cast; gather (chop with an axe shown, mine with a pickaxe, pick up);
+  - hurt, block, tame, ride, death fall;
+  - emotes on X: wave, cheer, sit.
+- **Network:** the state rides the move broadcast (`an`), so friends see each other act.
+- **Owner bug fix:** the game no longer auto-enters on load. The title greets a returning player by name.
+- **Tests:**
+  - run4 went from 2133 to 2168+ with 35 S2 gates; 7 mutations were each caught.
+  - Legacy gates updated with written reasons: keybinds 17 → 18, help entries 11 → 12, the v46 resume claim inverted by the owner fix, disc-before-sprite order, and the hero leg pair plus lunge offsets.
+  - run6 adds 4 S2 gates: at most 40 colours with only alpha 0/255, no sprite clipped across 1752 bakes, a quiet cache when standing still, and an average bake under 4 ms.
+- **Opus review:** 10 findings, all fixed. They included weapons clipped on strike frames, remote poses that never cleared, cache thrash while zooming, and a single bake failure switching the forge off.
+- **Flakes to watch:**
+  - The S2 C ambient-life "3 kinds in the dark forest" gate once saw only 2, because firefly/mote spawns are random.
+  - The S7 walking-speed gate (noted in session 1).
+
 ## Remaining stages
 None — the gauntlet is complete.
