@@ -659,6 +659,10 @@
   #login.fp .fp-item:hover::before, #login.fp .fp-item:focus-visible::before, #login.fp .fp-item.fp-focus::before { content: "– "; }
   #login.fp .fp-item:hover::after, #login.fp .fp-item:focus-visible::after, #login.fp .fp-item.fp-focus::after { content: " –"; }
   #login.fp #fpPlay       { top: 44vh; }
+  /* Owner bug fix 2026-10-24: a returning player is greeted on the title, never auto-entered */
+  #login.fp #fpWelcome    { position: absolute; left: 8vw; top: calc(44vh - 26px); font: italic 16px 'Cormorant Garamond', serif;
+                            color: var(--menu-gold); letter-spacing: 0.04em; display: none; }
+  #login.fp.fp-title #fpWelcome.on { display: block; }
   #login.fp #settingsBtn  { top: calc(44vh + 52px); }
   #login.fp #fpRedeem     { top: calc(44vh + 104px); }
   #login.fp #fpCredits    { top: calc(44vh + 156px); }
@@ -889,6 +893,7 @@
   <div id="fpShade"></div>
   <h1>RuneHaven</h1>
   <div class="tagline">One world &nbsp;·&nbsp; one history &nbsp;·&nbsp; shared by all</div>
+  <div id="fpWelcome"></div>
   <button class="fp-item fp-ttl" id="fpPlay">Play</button>
   <button id="settingsBtn">Settings</button>
   <button class="fp-item fp-ttl" id="fpRedeem">Redeem a Code</button>
@@ -9472,9 +9477,20 @@ async function resumeSession() {
     if (res.mode === "create") forgetSession();
     return false;
   }
-  /* v52+53 PART A: the pause goes exactly here — after the last check that
-     could still refuse, immediately before the one line that used to submit
-     with no warning at all. */
+  /* ============ OWNER BUG FIX 2026-10-24 — NEVER AUTO-ENTER =============
+     Reported: "when you open the game it takes you to the page of the
+     characters and auto enters, so you can't go into settings and the front
+     page". Since the Front Page Rework the title screen IS the front door, and
+     the 1.8 s resume pause (v52+53 PART A) skipped it. The resume now stops
+     HERE, at "ready": the name is filled in, the PIN state is probed, the
+     stored key is kept, and the title greets the player by name — they press
+     Play and Enter the World themselves. Nothing is ever submitted for them.
+     resumePause() is kept (unused) for the harness's own v52+53 checks. */
+  sessionResume.reason = "ready";
+  const welcome = document.getElementById("fpWelcome");
+  if (welcome) { welcome.textContent = `Welcome back, ${name}`; welcome.classList.add("on"); }
+  return false;
+  // eslint-disable-next-line no-unreachable
   sessionResume.reason = "waiting";
   const go = await resumePause(name);
   if (!go) {
