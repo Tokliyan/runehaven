@@ -663,6 +663,7 @@
   #login.fp #fpWelcome    { position: absolute; left: 8vw; top: calc(44vh - 26px); font: italic 16px 'Cormorant Garamond', serif;
                             color: var(--menu-gold); letter-spacing: 0.04em; display: none; }
   #login.fp.fp-title #fpWelcome.on { display: block; }
+  #login.fp.fp-sub-open #fpWelcome { display: none; }
   #login.fp #settingsBtn  { top: calc(44vh + 52px); }
   #login.fp #fpRedeem     { top: calc(44vh + 104px); }
   #login.fp #fpCredits    { top: calc(44vh + 156px); }
@@ -10858,9 +10859,9 @@ async function joinRealtime() {
     if (p.u === me.username) return;
     const o = others.get(p.u) || { x: p.x, y: p.y };
     o.tx = p.x; o.ty = p.y; o.cls = p.c; o.level = p.l;
-    if (!o.dead && p.d) o.diedAt = performance.now();   // Living World S2: when they fell, for the fall
+    if (others.has(p.u) && !o.dead && p.d) o.diedAt = performance.now();   // Living World S2: the fall — only for someone we saw alive
     o.hp = p.h; o.maxHp = p.m || 100; o.tier = p.t || null; o.dead = !!p.d;
-    if (p.an) { const a2 = animUnwire(p.an, performance.now()); if (a2) o.anim = a2; }   // Living World S2
+    o.anim = p.an ? animUnwire(p.an, performance.now()) : null;   // Living World S2: 0 means "doing nothing special" — clears it
     o.wk = p.wk || null; o.at = p.at || null; o.ps = !!p.ps; o.bl = !!p.bl;
     o.pe = p.pe || null; o.mo = !!p.mo;
     o.cb = !!p.cb;              // v39: is this player in combat right now
@@ -14403,7 +14404,8 @@ addEventListener("keydown", e => {
      open/close discipline as every other panel key — it simply skips the
      precedence chain in doInteract(), which is the whole point of having it:
      E gives you whatever is nearest, G always means "hand something over". */
-  if (k === KEYBINDS.emote && !e.repeat && !dead) doEmote();   // Living World S2: wave -> cheer -> sit
+  if (k === KEYBINDS.emote && !e.repeat && !dead &&
+      !(document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName))) doEmote();   // Living World S2: wave -> cheer -> sit
   if (k === KEYBINDS.give && !e.repeat && !dead) {
     const gw = nearestGiveTarget();
     if (gw) openGivePanel(gw);
@@ -20543,7 +20545,8 @@ function debugGuildBadges(patch) {
    fixed pixel-art frame rate. Animation is presentation only: the hit lands
    when it always did, and no timing, range or damage moved. */
 const ANIM_FRAME_MS = 100;          // pixel-art frame time (10 fps) — TUNABLE
-const ANIM_IDLE_LOOP = 48;          // idle frames per loop: 4.8 s, so breathing and the Mystic's runes both close
+const ANIM_IDLE_LOOP = 24;          // idle frames per loop at ANIM_IDLE_MS: 4.8 s, so breathing and the Mystic's runes both close
+const ANIM_IDLE_MS = 200;           // review (S2): idle is slow motion, so half the frames (and sprites) of the rest
 const ANIM_WALK_FRAMES = 8;
 const ANIM_ACTION_FRAMES = 6;       // cast / gather / death
 const ANIM_ATTACK_FRAMES = 8;       // attacks get two more: anticipation and impact both read
@@ -20579,7 +20582,7 @@ function remoteAnimState(o, moving, now) {
   if (o.dead) return { s: "death", at: o.diedAt || 0, dur: ANIM_DEATH_MS };
   const a = o.anim;
   if (a) {
-    const dur = a.s === "attack" ? (a.k === "bow" || a.k === "crossbow" ? ANIM_SHOOT_MS : swingDur(a.k)) : a.s === "cast" ? ANIM_CAST_MS
+    const dur = a.s === "attack" ? (a.k === "bow" || a.k === "crossbow" || a.k === "staff" ? ANIM_SHOOT_MS : swingDur(a.k)) : a.s === "cast" ? ANIM_CAST_MS
               : a.s === "gather" ? ANIM_GATHER_MS : a.s === "emote" ? (EMOTE_MS[a.k] || 0) : -1;
     const held = a.s === "tame" || (a.s === "emote" && !EMOTE_MS[a.k]);
     if ((dur > 0 && now - a.at < dur) || (held && !moving && now - a.at < 60000)) return { s: a.s, k: a.k, at: a.at, dur: dur > 0 ? dur : 0 };
@@ -20601,9 +20604,13 @@ function animUnwire(w, now) {
   return { s: s2, k: k || null, at: now - Math.min(60000, Math.max(0, +w[2] || 0)) };
 }
 /* an action just started: tell everyone now, not at the next 10 Hz tick */
+let animPulseTimer = 0;
 function animPulse() {
-  const now = performance.now();
-  if (now - animPulseAt < 120) return;
+  const now = performance.now(), wait = 120 - (now - animPulseAt);
+  if (wait > 0) {                       // review (S2): a second action inside the window is sent when it ends, not dropped
+    if (!animPulseTimer) animPulseTimer = setTimeout(() => { animPulseTimer = 0; animPulse(); }, wait);
+    return;
+  }
   animPulseAt = now;
   try { if (channel && me) sendMove(true); } catch (e) {}
 }
@@ -20752,11 +20759,11 @@ function heroAnimFrame(an, now, t) {
       break;
     }
     default: {   // idle: breathing, and a look-around every loop
-      frame = Math.floor(t / ANIM_FRAME_MS) % ANIM_IDLE_LOOP;
-      tA = frame * ANIM_FRAME_MS;
+      frame = Math.floor(t / ANIM_IDLE_MS) % ANIM_IDLE_LOOP;
+      tA = frame * ANIM_IDLE_MS;
       const br = Math.sin(tA / 2400 * 2 * Math.PI);
       P.sqY = br * 0.025; P.armL = br * 0.05; P.armR = -br * 0.05;
-      if (frame >= 30 && frame < 40) P.lean = 0.06 * Math.sin((frame - 30) / 10 * Math.PI);
+      if (frame >= 15 && frame < 20) P.lean = 0.06 * Math.sin((frame - 15) / 5 * Math.PI);
     }
   }
   return { P, frame, step, bob, tA, tool, key: an.s + ":" + (an.k || "") + ":" + frame };
@@ -20779,7 +20786,12 @@ const FORGE_ALPHA_CUT = 100;        // average alpha (0-255) at or above which a
 const FORGE_ART_LOGICAL = 1;        // ~ logical px per art px (B+: ~43 art px for a standing hero)
 const FORGE_CACHE_MAX = 900;        // sprites kept (each a few KB)
 const FORGE_BAKES_PER_FRAME = 4;
-const FORGE_BOX = { l: -34, r: 34, t: -74, b: 8 };   // logical px about the feet at S 2.4, scaled with S
+const FORGE_BOX = { l: -34, r: 34, t: -74, b: 8 };        // logical px about the feet at S 2.4, scaled with S
+/* review (S2): a strike reaches well past the standing box — a thrust spear
+   ~65 px out, a pickaxe under the feet, a death fall to the side — so the
+   states that move the weapon or the body out get the WIDE box. */
+const FORGE_BOX_WIDE = { l: -72, r: 72, t: -84, b: 16 };
+const FORGE_WIDE_STATES = new Set(["attack", "gather", "death", "emote", "cast", "hurt"]);
 let FORGE_ON = true;                // a context that cannot be read back (harness stub) turns it off
 const forgeCache = new Map(), forgeLast = new Map();
 const forgeStats = { bakes: 0, hits: 0, fallbacks: 0, live: 0, evictions: 0, failures: 0, maxColors: 0, lastBakeMs: 0 };
@@ -20829,9 +20841,9 @@ function forgeQuantize(buf, maxC) {
   return boxes.length;
 }
 function forgeBake(spec, px) {
-  const k = spec.S / 2.4;
-  const L = FORGE_BOX.l * k, T = FORGE_BOX.t * k;
-  const W = Math.ceil((FORGE_BOX.r - FORGE_BOX.l) * k / px), H = Math.ceil((FORGE_BOX.b - FORGE_BOX.t) * k / px);
+  const k = spec.S / 2.4, BX = spec.wide ? FORGE_BOX_WIDE : FORGE_BOX;
+  const L = BX.l * k, T = BX.t * k;
+  const W = Math.ceil((BX.r - BX.l) * k / px), H = Math.ceil((BX.b - BX.t) * k / px);
   const HW = W * FORGE_SS, HH = H * FORGE_SS;
   if (!forgeHi) {
     forgeHi = document.createElement("canvas");
@@ -20870,25 +20882,41 @@ function forgeBake(spec, px) {
 function cosKeyOf(cos) { return cos ? [cos.hat || "", cos.cloak || "", cos.skin || "", cos.aura || ""].join(",") : ""; }
 function forgeKey(spec, px) {
   return [spec.cls, spec.S, spec.tier || "", spec.wk || "", spec.atier || "", spec.blocking ? 1 : 0, cosKeyOf(spec.cos),
-          spec.face.x < -0.15 ? -1 : 1, spec.animKey, px.toFixed(5)].join("|");
+          spec.face.x < -0.15 ? -1 : 1, spec.animKey, spec.wide ? "W" : "N", px.toFixed(5)].join("|");
 }
 /* the sprite for a spec, or null when the caller should draw live */
+const FORGE_BAKE_MS_PER_FRAME = 3;  // review (S2): the budget is TIME as well as count
+const FORGE_BACKOFF_MS = 2000;      // a failed bake pauses baking this long; it never switches the forge off
+let forgeBakeMsLeft = FORGE_BAKE_MS_PER_FRAME, forgeBackoffUntil = 0;
+function forgeLookKey(spec, px) { return [spec.cls, spec.S, spec.tier || "", spec.wk || "", spec.atier || "", spec.blocking ? 1 : 0, cosKeyOf(spec.cos), spec.face.x < -0.15 ? -1 : 1, px.toFixed(5)].join("|"); }
 function forgeSprite(spec, px) {
   if (!FORGE_ON) { forgeStats.live++; return null; }
-  const key = forgeKey(spec, px);
+  const key = forgeKey(spec, px), look = forgeLookKey(spec, px);
   let e = forgeCache.get(key);
   if (e) { forgeCache.delete(key); forgeCache.set(key, e); forgeStats.hits++; forgeLast.set(spec.owner, e); return e; }
-  if (forgeBakesLeft > 0) {
+  const now = performance.now();
+  const mine = !!(me && spec.owner === me.username);
+  /* your own player may always take one bake a frame; everyone else waits for budget */
+  if (now >= forgeBackoffUntil && (mine ? forgeBakesLeft > -1 : (forgeBakesLeft > 0 && forgeBakeMsLeft > 0))) {
     forgeBakesLeft--;
+    const t0 = performance.now();
     try { e = forgeBake(spec, px); } catch (err) { e = null; }
-    if (!e) { FORGE_ON = false; forgeStats.failures++; forgeStats.live++; return null; }
-    forgeCache.set(key, e);
-    while (forgeCache.size > FORGE_CACHE_MAX) { forgeCache.delete(forgeCache.keys().next().value); forgeStats.evictions++; }
-    forgeLast.set(spec.owner, e);
-    return e;
+    forgeBakeMsLeft -= performance.now() - t0;
+    if (!e) {
+      forgeStats.failures++;
+      /* the very first bake failing means this context cannot be read back at
+         all (a harness stub): no forge here. Later failures only back off. */
+      if (forgeStats.bakes === 0) FORGE_ON = false; else forgeBackoffUntil = now + FORGE_BACKOFF_MS;
+    } else {
+      e.look = look;
+      forgeCache.set(key, e);
+      while (forgeCache.size > FORGE_CACHE_MAX) { forgeCache.delete(forgeCache.keys().next().value); forgeStats.evictions++; }
+      forgeLast.set(spec.owner, e);
+      return e;
+    }
   }
   const last = forgeLast.get(spec.owner);
-  if (last && last.px === px) { forgeStats.fallbacks++; return last; }
+  if (last && last.look === look) { forgeStats.fallbacks++; return last; }   // same player, same look and facing — only the frame lags
   forgeStats.live++;
   return null;
 }
@@ -20982,12 +21010,12 @@ function drawPlayerEntity(p, name, t, isMe) {
   const fr = heroAnimFrame(an, nowA, t);
   const faceN = { x: face.x < -0.15 ? -1 : 1, y: 1 };
   const spec = { owner: name, cls: p.cls, S, tier, face: faceN, wk: fr.tool || wkind, atier, blocking, cos: cosNow,
-                 step: fr.step, bob: fr.bob, pose: fr.P, tA: fr.tA, animKey: fr.key };
+                 step: fr.step, bob: fr.bob, pose: fr.P, tA: fr.tA, animKey: fr.key, wide: FORGE_WIDE_STATES.has(an.s) };
   const gx0 = sx + rx, gy0 = sy + ry + seatLift;
   const deathFade = an.s === "death" ? Math.max(0, 1 - Math.max(0, (nowA - an.at) / ANIM_DEATH_MS - 0.6) / 0.4) : 1;
   if (deathFade < 1) ctx.globalAlpha = deathFade;
   if (!mountedNow) drawUnitShadow(ctx, gx0, sy + ry, S);
-  const spr = forgeSprite(spec, forgeGrid().px);
+  const spr = forgeSprite(spec, forgeGrid(RENDER_DPR * zoomTarget).px);   // review (S2): the TARGET scale — easing reuses, never re-bakes
   if (spr) drawForgeSprite(ctx, spr, gx0, gy0);
   else {
     HERO_POSE = fr.P;
@@ -21746,7 +21774,7 @@ function drawGroundPass(w, h, minX, maxX, minY, maxY) {
 let renderShX = 0, renderShY = 0;
 function render(t) {
   updateZoom(performance.now());                               // Living World S1
-  forgeBakesLeft = FORGE_BAKES_PER_FRAME;                      // Living World S2: the per-frame bake budget
+  forgeBakesLeft = FORGE_BAKES_PER_FRAME; forgeBakeMsLeft = FORGE_BAKE_MS_PER_FRAME;   // Living World S2: the per-frame bake budget
   /* The view transform, in two steps: the device ratio here, then — after
      the shake's translate, which is in SCREEN (CSS) pixels — the zoom, so a
      hit shakes the same few pixels at any zoom. Net: VIEW_SCALE per logical px. */
@@ -23821,6 +23849,14 @@ function loadSettings() {
       const o = JSON.parse(raw) || {};
       for (const a in KEYBIND_DEFAULTS)
         if (typeof o[a] === "string" && o[a]) KEYBINDS[a] = o[a].toLowerCase();
+      /* Living World S2 review: a player who had already bound some action to
+         X before emotes existed keeps it — the new emote key moves to the first
+         free letter instead of firing alongside it. */
+      if (!(typeof o.emote === "string" && o.emote) &&
+          Object.keys(KEYBINDS).some(a => a !== "emote" && KEYBINDS[a] === KEYBINDS.emote)) {
+        const used = new Set(Object.values(KEYBINDS));
+        KEYBINDS.emote = ["z", "v", "n", "l", "j", "h", "u", "y", "o", "t"].find(c => !used.has(c)) || KEYBINDS.emote;
+      }
     }
   } catch (e) {}
   try {
