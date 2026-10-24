@@ -1865,8 +1865,8 @@ animation keeps working automatically:
 | Session | Contents | Status |
 |---|---|---|
 | **1** | P1: zoom, device pixels, camera | **SHIPPED** (see the changelog) |
-| **2** ★ | P2: Pixel Forge plus player characters and all their actions | next |
-| **3** ★ | P3 + P4: pets and all 27 mobs, through the same forge | |
+| **2** ★ | P2: Pixel Forge plus player characters and all their actions | **SHIPPED** (owner-approved GIFs, 2026-10-24) |
+| **3** ★ | P3 + P4: pets and all 27 mobs, through the same forge | next |
 | **4** ★ | P5 batch 1: Plains, Meadow, Forest, Dark Forest, sand and coast | |
 | **5** ★ | P5 batch 2: Enchanted, Sacred, Snow, Volcano, caves, buildings and landmarks | |
 | **6** | P6–P9 trimmed: townsfolk, wind and wildlife, action feel, landmark title cards, boss intro | |
