@@ -15076,6 +15076,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             const labelHits = [], plateHits = [];
             window.labelClearOfPlate = (x, y, w, mine) => { labelHits.push([x, y, mine && mine.feetY]); return lwSaved.labelClear(x, y, w, mine); };
             window.drawPlayerPlate = (q) => { plateHits.push({ sx: q.sx, sy: q.sy, feetY: q.feetY, name: q.name, isMe: q.isMe }); };
+            /* Living World S3 (harness setup, not the gate): the plate probe needs the local player ALIVE; record whether an
+               earlier frame of this block left it dead (shown in the label) and revive it, as the block start does. */
+            const s3WasDead = (window.document.getElementById('deathOverlay') || {}).style ? window.document.getElementById('deathOverlay').style.display : '?';
+            if (typeof window.respawn === 'function') window.respawn();
             const rows = []; let sy1 = NaN;
             for (const z of [1, 1.6, 2.2]) {
               window.debugSetZoom(z); placeAt(spawnX, spawnY); rf();
@@ -15095,7 +15099,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             const q = window.debugS2Info();
             results.push([`Living World S1 I: a queued label lands at ((x + shake) * Z, (y + 3 + shake) * Z - 3) at 1x / 1.6x / 2.2x, and the queues are left empty`,
               rows.every(r => r.label) && q.plateQueue === 0 && q.labelQueue === 0]);
-            results.push([`Living World S1 I: the local player's real plate (${rows.map(r => r.got).join(' | ')}) satisfies sy' = (sy - 25) * Z + 25 and feet - sy' = 25 * (Z - 1), and its feet and centre column stay where the zoomed world puts them`,
+            results.push([`Living World S1 I: the local player's real plate (${rows.map(r => r.got).join(' | ')}; death overlay was '${s3WasDead}') satisfies sy' = (sy - 25) * Z + 25 and feet - sy' = 25 * (Z - 1), and its feet and centre column stay where the zoomed world puts them`,
               rows.every(r => r.relation && r.anchor)]);
           }
           {
@@ -15862,7 +15866,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       const W = window, E = (x) => W.eval(x);
       try {
         const CI = W.debugCreatureInfo(), FAM = CI.families;
-        const MOBK = Object.keys(E('MOBS')), WILDK = Object.keys(E('WILD_SPECIES')), PC = E('PET_COMBAT');
+        const WI = W.debugWorldInfo(), MOBK = Object.keys(WI.MOBS), WILDK = Object.keys(WI.WILD_SPECIES), PC = WI.PET_COMBAT;
         const want = { dragon: ['fire_dragon', 'water_dragon', 'storm_dragon', 'shadow_dragon', 'dragon_elder'], flier: ['griffin', 'phoenix'],
           canine: ['wolf', 'shadowfox', 'lightfox', 'duskfox_elder'], equine: ['unicorn', 'stag', 'unicorn_elder'], golem: ['golem', 'crystal_golem', 'golem_elder'],
           sprite: ['tree_sprite', 'water_sprite', 'stone_sprite', 'wind_sprite'], moth: ['glow_moth'], serpent: ['basilisk', 'krakenling', 'salamander_king'], beast: ['bear', 'boar'] };
@@ -15880,12 +15884,12 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           const s = W.petAnimState(h, sp, now0, true).s;
           if ((s === 'attack') !== !!PC[sp]) atkBad.push(sp + ':' + s);
         }
-        E('petHappyAt = performance.now() - 100');
+        W.debugSetPetHappy(W.performance.now() - 100);
         for (const sp of WILDK) {
           const s = W.petAnimState(mk(), sp, W.performance.now(), true).s, drag = FAM[sp] === 'dragon';
           if ((s === 'happy') === drag) happyBad.push(sp + ':' + s);
         }
-        E('petHappyAt = 0');
+        W.debugSetPetHappy(0);
         results.push([`Living World S3 B (owner rule): a pet attacks ONLY if it fights (PET_COMBAT) — ${WILDK.length} species, ${atkBad.length} wrong ${atkBad.slice(0, 4).join(' ')}`, atkBad.length === 0 && WILDK.length >= 27]);
         results.push([`Living World S3 B (owner rule): every family plays "happy" except the dragons, which never do — ${happyBad.length} wrong ${happyBad.slice(0, 4).join(' ')}`, happyBad.length === 0]);
         const hm = mk(); W.me.mounted = true; hm.pet.swingT = now0 - 5;

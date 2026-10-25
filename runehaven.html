@@ -20347,10 +20347,11 @@ function drawPet(h, species, t) {
   if (downed) ctx.globalAlpha = 0.55;          // dimmed + grounded = out of the fight
   if (flier) {
     /* S3: a forged flier's hover is in its pose, so it holds a flat altitude (no second bob); a mount keeps the seat's */
-    const alt = ps && !mounted ? (downed ? 2 : (sp.alt || 32)) : petDrawAlt(species, t, downed);   // Mount/Bazaar Polish PART A
+    const alt = petDrawAlt(species, t, downed);   // Mount/Bazaar Polish PART A
+    const altF = ps && !mounted ? (downed ? 2 : (sp.alt || 32)) : alt;   // S3: a forged flier's hover is in its pose — a flat altitude (the mount keeps the shared one)
     ctx.fillStyle = `rgba(20,32,44,${SUN.alpha * 0.4})`;
     ctx.beginPath(); ctx.ellipse(gx, gy, 3.2, 1.4, 0, 0, Math.PI * 2); ctx.fill();
-    const [sx, sy] = worldToScreen(px, py, groundZ(px, py) + alt);
+    const [sx, sy] = worldToScreen(px, py, groundZ(px, py) + altF);
     const PZ = ps ? drawSpeciesForged(owner, species, sx, sy, t, ps, true, face) : null;
     if (!PZ) drawSpecies(species, sx, sy, t, !downed);
     drawPetAccessory(petAcc, species, sx + (PZ ? (PZ.dx || 0) * face : 0), sy - (PZ ? PZ.lift || 0 : 0));   // v35
@@ -21667,6 +21668,7 @@ function drawSpeciesForged(owner, species, sx, sy, t, st, air, flip) {
 function wildAnimState(w, wx, wy, now) {
   return crBeatState("wild:" + (w.id !== undefined ? w.id : (w.x + "," + w.y)), now) || { s: "idle" };
 }
+function debugSetPetHappy(t) { petHappyAt = +t || 0; }
 function debugCreatureInfo() {
   return { families: Object.assign({}, CREATURE_FAMILY), CR_FRAMES: Object.assign({}, CR_FRAMES), CR_HURT_MS, CR_DEATH_MS, CR_STRIKE_MS, CR_HAPPY_MS,
            CR_BEAT_MS, CR_BEAT_EVERY_MS, CR_SIT_AFTER_MS, CR_ALERT_R, CR_IMPACT: Object.assign({}, CR_IMPACT), CR_BIG_BAKE_PX, CR_MOVE_SPEED,
