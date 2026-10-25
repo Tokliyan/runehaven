@@ -20853,30 +20853,90 @@ function forgeDownsample(src, HW, W, H, ss, cut) {
   }
   return out;
 }
-/* median cut over the solid pixels; returns the number of colours left */
+/* median cut over the solid pixels; returns the number of colours left.
+   S3: the cut runs over the colour HISTOGRAM (each distinct colour weighted
+   by how many pixels use it) rather than over every pixel — the same boxes,
+   a fraction of the cost, which is what pays for the finer grid and for the
+   second pass after the finish. */
 function forgeQuantize(buf, maxC) {
-  const idx = [];
-  for (let i = 0; i < buf.length; i += 4) if (buf[i + 3]) idx.push(i);
-  const distinct = new Set();
-  for (const i of idx) { distinct.add((buf[i] << 16) | (buf[i + 1] << 8) | buf[i + 2]); if (distinct.size > maxC) break; }
-  if (distinct.size <= maxC) return distinct.size;
-  let boxes = [idx];
-  const range = b => { let lo = [255, 255, 255], hi = [0, 0, 0]; for (const i of b) for (let c = 0; c < 3; c++) { const v = buf[i + c]; if (v < lo[c]) lo[c] = v; if (v > hi[c]) hi[c] = v; } const r = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]]; const ch = r[0] >= r[1] && r[0] >= r[2] ? 0 : r[1] >= r[2] ? 1 : 2; return [r[ch], ch]; };
+  const hist = new Map();
+  for (let i = 0; i < buf.length; i += 4) if (buf[i + 3]) { const k = (buf[i] << 16) | (buf[i + 1] << 8) | buf[i + 2]; hist.set(k, (hist.get(k) || 0) + 1); }
+  if (hist.size <= maxC) return hist.size;
+  const cols = [];
+  for (const [k, n] of hist) cols.push([k >> 16, (k >> 8) & 255, k & 255, n, k]);
+  let boxes = [cols];
+  const stat = b => { let lo0 = 255, lo1 = 255, lo2 = 255, hi0 = 0, hi1 = 0, hi2 = 0, w = 0;
+    for (const c of b) { if (c[0] < lo0) lo0 = c[0]; if (c[0] > hi0) hi0 = c[0]; if (c[1] < lo1) lo1 = c[1]; if (c[1] > hi1) hi1 = c[1]; if (c[2] < lo2) lo2 = c[2]; if (c[2] > hi2) hi2 = c[2]; w += c[3]; }
+    const r0 = hi0 - lo0, r1 = hi1 - lo1, r2 = hi2 - lo2, ch = r0 >= r1 && r0 >= r2 ? 0 : r1 >= r2 ? 1 : 2;
+    return [ch === 0 ? r0 : ch === 1 ? r1 : r2, ch, w]; };
   while (boxes.length < maxC) {
-    let best = -1, bestScore = 0, bestCh = 0;
-    for (let b = 0; b < boxes.length; b++) { if (boxes[b].length < 2) continue; const [r, ch] = range(boxes[b]); const sc = r * Math.sqrt(boxes[b].length); if (sc > bestScore) { bestScore = sc; best = b; bestCh = ch; } }
+    let best = -1, bestScore = 0, bestCh = 0, bestW = 0;
+    for (let b = 0; b < boxes.length; b++) { if (boxes[b].length < 2) continue; const [r, ch, w] = stat(boxes[b]); const sc = r * Math.sqrt(w); if (sc > bestScore) { bestScore = sc; best = b; bestCh = ch; bestW = w; } }
     if (best < 0 || bestScore === 0) break;
-    const b = boxes[best].sort((p, q) => buf[p + bestCh] - buf[q + bestCh]);
-    const mid = b.length >> 1;
+    const b = boxes[best].sort((p, q) => p[bestCh] - q[bestCh]);
+    let acc = 0, mid = 1;                       // split at the weighted median, never leaving a side empty
+    for (let i = 0; i < b.length - 1; i++) { acc += b[i][3]; if (acc * 2 >= bestW) { mid = i + 1; break; } mid = i + 1; }
     boxes.splice(best, 1, b.slice(0, mid), b.slice(mid));
   }
+  const map = new Map();
   for (const b of boxes) {
-    let r = 0, g = 0, bl = 0;
-    for (const i of b) { r += buf[i]; g += buf[i + 1]; bl += buf[i + 2]; }
-    r = Math.round(r / b.length); g = Math.round(g / b.length); bl = Math.round(bl / b.length);
-    for (const i of b) { buf[i] = r; buf[i + 1] = g; buf[i + 2] = bl; }
+    let r = 0, g = 0, bl = 0, w = 0;
+    for (const c of b) { r += c[0] * c[3]; g += c[1] * c[3]; bl += c[2] * c[3]; w += c[3]; }
+    const v = (Math.round(r / w) << 16) | (Math.round(g / w) << 8) | Math.round(bl / w);
+    for (const c of b) map.set(c[4], v);
   }
-  return boxes.length;
+  const out = new Set();
+  for (let i = 0; i < buf.length; i += 4) if (buf[i + 3]) { const v = map.get((buf[i] << 16) | (buf[i + 1] << 8) | buf[i + 2]); buf[i] = v >> 16; buf[i + 1] = (v >> 8) & 255; buf[i + 2] = v & 255; out.add(v); }
+  return out.size;
+}
+/* ============ LIVING WORLD S3 — THE PIXEL FINISH ==========================
+   Owner direction 2026-10-25 (README "Session 3 design"): finer pixels (one
+   art pixel = one screen pixel at the 1.6x default, so today's detail
+   survives) and an authored pixel-art FINISH on every sprite the forge makes,
+   heroes and creatures alike:
+     1. speckle clean-up — a lone pixel unlike all four neighbours takes their
+        majority colour (the anti-aliasing crumbs a downsample leaves);
+     2. light from the top-left — a highlight on lit edges, shade on far ones;
+     3. a selective outline — each sprite edged in its OWN darkened hue, never
+        flat black;
+     4. (deaths only) an ordered Bayer dither that eats the sprite away. */
+const FINISH_HI = 1.16, FINISH_HI_ADD = 16, FINISH_SHADE = 0.78, FINISH_LINE = 0.28;
+const FINISH_BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+function forgeFinish(b, W, H, dissolve) {
+  const N = W * H, sol = new Uint8Array(N);
+  for (let p = 0; p < N; p++) sol[p] = b[p * 4 + 3] ? 1 : 0;
+  /* 1. speckles (read from a snapshot so a fix never feeds the next one) */
+  const snap = new Uint8ClampedArray(b);
+  const sk = p => (snap[p * 4] << 16) | (snap[p * 4 + 1] << 8) | snap[p * 4 + 2];
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+    const p = y * W + x;
+    if (!sol[p] || !sol[p - 1] || !sol[p + 1] || !sol[p - W] || !sol[p + W]) continue;
+    const me2 = sk(p), a = sk(p - 1), c = sk(p + 1), d = sk(p - W), e = sk(p + W);
+    if (me2 === a || me2 === c || me2 === d || me2 === e) continue;
+    const best = a === c || a === d || a === e ? a : c === d || c === e ? c : d === e ? d : -1;
+    if (best >= 0) { b[p * 4] = best >> 16; b[p * 4 + 1] = (best >> 8) & 255; b[p * 4 + 2] = best & 255; }
+  }
+  /* 2. light from the top-left, shade on the bottom-right edges */
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const p = y * W + x; if (!sol[p]) continue;
+    const i = p * 4;
+    if (y === 0 || x === 0 || !sol[p - W] || !sol[p - 1]) { b[i] = Math.min(255, b[i] * FINISH_HI + FINISH_HI_ADD); b[i + 1] = Math.min(255, b[i + 1] * FINISH_HI + FINISH_HI_ADD); b[i + 2] = Math.min(255, b[i + 2] * FINISH_HI + FINISH_HI_ADD); }
+    else if (y === H - 1 || x === W - 1 || !sol[p + W] || !sol[p + 1]) { b[i] *= FINISH_SHADE; b[i + 1] *= FINISH_SHADE; b[i + 2] *= FINISH_SHADE; }
+  }
+  /* 3. the selective outline: each empty pixel touching the sprite takes its neighbour's colour, darkened */
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const p = y * W + x; if (sol[p]) continue;
+    const q = y < H - 1 && sol[p + W] ? p + W : y > 0 && sol[p - W] ? p - W : x < W - 1 && sol[p + 1] ? p + 1 : x > 0 && sol[p - 1] ? p - 1 : -1;
+    if (q < 0) continue;
+    const i = p * 4, j = q * 4;
+    b[i] = b[j] * FINISH_LINE + 14; b[i + 1] = b[j + 1] * FINISH_LINE + 12; b[i + 2] = b[j + 2] * FINISH_LINE + 24; b[i + 3] = 255;
+  }
+  /* 4. the death dissolve */
+  if (dissolve > 0) {
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++)
+      if (FINISH_BAYER[(y & 3) * 4 + (x & 3)] / 16 < dissolve) b[(y * W + x) * 4 + 3] = 0;
+  }
+  return b;
 }
 function forgeBake(spec, px) {
   const k = spec.S / 2.4, BX = spec.wide ? FORGE_BOX_WIDE : FORGE_BOX;
@@ -20959,9 +21019,19 @@ function forgeSprite(spec, px) {
   forgeStats.live++;
   return null;
 }
+/* S3: the cache is bounded by count AND by pixels — a dragon's frame is
+   far bigger than a goblin's, and the pixels are what cost memory */
+const FORGE_CACHE_PX = 16e6;
+let forgeCachePx = 0;
 function forgeCacheAdd(key, e) {
+  const old = forgeCache.get(key);
+  if (old) forgeCachePx -= old.W * old.H;
   forgeCache.set(key, e);
-  while (forgeCache.size > FORGE_CACHE_MAX) { forgeCache.delete(forgeCache.keys().next().value); forgeStats.evictions++; }
+  forgeCachePx += e.W * e.H;
+  while (forgeCache.size > FORGE_CACHE_MAX || (forgeCachePx > FORGE_CACHE_PX && forgeCache.size > 1)) {
+    const k = forgeCache.keys().next().value, v = forgeCache.get(k);
+    forgeCache.delete(k); forgeCachePx -= v ? v.W * v.H : 0; forgeStats.evictions++;
+  }
 }
 /* the sprite's top-left snapped to a whole backing pixel of the main canvas */
 function drawForgeSprite(c, e, sx, sy) {
@@ -20988,60 +21058,7 @@ function debugForgeInfo() {
            FORGE_ART_LOGICAL, FORGE_CACHE_MAX, FORGE_BAKES_PER_FRAME, grid: forgeGrid(),
            ANIM_FRAME_MS, ANIM_IDLE_LOOP, ANIM_WALK_FRAMES, ANIM_ACTION_FRAMES, emote: emoteKind };
 }
-function debugSetForge(on) { FORGE_ON = !!on; if (!on) { forgeCache.clear(); forgeLast.clear(); } }
-
-/* ============ LIVING WORLD S3 — THE PIXEL FINISH ==========================
-   Owner direction 2026-10-25 (README "Session 3 design"): finer pixels (one
-   art pixel = one screen pixel at the 1.6x default, so today's detail
-   survives) and an authored pixel-art FINISH on every sprite the forge makes,
-   heroes and creatures alike:
-     1. speckle clean-up — a lone pixel unlike all four neighbours takes their
-        majority colour (the anti-aliasing crumbs a downsample leaves);
-     2. light from the top-left — a highlight on lit edges, shade on far ones;
-     3. a selective outline — each sprite edged in its OWN darkened hue, never
-        flat black;
-     4. (deaths only) an ordered Bayer dither that eats the sprite away. */
-const FINISH_HI = 1.16, FINISH_HI_ADD = 16, FINISH_SHADE = 0.78, FINISH_LINE = 0.28;
-const FINISH_BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
-function forgeFinish(b, W, H, dissolve) {
-  const at = (x, y) => (y * W + x) * 4;
-  const op = (x, y) => x >= 0 && y >= 0 && x < W && y < H && b[at(x, y) + 3] > 0;
-  const key = j => (b[j] << 16) | (b[j + 1] << 8) | b[j + 2];
-  const c2 = new Uint8ClampedArray(b);
-  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
-    const i = at(x, y); if (!b[i + 3]) continue;
-    let n = 0; const ks = [];
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (op(x + dx, y + dy)) { n++; ks.push(key(at(x + dx, y + dy))); }
-    if (n < 3) continue;
-    const me2 = key(i);
-    if (ks.indexOf(me2) >= 0) continue;
-    const cnt = new Map(); let best = -1, bc = 0;
-    for (const k of ks) { const v = (cnt.get(k) || 0) + 1; cnt.set(k, v); if (v > bc) { bc = v; best = k; } }
-    if (bc >= 2) { c2[i] = best >> 16; c2[i + 1] = (best >> 8) & 255; c2[i + 2] = best & 255; }
-  }
-  b.set(c2);
-  const c3 = new Uint8ClampedArray(b);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const i = at(x, y); if (!b[i + 3]) continue;
-    if (!op(x, y - 1) || !op(x - 1, y)) { for (let c = 0; c < 3; c++) c3[i + c] = Math.min(255, b[i + c] * FINISH_HI + FINISH_HI_ADD); }
-    else if (!op(x, y + 1) || !op(x + 1, y)) { for (let c = 0; c < 3; c++) c3[i + c] = b[i + c] * FINISH_SHADE; }
-  }
-  b.set(c3);
-  const c4 = new Uint8ClampedArray(b);
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const i = at(x, y); if (b[i + 3]) continue;
-    let src = -1;
-    for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) if (op(x + dx, y + dy)) { src = at(x + dx, y + dy); break; }
-    if (src < 0) continue;
-    c4[i] = b[src] * FINISH_LINE + 14; c4[i + 1] = b[src + 1] * FINISH_LINE + 12; c4[i + 2] = b[src + 2] * FINISH_LINE + 24; c4[i + 3] = 255;
-  }
-  b.set(c4);
-  if (dissolve > 0) {
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++)
-      if (FINISH_BAYER[(y % 4) * 4 + (x % 4)] / 16 < dissolve) b[at(x, y) + 3] = 0;
-  }
-  return b;
-}
+function debugSetForge(on) { FORGE_ON = !!on; if (!on) { forgeCache.clear(); forgeLast.clear(); forgeCachePx = 0; } }
 
 /* ============ LIVING WORLD S3 — CREATURES THAT LIVE ======================
    Every mob, pet and wild creature goes through the same forge as the heroes:
@@ -21375,16 +21392,22 @@ function creatureBake(spec, px) {
   forgeQuantize(out, FORGE_MAX_COLORS);
   forgeFinish(out, W, H, P.dissolve || 0);
   const colors = forgeQuantize(out, FORGE_MAX_COLORS);
-  const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+  /* trimmed to what is really there: the box is generous so nothing clips, the cache keeps only the pixels */
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (out[(y * W + x) * 4 + 3]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) { x0 = 0; y0 = 0; x1 = 0; y1 = 0; }
+  const TW = x1 - x0 + 1, TH = y1 - y0 + 1;
+  const cv = document.createElement("canvas"); cv.width = TW; cv.height = TH;
   const oc = cv.getContext("2d");
   if (!oc || typeof oc.createImageData !== "function") return null;
-  const id = oc.createImageData(W, H);
-  if (!id || !id.data || id.data.length !== out.length) return null;
-  id.data.set(out); oc.putImageData(id, 0, 0);
+  const id = oc.createImageData(TW, TH);
+  if (!id || !id.data || id.data.length !== TW * TH * 4) return null;
+  for (let y = 0; y < TH; y++) id.data.set(out.subarray(((y + y0) * W + x0) * 4, ((y + y0) * W + x0 + TW) * 4), y * TW * 4);
+  oc.putImageData(id, 0, 0);
   forgeStats.bakes++; forgeStats.creatureBakes++;
   if (colors > forgeStats.maxColors) forgeStats.maxColors = colors;
   forgeStats.lastBakeMs = performance.now() - t0;
-  return { cv, W, H, ax: -L / px, ay: -T / px, px, colors, creature: true };
+  return { cv, W: TW, H: TH, ax: -L / px - x0, ay: -T / px - y0, px, colors, creature: true };
 }
 /* a creature's sprite for a frame: cache, budget, same-look fallback (as the heroes') */
 function creatureSprite(spec, px) {
