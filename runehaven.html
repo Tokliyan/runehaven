@@ -21213,8 +21213,10 @@ function crBeat(kind, x, big, box) {
     case "golem_elder": return { sqY: -0.05 * b, dust: b > 0.7 ? (b - 0.7) / 0.3 * 0.6 : 0 };                              // settles its weight; the ground puffs
     case "adult_golem": return { dx: Math.sin(x * Math.PI * 6) * 0.9 * b, lean: 0.05 * b };                                // grinds its stone knuckles
     case "crystal_golem": return { fx: [P => crSparkles(box, x, "#e6f6ff", 2, P)] };                                  // refracts a glint
-    case "tree_sprite": case "water_sprite": case "stone_sprite": case "wind_sprite":
-      return { spin: x * Math.PI * 2 * 0.25 * Math.sin(x * Math.PI), fx: [P => crSparkles(box, x, kind === "water_sprite" ? "#bfefff" : kind === "tree_sprite" ? "#c6ee90" : kind === "wind_sprite" ? "#eef8ff" : "#d8cfb8", 3, P)] };
+    case "tree_sprite": return { spin: x * Math.PI * 2 * 0.25 * Math.sin(x * Math.PI), fx: [P => crSparkles(box, x, "#c6ee90", 3, P)] };      // leaves circle it
+    case "water_sprite": return { lift: 2 * b, sqY: Math.sin(x * Math.PI * 4) * 0.08, fx: [P => crSparkles(box, x, "#bfefff", 4, P)] };   // ripples, droplets spin off
+    case "stone_sprite": return { sqY: -0.1 * b, dust: b > 0.8 ? 0.4 : 0, fx: [P => crSparkles(box, x, "#d8cfb8", 2, P)] };               // hunkers down, pebbles orbit
+    case "wind_sprite": return { spin: x * Math.PI * 2, dx: Math.sin(x * Math.PI * 2) * 3, fx: [P => crSparkles(box, x, "#eef8ff", 5, P)] };   // a full gust of a twirl
     case "glow_moth": return { dx: Math.cos(x * Math.PI * 2) * 6 * big, lift: Math.sin(x * Math.PI * 2) * 4 * big };  // circles the light
     case "fire_dragon": return { lean: -0.1 * b, fx: [P => crPuff(box, x, "rgba(120,110,110,0.85)", P)] };                // a smoke puff
     case "dragon_elder": return { sqY: 0.06 * b, lift: 1.5 * b, fx: [P => crSparkles(box, x, "#ffd25a", 5, P)] };          // stretches tall in a crown of gold
