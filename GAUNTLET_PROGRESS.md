@@ -114,6 +114,11 @@ Session started 2026-10-13 17:32 Sydney, by the owner ("start the gauntlet now, 
 - **Opus review:** 9 findings, all fixed. The biggest was Retina memory at 2.2x.
 - **Flake to watch:** the S7 "walking player really is slower" gate once measured 1645 tiles moved (a teleport mid-walk). It passed on rerun, and the cause hasn't been found yet.
 
+## Living World session 3 (creatures that live): SHIPPED to `main` (2026-10-25)
+- All 15 mobs and every pet / wild species are forged with family motion (idle, beat, move, attack, hurt, death; happy / sit / alert / ride for pets), per-species life beats and the pixel finish (heroes too). See the art-style skill's 2026-10-25 entry.
+- One Opus review (6 must-fix, 12 should-fix) — all must-fix and most should-fix applied; the weapon-rig depth and remote pet attacks are noted as limits.
+- Gates: run4 "Living World S3" A–F (10 gates); run6 "Living World S3 forge" (1)–(3). Legacy gates changed with written reasons: S2 A (SS 4 -> 2), S2 B (forgeGrid pins for 0.625), run6 S2 forge (4) bake limit 4 -> 6 ms.
+
 ## Living World session 2 (pixel-art characters that act): SHIPPED to `main` (2026-10-24)
 - **Pixel Forge (owner D1 "B+"):** procedural hero bodies are baked at 4×, box-filtered to a whole-backing-pixel art grid, reduced to at most 40 colours, LRU-cached, and drawn crisp and snapped. Wide boxes are used for actions.
 - **Pose rig:** arm pivots, lean, squash/stretch, lunge footwork, body drive, and a weapon grip that follows the arm with the blade at its own angle; smears on forward swings, dust, hit flash and cast sparks.

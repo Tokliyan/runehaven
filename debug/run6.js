@@ -334,7 +334,10 @@ const STUB = `
     const tn = r.times.filter(t => !t[0]).map(t => t[1]), tw = r.times.filter(t => t[0]).map(t => t[1]), ta = r.times.map(t => t[1]).concat(r.classes.map(c => c.ms));
     const srt = ta.slice().sort((a, b) => a - b), p95 = srt[Math.floor(srt.length * 0.95)];
     console.log(`forge bake time over ${ta.length} bakes: average ${avg(ta).toFixed(2)} ms (narrow ${avg(tn).toFixed(2)}, wide ${avg(tw).toFixed(2)}), p95 ${p95.toFixed(2)}, max ${srt[srt.length - 1].toFixed(2)}`);
-    results.push([`Living World S2 forge (4): a bake is cheap — over ${ta.length} bakes the average is ${avg(ta).toFixed(2)} ms (narrow ${avg(tn).toFixed(2)}, wide ${avg(tw).toFixed(2)}; limit 4 ms), p95 ${p95.toFixed(2)} ms`, avg(ta) < 4]);
+    /* Living World S3: limit 4 -> 6 ms. Reason: the owner-approved finer grid (one art px = one screen px at 1.6x) has ~3-4x the art pixels per sprite
+       (the quantize + finish passes run over all of them). Measured on a quiet machine on the S3 branch before this change: average 4.58 ms
+       (narrow 3.02, wide 5.06); 6 ms is the smallest round figure with ~30% headroom over it. */
+    results.push([`Living World S2 forge (4): a bake is cheap — over ${ta.length} bakes the average is ${avg(ta).toFixed(2)} ms (narrow ${avg(tn).toFixed(2)}, wide ${avg(tw).toFixed(2)}; limit 6 ms), p95 ${p95.toFixed(2)} ms`, avg(ta) < 6]);
   }
   {
     /* (3) standing still: the idle loop is 24 frames of 200 ms, so give the real loop longer than one loop to bake them all */
@@ -349,6 +352,40 @@ const STUB = `
     console.log(`standing still: bakes ${r.a.bakes} -> ${r.b.bakes}, hits ${r.a.hits} -> ${r.b.hits}, live ${r.a.live} -> ${r.b.live}, fallbacks ${r.a.fallbacks} -> ${r.b.fallbacks}, ${r.size} sprites cached, forge ${r.on ? 'on' : 'OFF'}`);
     results.push([`Living World S2 forge (3): standing still for 60 rendered frames adds no bake (${r.a.bakes} -> ${r.b.bakes}), no live draw (${r.a.live} -> ${r.b.live}) and no fallback (${r.a.fallbacks} -> ${r.b.fallbacks}); every frame is a cache hit (${r.b.hits - r.a.hits} hits), FORGE_ON stays true and nothing failed (${r.b.failures} failures)`,
       r.onBefore && r.on === true && r.b.bakes === r.a.bakes && r.b.live === r.a.live && r.b.fallbacks === r.a.fallbacks && r.b.hits - r.a.hits >= 55 && r.b.failures === 0 && r.size > 0]);
+  }
+
+  /* ---- 7. Living World S3: every creature through the real forge ---------- */
+  {
+    const r = await p.evaluate(() => {
+      const out = { n: 0, nulls: [], bad: [], deathOk: 0, deathN: 0, ms: [], maxC: 0 };
+      const scan = (e) => { const d = e.cv.getContext('2d').getImageData(0, 0, e.W, e.H).data, cols = new Set(); let bad = 0, solid = 0;
+        for (let i = 0; i < d.length; i += 4) { if (d[i + 3] && d[i + 3] !== 255) bad++; if (d[i + 3] === 255) { solid++; cols.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]); } } return { bad, solid, cols: cols.size }; };
+      const run = (owner, kind, body, s, opts) => { const n = CR_FRAMES[s], solids = [];
+        for (let i = 0; i < n; i++) { forgeBakesLeft = FORGE_BAKES_PER_FRAME; forgeBakeMsLeft = 1e9; const t0 = performance.now();
+          const e = crFrame(owner + s + i, kind, opts.sk, body, 0, { s, x: (i + 0.5) / n }, opts); out.ms.push(performance.now() - t0); out.n++;
+          if (!e) { out.nulls.push(kind + ' ' + s + i); continue; } const q = scan(e); solids.push(q.solid); out.maxC = Math.max(out.maxC, q.cols);
+          if (q.bad || q.cols > FORGE_MAX_COLORS || q.solid < 20) out.bad.push(`${kind} ${s}${i}: ${q.bad} partial, ${q.cols} cols, ${q.solid} solid`); }
+        if (s === 'death' && solids.length === n) { out.deathN++; if (solids[n - 1] < solids[0] * 0.6) out.deathOk++; } };
+      for (const kind of Object.keys(MOBS)) { const m = { kind, id: 'g6' + kind, x: me.x, y: me.y, fx: 1, fy: 0, state: 'idle', ph: 0, hp: 1, maxHp: 1, dead: false, winding: false };
+        const big = Math.min(2.4, Math.max(1, (MOB_K[kind] || SPECIES_K[kind] || 1) / 1.5));
+        for (const s of ['idle', 'beat', 'move', 'attack', 'hurt', 'death']) { m.dead = s === 'death'; run('g6m', kind, mobBodyFn(m), s, { big, flip: 1, sk: 'm' }); } }
+      for (const sp of Object.keys(WILD_SPECIES)) { const big = Math.min(2.2, Math.max(1, (SPECIES_K[sp] || 1) / 1.3)), fam = crFamily(sp);
+        for (const s of ['idle', 'beat', 'move', 'happy', 'attack', 'sit']) { if (s === 'attack' && !PET_COMBAT[sp]) continue; if (s === 'happy' && fam === 'dragon') continue;
+          run('g6p', sp, speciesBodyFn(sp), s, { big, flip: -1, sk: 's' }); } }
+      return out;
+    });
+    const avg = r.ms.reduce((a, b) => a + b, 0) / Math.max(1, r.ms.length);
+    console.log(`S3 creature bakes: ${r.n}, average ${avg.toFixed(2)} ms, most colours ${r.maxC}`);
+    results.push([`Living World S3 forge (1): every mob x 6 states and every species x its allowed states (${r.n} frames, both facings in play) bakes into alpha 0 / 255, <= 40 colours, never empty — ${r.nulls.length} null, ${r.bad.length} bad${r.bad.length ? ': ' + r.bad.slice(0, 3).join(' | ') : ''}`,
+      r.n > 1500 && r.nulls.length === 0 && r.bad.length === 0]);
+    results.push([`Living World S3 forge (2): every death dissolves — the last frame keeps under 60% of the first's pixels for ${r.deathOk} of ${r.deathN} mobs; average creature bake ${avg.toFixed(2)} ms (limit 10)`, r.deathN >= 15 && r.deathOk === r.deathN && avg < 10]);
+    const w = await p.evaluate(async () => {
+      debugGrantPet('wolf'); const a = debugForgeInfo().stats;
+      await new Promise(res => setTimeout(res, 2500));
+      const b = debugForgeInfo().stats;
+      return { on: debugForgeInfo().FORGE_ON, cb: b.creatureBakes - a.creatureBakes, fail: b.failures - a.failures, pet: !!eval('forgeLast.get("pet:me")') };
+    });
+    results.push([`Living World S3 forge (3): in the world a pet is drawn from the forge (pet sprite ${w.pet}, ${w.cb} creature bakes in 2.5 s, ${w.fail} failures, forge on ${w.on})`, w.on && w.pet && w.cb > 0 && w.fail === 0]);
   }
 
   if (errs.length) results.push(['S4 run6: no page errors (' + errs.slice(0, 3).join(' | ') + ')', false]);

@@ -15387,7 +15387,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         try {
           /* ---------- A. the pose rig and the keyframes ---------- */
           results.push([`Living World S2 A: the tunables are as specced — ${K2.FRAME} ms frames, idle loop ${K2.IDLE} frames of ${K2.IDLE_MS} ms, walk ${K2.WALK}, cast/gather/death ${K2.ACT}, attack ${K2.ATKF}, death ${K2.DEATH} ms, <= ${K2.MAXC} colours, alpha cut ${K2.CUT}, ${K2.SS}x supersample, ${K2.BUDGET} bakes a frame`,
-            K2.FRAME === 100 && K2.IDLE === 24 && K2.IDLE_MS === 200 && K2.MS3 === 3 && K2.WALK === 8 && K2.ACT === 6 && K2.ATKF === 8 && K2.DEATH === 900 && K2.MAXC === 40 && K2.CUT === 100 && K2.SS === 4 && K2.BUDGET === 4 &&
+            K2.FRAME === 100 && K2.IDLE === 24 && K2.IDLE_MS === 200 && K2.MS3 === 3 && K2.WALK === 8 && K2.ACT === 6 && K2.ATKF === 8 && K2.DEATH === 900 && K2.MAXC === 40 && K2.CUT === 100 && /* Living World S3: SS 4 -> 2, owner-approved finer grid (README "Session 3 design": one art px = one screen px at 1.6x; a 2x supersample suffices) */ K2.SS === 2 && K2.BUDGET === 4 &&
             ATK && GAT && CODES && KINDS && CODES.length === 11 && K2.WALK_MS === 110]);
           {
             const rest = (gameScript.match(/const HERO_POSE_REST = Object\.freeze\((\{[^}]*\})\)/) || [])[1];
@@ -15516,7 +15516,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             let worst = 0, bad = 0;
             for (let S = 1; S <= 4.4001; S += 0.05) { const o = g(S); worst = Math.max(worst, Math.abs(o.px * S - o.n)); if (!(Number.isInteger(o.n) && o.n >= 1)) bad++; }
             results.push([`Living World S2 B: forgeGrid makes an art pixel a WHOLE number of backing pixels at every scale 1..4.4 (n integer >= 1: ${bad} bad, px*S off by at most ${worst.toExponential(1)}) — 1.6x -> ${g(1.6).n} backing px = ${g(1.6).px}, 2.2x -> ${g(2.2).n}, 1x -> ${g(1).n}, retina 3.2 -> ${g(3.2).n}`,
-              bad === 0 && worst < 1e-9 && g(1.6).n === 2 && near2(g(1.6).px, 1.25) && g(1).n === 1 && g(1).px === 1 && g(2.2).n === 2 && g(3.2).n === 3]);
+              /* Living World S3: UPDATED, not relaxed — the whole-number invariant above is unchanged. Only the pinned values moved, because
+                 FORGE_ART_LOGICAL went 1 -> 0.625 (owner-approved finer grid, README "Session 3 design": one art px = one screen px at 1.6x):
+                 1.6x 2 -> 1 backing px (px 1.25 -> 0.625), 2.2x 2 -> 1, retina 3.2 3 -> 2; 1x stays 1 px / 1. */
+              bad === 0 && worst < 1e-9 && g(1.6).n === 1 && near2(g(1.6).px, 0.625) && g(1).n === 1 && g(1).px === 1 && g(2.2).n === 1 && g(3.2).n === 2]);
           }
           {
             const blk = (a, nOpaque, rgb) => {          // one 4x4 block: `nOpaque` pixels of alpha 255, the rest clear
@@ -15850,6 +15853,84 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push(['Living World S2: the block leaves the clock real, the forge as it found it, no emote running, the draw hooks restored, and no error thrown by any frame',
           window.performance.now === s2Saved.perfNow && window.debugForgeInfo().FORGE_ON === s2Saved.forge && !window.debugForgeInfo().emote && window.drawPlayerEntity === s2Saved.drawPlayerEntity && window.forgeBake === s2Saved.forgeBake && !caught]);
       }
+    }
+
+    /* ============ Living World S3 — creatures that live (README "Session 3 design") ============
+       jsdom has no real canvas (the forge is off here), so these are the PURE pieces and the
+       owner's rules; the real bakes are proven in run6. */
+    {
+      const W = window, E = (x) => W.eval(x);
+      try {
+        const CI = W.debugCreatureInfo(), FAM = CI.families;
+        const MOBK = Object.keys(E('MOBS')), WILDK = Object.keys(E('WILD_SPECIES')), PC = E('PET_COMBAT');
+        const want = { dragon: ['fire_dragon', 'water_dragon', 'storm_dragon', 'shadow_dragon', 'dragon_elder'], flier: ['griffin', 'phoenix'],
+          canine: ['wolf', 'shadowfox', 'lightfox', 'duskfox_elder'], equine: ['unicorn', 'stag', 'unicorn_elder'], golem: ['golem', 'crystal_golem', 'golem_elder'],
+          sprite: ['tree_sprite', 'water_sprite', 'stone_sprite', 'wind_sprite'], moth: ['glow_moth'], serpent: ['basilisk', 'krakenling', 'salamander_king'], beast: ['bear', 'boar'] };
+        const famBad = Object.keys(want).flatMap(f => want[f].filter(k => FAM[k] !== f));
+        const missing = MOBK.concat(WILDK).filter(k => !FAM[k]);
+        const FI = W.debugForgeInfo();
+        results.push([`Living World S3 A: every mob and species has a family (${missing.length} missing) and the README families table holds (${famBad.length} off: ${famBad.join(',')}); grid FORGE_SS ${FI.FORGE_SS} / FORGE_ART_LOGICAL ${FI.FORGE_ART_LOGICAL}; death ${CI.CR_DEATH_MS} ms, hurt ${CI.CR_HURT_MS}, beat ${CI.CR_BEAT_MS} every ${CI.CR_BEAT_EVERY_MS}`,
+          missing.length === 0 && famBad.length === 0 && FI.FORGE_SS === 2 && FI.FORGE_ART_LOGICAL === 0.625 && CI.CR_DEATH_MS === 1300 && CI.CR_HURT_MS === 360 && CI.CR_BEAT_MS === 1100 && CI.CR_BEAT_EVERY_MS === 6500]);
+        /* the owner's rules, through the real petAnimState */
+        const now0 = W.performance.now(), wasMounted = W.me.mounted; W.me.mounted = false;
+        const mk = () => ({ username: 'gateowner', pet: { x: -9999, y: -9999, moving: false, swingT: 0 } });
+        const atkBad = [], happyBad = [];
+        for (const sp of WILDK) {
+          const h = mk(); h.pet.swingT = now0 - 5;
+          const s = W.petAnimState(h, sp, now0, true).s;
+          if ((s === 'attack') !== !!PC[sp]) atkBad.push(sp + ':' + s);
+        }
+        E('petHappyAt = performance.now() - 100');
+        for (const sp of WILDK) {
+          const s = W.petAnimState(mk(), sp, W.performance.now(), true).s, drag = FAM[sp] === 'dragon';
+          if ((s === 'happy') === drag) happyBad.push(sp + ':' + s);
+        }
+        E('petHappyAt = 0');
+        results.push([`Living World S3 B (owner rule): a pet attacks ONLY if it fights (PET_COMBAT) — ${WILDK.length} species, ${atkBad.length} wrong ${atkBad.slice(0, 4).join(' ')}`, atkBad.length === 0 && WILDK.length >= 27]);
+        results.push([`Living World S3 B (owner rule): every family plays "happy" except the dragons, which never do — ${happyBad.length} wrong ${happyBad.slice(0, 4).join(' ')}`, happyBad.length === 0]);
+        const hm = mk(); W.me.mounted = true; hm.pet.swingT = now0 - 5;
+        const rideS = W.petAnimState(hm, 'fire_dragon', now0, true).s; hm.pet.moving = true; const rideM = W.petAnimState(hm, 'wolf', now0, true).s;
+        W.me.mounted = wasMounted;
+        results.push([`Living World S3 B: a mount holds still under its rider — ${rideS} / ${rideM} while ridden (no attack, sit or happy)`, rideS === 'ride' && rideM === 'ridewalk']);
+        /* every species its own beat */
+        const all = Array.from(new Set(WILDK.concat(MOBK))), sig = new Map();
+        for (const k of all) {
+          const parts = [];
+          for (const x of [0.2, 0.5, 0.8]) { const P = W.crBeat(k, x, 1, { front: 10, back: 10, h: 20 }); parts.push(JSON.stringify(P, (kk, v) => typeof v === 'function' ? String(v) : v)); }
+          sig.set(k, parts.join('|'));
+        }
+        const empty = all.filter(k => sig.get(k) === '{}|{}|{}'), dist = new Set(sig.values()).size;
+        results.push([`Living World S3 C (owner rule): every species has its OWN idle life beat — ${dist} distinct beats for ${all.length} creatures, ${empty.length} empty ${empty.join(',')}`, dist === all.length && empty.length === 0]);
+        const lb = W.crPose('flier', 'beat', 0.5, 4, 1, 'griffin', { front: 10, back: 10, h: 20 }).P.lift || 0, lh = W.crPose('sprite', 'hurt', 0.5, 2, 1, 'tree_sprite', { front: 5, back: 5, h: 10 }).P.lift || 0;
+        results.push([`Living World S3 C: an airborne family keeps its hover through a beat and a hit (griffin beat lift ${lb.toFixed(1)} >= 6, sprite hurt ${lh.toFixed(1)} >= 5)`, lb >= 6 && lh >= 5]);
+        /* mobs: the state comes from the AI's own timers */
+        const def = { windupMs: 600 }, n = W.performance.now();
+        const M = (o) => Object.assign({ kind: 'goblin', id: 'g4', x: 0, y: 0, state: 'idle', dead: false, winding: false }, o);
+        const w1 = W.mobAnimState(M({ winding: true, windupStart: n - 150 }), n, def), w2 = W.mobAnimState(M({ winding: true, windupStart: n - 590 }), n, def);
+        const imp = CI.CR_IMPACT.humanoid, s1 = W.mobAnimState(M({ strikeT: n - 50 }), n, def), hu = W.mobAnimState(M({ flash: n - 30 }), n, def);
+        const de = W.mobAnimState(M({ dead: true, diedAt: n - 200 }), n, def), gone = W.mobAnimState(M({ dead: true, diedAt: n - 1400 }), n, def), ag = W.mobAnimState(M({ state: 'aggro' }), n, def);
+        results.push([`Living World S3 D: a mob's pose follows its own timers — wind-up ${w1.s} ${w1.x.toFixed(2)} -> ${w2.x.toFixed(2)} (up to the impact ${imp}), strike ${s1.s} ${s1.x.toFixed(2)}, hit ${hu.s}, death ${de && de.s}, after ${CI.CR_DEATH_MS} ms ${gone}, aggro ${ag.s}`,
+          w1.s === 'attack' && w2.s === 'attack' && w1.x < w2.x && w2.x <= imp + 1e-9 && s1.s === 'attack' && s1.x > imp && hu.s === 'hurt' && de && de.s === 'death' && gone === null && ag.s === 'move']);
+        const um = gameScript.slice(gameScript.indexOf('function updateMob('), gameScript.indexOf('function updateMob(') + 20000), mkl = gameScript.slice(gameScript.indexOf('async function mobKill('), gameScript.indexOf('async function mobKill(') + 1500);
+        results.push(['Living World S3 D: the strike, death and tamed moments are recorded (strikeT where the wind-up resolves, diedAt in mobKill and on a mob_dead that is not a tame), and nothing else in the AI moved',
+          /m\.winding = false;\s*m\.atkAt = now \+ def\.atkCooldownMs;\s*m\.strikeT = now;/.test(um) && mkl.indexOf('m.diedAt = performance.now();') > 0 &&
+          gameScript.indexOf('if (!m.dead && !p.tamed) m.diedAt = performance.now();') > 0 && (gameScript.match(/tamed: 1 \}/g) || []).length === 2]);
+        /* the body-only draw never paints the live parts */
+        const sv = { disc: W.drawActorDisc, ov: W.drawMobOverlays }; let disc = 0, ov = 0;
+        W.drawActorDisc = function () { disc++; }; W.drawMobOverlays = function () { ov++; };
+        const gm = M({ kind: 'goblin', fx: 1, fy: 0, ph: 0, hp: 5, maxHp: 10 });
+        W.mobBodyFn(gm)(0, 0, 0, false, { raise: 2 }, 1); const bodyDisc = disc, bodyOv = ov;
+        const fon = W.debugForgeInfo().FORGE_ON; W.debugSetForge(false); W.drawMob(gm, 0); if (fon) W.debugSetForge(true);
+        W.drawActorDisc = sv.disc; W.drawMobOverlays = sv.ov;
+        results.push([`Living World S3 E: a forged mob's BODY bake draws no disc and no overlays (${bodyDisc}, ${bodyOv}); the live draw still draws both (${disc - bodyDisc}, ${ov - bodyOv})`, bodyDisc === 0 && bodyOv === 0 && disc > bodyDisc && ov > bodyOv]);
+        /* the finish, on a 6x6 buffer with a 2x2 block of (100,150,200) */
+        const Wd = 6, b = new Uint8ClampedArray(Wd * Wd * 4), px = (x, y) => (y * Wd + x) * 4;
+        for (const [x, y] of [[2, 2], [3, 2], [2, 3], [3, 3]]) b.set([100, 150, 200, 255], px(x, y));
+        const f = W.forgeFinish(new Uint8ClampedArray(b), Wd, Wd, 0), o = px(2, 1), tl = px(2, 2), br = px(3, 3);
+        const d1 = W.forgeFinish(new Uint8ClampedArray(b), Wd, Wd, 1); let left = 0; for (let i = 3; i < d1.length; i += 4) if (d1[i]) left++;
+        results.push([`Living World S3 F: the finish — outline in the sprite's own darkened hue (${f[o]},${f[o + 1]},${f[o + 2]}), a lit top-left (${f[tl]},${f[tl + 1]},${f[tl + 2]}), a shaded bottom-right (${f[br]},${f[br + 1]},${f[br + 2]}), a full dissolve leaves ${left} px`,
+          f[o + 3] === 255 && f[o] === 51 && f[o + 1] === 65 && f[o + 2] === 93 && f[tl] === 132 && f[tl + 2] === 248 && f[br] === 78 && f[br + 2] === 156 && left === 0]);
+      } catch (e) { results.push(['Living World S3: the block runs without throwing (' + (e && e.message) + ')', false]); }
     }
 
     let allOk = true;

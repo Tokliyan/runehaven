@@ -10224,7 +10224,7 @@ async function resolveTaming() {
       // v14: taming forfeits the loot — the creature leaves the world as a mob
       w.mob.dead = true; w.mob.hp = 0;
       w.mob.respawnAt = Date.now() + mobRespawnMs(w.mob.kind);   // v39
-      channel.send({ type: "broadcast", event: "mob_dead", payload: { id: w.mob.id, until: w.mob.respawnAt } });
+      channel.send({ type: "broadcast", event: "mob_dead", payload: { id: w.mob.id, until: w.mob.respawnAt, tamed: 1 } });   // S3: tamed / fled — no death fall
     } else {
       wilds = wilds.filter(x => x.id !== w.id);
       channel.send({ type: "broadcast", event: "wild_gone", payload: { id: w.id } });
@@ -10257,7 +10257,7 @@ async function resolveTaming() {
     if (w.mob) {
       w.mob.dead = true; w.mob.hp = 0;
       w.mob.respawnAt = Date.now() + mobRespawnMs(w.mob.kind);   // v39
-      channel.send({ type: "broadcast", event: "mob_dead", payload: { id: w.mob.id, until: w.mob.respawnAt } });
+      channel.send({ type: "broadcast", event: "mob_dead", payload: { id: w.mob.id, until: w.mob.respawnAt, tamed: 1 } });   // S3: tamed / fled — no death fall
     } else {
       wilds = wilds.filter(x => x.id !== w.id);
       channel.send({ type: "broadcast", event: "wild_gone", payload: { id: w.id } });
@@ -10976,7 +10976,7 @@ async function joinRealtime() {
   channel.on("broadcast", { event: "mob_dead" }, ({ payload: p }) => {
     const m = mobs.find(x => x.id === p.id);
     if (!m) return;
-    if (!m.dead) m.diedAt = performance.now();   // Living World S3
+    if (!m.dead && !p.tamed) m.diedAt = performance.now();   // Living World S3 (a tamed or fled one just leaves)
     m.dead = true; m.hp = 0;
     if (m.roams) { delete m.syncTargetX; delete m.syncTargetY; }   // S6: no pull back to where it died
     /* v30: a world boss that respawns like a goblin is not a world boss. */
@@ -16892,6 +16892,8 @@ function SCL(c, x, y, w, h, col, step) {
    be reused by future Elder-tier content. `col` is an "r,g,b" triplet string,
    not a css colour, because every stop composes its own alpha. */
 function aura(sx, sy, col, rx, t, o) {
+  /* Living World S3: inside a creature bake the glow is recorded, not painted — it is drawn live and translucent around the sprite */
+  if (CR_BAKE_AURAS) { const T = ctx.getTransform(); CR_BAKE_AURAS.push([T.a, T.b, T.c, T.d, T.e, T.f, sx, sy, col, rx, o]); return; }
   o = o || {};
   const rgb = col;
   const pulse = 0.45 + Math.sin(t / (o.speed || 340)) * 0.28;
@@ -17711,7 +17713,7 @@ function drawMob(m, t) {
     : m.state === "aggro" || m.state === "leash" ? Math.abs(Math.sin(t / 120)) * 1.5 : Math.sin(t / 700 + m.ph) * 0.5;
   const crouch = MB ? 0 : (cowering ? 1.4 : 0) + (m.winding && def.tameable ? 1.2 : 0);  // beasts pre-lunge crouch as part of the tell
   const [sx, sy] = MB ? [0, 0] : worldToScreen(m.x, m.y, groundZ(m.x, m.y) + bob - crouch);
-  const flip = MB ? MB.flip : m.fx < -0.15 ? -1 : 1;
+  const flip = MB ? MB.flip : (m.fx < -0.15 ? -1 : 1) * (m.kind === "elder_drake" ? -1 : 1);   // S3: the Drake's art faces left — it faces where it is going now
   // v14: weakened tame-window ring — the state-change advertisement
   const mk = MOB_K[m.kind] || SPECIES_K[m.kind] || 1;
   if (!MB) {                                         // S2 R4: the hostile disc, on the ground (no bob, no crouch)
@@ -17734,7 +17736,9 @@ function drawMob(m, t) {
       ctx.fillStyle = `rgba(20,32,44,${SUN.alpha})`;
       ctx.beginPath(); ctx.ellipse(sx, sy + 1, 6, 2.6, 0, 0, Math.PI * 2); ctx.fill();
     }
+    if (MB && MB.flip < 0) { ctx.save(); ctx.scale(-1, 1); }           // S3: a forged beast faces its target
     drawSpecies(m.kind, sx, sy, t, MB ? MB.moving : m.state === "aggro");
+    if (MB && MB.flip < 0) ctx.restore();
     if (!MB) drawMobOverlays(m, sx, sy, t, def);
     return;
   }
@@ -19396,7 +19400,7 @@ function feedSalamander(row) {
   if (!canFeedSalamander(row)) return false;
   invSpend({ rare_herb: 1 });
   row.lastFedAt = Date.now();
-  petHappyAt = performance.now();   // Living World S3
+  if (activePet && activePet.id === row.id) petHappyAt = performance.now();   // Living World S3: only the pet you fed
   /* Best effort, and deliberately un-awaited: if the last_fed_at column is not
      there yet the write simply fails server-side and the in-memory clock still
      holds for this session. Feeding must never be able to throw. */
@@ -20325,34 +20329,43 @@ function drawPet(h, species, t) {
      once here, so the drawing helper takes a cosmetic id and nothing else. */
   const petAcc = mine ? wornCosmetic(me, "pet") : ((h.cs && h.cs.pet) || null);
   const downed = !!(mine && pet.downedUntil && nowMs < pet.downedUntil);
-  const lg = (mine && pet.swingT && nowMs - pet.swingT < PET_LUNGE_MS)
+  /* Living World S3: the forged state (null = the forge is off: the pet is drawn live, exactly as before) */
+  const ps = FORGE_ON ? petAnimState(h, species, nowMs, mine) : null;
+  const mounted = mine ? !!me.mounted : !!h.mo;
+  const lg = (!ps && mine && pet.swingT && nowMs - pet.swingT < PET_LUNGE_MS)        // a forged attack carries its own lunge
     ? Math.sin((nowMs - pet.swingT) / PET_LUNGE_MS * Math.PI) * 0.3 : 0;
   const px = pet.x + (pet.ax || 0) * lg, py = pet.y + (pet.ay || 0) * lg;
   const [gx, gy] = worldToScreen(px, py, groundZ(px, py));
+  /* S3: it faces its bite, or the way it last moved across the screen */
+  if (ps) {
+    if (ps.s === "attack" && (pet.ax || pet.ay)) pet._face = ((pet.ax || 0) - (pet.ay || 0)) < 0 ? -1 : 1;
+    else if (pet._gx !== undefined && Math.abs(gx - pet._gx) > 0.05) pet._face = gx < pet._gx ? -1 : 1;
+    pet._gx = gx;
+  }
+  const face = ps && !mounted ? (pet._face || 1) : 1;
+  const owner = "pet:" + (mine ? "me" : (h.username || h.name || h.id || "?"));
   if (downed) ctx.globalAlpha = 0.55;          // dimmed + grounded = out of the fight
   if (flier) {
-    const alt = petDrawAlt(species, t, downed);   // Mount/Bazaar Polish PART A
+    /* S3: a forged flier's hover is in its pose, so it holds a flat altitude (no second bob); a mount keeps the seat's */
+    const alt = ps && !mounted ? (downed ? 2 : (sp.alt || 32)) : petDrawAlt(species, t, downed);   // Mount/Bazaar Polish PART A
     ctx.fillStyle = `rgba(20,32,44,${SUN.alpha * 0.4})`;
     ctx.beginPath(); ctx.ellipse(gx, gy, 3.2, 1.4, 0, 0, Math.PI * 2); ctx.fill();
     const [sx, sy] = worldToScreen(px, py, groundZ(px, py) + alt);
-    /* Living World S3: the forged body, with its family's motion and its species' life */
-    const PZ = drawSpeciesForged((mine ? "pet:me" : "pet:" + (h.username || h.name || "")), species, sx, sy, t, petAnimState(h, species, nowMs, mine), true);
+    const PZ = ps ? drawSpeciesForged(owner, species, sx, sy, t, ps, true, face) : null;
     if (!PZ) drawSpecies(species, sx, sy, t, !downed);
-    drawPetAccessory(petAcc, species, sx, sy - (PZ ? PZ.lift || 0 : 0));   // v35
+    drawPetAccessory(petAcc, species, sx + (PZ ? (PZ.dx || 0) * face : 0), sy - (PZ ? PZ.lift || 0 : 0));   // v35
     if (mine) petOverlays(pet, sx, sy, nowMs, downed, gx, gy);
   } else {
-    const ps = FORGE_ON ? petAnimState(h, species, nowMs, mine) : null;
     const bob = ps ? 0 : downed ? -1.4                  // sits/cowers — no walk bob (S3: the forged poses carry their own)
       : pet.moving ? Math.abs(Math.sin(t / 140)) * 1.6 : Math.sin(t / 800) * 0.4;
     const [sx, sy] = worldToScreen(px, py, groundZ(px, py) + bob);
-    const fam = crFamily(species);
-    if (ps && (fam === "dragon")) {           // S3: a dragon hovers now — its shadow stays on the ground
+    if (ps && !mounted && crFamily(species) === "dragon") {   // S3: a dragon hovers now — its shadow stays on the ground
       ctx.fillStyle = `rgba(20,32,44,${SUN.alpha * 0.5})`;
       ctx.beginPath(); ctx.ellipse(gx, gy, 6, 2.4, 0, 0, Math.PI * 2); ctx.fill();
     }
-    const PZ = ps ? drawSpeciesForged((mine ? "pet:me" : "pet:" + (h.username || h.name || "")), species, sx, sy, t, ps, false) : null;
+    const PZ = ps ? drawSpeciesForged(owner, species, sx, sy, t, ps, false, face) : null;
     if (!PZ) drawSpecies(species, sx, sy, t, !downed && pet.moving);
-    drawPetAccessory(petAcc, species, sx, sy - (PZ ? PZ.lift || 0 : 0));   // v35
+    drawPetAccessory(petAcc, species, sx + (PZ ? (PZ.dx || 0) * face : 0), sy - (PZ ? PZ.lift || 0 : 0));   // v35
     if (mine) petOverlays(pet, sx, sy, nowMs, downed, gx, gy);
   }
   ctx.globalAlpha = 1;
@@ -20437,11 +20450,12 @@ function drawWild(w, t) {
   if (!isWildVisible(w)) return;
   const [wx, wy] = wildPos(w, t);
   const sp = WILD_SPECIES[w.species];
-  const hop = sp.flier
+  const hop = FORGE_ON ? (sp.flier ? (sp.alt || 8) : 0)        // S3: a forged wild's bob is in its pose — no second one
+    : sp.flier
     ? (sp.alt || 8) + Math.sin(t / 500 + w.ph) * 2
     : (w.species === "golem" ? Math.abs(Math.sin(t / 420 + w.ph)) * 1.1 : Math.abs(Math.sin(t / 400 + w.ph)) * 1.2);
   const [sx, sy] = worldToScreen(wx, wy, groundZ(wx, wy) + hop);
-  /* Living World S3: a wild creature is forged too — idle with its life beat, moving when it wanders */
+  /* Living World S3: a wild creature is forged too — idle, with its life beat */
   if (!(FORGE_ON && drawSpeciesForged("wild:" + (w.id !== undefined ? w.id : w.x + "," + w.y), w.species, sx, sy, t,
         wildAnimState(w, wx, wy, performance.now()), !!sp.flier))) drawSpecies(w.species, sx, sy, t, false);
   if (Math.hypot(wx - me.x, wy - me.y) < 3) {
@@ -20993,7 +21007,7 @@ function forgeSprite(spec, px) {
   if (!FORGE_ON) { forgeStats.live++; return null; }
   const key = forgeKey(spec, px), look = forgeLookKey(spec, px);
   let e = forgeCache.get(key);
-  if (e) { forgeCache.delete(key); forgeCache.set(key, e); forgeStats.hits++; forgeLast.set(spec.owner, e); return e; }
+  if (e) { forgeCache.delete(key); forgeCache.set(key, e); forgeStats.hits++; forgeLast.set(spec.owner, key); return e; }
   const now = performance.now();
   const mine = !!(me && spec.owner === me.username);
   /* your own player may always take one bake a frame; everyone else waits for budget */
@@ -21010,11 +21024,11 @@ function forgeSprite(spec, px) {
     } else {
       e.look = look;
       forgeCacheAdd(key, e);
-      forgeLast.set(spec.owner, e);
+      forgeLast.set(spec.owner, key);   // S3 review: the KEY, so an evicted sprite is really freed
       return e;
     }
   }
-  const last = forgeLast.get(spec.owner);
+  const lk = forgeLast.get(spec.owner), last = lk && forgeCache.get(lk);
   if (last && last.look === look) { forgeStats.fallbacks++; return last; }   // same player, same look and facing — only the frame lags
   forgeStats.live++;
   return null;
@@ -21083,7 +21097,7 @@ const CREATURE_FAMILY = {
   goblin: "humanoid", bandit: "humanoid", troll: "humanoid", demon_knight: "humanoid", dark_wraith: "wraith",
 };
 const CR_TICK = 110;                    // one creature frame of game time
-const CR_FRAMES = { idle: 12, move: 8, attack: 10, happy: 12, hurt: 5, death: 12, sit: 6, alert: 4, beat: 8, cower: 4 };
+const CR_FRAMES = { idle: 12, move: 8, attack: 10, happy: 12, hurt: 5, death: 12, sit: 6, alert: 4, beat: 8, cower: 4, ride: 12, ridewalk: 8 };
 const CR_HURT_MS = 360, CR_DEATH_MS = 1300, CR_STRIKE_MS = 420, CR_HAPPY_MS = 1500, CR_BEAT_MS = 1100, CR_BEAT_EVERY_MS = 6500;
 const CR_SIT_AFTER_MS = 5000, CR_ALERT_R = 7;
 const CR_QUAD = new Set(["boar", "bear", "elder_drake", "wolf", "shadowfox", "lightfox", "duskfox_elder", "unicorn", "stag", "unicorn_elder",
@@ -21120,13 +21134,13 @@ function crStar(x, y, s) {
 const CR_BREATH = { fire_dragon: ["#e2501e", "#ffa12e", "#fff2a0"], water_dragon: ["#3a8fd0", "#7fd0f0", "#e6fbff"],
   shadow_dragon: ["#3a2a5e", "#7a5ab4", "#d8c8ff"], dragon_elder: ["#c8962e", "#ffd25a", "#fff6c8"], elder_drake: ["#e2501e", "#ffa12e", "#fff2a0"] };
 function crBreath(box, k, cols, P) {
-  const mx = box.front + (P.dx || 0) - 2, my = -box.h * 0.78 - (P.lift || 0), L = box.h * 1.6 * k;
+  const mx = box.front + (P.dx || 0) - 2, my = -box.h * (box.mouth || 0.78) - (P.lift || 0), L = box.h * 1.6 * k;
   for (let j = 0; j < 9; j++) { const u = j / 8; if (u > k) break; const x = mx + u * L, y = my + Math.sin(u * 9 + k * 7) * 2 + u * 6, r = 2 + u * box.h * 0.16;
     crBlob(x, y, r, cols[0]); crBlob(x - r * 0.15, y - r * 0.1, r * 0.66, cols[1]); crBlob(x - r * 0.25, y - r * 0.15, r * 0.3, cols[2]); }
 }
 function crBolt(box, k, P) {
   if (k <= 0) return;
-  const mx = box.front - 2, my = -box.h * 0.78 - (P.lift || 0); let x = mx, y = my; const pts = [];
+  const mx = box.front - 2, my = -box.h * (box.mouth || 0.78) - (P.lift || 0); let x = mx, y = my; const pts = [];
   for (let j = 1; j <= 7; j++) { x += box.h * 0.22 * k; y += (j % 2 ? 1 : -1) * box.h * 0.12 + 2.2; pts.push([x, y]); }
   for (const [w2, c] of [[3.2, "#7fc8ff"], [1.2, "#ffffff"]]) {
     ctx.fillStyle = c; ctx.beginPath(); ctx.moveTo(mx, my);
@@ -21153,7 +21167,7 @@ function crTrail(box, P) {
   for (let j = 0; j < 4; j++) { ctx.fillStyle = cols[j % 2]; ctx.fillRect(-box.front * 0.6 - j * 9 + (P.dx || 0) * 0.4, -box.h * (0.3 + j * 0.12) - (P.lift || 0) * 0.6, 7 + j * 3, 1.6); }
 }
 function crPuff(box, k, col, P) {   // a small smoke / steam / ember puff from the nostrils
-  if (k <= 0) return; const x = box.front + 2 + k * 6, y = -box.h * 0.8 - (P.lift || 0) - k * 5;
+  if (k <= 0) return; const x = box.front + 2 + k * 6, y = -box.h * ((box.mouth || 0.78) + 0.02) - (P.lift || 0) - k * 5;
   crBlob(x, y, 1.5 + k * 2.4, col); crBlob(x + 2 + k * 2, y - 1 - k * 2, 1 + k * 1.6, col);
 }
 /* --- the poses: [family][state](x, i, big, kind, box) -> { P, tMul, moving } --- */
@@ -21187,28 +21201,36 @@ function crDeath(x, big, quad) {
 function crBeat(kind, x, big, box) {
   const b = crParab(x, 0, 1);
   switch (kind) {
-    case "wolf": case "duskfox_elder": return { lean: 0.28 * b, sqY: -0.06 * b };                                   // sniffs the ground
+    case "wolf": return { lean: 0.28 * b, sqY: -0.06 * b };                                                          // sniffs the ground
+    case "duskfox_elder": return { lean: -0.12 * b, lift: 0.8 * b, fx: [P => crSparkles(box, x, "#b89cff", 4, P)] };   // lifts its head as dusk motes drift off it
     case "shadowfox": return { dissolve: b * 0.45, dx: Math.sin(x * Math.PI * 2) * 3 };                              // flickers between shadows
     case "lightfox": return { fx: [P => crSparkles(box, x, "#fff6c8", 3, P)] };                                       // its tail glints
-    case "unicorn": case "unicorn_elder": return { lean: 0.38 * b, fx: x > 0.6 ? [P => crSparkles(box, (x - 0.6) / 0.4, "#ffe9ff", 3, P)] : [] };   // grazes, horn glints
+    case "unicorn": return { lean: 0.38 * b, fx: x > 0.6 ? [P => crSparkles(box, (x - 0.6) / 0.4, "#ffe9ff", 3, P)] : [] };   // grazes, horn glints
+    case "unicorn_elder": return { rear: -0.16 * b, pivot: -7 * big, fx: [P => crSparkles(box, x, "#ffe08a", 5, P)] };    // a slow regal half-rear in a ring of gold
     case "stag": return { lean: -0.14 * b, lift: 0.8 * b };                                                           // lifts its head and listens
-    case "golem": case "golem_elder": case "adult_golem": return { flash: b > 0.6 ? "rgba(122,232,248,0.35)" : null, sqY: 0.03 * b };   // runes pulse
+    case "golem": return { sqY: 0.03 * b, fx: x > 0.25 && x < 0.75 ? [P => crSparkles({ front: box.front, h: box.h * 0.6 }, x, "#7ae8f8", 3, P)] : [] };   // its runes pulse
+    case "golem_elder": return { sqY: -0.05 * b, dust: b > 0.7 ? (b - 0.7) / 0.3 * 0.6 : 0 };                              // settles its weight; the ground puffs
+    case "adult_golem": return { dx: Math.sin(x * Math.PI * 6) * 0.9 * b, lean: 0.05 * b };                                // grinds its stone knuckles
     case "crystal_golem": return { fx: [P => crSparkles(box, x, "#e6f6ff", 2, P)] };                                  // refracts a glint
     case "tree_sprite": case "water_sprite": case "stone_sprite": case "wind_sprite":
       return { spin: x * Math.PI * 2 * 0.25 * Math.sin(x * Math.PI), fx: [P => crSparkles(box, x, kind === "water_sprite" ? "#bfefff" : kind === "tree_sprite" ? "#c6ee90" : kind === "wind_sprite" ? "#eef8ff" : "#d8cfb8", 3, P)] };
     case "glow_moth": return { dx: Math.cos(x * Math.PI * 2) * 6 * big, lift: Math.sin(x * Math.PI * 2) * 4 * big };  // circles the light
-    case "fire_dragon": case "dragon_elder": case "elder_drake": return { lean: -0.1 * b, fx: [P => crPuff(box, x, "rgba(120,110,110,0.85)", P)] };   // a smoke puff
+    case "fire_dragon": return { lean: -0.1 * b, fx: [P => crPuff(box, x, "rgba(120,110,110,0.85)", P)] };                // a smoke puff
+    case "dragon_elder": return { sqY: 0.06 * b, lift: 1.5 * b, fx: [P => crSparkles(box, x, "#ffd25a", 5, P)] };          // stretches tall in a crown of gold
+    case "elder_drake": return { lean: 0.1 * b, fx: [P => crPuff(box, x, "rgba(255,120,40,0.9)", P)] };                    // lowers its head and snorts embers
     case "water_dragon": return { lean: -0.1 * b, fx: [P => crPuff(box, x, "rgba(220,244,255,0.9)", P)] };           // steam
     case "shadow_dragon": return { lean: -0.08 * b, dissolve: b * 0.25 };
     case "storm_dragon": return { fx: x > 0.3 && x < 0.7 ? [P => crBolt({ front: box.front * 0.2, h: box.h * 0.5 }, 0.6, P)] : [] };   // crackles
-    case "basilisk": case "sea_serpent": return { fx: x > 0.2 && x < 0.8 ? [P => { ctx.fillStyle = "#d84a4a"; ctx.fillRect(box.front, -box.h * 0.62 - (P.lift || 0), 3 + 3 * b, 1); }] : [] };   // tongue flick
+    case "sea_serpent": return { lift: 2.5 * b * big, sx: Math.sin(x * Math.PI * 2) * 0.06 };                           // surges up out of the water and back
+    case "basilisk": return { fx: x > 0.2 && x < 0.8 ? [P => { ctx.fillStyle = "#d84a4a"; ctx.fillRect(box.front, -box.h * 0.62 - (P.lift || 0), 3 + 3 * b, 1); }] : [] };   // tongue flick
     case "krakenling": return { sx: Math.sin(x * Math.PI * 4) * 0.08 };                                               // a tentacle wave
     case "salamander_king": return { fx: [P => crPuff(box, x, "rgba(255,150,60,0.85)", P)] };                         // an ember puff
     case "phoenix": return { fx: [P => crSparkles(box, x, "#ffb04a", 4, P)] };
     case "griffin": return { lean: -0.2 * b };                                                                         // preens
     case "bear": return { lean: -0.2 * b, sqY: 0.08 * b };                                                             // a yawn and stretch
     case "boar": return { lean: 0.2 * b, lift: Math.abs(Math.sin(x * Math.PI * 6)) * 0.8 };                            // snuffles
-    case "goblin": case "bandit": return { lean: Math.sin(x * Math.PI * 2) * 0.1 };                                   // shifts about
+    case "goblin": return { lift: crParab(x, 0.1, 0.45) * 3 + crParab(x, 0.55, 0.9) * 3, sqY: -0.05 * b };            // hops from foot to foot
+    case "bandit": return { lean: Math.sin(x * Math.PI * 2) * 0.1, raise: Math.sin(x * Math.PI * 2) * 2.4 };              // glances about, flips its knife
     case "troll": return { sqY: -0.06 * b, lean: 0.08 * b };                                                          // scratches
     case "demon_knight": return { lift: 0.6 * b, fx: [P => crPuff(box, x, "rgba(200,40,40,0.8)", P)] };                // a hellfire breath
     case "dark_wraith": return { dissolve: b * 0.3, lift: 2 * b };
@@ -21309,26 +21331,34 @@ function crPose(fam, st, x, i, big, kind, box, extra) {
       else if (st === "happy") P = {};
       break;
   }
+  /* review (S3): an airborne family keeps its hover through the states that do not set one — a flier never sinks on a beat or a hit */
+  if (CR_AIR_BASE[fam] && (st === "beat" || st === "alert" || st === "hurt" || st === "cower" || (st === "sit" && fam !== "dragon"))) P.lift = (P.lift || 0) + CR_AIR_BASE[fam] * big;
   return { P, tMul, moving };
 }
-/* the box a creature sprite needs, measured once per creature from its own resting drawing */
+/* the box a creature sprite needs, measured once per creature from its own resting drawing:
+   how far it reaches forward, back, up — and BELOW its feet (a drake's claws, an Elder's ground ring) */
 const crMeasureCache = new Map();
+let crMeasureCv = null, crMeasureCtx = null;
+let CR_BAKE_AURAS = null;          // while a bake runs, aura() glows are recorded here (and drawn live) instead of baked
 function crMeasure(key, body) {
   let m = crMeasureCache.get(key);
   if (m) return m;
-  m = { front: 10, back: 10, h: 16 };
+  m = { front: 10, back: 10, h: 16, below: 0 };
   try {
-    const cv = document.createElement("canvas"); cv.width = 480; cv.height = 320;
-    const c2 = cv.getContext("2d", { willReadFrequently: true });
+    if (!crMeasureCv) { crMeasureCv = document.createElement("canvas"); crMeasureCv.width = 480; crMeasureCv.height = 320;
+      try { crMeasureCtx = crMeasureCv.getContext("2d", { willReadFrequently: true }); } catch (e) { crMeasureCtx = null; } }
+    const c2 = crMeasureCtx;
     if (c2 && typeof c2.getImageData === "function") {
-      const was = ctx; ctx = c2;
-      try { c2.setTransform(1, 0, 0, 1, 240, 260); body(0, 0, 0, false, {}, 1); } finally { ctx = was; }
+      c2.setTransform(1, 0, 0, 1, 0, 0); c2.globalAlpha = 1; c2.globalCompositeOperation = "source-over"; c2.clearRect(0, 0, 480, 320);
+      const was = ctx, wasA = CR_BAKE_AURAS; ctx = c2; CR_BAKE_AURAS = [];
+      try { c2.setTransform(1, 0, 0, 1, 240, 230); body(0, 0, 0, false, {}, 1); } finally { ctx = was; CR_BAKE_AURAS = wasA; }
       c2.setTransform(1, 0, 0, 1, 0, 0);
       const d = c2.getImageData(0, 0, 480, 320);
       if (d && d.data && d.data.length === 480 * 320 * 4) {
-        let x0 = 480, x1 = -1, y0 = 320;
-        for (let y = 0; y < 320; y++) for (let x = 0; x < 480; x++) if (d.data[(y * 480 + x) * 4 + 3] > 40) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; }
-        if (x1 >= 0) m = { front: Math.max(2, x1 - 240), back: Math.max(2, 240 - x0), h: Math.max(4, 260 - y0) };
+        let x0 = 480, x1 = -1, y0 = 320, y1 = -1;
+        for (let y = 0; y < 320; y++) for (let x = 0; x < 480; x++) if (d.data[(y * 480 + x) * 4 + 3] > 40) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        if (x1 >= 0) m = { front: Math.max(2, x1 - 240), back: Math.max(2, 240 - x0), h: Math.max(4, 230 - y0), below: Math.max(0, y1 - 230) };
+        if (key.indexOf("elder_drake|") === 0) m.mouth = 0.42;      // the Drake carries its head low and forward
       }
     }
   } catch (e) {}
@@ -21339,18 +21369,20 @@ function crMeasure(key, body) {
 function crFrameBox(box, P, st, fam, big) {
   const fxPad = P.fx && P.fx.length ? Math.max(box.h * 0.95, 27) : 0;
   const turn = P.spin || P.rear ? box.h * 0.6 : 0;
+  const ring = fam === "golem" && st === "attack" ? box.h * 1.9 + 8 : 0;          // the slam's shockwave reaches both ways
+  const fall = st === "death" ? box.h + 8 : 0;                                     // a topple lands behind the feet
   const reach = st === "attack" ? ((fam === "dragon" || fam === "drake") ? box.h * 1.9 : box.h * 0.5 + 14 * big) : 0;
   const up = Math.max(box.h * 1.3, box.h * 0.6 + fxPad * 0.6) + Math.max(0, P.lift || 0) + turn + 12 + (st === "happy" ? 22 * big : 0);
   return {
-    L: -(Math.max(box.back, 26 * big, fxPad) + turn + Math.max(0, -(P.dx || 0)) + 10),
-    R: box.front + Math.max(reach, fxPad, 10 * big) + turn + Math.max(0, P.dx || 0) + 10,
-    T: -up, B: 12 + 4 * big + turn * 0.3,
+    L: -(Math.max(box.back, 26 * big, fxPad, ring) + turn + fall + Math.max(0, -(P.dx || 0)) + 10),
+    R: box.front + Math.max(reach, fxPad, ring, 10 * big) + turn + Math.max(0, P.dx || 0) + 10,
+    T: -up, B: (box.below || 0) + 12 + 4 * big + turn * 0.3 + (ring ? box.h * 0.4 : 0) + Math.max(0, -(P.lift || 0)),
   };
 }
 let crHi = null, crHiCtx = null;
 /* bake one creature frame. spec.body(x, y, t, moving, P, flip) draws through
    the global ctx; flip -1 mirrors the pose and the FX, and the body is asked
-   to face that way itself (mob bodies do; species art always faces right). */
+   to face that way itself. */
 function creatureBake(spec, px) {
   const box = spec.box, P = spec.P, big = spec.big, flip = spec.flip || 1;
   const fb = crFrameBox(box, P, spec.st, spec.fam, big);
@@ -21366,25 +21398,27 @@ function creatureBake(spec, px) {
   hc.clearRect(0, 0, HW, HH);
   const sc = SSc / px;
   const base = () => { hc.setTransform(sc, 0, 0, sc, -L * sc, -T * sc); if (flip < 0) hc.scale(-1, 1); };
-  const was = ctx; ctx = hc;
+  const was = ctx, wasA = CR_BAKE_AURAS, auras = [];
+  ctx = hc; CR_BAKE_AURAS = auras;
   try {
     base();
     crDust(P.dust || 0, big);
     hc.save();
-    if (P.spin) { const cy2 = -box.h * 0.5 - (P.lift || 0); hc.translate(0, cy2); hc.rotate(P.spin); hc.translate(0, -cy2); }
-    if (P.pivot) { hc.translate(P.pivot, 0); hc.rotate(P.rear || 0); hc.translate(-P.pivot, 0); }
-    hc.rotate(P.lean || 0);
-    hc.scale((1 - (P.sqY || 0) * 0.55) * (1 + (P.sx || 0)), 1 + (P.sqY || 0));
-    hc.translate(P.dx || 0, -(P.lift || 0));
-    if (flip < 0) hc.scale(-1, 1);          // the body applies its own facing
-    spec.body(0, 0, spec.tA, spec.moving, P, flip);
-    hc.restore();
+    try {
+      if (P.spin) { const cy2 = -box.h * 0.5 - (P.lift || 0); hc.translate(0, cy2); hc.rotate(P.spin); hc.translate(0, -cy2); }
+      if (P.pivot) { hc.translate(P.pivot, 0); hc.rotate(P.rear || 0); hc.translate(-P.pivot, 0); }
+      hc.rotate(P.lean || 0);
+      hc.scale((1 - (P.sqY || 0) * 0.55) * (1 + (P.sx || 0)), 1 + (P.sqY || 0));
+      hc.translate(P.dx || 0, -(P.lift || 0));
+      if (flip < 0) hc.scale(-1, 1);          // the body applies its own facing
+      spec.body(0, 0, spec.tA, spec.moving, P, flip);
+    } finally { hc.restore(); }
     if (P.flash) { hc.save(); hc.setTransform(1, 0, 0, 1, 0, 0); hc.globalCompositeOperation = "source-atop"; hc.fillStyle = P.flash; hc.fillRect(0, 0, HW, HH); hc.restore(); }
     base();
     if (P.smear) { const r0 = Math.max(box.h * 0.62, box.front * 0.75) + 3; crSmear(box.front * 0.35 + (P.dx || 0), -box.h * 0.48, r0, -1.35, 1.05, P.smear); }
     if (P.fx) for (const g of P.fx) g(P);
     if (P.star) crStar(box.front + (P.dx || 0) + 3, -box.h * 0.5, 5 * big * P.star);
-  } finally { ctx = was; }
+  } finally { ctx = was; CR_BAKE_AURAS = wasA; }
   hc.setTransform(1, 0, 0, 1, 0, 0); hc.globalAlpha = 1; hc.globalCompositeOperation = "source-over";
   const img = hc.getImageData(0, 0, HW, HH);
   if (!img || !img.data || img.data.length !== HW * HH * 4) return null;
@@ -21404,28 +21438,43 @@ function creatureBake(spec, px) {
   if (!id || !id.data || id.data.length !== TW * TH * 4) return null;
   for (let y = 0; y < TH; y++) id.data.set(out.subarray(((y + y0) * W + x0) * 4, ((y + y0) * W + x0 + TW) * 4), y * TW * 4);
   oc.putImageData(id, 0, 0);
+  /* the soft glows, as logical offsets from the feet, to be drawn live and translucent behind the sprite */
+  const glows = [];
+  for (const a of auras) {
+    const X = a[0] * a[6] + a[2] * a[7] + a[4], Y = a[1] * a[6] + a[3] * a[7] + a[5];
+    glows.push({ lx: X / sc + L, ly: Y / sc + T, s: Math.hypot(a[0], a[1]) / sc, col: a[8], rx: a[9], o: a[10] });
+  }
   forgeStats.bakes++; forgeStats.creatureBakes++;
   if (colors > forgeStats.maxColors) forgeStats.maxColors = colors;
   forgeStats.lastBakeMs = performance.now() - t0;
-  return { cv, W: TW, H: TH, ax: -L / px - x0, ay: -T / px - y0, px, colors, creature: true };
+  return { cv, W: TW, H: TH, ax: -L / px - x0, ay: -T / px - y0, px, colors, creature: true, P, glows };
 }
-/* a creature's sprite for a frame: cache, budget, same-look fallback (as the heroes') */
-function creatureSprite(spec, px) {
+/* a bake bigger than this many art pixels (a dragon's breath, the Drake) may only be a frame's FIRST bake */
+const CR_BIG_BAKE_PX = 30000;
+/* a creature's sprite for a frame: cache, budget, same-look fallback (as the heroes').
+   The pose is only built on a miss — a cache hit allocates nothing but its key. */
+function creatureSprite(key, look, owner, mkSpec, px) {
   if (!FORGE_ON) { forgeStats.live++; return null; }
-  const look = ["C", spec.key, spec.flip || 1, px.toFixed(5)].join("|");
-  const key = look + "|" + spec.animKey;
   let e = forgeCache.get(key);
-  if (e) { forgeCache.delete(key); forgeCache.set(key, e); forgeStats.hits++; forgeLast.set(spec.owner, e); return e; }
+  if (e) { forgeCache.delete(key); forgeCache.set(key, e); forgeStats.hits++; forgeLast.set(owner, key); return e; }
   const now = performance.now();
   if (now >= forgeBackoffUntil && forgeBakesLeft > 0 && forgeBakeMsLeft > 0) {
-    forgeBakesLeft--;
-    const t0 = performance.now();
-    try { e = creatureBake(spec, px); } catch (err) { e = null; }
-    forgeBakeMsLeft -= performance.now() - t0;
-    if (!e) { forgeStats.failures++; if (forgeStats.bakes === 0) FORGE_ON = false; else forgeBackoffUntil = now + FORGE_BACKOFF_MS; }
-    else { e.look = look; forgeCacheAdd(key, e); forgeLast.set(spec.owner, e); return e; }
+    const spec = mkSpec();
+    if (spec) {
+      const fb = crFrameBox(spec.box, spec.P, spec.st, spec.fam, spec.big), area = (fb.R - fb.L) * (fb.B - fb.T) / (px * px);
+      if (area <= CR_BIG_BAKE_PX || forgeBakesLeft === FORGE_BAKES_PER_FRAME) {
+        forgeBakesLeft--;
+        const t0 = performance.now();
+        try { e = creatureBake(spec, px); } catch (err) { e = null; }
+        forgeBakeMsLeft -= performance.now() - t0;
+        if (area > CR_BIG_BAKE_PX) forgeBakesLeft = 0;          // nothing else bakes behind a big one this frame
+        if (!e) { forgeStats.failures++; if (forgeStats.bakes === 0) FORGE_ON = false; else forgeBackoffUntil = now + FORGE_BACKOFF_MS; }
+        else { e.look = look; forgeCacheAdd(key, e); forgeLast.set(owner, key); return e; }
+      }
+    }
   }
-  const last = forgeLast.get(spec.owner);
+  /* the same creature's last sprite, if it is the same look (zoom aside: it is drawn at its own scale) */
+  const lk = forgeLast.get(owner), last = lk && forgeCache.get(lk);
   if (last && last.look === look) { forgeStats.fallbacks++; return last; }
   forgeStats.live++;
   return null;
@@ -21433,43 +21482,71 @@ function creatureSprite(spec, px) {
 /* the base hover a family's poses carry, taken off again for a creature the
    game already holds in the air (a flier's own altitude) */
 const CR_AIR_BASE = { dragon: 7, flier: 6, sprite: 5, moth: 7 };
+const CR_NO_AIR = new Set(["death", "ride", "ridewalk"]);
+/* where in its attack each family LANDS the blow (x 0..1): the wind-up tell plays
+   up to here and the strike from here, so the impact frame is the damage moment */
+const CR_IMPACT = { dragon: 0.42, drake: 0.42, flier: 0.55, canine: 0.64, equine: 0.6, golem: 0.5, sprite: 0.5, moth: 0.4, serpent: 0.44, beast: 0.46, humanoid: 0.46, wraith: 0.46 };
+function crImpact(kind) { return kind === "bear" ? 0.52 : (CR_IMPACT[crFamily(kind)] || 0.46); }
 /* state -> frame -> pose -> sprite, shared by every creature draw site.
-   st: { s, x? } (x = 0..1 progress for one-shots). Returns { spr, P } — spr
-   null means "draw the creature live, as before". */
+   st: { s, x? } (x = 0..1 progress for one-shots). Returns the sprite or null
+   ("draw the creature live, as before"); the sprite carries its pose (e.P). */
 function crFrame(owner, kind, scaleKey, body, t, st, opts) {
-  const fam = crFamily(kind);
-  const key = kind + "|" + scaleKey;
-  const box = crMeasure(key, body);
+  const key0 = kind + "|" + scaleKey, flip = opts.flip || 1, air = opts.air ? 1 : 0;
   const n = CR_FRAMES[st.s] || 8;
-  const strideMs = 2 * Math.PI * BEAST_WALK_MS;
+  const strideMs = 2 * Math.PI * BEAST_WALK_MS, walk = st.s === "move" || st.s === "ridewalk";
+  const slow = st.s === "idle" || st.s === "sit" || st.s === "ride";
   let frame;
   if (st.x !== undefined) frame = Math.min(n - 1, Math.floor(Math.max(0, st.x) * n));
-  else if (st.s === "move") frame = Math.floor(t / (strideMs / n)) % n;
-  else frame = Math.floor(t / (st.s === "idle" || st.s === "sit" ? 200 : CR_TICK)) % n;
-  const x = (frame + 0.5) / n, big = opts.big || 1;
-  const pose = crPose(fam, st.s, x, frame, big, kind, box);
-  const P = pose.P;
-  if (opts.air && CR_AIR_BASE[fam]) P.lift = (P.lift || 0) - CR_AIR_BASE[fam] * big;
-  const tA = st.s === "move" ? x * strideMs : frame * (st.s === "idle" || st.s === "sit" ? 200 : CR_TICK) * pose.tMul;
-  const spec = { owner, key, fam, st: st.s, box, P, big, flip: opts.flip || 1, tA, moving: st.s === "move" ? !opts.air : pose.moving,
-                 body, animKey: st.s + ":" + frame };
-  return { spr: creatureSprite(spec, forgeGrid(RENDER_DPR * zoomTarget).px), P, box };
+  else if (walk) frame = Math.floor(t / (strideMs / n)) % n;
+  else frame = Math.floor(t / (slow ? 200 : CR_TICK)) % n;
+  const px = forgeGrid(RENDER_DPR * zoomTarget).px;
+  const look = "C|" + key0 + "|" + flip + "|" + air;
+  const key = look + "|" + px.toFixed(5) + "|" + st.s + ":" + frame;
+  if (!crMeasureCache.has(key0) && !forgeCache.has(key) && !(forgeBakesLeft > 0 && forgeBakeMsLeft > 0)) {
+    const lk = forgeLast.get(owner), last = lk && forgeCache.get(lk);      // not measured yet and no budget: wait a frame
+    return last && last.look === look ? last : null;
+  }
+  return creatureSprite(key, look, owner, () => {
+    const fam = crFamily(kind), box = crMeasure(key0, body), big = opts.big || 1;
+    const x = (frame + 0.5) / n;
+    const pose = crPose(fam, st.s, x, frame, big, kind, box);
+    const P = pose.P;
+    if (air && CR_AIR_BASE[fam] && !CR_NO_AIR.has(st.s)) P.lift = (P.lift || 0) - CR_AIR_BASE[fam] * big;
+    const tA = walk ? x * strideMs : frame * (slow ? 200 : CR_TICK) * pose.tMul;
+    return { fam, st: st.s, box, P, big, flip, tA, moving: walk ? !air : pose.moving, body };
+  }, px);
 }
 /* the idle "life beat": every CR_BEAT_EVERY_MS each creature (phase-shifted by its id) plays its species beat */
+const crHashCache = new Map();
 function crBeatState(id, now) {
-  let h = 0; const s = String(id); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  let h = crHashCache.get(id);
+  if (h === undefined) { h = 0; const s = String(id); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; if (crHashCache.size < 20000) crHashCache.set(id, h); }
   const ph = (now + (h & 0xffff) * 7) % CR_BEAT_EVERY_MS;
   return ph < CR_BEAT_MS ? { s: "beat", x: ph / CR_BEAT_MS } : null;
+}
+/* has this thing moved lately? — by distance per millisecond, so frame rate never changes the answer */
+const CR_MOVE_SPEED = 0.0003;      // tiles per ms (0.3 tiles a second)
+function crMovedLately(o, x, y, now) {
+  if (o._crT !== undefined && now > o._crT) {
+    if (Math.hypot(x - o._crX, y - o._crY) / (now - o._crT) > CR_MOVE_SPEED) o._crMv = now;
+  }
+  o._crX = x; o._crY = y; o._crT = now;
+  return now - (o._crMv || -1e9) < 200;
 }
 /* ---- mobs: the state from the timers the mob AI already keeps ---- */
 let MOB_BODY = null;
 function mobAnimState(m, now, def) {
   if (m.dead) return m.diedAt && now - m.diedAt < CR_DEATH_MS ? { s: "death", x: (now - m.diedAt) / CR_DEATH_MS } : null;
-  if (m.winding && def && def.windupMs) return { s: "attack", x: Math.min(1, (now - (m.windupStart || now)) / def.windupMs) * 0.38 };
-  if (m.strikeT && now - m.strikeT < CR_STRIKE_MS) return { s: "attack", x: 0.38 + (now - m.strikeT) / CR_STRIKE_MS * 0.62 };
+  const imp = crImpact(m.kind), heavy = CR_HEAVY.has(m.kind);
+  if (m.winding && def && def.windupMs) {
+    const p = Math.min(1, Math.max(0, (now - (m.windupStart || now)) / def.windupMs));
+    return { s: "attack", x: (heavy ? Math.pow(p, 1.25) : p) * imp };         // heavy timing: a slower load, the same moment of impact
+  }
+  if (m.strikeT && now - m.strikeT < CR_STRIKE_MS) return { s: "attack", x: imp + (now - m.strikeT) / CR_STRIKE_MS * (1 - imp) };
   if (m.flash && now - m.flash < CR_HURT_MS) return { s: "hurt", x: (now - m.flash) / CR_HURT_MS };
   if (m.state === "cower") return { s: "cower" };
-  if (m.state === "aggro" || m.state === "leash" || (m.roams && now - (m.movedAt || -1e9) < 250)) return { s: "move" };
+  const mv = crMovedLately(m, m.x, m.y, now);
+  if (m.state === "aggro" || m.state === "leash" || mv) return { s: "move" };
   return crBeatState(m.id, now) || { s: "idle" };
 }
 const CR_HEAVY = new Set(["elder_drake", "adult_golem", "golem_elder", "demon_knight"]);
@@ -21482,6 +21559,14 @@ function mobBodyFn(m) {
     try { drawMob(m, tt); } finally { MOB_BODY = was; }
   };
 }
+/* the soft aura glows a bake left out, drawn live (translucent, animated) at the sprite's anchor */
+function crDrawGlows(e, sx, sy, t) {
+  if (!e.glows || !e.glows.length) return;
+  for (const g of e.glows) {
+    ctx.save(); ctx.translate(sx + g.lx, sy + g.ly); ctx.scale(g.s, g.s);
+    try { aura(0, 0, g.col, g.rx, t, g.o); } finally { ctx.restore(); }
+  }
+}
 /* the forged mob: live disc, ring and shadow under a baked body, live overlays over it */
 function drawMobForged(m, t) {
   if (!FORGE_ON) return false;
@@ -21493,16 +21578,13 @@ function drawMobForged(m, t) {
   const mk = MOB_K[m.kind] || SPECIES_K[m.kind] || 1;
   const heavy = CR_HEAVY.has(m.kind);
   const big = Math.min(2.4, Math.max(1, mk / 1.5));
-  if (heavy && st.x !== undefined && (st.s === "attack" || st.s === "hurt")) st.x = Math.pow(st.x, 1.25);   // heavy timing: a slower load, the same moment of impact
-  const flip = def.tameable ? 1 : (m.fx < -0.15 ? -1 : 1);
+  const flip = m.fx < -0.15 ? -1 : 1;           // review (S3): the beasts face their target too, so a charge never goes backwards
   if (!m._crBody) m._crBody = mobBodyFn(m);
-  const fr = crFrame("mob:" + m.id, m.kind, "m", m._crBody, t, st, { big, flip });
-  if (!fr.spr) return !!m.dead;          // nothing baked for this look yet: draw live (a dead one: nothing)
+  const spr = crFrame("mob:" + m.id, m.kind, "m", m._crBody, t, st, { big, flip });
+  if (!spr) return !!m.dead;             // nothing baked for this look yet: draw live (a dead one: nothing)
   /* a big one landing its blow shakes the ground — through the player's own shake setting */
-  if (heavy && st.s === "attack" && m.strikeT && now - m.strikeT < CR_STOMP_MS && !m._stompAt) { m._stompAt = m.strikeT; crStomp(m, mk); }
-  if (m._stompAt && m._stompAt !== m.strikeT) m._stompAt = 0;
-  const cowering = m.state === "cower";
-  const bob = m.dead ? 0 : cowering ? Math.sin(t / 180) * 0.4 : 0;
+  if (heavy && st.s === "attack" && m.strikeT && now - m.strikeT < CR_STOMP_MS && m._stompAt !== m.strikeT) { m._stompAt = m.strikeT; crStomp(m, mk); }
+  const bob = !m.dead && m.state === "cower" ? Math.sin(t / 180) * 0.4 : 0;
   const [gx, gy] = worldToScreen(m.x, m.y, groundZ(m.x, m.y));
   const sx = gx, sy = gy - bob;
   if (!m.dead) {
@@ -21518,8 +21600,12 @@ function drawMobForged(m, t) {
     ctx.fillStyle = `rgba(20,32,44,${(SUN.alpha * fade).toFixed(3)})`;
     const rx = def.tameable ? 6 * Math.max(1, mk / 1.6) : 5.6 * mk, ry = def.tameable ? 2.6 * Math.max(1, mk / 1.6) : 2.4 * mk;
     ctx.beginPath(); ctx.ellipse(sx, sy + 1, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+    crDrawGlows(spr, sx, sy, t);
   }
-  drawForgeSprite(ctx, fr.spr, sx, sy);
+  const ghost = m.kind === "dark_wraith";                      // review (S3): the wraith stays see-through
+  if (ghost) ctx.globalAlpha = 0.86;
+  drawForgeSprite(ctx, spr, sx, sy);
+  if (ghost) ctx.globalAlpha = 1;
   drawMobAfter(m, sx, sy, t, def);
   return true;
 }
@@ -21530,11 +21616,14 @@ function crStomp(m, mk) {
   } catch (e) {}
 }
 /* ---- pets: lunge (combat pets only), moving, happy (never dragons), sit, alert, idle + beat ---- */
-let petHappyAt = 0, ownerStillSince = 0, ownerLastX = NaN, ownerLastY = NaN;
+let petHappyAt = 0;
 function petAnimState(h, species, now, mine) {
   const pet = h.pet, fam = crFamily(species);
+  if (mine ? me.mounted : !!h.mo) return { s: pet.moving ? "ridewalk" : "ride" };   // review (S3): a mount holds still under its rider
   if (mine && pet.downedUntil && now < pet.downedUntil) return { s: "sit" };
-  if (mine && PET_COMBAT[species] && pet.swingT && now - pet.swingT < PET_LUNGE_MS * 1.8) return { s: "attack", x: (now - pet.swingT) / (PET_LUNGE_MS * 1.8) };
+  const imp = crImpact(species), atkMs = PET_LUNGE_MS * 1.8;
+  /* the bite lands at swingT, so the pose starts at its impact frame (pets have no wind-up tell) */
+  if (mine && PET_COMBAT[species] && pet.swingT && now - pet.swingT < atkMs) return { s: "attack", x: imp + (now - pet.swingT) / atkMs * (1 - imp) };
   if (pet.moving) return { s: "move" };
   let ha = 0, ownerSits = false;
   if (mine) {
@@ -21547,38 +21636,41 @@ function petAnimState(h, species, now, mine) {
   }
   if (fam !== "dragon" && ha && now - ha < CR_HAPPY_MS) return { s: "happy", x: (now - ha) / CR_HAPPY_MS };
   const grounded = fam !== "flier" && fam !== "sprite" && fam !== "moth" && fam !== "dragon";
-  if (mine) {
-    for (const m of mobs) if (!m.dead && (m.state === "aggro" || m.winding) && (m.space || "main") === (me.space || "main") &&
-      Math.abs(m.x - pet.x) < CR_ALERT_R && Math.abs(m.y - pet.y) < CR_ALERT_R && Math.hypot(m.x - pet.x, m.y - pet.y) < CR_ALERT_R) return { s: "alert" };
-    if (Math.abs(me.x - ownerLastX) > 0.01 || Math.abs(me.y - ownerLastY) > 0.01 || !(ownerLastX === ownerLastX)) { ownerLastX = me.x; ownerLastY = me.y; ownerStillSince = now; }
-    if (grounded && (ownerSits || now - ownerStillSince > CR_SIT_AFTER_MS)) return { s: "sit" };
-  } else if (grounded && ownerSits) return { s: "sit" };
-  return crBeatState("pet:" + (h.username || h.name || species), now) || { s: "idle" };
+  const sp = me ? (me.space || "main") : "main";
+  for (const m of mobs) if (!m.dead && (m.state === "aggro" || m.winding) && (m.space || "main") === sp &&
+    Math.abs(m.x - pet.x) < CR_ALERT_R && Math.abs(m.y - pet.y) < CR_ALERT_R && Math.hypot(m.x - pet.x, m.y - pet.y) < CR_ALERT_R) return { s: "alert" };
+  /* the owner standing still (any player's — tracked on the owner) */
+  const ox = mine ? me.x : h.x, oy = mine ? me.y : h.y;
+  if (h._stillX === undefined || Math.abs(ox - h._stillX) > 0.01 || Math.abs(oy - h._stillY) > 0.01) { h._stillX = ox; h._stillY = oy; h._stillSince = now; }
+  if (grounded && (ownerSits || now - h._stillSince > CR_SIT_AFTER_MS)) return { s: "sit" };
+  return crBeatState("pet:" + (h.username || h.name || h.id || species), now) || { s: "idle" };
 }
 const CR_SPECIES_BODY = {};
+/* species art faces right; a flip -1 draws it mirrored about its feet */
 function speciesBodyFn(species) {
-  return CR_SPECIES_BODY[species] || (CR_SPECIES_BODY[species] = (x, y, tt, mv) => drawSpecies(species, x, y, tt, mv));
+  return CR_SPECIES_BODY[species] || (CR_SPECIES_BODY[species] = (x, y, tt, mv, P, flip) => {
+    if ((flip || 1) < 0) { ctx.save(); ctx.translate(x, y); ctx.scale(-1, 1); ctx.translate(-x, -y); try { drawSpecies(species, x, y, tt, mv); } finally { ctx.restore(); } }
+    else drawSpecies(species, x, y, tt, mv);
+  });
 }
-/* the forged species art at (sx, sy) for a pet or a wild; false = draw it live */
-function drawSpeciesForged(owner, species, sx, sy, t, st, air) {
+/* the forged species art at (sx, sy) for a pet or a wild; null = draw it live */
+function drawSpeciesForged(owner, species, sx, sy, t, st, air, flip) {
   if (!FORGE_ON) return null;
   const big = Math.min(2.2, Math.max(1, (SPECIES_K[species] || 1) / 1.3));
-  const fr = crFrame(owner, species, "s", speciesBodyFn(species), t, st, { big, air });
-  if (!fr.spr) return null;
-  drawForgeSprite(ctx, fr.spr, sx, sy);
-  return fr.P;
+  const spr = crFrame(owner, species, "s", speciesBodyFn(species), t, st, { big, air, flip: flip || 1 });
+  if (!spr) return null;
+  crDrawGlows(spr, sx, sy, t);
+  drawForgeSprite(ctx, spr, sx, sy);
+  return spr.P || {};
 }
-/* ---- wilds: idle with their life beat, moving when they wander ---- */
+/* ---- wilds: idle with their life beat (a wild only drifts; it never walks a stride) ---- */
 function wildAnimState(w, wx, wy, now) {
-  const mv = w._lx !== undefined && Math.hypot(wx - w._lx, wy - w._ly) > 0.0015;
-  if (mv) w._mvAt = now;
-  w._lx = wx; w._ly = wy;
-  if (now - (w._mvAt || -1e9) < 180) return { s: "move" };
   return crBeatState("wild:" + (w.id !== undefined ? w.id : (w.x + "," + w.y)), now) || { s: "idle" };
 }
 function debugCreatureInfo() {
   return { families: Object.assign({}, CREATURE_FAMILY), CR_FRAMES: Object.assign({}, CR_FRAMES), CR_HURT_MS, CR_DEATH_MS, CR_STRIKE_MS, CR_HAPPY_MS,
-           CR_BEAT_MS, CR_BEAT_EVERY_MS, CR_SIT_AFTER_MS, CR_ALERT_R, measured: crMeasureCache.size, creatureBakes: forgeStats.creatureBakes, petHappyAt };
+           CR_BEAT_MS, CR_BEAT_EVERY_MS, CR_SIT_AFTER_MS, CR_ALERT_R, CR_IMPACT: Object.assign({}, CR_IMPACT), CR_BIG_BAKE_PX, CR_MOVE_SPEED,
+           measured: crMeasureCache.size, creatureBakes: forgeStats.creatureBakes, petHappyAt };
 }
 
 function drawPlayerEntity(p, name, t, isMe) {
