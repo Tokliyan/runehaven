@@ -1879,6 +1879,55 @@ animation keeps working automatically:
   - One Opus review per session.
   - One screenshot check per stage.
 
+### Session 3 design (owner direction 2026-10-25; waiting for the final "approve")
+
+Previews were rendered from the real game art: `mobs3.gif`, `pets3.gif`, `heroes3.gif` and `pet-families.gif`, all sent in chat.
+
+**Look (final).**
+- **Fine pixels.** One art pixel = one screen pixel at the 1.6× default. That is half the earlier size, so today's detail survives: eyes, teeth, wing ribs.
+- **The pixel-art finish:**
+  - an outline in each sprite's own darkened hue (never flat black);
+  - a 1 px highlight on top-left edges and shade on bottom-right edges;
+  - speckle clean-up;
+  - at most 40 colours.
+- **Scope.** It applies to mobs, pets, wild creatures AND the player classes, so the whole cast matches.
+
+**Living motion.** The creature's own animation clock keeps running through every action, so wings flap, tails swish and embers drift. A state never freezes it.
+
+**Mobs (all 15).**
+- States: idle, walk, attack (crouch wind-up → lunge with stretch → overshoot → settle), hurt (white then red flash, knockback squash), death (flash, pop, fall with a bounce and dust, then an ordered-dither dissolve).
+- Two-legged mobs topple backwards; beasts flop onto their side.
+- Humanoid mobs (goblin, bandit, troll, Demon Knight, Dark Wraith) get the player arm rig, so their weapon swings.
+- Big ones (Elder Drake, golems, Demon Knight) get heavier timing and a stomp shake that respects the shake switch.
+- Styled FX: a tapered two-tone slash smear, a gold impact star on the hit frame, two-tone dust clouds.
+
+**Pets and wild creatures — every family moves differently** (owner: "differentiation and uniqueness for everything so it feels like the world is alive").
+
+| Family | Members | Moving | Attack | Happy |
+|---|---|---|---|---|
+| Dragon | fire/water/storm/shadow, Dragon Elder | flies: hovers on fast wing beats | rears back, breathes its element (fireballs / water jet / lightning bolt) | NONE (owner: no happy for dragons) |
+| Flier | griffin, phoenix | glides with speed streaks | rises, then dives in a swoop with smear, star and dust | spirals up |
+| Canine | wolf, shadowfox, lightfox, Duskfox Elder | bounding run | crouch → leap arc → bite on landing | sits and howls (sound rings) |
+| Equine | unicorn, stag, Unicorn Elder | high-stepping prance | rears on its hind legs, stamps with a horn sparkle burst | sparkle trot |
+| Golem | golem, crystal golem, Golem Elder | lumbering steps, a dust puff each footfall | overhead slam with a ground shockwave ring | stomp dance |
+| Sprite | tree/water/stone/wind sprites | floats and bobs | — (no combat role) | twirls upward |
+| Moth | glow moth | erratic flutter | — (no combat role) | loop-the-loop |
+| Serpent | basilisk, krakenling, salamander king | slithers in waves | coils, strikes, spits venom | sways |
+| Beast | bear, boar | heavy trot | bear: standing swipe; boar: head-down charge with a dust trail | bear sits up; boar snuffles |
+
+**Rules the owner set (and memory records):**
+- **Pets that don't fight get NO attack animation.** The attack set is exactly the `PET_COMBAT` roster: wolf, bear, boar, griffin, golem, stag, phoenix, shadowfox, unicorn, lightfox, the four dragons, crystal golem, basilisk, krakenling, salamander king. Re-check the live table when building.
+- **Happy is for every family EXCEPT dragons.**
+- **Every species gets a unique idle "life" beat** on top of its family, so no two read the same. For example:
+  - the wolf sniffs the ground; the shadowfox flicks between shadows; the lightfox's tail glints;
+  - the unicorn grazes; the stag lifts its head and listens;
+  - golems' runes pulse; the crystal golem refracts a glint;
+  - sprites orbit their element; the glow moth circles the nearest light;
+  - dragons puff smoke or steam and look around; the storm dragon crackles;
+  - the basilisk flicks its tongue; the krakenling waves a tentacle;
+  - each guild companion gets its guild's motif.
+- **Combat is unchanged.** Stats, AI, damage, ranges, taming and the timing of wind-up warnings stay exactly as they are; the animations sit on top of the existing timers.
+
 ### Stages (each in one sitting, gauntlet rules; ★ = owner sign-off before merge)
 
 **P1: camera, zoom and a sharp canvas.**
