@@ -53,6 +53,17 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-10-25 (Living World S3 — creatures that live)
+Owner approved the design ("approve") and saw the in-game GIFs. What shipped:
+- **Finer grid for everything:** FORGE_ART_LOGICAL 0.625 (one art px = one screen px at 1.6x) with FORGE_SS 2; heroes and creatures share it.
+- **The pixel finish (forgeFinish):** speckle cleanup, top-left highlight (x1.16+16), bottom-right shade (x0.78), an outline in the sprite's own darkened hue (x0.28+(14,12,24)), and a Bayer 4x4 dissolve for deaths; re-quantized to <= 40 colours. forgeQuantize now cuts over the colour histogram (much faster).
+- **Creature forge:** `ctx` is a `let` and is pointed at a scratch canvas for one bake (always restored in finally). Mobs bake their BODY only (MOB_BODY mode in drawMob); disc, tame ring, shadow, wraith bolt and overlays stay live. aura() glows are recorded during a bake and drawn live and translucent; the wraith is drawn at 0.86 alpha. Sprites are trimmed; the cache is bounded by count (2400) and pixels (16e6); forgeLast holds keys; a bake over 30k art px may only be a frame's first.
+- **Families and beats:** see the README table. Each species has its own idle beat. Owner rules: a pet not in PET_COMBAT never attacks; dragons have no happy. Mounts hold still (ride / ridewalk). Airborne families keep their hover through beats and hits.
+- **Timing:** a mob's wind-up tell plays up to the family's impact frame (CR_IMPACT) and the strike from it, so the blow lands with the damage. Heavies (drake, golems, Demon Knight) load slower and shake the screen through the shake setting. Pets start their attack at the impact frame.
+- **Facing:** beasts and pets now face their target or travel; the Elder Drake (whose art faces left) faces where it is going.
+- **Known limits:** the humanoid "weapon rig" is the existing raise offset driven by the pose (cocked on the wind-up, driven down on the strike), not a full arm rotation; remote pets do not show attacks (pet swings are not synced); "guild companions" do not exist in the game, so there was nothing to animate.
+- Do not reintroduce: flat-black outlines, a second bob on top of a forged pose, baked translucent glows.
+
 ### 2026-10-24 (Living World S2 — pixel-art characters that act)
 
 Owner approved the GIFs on 2026-10-24. Owner D1 is B+: finer pixels, at most 40 colours per sprite, no outline.

@@ -1866,7 +1866,7 @@ animation keeps working automatically:
 |---|---|---|
 | **1** | P1: zoom, device pixels, camera | **SHIPPED** (see the changelog) |
 | **2** ★ | P2: Pixel Forge plus player characters and all their actions | **SHIPPED** (owner-approved GIFs, 2026-10-24) |
-| **3** ★ | P3 + P4: pets and all 27 mobs, through the same forge | next |
+| **3** ★ | P3 + P4: pets and all 27 mobs, through the same forge | **SHIPPED** (owner-approved design + in-game GIFs, 2026-10-25) |
 | **4** ★ | P5 batch 1: Plains, Meadow, Forest, Dark Forest, sand and coast | |
 | **5** ★ | P5 batch 2: Enchanted, Sacred, Snow, Volcano, caves, buildings and landmarks | |
 | **6** | P6–P9 trimmed: townsfolk, wind and wildlife, action feel, landmark title cards, boss intro | |
@@ -1879,7 +1879,7 @@ animation keeps working automatically:
   - One Opus review per session.
   - One screenshot check per stage.
 
-### Session 3 design (owner direction 2026-10-25; waiting for the final "approve")
+### Session 3 design (owner direction 2026-10-25; APPROVED and SHIPPED 2026-10-25)
 
 Previews were rendered from the real game art: `mobs3.gif`, `pets3.gif`, `heroes3.gif` and `pet-families.gif`, all sent in chat.
 
