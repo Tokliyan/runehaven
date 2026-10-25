@@ -15876,7 +15876,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         results.push([`Living World S3 A: every mob and species has a family (${missing.length} missing) and the README families table holds (${famBad.length} off: ${famBad.join(',')}); grid FORGE_SS ${FI.FORGE_SS} / FORGE_ART_LOGICAL ${FI.FORGE_ART_LOGICAL}; death ${CI.CR_DEATH_MS} ms, hurt ${CI.CR_HURT_MS}, beat ${CI.CR_BEAT_MS} every ${CI.CR_BEAT_EVERY_MS}`,
           missing.length === 0 && famBad.length === 0 && FI.FORGE_SS === 2 && FI.FORGE_ART_LOGICAL === 0.625 && CI.CR_DEATH_MS === 1300 && CI.CR_HURT_MS === 360 && CI.CR_BEAT_MS === 1100 && CI.CR_BEAT_EVERY_MS === 6500]);
         /* the owner's rules, through the real petAnimState */
-        const now0 = W.performance.now(), wasMounted = W.me.mounted; W.me.mounted = false;
+        const now0 = W.performance.now();
         const mk = () => ({ username: 'gateowner', pet: { x: -9999, y: -9999, moving: false, swingT: 0 } });
         const atkBad = [], happyBad = [];
         for (const sp of WILDK) {
@@ -15892,9 +15892,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
         W.debugSetPetHappy(0);
         results.push([`Living World S3 B (owner rule): a pet attacks ONLY if it fights (PET_COMBAT) — ${WILDK.length} species, ${atkBad.length} wrong ${atkBad.slice(0, 4).join(' ')}`, atkBad.length === 0 && WILDK.length >= 27]);
         results.push([`Living World S3 B (owner rule): every family plays "happy" except the dragons, which never do — ${happyBad.length} wrong ${happyBad.slice(0, 4).join(' ')}`, happyBad.length === 0]);
-        const hm = mk(); W.me.mounted = true; hm.pet.swingT = now0 - 5;
-        const rideS = W.petAnimState(hm, 'fire_dragon', now0, true).s; hm.pet.moving = true; const rideM = W.petAnimState(hm, 'wolf', now0, true).s;
-        W.me.mounted = wasMounted;
+        const hm = mk(); hm.mo = true; hm.pet.swingT = now0 - 5; hm.anim = { s: 'emote', k: 'cheer', at: now0 - 10 };   // a rider's mount (remote: h.mo)
+        const rideS = W.petAnimState(hm, 'wolf', now0, false).s; hm.pet.moving = true; const rideM = W.petAnimState(hm, 'wolf', now0, false).s;
         results.push([`Living World S3 B: a mount holds still under its rider — ${rideS} / ${rideM} while ridden (no attack, sit or happy)`, rideS === 'ride' && rideM === 'ridewalk']);
         /* every species its own beat */
         const all = Array.from(new Set(WILDK.concat(MOBK))), sig = new Map();
