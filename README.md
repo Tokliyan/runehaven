@@ -1866,7 +1866,7 @@ Supersedes sessions 4–6 of the plan below. Target: about 4 weeks at ~1.5 sessi
 
 | Session | Week | Contents | Status |
 |---|---|---|---|
-| **4** ★ | 1 | **Pixel biomes, batch 1** — Plains, Meadow, Forest, Dark Forest, sand and coast through the forge (outline, light, shade). **Wind:** grass and trees sway. One `PIXEL_BIOMES` switch per biome; each approved on its own. | next |
+| **4** ★ | 1 | **Pixel biomes, batch 1 — "The Breathing Land" (design written below, awaiting go)** — Plains, Meadow, Forest, Dark Forest, sand and coast through the forge (outline, light, shade). **Wind:** grass and trees sway. One `PIXEL_BIOMES` switch per biome; each approved on its own. | next |
 | **5** ★ | 1–2 | **Pixel biomes, batch 2 + buildings** — Enchanted, Sacred, Snow, Volcano, caves; every building and landmark forged (Spawn Forge, Bounty Board, Oracle, Eternal Tower, ruins). Lava glows and flows; snow drifts. | |
 | **6** ★ | 2 | **The Capital: Spawn Vale becomes a walled city** (below). | |
 | **7** ★ | 3 | **Frontier towns and roads** — Emberhold (volcano edge) and Frostgate (snow edge), each with an inn, smith, notice board and a local merchant; cobbled roads joining them to the Capital; each town a fast-travel point and a safe zone. | |
@@ -1888,6 +1888,58 @@ Supersedes sessions 4–6 of the plan below. Target: about 4 weeks at ~1.5 sessi
 
 #### Not in v2 (parked, not cancelled)
 Flying mounts and the sky layer, airships, guild-built cities and sieges, lava that reshapes the map, and the App Store wrapper (a separate track once touch play is polished).
+
+### Session 4 design — "The Breathing Land" (owner direction 2026-10-26: "extravagant, a lifelike world"; Week 1; DESIGN ONLY until the owner says go)
+
+**Goal in one line:** stand in Plains at dusk and the world should feel *alive*: grass leans in gusts that roll across the field, trees breathe, light falls in shafts through the forest, the shore foams, butterflies, deer and fireflies go about their business, and every tile is pixel-art with an outline, light and shade. It is the same game and the same map, only alive.
+
+#### The four pillars (what makes it feel lifelike, not just prettier)
+1. **One wind for the whole world.** A single wind field (direction drifts slowly over minutes, speed from calm to gusty) drives everything that moves in the air. Gusts are visible as bands sweeping across grass; trees lean *with* the gust, then recover; leaves, petals, seeds and rain slant the same way; smoke (later cities) bends the same way. No per-object random wobble: if you watch two trees, they sway in order as the gust passes. Weather sets the strength (rain = steady and strong, fog = still, storm slot = gusty). Setting: *Wind motion* Off / Low / Full (reuses the shake-setting pattern; Off = static, and phones default to Low).
+2. **Light you can see.** Sun angle follows the existing world clock. Trees cast long shadows at dawn and dusk (shadow direction and length follow the sun, one soft shape per tree through the forge). Forest and Dark Forest get dappled light (moving pools of light on the floor) and visible shafts at low sun. Night is not just a dark filter: moonlit blue on grass, firefly points in Meadow and Forest, glow-lit mushrooms in Dark Forest. Reuses the existing night alpha; no new lighting engine.
+3. **Ground with texture and story.** Tiles are no longer flat colour plus noise. Each biome gets forged ground with clumps, tufts, pebbles, worn dirt paths where mobs and players walk most, flower drifts that follow soft noise patches (not scatter), fallen logs, stumps, roots, mushroom rings, boulders with moss, reeds and lily pads at water. Decor density breathes by season of the day only if cheap; otherwise fixed.
+4. **Life that is not a mob.** Ambient creatures that never fight and never sync over the network (positions come from the world clock and tile hash, so every client sees the same ones in the same place): butterflies and bees over Meadow flowers, rabbits that bolt when you get near, deer in Forest at dawn and dusk, crows in Dark Forest that lift off when you pass, fireflies at night, gulls and crabs on the coast, fish shadows in shallows, dragonflies at water. Capped (≤ 24 live per screen), culled off screen, drawn through the forge.
+
+#### Biome by biome (each is its own `PIXEL_BIOMES.<name>` switch and is approved on its own with a before/after GIF)
+
+| Biome | Ground | Plants and props | Life | Signature moment |
+|---|---|---|---|---|
+| **Plains** | Layered grass tones in broad rolling patches, bright tufts, worn dirt tracks, small stones | Lone oaks with real canopies (3 lobes, outline, light on the sun side), wheat-like tall grass that waves in bands, wildflower drifts | Rabbits, crows overhead, butterflies by day | **Gust waves** roll across the grass like the sea; long golden shadows at dusk |
+| **Meadow** | Lush, flower-dense, soft clover texture | Poppies, daisies, lavender, bluebells in noise-driven drifts, bees, a few birches, hay bales at some edges | Butterflies and bees, dragonflies by water, **fireflies at night** | Petals lift off in gusts and drift downwind |
+| **Forest** | Mossy floor, leaf litter, roots, ferns, fallen logs | Tall layered pines and broadleaf trees (three heights so the forest has depth), undergrowth, mushrooms, stumps, hollow logs | Deer (dawn/dusk), woodpeckers, squirrels that scamper up trunks | **Light shafts and dappled floor**; canopies roar softly in strong gusts |
+| **Dark Forest** | Near-black soil, twisting roots, bone and moss, wet sheen | Gnarled bare-limbed trees with faint glowing knots, glow-mushroom clusters, hanging moss, cobwebs, thorn thickets | Crows that burst up, bats at dusk, pale eyes in the dark that blink and vanish | Ground mist hugging the floor that parts around you; mushrooms pulse in time |
+| **Sand** | Wind-ripples in the sand that shift direction with the wind, shell scatter, dune lines | Dry grass clumps, driftwood, beach boulders, palm-like coast trees | Crabs scuttling sideways, gulls | Blowing sand streaks on gusty days; ripples *move* |
+| **Coast and water** | Wet-sand band (darker, shiny), foam line that advances and retreats on a slow tide cycle, shallow water you can see the floor through | Reeds, lily pads, floating weed, wooden pier stubs, shells | Fish shadows, dragonflies, gulls, ripples when you wade | **Foam and shimmer:** sun glints on waves, soft reflections of trees at the shoreline |
+
+#### How it is built (reuses what exists; nothing exotic)
+- **Ground** goes through the Pixel Forge into the existing ground-chunk cache, so it costs nothing per frame. Static art is baked once per chunk. Only things that move are drawn live.
+- **Wind** is one function `windAt(x, y, t)` returning a lean value from a travelling wave field plus a slow direction drift. Grass tufts, tree canopies (already have `swayAt` from the Animation Pass; they will take their phase from `windAt` instead of a hash), petals, leaves and weather particles all read it. Grass sway uses 4 pre-baked lean frames per tuft type (sprite swap, not per-frame redraw) so a screen of 400+ tufts stays cheap.
+- **Shadows and light shafts** are baked per tree archetype per sun bucket (4 sun angles across the day) and tinted by night alpha. No per-frame shadow casting.
+- **Ambient life** is a small pool of spawn slots per screen. Each slot's creature and path are a hash of (chunk, world-clock window), so it is deterministic and needs no network. They use the creature forge from S3 (new families: insect, small-bird, small-mammal, crab, fish).
+- **Water** is a screen-space shimmer layer using a few pre-baked glint sprites plus the foam band drawn from the tide phase; reflections are a cheap flipped, faded tree strip only on shoreline tiles near the camera.
+- **Zoom and mobile:** everything stays on the S1 zoom/DPR transform and snaps to backing pixels. Mobile gets lower ambient caps and Low wind by default.
+
+#### Performance budget (gates, not wishes)
+- Plains screen at default zoom: average frame cost within **1.15×** of today's (wind, life and shimmer included); ground chunk bake ≤ 6 ms (S2 limit).
+- Ambient creatures ≤ 24 live per screen; all culled off screen; zero allocations per frame in the wind function.
+- Cache stays inside `FORGE_CACHE_MAX` / `FORGE_CACHE_PX`; new sprites are counted in the budget test.
+- With *Wind motion: Off* the frame is pixel-identical between two timestamps (proves nothing moves).
+
+#### Week 1 schedule (how the design fits the week)
+| Day | Work | Output for the owner |
+|---|---|---|
+| 1 | `windAt` + settings + trees taking wind from it + grass tuft sprites with lean frames | GIF: gust waves across Plains |
+| 2 | **Plains** and **Meadow** forged (ground, plants, flowers, drifts), ambient life v1 (butterflies, bees, rabbits) | ★ GIFs: Plains, Meadow, day to dusk |
+| 3 | **Forest** and **Dark Forest** (three-height canopy, dappled light, shafts, glow mushrooms, mist) | ★ GIFs: Forest, Dark Forest, dusk to night |
+| 4 | **Sand**, **coast and water** (tide foam, shimmer, reflections), crabs, gulls, fish | ★ GIF: a coastline walk |
+| 5 | Fireflies, deer, crows, bats; tuning, mobile pass, performance and mutation gates, review, merge | Final tour GIF; owner redeploys |
+
+Biomes ship as separate switches: if one is not good enough it stays off and the others still merge.
+
+#### Gates added (they only ever rise)
+Wind: determinism (same seed and time gives the same lean), direction and speed bounds, Off = identical frames, trees and grass phase-ordered along the gust. Forge: every new ground and plant sprite has a stable key, ≤ 40 colours, outline present, cache inside budget. Life: ambient pool cap, deterministic placement (two clients agree), no ambient creature is targetable or damages anything. Perf: the 1.15× and 6 ms figures above. Visuals: before/after sheet per biome; the owner approves each.
+
+#### Not in Session 4 (goes to Session 5 or later)
+Enchanted, Sacred, Snow, Volcano, caves; all buildings; seasons that change the map; ambient sound (a later option: wind and bird loops under the existing audio settings).
 
 ### The 6-session plan (owner-approved 2026-10-24; this supersedes the P-stage order below)
 
