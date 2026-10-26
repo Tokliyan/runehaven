@@ -1860,6 +1860,35 @@ animation keeps working automatically:
 5. **Draw crisp.** Sprites are drawn with `imageSmoothingEnabled = false` at
    whole-art-pixel positions, so pixels stay square and never shimmer.
 
+### LOCKED 2026-10-26 — Living World v2: Cities & a Lifelike World (owner: "large cities, better quality and a lifelike world that can be done within weeks")
+
+Supersedes sessions 4–6 of the plan below. Target: about 4 weeks at ~1.5 sessions a week. ★ = the owner approves GIFs before merge.
+
+| Session | Week | Contents | Status |
+|---|---|---|---|
+| **4** ★ | 1 | **Pixel biomes, batch 1** — Plains, Meadow, Forest, Dark Forest, sand and coast through the forge (outline, light, shade). **Wind:** grass and trees sway. One `PIXEL_BIOMES` switch per biome; each approved on its own. | next |
+| **5** ★ | 1–2 | **Pixel biomes, batch 2 + buildings** — Enchanted, Sacred, Snow, Volcano, caves; every building and landmark forged (Spawn Forge, Bounty Board, Oracle, Eternal Tower, ruins). Lava glows and flows; snow drifts. | |
+| **6** ★ | 2 | **The Capital: Spawn Vale becomes a walled city** (below). | |
+| **7** ★ | 3 | **Frontier towns and roads** — Emberhold (volcano edge) and Frostgate (snow edge), each with an inn, smith, notice board and a local merchant; cobbled roads joining them to the Capital; each town a fast-travel point and a safe zone. | |
+| **8** ★ | 3 | **City life** — named townsfolk with daily routines, guards on patrol, an opening and closing market, lamps and lit windows at night, chimney smoke, cats, dogs and birds, children who chase pets; the existing weather drawn properly (rain on roofs, snow on streets, ash at Emberhold). | |
+| **9** | 4 | **Feel and grand moments** — heavier hits (hit-stop, dust, shake through the setting), title cards on entering a city, town or landmark, the Elder Drake's boss intro, and the **Tower Awakening** world event. | |
+
+#### The Capital (session 6)
+- **Size and shape:** about 40×40 tiles centred on today's spawn, inside a stone wall with four gates (N/E/S/W). Today's Spawn Forge, Bounty Board and Oracle keep their places and become part of it.
+- **Districts:** Market Square (stalls, a fountain, the bounty board), Smithy Row (the Spawn Forge, an armourer), Guild Row (one hall per real guild, flying its badge and colour), the Temple of the Oracle, homes (lit windows at night), and a Keep at the top of the city.
+- **Streets:** cobbled streets on a grid with lamp posts, signposts and banners. Buildings block movement; streets do not.
+- **Rules:** the whole city is a safe zone; players cannot place base pieces inside the wall; mobs and wilds never spawn inside it.
+
+#### Design rules for v2 (they keep it doable in weeks)
+- **No new SQL.** Cities, towns and roads are generated from the world seed on every client, so everyone sees the same city without new tables.
+- **Townsfolk are clock-driven.** Each one's position comes from the shared world clock and their schedule, so every player sees them in the same place with nothing synced over the network.
+- **Everything through the forge.** New buildings, stalls and townsfolk are procedural art baked by the Pixel Forge, with the finish (outline, light, shade, ≤ 40 colours).
+- **Performance stays a gate.** City ground goes through the ground-chunk cache; frame rate at the Capital must stay within 0.9× of today's spawn figure on desktop, and the mobile layout must still fit.
+- **Process unchanged:** gates only rise, one Opus review per session, run3–run6 green before merge, the owner redeploys on Render.
+
+#### Not in v2 (parked, not cancelled)
+Flying mounts and the sky layer, airships, guild-built cities and sieges, lava that reshapes the map, and the App Store wrapper (a separate track once touch play is polished).
+
 ### The 6-session plan (owner-approved 2026-10-24; this supersedes the P-stage order below)
 
 | Session | Contents | Status |
@@ -1867,9 +1896,7 @@ animation keeps working automatically:
 | **1** | P1: zoom, device pixels, camera | **SHIPPED** (see the changelog) |
 | **2** ★ | P2: Pixel Forge plus player characters and all their actions | **SHIPPED** (owner-approved GIFs, 2026-10-24) |
 | **3** ★ | P3 + P4: pets and all 27 mobs, through the same forge | **SHIPPED** (owner-approved design + in-game GIFs, 2026-10-25) |
-| **4** ★ | P5 batch 1: Plains, Meadow, Forest, Dark Forest, sand and coast | |
-| **5** ★ | P5 batch 2: Enchanted, Sacred, Snow, Volcano, caves, buildings and landmarks | |
-| **6** | P6–P9 trimmed: townsfolk, wind and wildlife, action feel, landmark title cards, boss intro | |
+| **4–9** | superseded 2026-10-26 by "Living World v2 — Cities & a Lifelike World" below | see below |
 
 - **Batch approval.** In sessions 4 and 5 each biome is its own `PIXEL_BIOMES` switch. The owner approves or rejects each one from before/after GIFs during the session, and only approved ones merge.
 - **Cut to fit:** windmills and water wheels, footprints, the dawn/dusk colour sweep, and run frames separate from walk frames.
