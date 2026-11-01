@@ -8204,7 +8204,8 @@ function drawGroundTile(c, tx, ty) {
        gives the eye something to read INSIDE a sand tile, which is the other
        half of why a beach reads as banded: two near-identical shades with no
        texture between them leave the tile edges as the only thing to see. */
-    for (let s = 0; s < (pbT ? 0 : 4); s++) {          // Living World S4: the forged texture carries the grain
+    for (let s = 0; s < 4; s++) {
+      if (pbT) break;                                     // Living World S4: the forged texture carries the grain
       const gh = hash2(tx, ty, 100 + s * 3);
       if (gh < 0.34) continue;
       const gu = (hash2(tx, ty, 101 + s * 3) - 0.5) * 1.3;   // tile-local u,v in [-0.65,0.65]
