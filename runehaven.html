@@ -10578,14 +10578,15 @@ function drawWeather(w, h) {
   /* A change of weather fills the whole screen at once; after that new
      ones enter from the top, a few a frame, up to the cap. */
   const seedAll = weatherParts.length === 0;
+  const wdr = pbAirWeatherDrift(kind), wext = Math.abs(wdr) * h / P.vy, wlo = wdr > 0 ? -wext : 0, whi = w + 60 + (wdr < 0 ? wext : 0);   // Living World S4: the wind's slant
   for (let n = 0; n < (seedAll ? want : 8) && weatherParts.length < want && weatherParts.length < WEATHER_PARTICLE_CAP; n++) {
-    weatherParts.push({ x: Math.random() * (w + 60), y: seedAll ? Math.random() * h : -10 - Math.random() * h * 0.3,
+    weatherParts.push({ x: wlo + Math.random() * (whi - wlo), y: seedAll ? Math.random() * h : -10 - Math.random() * h * 0.3,
                         s: 0.7 + Math.random() * 0.6, e: kind === "ash" && Math.random() < 0.15 });
   }
   for (const q of weatherParts) {
     const sway = kind === "rain" ? 0 : Math.sin(nowT / 700 + q.s * 9) * 12;
-    q.x += (P.vx + sway) * q.s * dt; q.y += P.vy * q.s * dt;
-    if (q.y > h + 8 || q.x < -20 || q.x > w + 80) { q.x = Math.random() * (w + 60); q.y = -8; }
+    q.x += (P.vx + sway + wdr) * q.s * dt; q.y += P.vy * q.s * dt;
+    if (q.y > h + 8 || q.x < wlo - 20 || q.x > whi + 20) { q.x = wlo + Math.random() * (whi - wlo); q.y = -8; }
     ctx.fillStyle = q.e ? P.ember : P.col;
     ctx.fillRect(Math.round(q.x), Math.round(q.y), P.w, P.h);
   }
@@ -15130,6 +15131,7 @@ function updateParticles(dt, t) {
       const tx = Math.floor(cam.x - 14 + Math.random() * 28);
       const ty = Math.floor(cam.y - 14 + Math.random() * 28);
       const b = biomeAt(tx, ty);
+      if (typeof pbAirSpawn === "function") pbAirSpawn(tx, ty, b, isNight);   // Living World S4: petals on a meadow gust, sand streaks
       /* v54 PART A: the spawn ambience, concentrated inside SAFE_RADIUS
          and nowhere else. Surface-only for the same reason the wisps
          below are: inside an interior me.x/me.y are the interior's own
@@ -15316,6 +15318,7 @@ function updateParticles(dt, t) {
     const p = particles[i];
     p.life -= dt;
     if (p.life <= 0) { particles.splice(i, 1); continue; }
+    if (p.pbAir) { pbAirStep(p, dt, t); } else   // Living World S4: petals, sand streaks
     if (p.kind === "firefly") {
       p.x += Math.sin(t / 600 + p.ph) * dt;
       p.y += Math.cos(t / 800 + p.ph) * dt;
@@ -15327,8 +15330,9 @@ function updateParticles(dt, t) {
       p.z = Math.abs(Math.sin(t / 220 + p.ph)) * 2.2;
       p.x += Math.sin(t / 1400 + p.ph) * dt * 0.5;
     } else if (p.kind === "leaf") {            // Gauntlet S2 R1: falls, swaying
-      p.x += (p.vx + Math.sin(t / 520 + p.ph) * 0.5) * dt;
-      p.y += (p.vy + Math.cos(t / 610 + p.ph) * 0.25) * dt;
+      const lw = pbAirLeafWind(p.x, p.y);   // Living World S4: with the wind
+      p.x += (p.vx + Math.sin(t / 520 + p.ph) * 0.5 + WIND.dx * lw) * dt;
+      p.y += (p.vy + Math.cos(t / 610 + p.ph) * 0.25 + WIND.dy * lw) * dt;
       p.z += p.vz * dt;
       if (p.z < 0) { particles.splice(i, 1); continue; }
     } else {
@@ -22523,6 +22527,712 @@ function debugWindAt(x, y, ms, kind, mode) {
 
 /*@@S4_LIFE@@*/
 /*@@S4_AIR@@*/
+/* =====================================================================
+   Living World S4 — WATER, LIGHT AND AIR
+   The shore, the sun on the water, the light under the trees and the air
+   between them. Everything here is a flat fill or a hard stroke; a soft
+   falloff is a stack of concentric flat shapes at low alpha, never a
+   gradient. Every effect is a pure function of the WORLD clock
+   (WIND.tS), the day and tile hashes, so two clients see the same swash,
+   the same glint and the same mist drifting the same way, and nothing is
+   sent anywhere. Reduce motion draws the still version (static light,
+   foam without a tide) or nothing at all (glints); a biome whose
+   PIXEL_BIOMES switch is off gets none of it; nothing is drawn in an
+   interior. Static lists (where the shore is, which tiles dapple, where
+   a glow mushroom stands) are built once per 16x16 chunk, as the tufts
+   are, so a frame walks a few dozen items and never the whole map.
+   ===================================================================== */
+const PB_AIR_CH = 16, PB_AIR_CHUNKS_MAX = 140, PB_AIR_BUILDS = 4;       // chunk side, chunks kept, builds a frame
+const PB_AIR_SHIFT = HZ / (2 * IH2);        // a drop of HZ px, in tiles along either world axis: 0.727 (FOAM_FRONT_T = 1 - this)
+const PB_AIR_TIDE_S = 14, PB_AIR_TIDE_A = 0.12, PB_AIR_TIDE_SLOPE = 0.09;   // TUNABLE: tide period (s), swash (tiles), phase per tile along a shore
+const PB_AIR_LV = 8, PB_AIR_SEG_CAP = 96, PB_AIR_POLY_CAP = 96;        // foam alpha levels, per-level batch sizes
+const PB_AIR_GLINT_CAP = 40, PB_AIR_GLINT_S = 0.6;                       // TUNABLE: most glints on screen, life of one (s)
+const PB_AIR_DAPPLE_CAP = 96;                                            // TUNABLE: most light patches on the forest floor
+const PB_AIR_SHAFT_CAP = 6;                                              // TUNABLE: most light shafts on screen
+const PB_AIR_MIST_CELL = 8, PB_AIR_MIST_CAP = 54, PB_AIR_MIST_CYCLE = 96;   // TUNABLE: mist cell (tiles), most puffs, life of a bank (s)
+const PB_AIR_GLOW_CAP = 24;                                              // TUNABLE: most glow mushrooms lit at once
+
+const pbAirChunks = new Map();
+const pbAirCells = new Map();
+let pbAirBuilds = 0;
+const pbAirF = { no: -1, tS: 0, dayT: 0, na: 0, dusk: 0, sun: 0, low: 0, moon: 0, still: false, S: 1, shX: 0, shY: 0 };
+const pbAirSt = { foamSE: 0, foamNW: 0, wet: 0, glints: 0, glintCands: 0, dapples: 0, shafts: 0, mist: 0, glow: 0, lights: 0,
+                  ms: 0, msAcc: 0, msAvg: 0, msMax: 0, frames: 0, builds: 0, petalSpawns: 0, streakSpawns: 0 };
+
+/* ---- palettes: strings built once, so a frame builds none ---- */
+const PB_AIR_FOAM_A = [], PB_AIR_FOAM_B = [];
+for (let k = 0; k < PB_AIR_LV; k++) {                    // the existing foam's own white, at its own 0.72 / 0.30 of the pulse 0.32..0.92
+  const p = 0.32 + 0.6 * k / (PB_AIR_LV - 1);
+  PB_AIR_FOAM_A.push("rgba(238,248,250," + (0.72 * p).toFixed(3) + ")");
+  PB_AIR_FOAM_B.push("rgba(238,248,250," + (0.30 * p).toFixed(3) + ")");
+}
+const PB_AIR_WET = [], PB_AIR_GL_W = [], PB_AIR_GL_C = [], PB_AIR_GL_M = [], PB_AIR_MIST = [];
+for (let k = 1; k <= 4; k++) PB_AIR_WET.push("rgba(84,66,40," + (0.05 * k).toFixed(3) + ")");
+for (let k = 0; k < 8; k++) {
+  const a = (k + 1) / 8;
+  PB_AIR_GL_W.push("rgba(252,254,255," + (0.92 * a).toFixed(3) + ")");
+  PB_AIR_GL_C.push("rgba(206,244,250," + (0.92 * a).toFixed(3) + ")");
+  PB_AIR_GL_M.push("rgba(190,216,255," + (0.6 * a).toFixed(3) + ")");
+}
+for (let k = 1; k <= 5; k++) PB_AIR_MIST.push("rgba(168,190,188," + (0.014 * k).toFixed(3) + ")");
+
+/* batches: flat typed arrays per alpha level, reused every frame */
+const pbAirSegA = [], pbAirSegB = [], pbAirPoly = [];
+for (let k = 0; k < PB_AIR_LV; k++) { pbAirSegA.push(new Float32Array(PB_AIR_SEG_CAP * 4)); pbAirSegB.push(new Float32Array(PB_AIR_SEG_CAP * 4)); }
+for (let k = 0; k < 4; k++) pbAirPoly.push(new Float32Array(PB_AIR_POLY_CAP * 8));
+const pbAirNA = new Int16Array(PB_AIR_LV), pbAirNB = new Int16Array(PB_AIR_LV), pbAirNP = new Int16Array(4);
+const pbAirGl = new Float32Array(160 * 4);               // glint candidates: sx, sy, level, colour
+const pbAirDap = [];                                     // dapples, bucketed by alpha: x, y, rx
+for (let k = 0; k < 4; k++) pbAirDap.push(new Float32Array(PB_AIR_DAPPLE_CAP * 3));
+const pbAirNDap = new Int16Array(4);
+const pbAirGlowX = new Float32Array(PB_AIR_GLOW_CAP), pbAirGlowY = new Float32Array(PB_AIR_GLOW_CAP),
+      pbAirGlowZ = new Float32Array(PB_AIR_GLOW_CAP), pbAirGlowP = new Float32Array(PB_AIR_GLOW_CAP);
+let pbAirGlowN = 0;
+const pbAirLightPool = [];
+for (let k = 0; k < PB_AIR_GLOW_CAP; k++) pbAirLightPool.push({ x: 0, y: 0, z: 0, r: 30, a: 0.5, col: "rgba(110,236,208,A)" });
+const pbAirMistX = new Float32Array(PB_AIR_MIST_CAP), pbAirMistY = new Float32Array(PB_AIR_MIST_CAP),
+      pbAirMistRX = new Float32Array(PB_AIR_MIST_CAP), pbAirMistRY = new Float32Array(PB_AIR_MIST_CAP),
+      pbAirMistL = new Uint8Array(PB_AIR_MIST_CAP);
+const PB_AIR_Q = [[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0.5]];
+const pbAirShaftC = new Float32Array(32 * 5);            // shaft candidates: tx, ty, z, dist, ph
+
+/* ---------------------------------------------------------------------
+   THE FRAME: the numbers every effect reads, worked out once a frame.
+   `sun` is the day light that reaches the ground: gone at night, under a
+   heavy cloud, and in rain and fog; `low` is how low the sun stands
+   (0 noon, 1 at the horizon); `moon` is the night's share.
+   --------------------------------------------------------------------- */
+function pbAirFrame(t) {
+  const f = pbAirF;
+  if (f.no === pbFrameNo) return f;
+  const st = pbAirSt;
+  st.ms = st.msAcc; st.msAcc = 0; st.frames++;
+  st.msAvg += (st.ms - st.msAvg) * 0.04; if (st.ms > st.msMax) st.msMax = st.ms;
+  f.no = pbFrameNo; pbAirBuilds = 0;
+  f.tS = WIND.tS; f.still = !!SETTINGS.reduceMotion;
+  const dayT = getDayT(), na = nightAlpha(dayT), wk = WIND.kind;
+  f.dayT = dayT; f.na = na; f.dusk = duskGlow(dayT);
+  const wx = (wk === "rain" || wk === "fog") ? 0 : wk === "snow" ? 0.35 : wk === "ash" ? 0.45 : 1;
+  const cl = Math.min(1, SUN.alpha / 0.22);
+  f.sun = (1 - Math.min(1, na * 3)) * wx * cl;
+  f.low = Math.abs(Math.cos(Math.PI * Math.min(1, dayT / 0.55)));
+  f.moon = Math.max(0, Math.min(1, (na - 0.3) / 0.5)) * ((wk === "rain" || wk === "fog") ? 0 : 1);
+  f.S = VIEW_SCALE; f.shX = renderShX; f.shY = renderShY;
+  return f;
+}
+function pbAirTally(t0) { pbAirSt.msAcc += performance.now() - t0; }
+/* a position snapped to the backing pixel grid, the way the forge sprites are */
+function pbAirSnapX(x) { return Math.round((x + pbAirF.shX) * pbAirF.S) / pbAirF.S - pbAirF.shX; }
+function pbAirSnapY(y) { return Math.round((y + pbAirF.shY) * pbAirF.S) / pbAirF.S - pbAirF.shY; }
+
+/* ---------------------------------------------------------------------
+   THE TIDE. One slow swash for every shore, on the world clock: how far
+   the foam has run up the beach, in tiles along the edge normal, + toward
+   the land, about -0.12..0.12 (a few px: a tile of world is ~20 px across
+   an edge). The phase slips a little per tile along a shore, so the swash
+   rolls along the coast instead of the whole sea breathing at once. The
+   existing north and west foam reads this too (see the patch); `lag`
+   trails a second line behind the first so the band widens and narrows.
+   Reduce motion: the foam stays where it was.
+   --------------------------------------------------------------------- */
+function pbAirTideTh(tx, ty, lag) { return 6.2832 * WIND.tS / PB_AIR_TIDE_S + (tx + ty) * PB_AIR_TIDE_SLOPE - (lag || 0); }
+function pbAirTide(tx, ty, lag) {
+  if (SETTINGS.reduceMotion || !PIXEL_BIOMES.coast) return 0;     // the coast's switch also takes the tide off the existing foam
+  return PB_AIR_TIDE_A * Math.sin(pbAirTideTh(tx, ty, lag));
+}
+/* how wet the sand is: 0 while the foam is at its highest, widening as it
+   slides back, and drying off over the rest of the cycle before the next swash */
+function pbAirWet(th) {
+  let phi = (th - 1.5708) / 6.2832; phi -= Math.floor(phi);
+  const retreat = 0.5 - 0.5 * Math.sin(th);
+  return Math.min(1, 2.5 * retreat * Math.pow(1 - phi, 1.5));
+}
+
+/* ---------------------------------------------------------------------
+   STATIC LISTS, once per chunk (terrain does not change)
+   --------------------------------------------------------------------- */
+function pbAirChunk(cx, cy) {
+  const key = cx * 65536 + cy;
+  let C = pbAirChunks.get(key);
+  if (C) return C;
+  if (pbAirBuilds >= PB_AIR_BUILDS) return null;
+  pbAirBuilds++; pbAirSt.builds++;
+  const x0 = cx * PB_AIR_CH, y0 = cy * PB_AIR_CH;
+  const water = [], shore = [], dap = [], shaft = [], glow = [];
+  const props = typeof PB_PROPS !== "undefined" ? PB_PROPS.darkforest : null;
+  const propP = typeof PB_PROP_P !== "undefined" ? PB_PROP_P.darkforest : 0;
+  for (let ty = y0; ty < y0 + PB_AIR_CH; ty++) for (let tx = x0; tx < x0 + PB_AIR_CH; tx++) {
+    if (tx < 0 || ty < 0 || tx >= N || ty >= N) continue;
+    const b = biomeAt(tx, ty);
+    if (b === B.SHALLOW || b === B.WATER || b === B.DEEP) {
+      water.push(tx, ty);
+      if (b === B.SHALLOW) {
+        const hN = heightAt(tx, ty - 1), hW = heightAt(tx - 1, ty), hS = heightAt(tx, ty + 1), hE = heightAt(tx + 1, ty);
+        /* 1 land N, 2 land W (the existing foam's own test); 4 / 8 land S / E at beach level, where the
+           shore is seen across the water; 16 / 32 land E / S at any height (that edge's front part is
+           hidden); 64 water W, 128 water N (so the shore line may run on over the next tile) */
+        const m = (hN >= 0 ? 1 : 0) | (hW >= 0 ? 2 : 0) | (hS === 0 ? 4 : 0) | (hE === 0 ? 8 : 0)
+                | (hE >= 0 ? 16 : 0) | (hS >= 0 ? 32 : 0) | (hW < 0 ? 64 : 0) | (hN < 0 ? 128 : 0);
+        if (m & 15) shore.push(tx, ty, m);
+      }
+    } else if (b === B.FOREST) {
+      const z = groundZ(tx + 0.5, ty + 0.5);
+      if (hash2(tx, ty, 3301) < 0.11) dap.push(tx, ty, 0, z);
+      if (hash2(tx, ty, 3311) < 1 / 70) shaft.push(tx, ty, z);
+    } else if (b === B.DARKFOREST) {
+      const z = groundZ(tx + 0.5, ty + 0.5);
+      if (hash2(tx, ty, 3301) < 0.03) dap.push(tx, ty, 1, z);
+      /* the core's own test for what stands on this tile (pbGroundProps), repeated so the glow sits on the
+         mushrooms it belongs to */
+      if (props && hash2(tx, ty, 1931) <= propP && props[(hash2(tx, ty, 1933) * props.length) | 0] === "glowshrooms"
+          && !(typeof arenaFloorAt === "function" && arenaFloorAt(tx, ty, b))
+          && distToSeg(tx + 0.5, ty + 0.5, SPAWN.x, SPAWN.y, SPAWN_FORGE.x, SPAWN_FORGE.y) >= 1.2)
+        glow.push(tx, ty, z, hash2(tx, ty, 3331));
+    }
+  }
+  C = { water: Int32Array.from(water), shore: Int32Array.from(shore), dap: Float32Array.from(dap),
+        shaft: Float32Array.from(shaft), glow: Float32Array.from(glow) };
+  pbAirChunks.set(key, C);
+  if (pbAirChunks.size > PB_AIR_CHUNKS_MAX) pbAirChunks.delete(pbAirChunks.keys().next().value);
+  return C;
+}
+/* a water-plane point the land in front of it hides: land top faces stand HZ above the water, so the
+   tile a point is hidden by is the one at (x, y) + PB_AIR_SHIFT, and a plateau one step higher hides twice that */
+function pbAirHidden(X, Y) {
+  if (heightAt(Math.floor(X + PB_AIR_SHIFT), Math.floor(Y + PB_AIR_SHIFT)) >= 0) return true;
+  return heightAt(Math.floor(X + 2 * PB_AIR_SHIFT), Math.floor(Y + 2 * PB_AIR_SHIFT)) >= 1;
+}
+
+/* ---------------------------------------------------------------------
+   WATER: foam on the south and east shores, the tide's wet band, and the
+   sun (or the moon) glinting on the surface. Called by render() right
+   after the existing water pass.
+   --------------------------------------------------------------------- */
+function pbDrawWaterExtras(minX, maxX, minY, maxY, t, w, h) {
+  const t0 = performance.now(), st = pbAirSt;
+  st.foamSE = 0; st.foamNW = 0; st.wet = 0; st.glints = 0; st.glintCands = 0;
+  if (inInterior() || !PIXEL_BIOMES.coast) { pbAirFrame(t); pbAirTally(t0); return; }
+  const f = pbAirFrame(t);
+  camOffset();
+  const ox = camOX, oy = camOY, still = f.still;
+  const c0x = Math.floor(minX / PB_AIR_CH), c1x = Math.floor(maxX / PB_AIR_CH), c0y = Math.floor(minY / PB_AIR_CH), c1y = Math.floor(maxY / PB_AIR_CH);
+  ctx.save();
+
+  /* ---- shores ---- */
+  pbAirNA.fill(0); pbAirNB.fill(0); pbAirNP.fill(0);
+  for (let cy = c0y; cy <= c1y; cy++) for (let cx = c0x; cx <= c1x; cx++) {
+    const C = pbAirChunk(cx, cy);
+    if (!C) continue;
+    const L = C.shore;
+    for (let i = 0; i < L.length; i += 3) {
+      const tx = L[i], ty = L[i + 1], m = L[i + 2];
+      const sx = ox + (tx - ty) * IW2, sy = oy + (tx + ty + 1) * IH2;
+      if (sx < -80 || sx > w + 80 || sy < -60 || sy > h + 90) continue;
+      /* the existing foam's own pulse (one brightness per run of FOAM_RUN tiles), in 8 steps */
+      const pulse = still ? 0.62 : 0.62 + Math.sin(t / 700 + Math.floor((tx + ty) / FOAM_RUN) * 1.7) * 0.3;
+      let lv = Math.round((pulse - 0.32) / 0.6 * (PB_AIR_LV - 1));
+      lv = lv < 0 ? 0 : lv > PB_AIR_LV - 1 ? PB_AIR_LV - 1 : lv;
+      const th = pbAirTideTh(tx, ty, 0);
+      const td = still ? 0 : PB_AIR_TIDE_A * Math.sin(th), td2 = still ? 0 : PB_AIR_TIDE_A * Math.sin(th - 0.6);
+      const wet = still ? 0 : pbAirWet(th);
+      let wl = wet < 0.05 ? -1 : Math.min(3, Math.floor(wet * 4));
+      if (m & 4) {                   // land to the SOUTH: its back edge A -> B, seen from across the water
+        const ax = ox + (tx - ty - 1) * IW2, ay = oy + (tx + ty + 1) * IH2;
+        const s0 = (m & 64) ? 0 : PB_AIR_SHIFT;
+        let ob = 0.07 - td, ob2 = 0.25 - td2;
+        pbAirSeg(pbAirSegA, pbAirNA, lv, ax + IW2 * (s0 + ob), ay + IH2 * (s0 - ob), ax + IW2 * (1 + ob), ay + IH2 * (1 - ob));
+        pbAirSeg(pbAirSegB, pbAirNB, lv, ax + IW2 * (s0 + ob2), ay + IH2 * (s0 - ob2), ax + IW2 * (1 + ob2), ay + IH2 * (1 - ob2));
+        st.foamSE++;
+        if (wl >= 0) {               // wet sand along the beach's edge, behind the foam that has gone back
+          const dw = 0.15 * wet;
+          pbAirQuad(wl, ax + IW2 * s0, ay + IH2 * s0, ax + IW2, ay + IH2, ax + IW2 - IW2 * dw, ay + IH2 + IH2 * dw, ax + IW2 * s0 - IW2 * dw, ay + IH2 * s0 + IH2 * dw);
+          st.wet++;
+        }
+      }
+      if (m & 8) {                   // land to the EAST
+        const px = ox + (tx + 1 - ty) * IW2, py = oy + (tx + 1 + ty) * IH2;
+        const s0 = (m & 128) ? 0 : PB_AIR_SHIFT;
+        let ob = 0.07 - td, ob2 = 0.25 - td2;
+        pbAirSeg(pbAirSegA, pbAirNA, lv, px - IW2 * (s0 + ob), py + IH2 * (s0 - ob), px - IW2 * (1 + ob), py + IH2 * (1 - ob));
+        pbAirSeg(pbAirSegB, pbAirNB, lv, px - IW2 * (s0 + ob2), py + IH2 * (s0 - ob2), px - IW2 * (1 + ob2), py + IH2 * (1 - ob2));
+        st.foamSE++;
+        if (wl >= 0) {
+          const dw = 0.15 * wet;
+          pbAirQuad(wl, px - IW2 * s0, py + IH2 * s0, px - IW2, py + IH2, px - IW2 + IW2 * dw, py + IH2 + IH2 * dw, px - IW2 * s0 + IW2 * dw, py + IH2 * s0 + IH2 * dw);
+          st.wet++;
+        }
+      }
+      if (wl >= 0 && (m & 3)) {      // the existing north and west foam: the wet foot of the bank above it
+        const bx = ox + (tx - ty) * IW2, by = oy + (tx + ty) * IH2 + HZ, hw = 4.5 * wet;
+        if (m & 1) {
+          const nEnd = (m & 16) ? FOAM_FRONT_T : 1;
+          pbAirQuad(wl, bx, by, bx + IW2 * nEnd, by + IH2 * nEnd, bx + IW2 * nEnd, by + IH2 * nEnd - hw, bx, by - hw);
+          st.wet++;
+        }
+        if (m & 2) {
+          const wEnd = (m & 32) ? FOAM_FRONT_T : 1;
+          pbAirQuad(wl, bx, by, bx - IW2 * wEnd, by + IH2 * wEnd, bx - IW2 * wEnd, by + IH2 * wEnd - hw, bx, by - hw);
+          st.wet++;
+        }
+      }
+      if (m & 3) st.foamNW += ((m & 1) ? 1 : 0) + ((m & 2) ? 1 : 0);
+    }
+  }
+  /* wet sand first, foam over it */
+  for (let k = 0; k < 4; k++) {
+    const n = pbAirNP[k];
+    if (!n) continue;
+    const a = pbAirPoly[k];
+    ctx.fillStyle = PB_AIR_WET[k];
+    ctx.beginPath();
+    for (let j = 0; j < n * 8; j += 8) {
+      ctx.moveTo(a[j], a[j + 1]); ctx.lineTo(a[j + 2], a[j + 3]); ctx.lineTo(a[j + 4], a[j + 5]); ctx.lineTo(a[j + 6], a[j + 7]); ctx.closePath();
+    }
+    ctx.fill();
+  }
+  if (st.foamSE) {
+    for (let pass = 0; pass < 2; pass++) {       // the fainter outer line first, then the bright one, as the existing foam does
+      const N2 = pass ? pbAirNA : pbAirNB, buf = pass ? pbAirSegA : pbAirSegB, sty = pass ? PB_AIR_FOAM_A : PB_AIR_FOAM_B;
+      ctx.lineWidth = pass ? 2.4 : 1.6;
+      for (let k = 0; k < PB_AIR_LV; k++) {
+        const n = N2[k];
+        if (!n) continue;
+        const a = buf[k];
+        ctx.strokeStyle = sty[k];
+        ctx.beginPath();
+        for (let j = 0; j < n * 4; j += 4) { ctx.moveTo(a[j], a[j + 1]); ctx.lineTo(a[j + 2], a[j + 3]); }
+        ctx.stroke();
+      }
+    }
+  }
+
+  /* ---- glints: the sun (or moon) on the surface ---- */
+  if (!still && (f.sun > 0.03 || f.moon > 0.03)) {
+    const day = f.sun > 0.03;
+    /* a tile has a glint in a slot of PB_AIR_GLINT_S seconds with this chance; the sun low in the sky
+       puts far more on the water than the sun overhead */
+    const P = day ? (0.012 + 0.062 * Math.pow(f.low, 1.2)) * f.sun : 0.016 * f.moon;
+    const u0 = f.tS / PB_AIR_GLINT_S;
+    let n = 0;
+    for (let cy = c0y; cy <= c1y && n < 156; cy++) for (let cx = c0x; cx <= c1x && n < 156; cx++) {
+      const C = pbAirChunk(cx, cy);
+      if (!C) continue;
+      const L = C.water;
+      for (let i = 0; i < L.length; i += 2) {
+        const tx = L[i], ty = L[i + 1];
+        const u = u0 + hash2(tx, ty, 3511) * 8, slot = Math.floor(u), s = slot & 1023;
+        if (hash2(tx, ty, 3517 + s) >= P) continue;
+        const X = tx + 0.12 + 0.76 * hash2(tx, ty, 3523 + s), Y = ty + 0.12 + 0.76 * hash2(tx, ty, 3529 + s);
+        const gx = ox + (X - Y) * IW2, gy = oy + (X + Y) * IH2 + HZ;
+        if (gx < -4 || gx > w + 4 || gy < -4 || gy > h + 4) continue;
+        const e = Math.sin(Math.PI * (u - slot));            // appears and fades over its slot
+        if (e < 0.14) continue;
+        const lv = Math.max(0, Math.min(7, Math.round(e * e * 8) - 1));
+        if (pbAirHidden(X, Y)) continue;                      // behind the land in front of the water
+        const o = n * 4;
+        pbAirGl[o] = gx; pbAirGl[o + 1] = gy; pbAirGl[o + 2] = lv;
+        pbAirGl[o + 3] = day ? (hash2(tx, ty, 3541 + s) < 0.35 ? 1 : 0) : 2;
+        n++;
+        if (n >= 156) break;
+      }
+    }
+    st.glintCands = n;
+    const draw = Math.min(n, PB_AIR_GLINT_CAP), S = f.S, u1 = Math.max(1, Math.round(S)) / S;   // one logical px, on the device grid
+    let lastKey = -1;
+    for (let k = 0; k < draw; k++) {
+      const o = (n > draw ? Math.floor(k * n / draw) : k) * 4;     // over the cap: an even pick through the list, not the first rows
+      const lv = pbAirGl[o + 2] | 0, col = pbAirGl[o + 3] | 0, key = col * 8 + lv;
+      if (key !== lastKey) { ctx.fillStyle = col === 2 ? PB_AIR_GL_M[lv] : col === 1 ? PB_AIR_GL_C[lv] : PB_AIR_GL_W[lv]; lastKey = key; }
+      const x = pbAirSnapX(pbAirGl[o]), y = pbAirSnapY(pbAirGl[o + 1]);
+      if (lv >= 5) {                                               // a bright one: a small plus
+        ctx.fillRect(x - u1, y, u1 * 3, u1); ctx.fillRect(x, y - u1, u1, u1 * 3);
+      } else ctx.fillRect(x, y, u1 * 2, u1);
+    }
+    st.glints = draw;
+  }
+  ctx.restore();
+  pbAirTally(t0);
+}
+function pbAirSeg(buf, cnt, lv, x0, y0, x1, y1) {
+  const n = cnt[lv];
+  if (n >= PB_AIR_SEG_CAP) return;
+  const a = buf[lv], o = n * 4;
+  a[o] = x0; a[o + 1] = y0; a[o + 2] = x1; a[o + 3] = y1;
+  cnt[lv] = n + 1;
+}
+function pbAirQuad(lv, x0, y0, x1, y1, x2, y2, x3, y3) {
+  const n = pbAirNP[lv];
+  if (n >= PB_AIR_POLY_CAP) return;
+  const a = pbAirPoly[lv], o = n * 8;
+  a[o] = x0; a[o + 1] = y0; a[o + 2] = x1; a[o + 3] = y1; a[o + 4] = x2; a[o + 5] = y2; a[o + 6] = x3; a[o + 7] = y3;
+  pbAirNP[lv] = n + 1;
+}
+
+/* ---------------------------------------------------------------------
+   GROUND LIGHT: sun dappled through the forest canopy, and the Dark
+   Forest's glow mushrooms breathing. After the tufts, before everything
+   that stands up.
+   --------------------------------------------------------------------- */
+function pbDrawGroundLight(minX, maxX, minY, maxY, t, w, h) {
+  const t0 = performance.now(), st = pbAirSt;
+  st.dapples = 0; st.glow = 0; st.lights = 0; pbAirGlowN = 0;
+  if (inInterior()) { pbAirFrame(t); pbAirTally(t0); return; }
+  const wantF = PIXEL_BIOMES.forest, wantD = PIXEL_BIOMES.darkforest;
+  if (!wantF && !wantD) { pbAirFrame(t); pbAirTally(t0); return; }
+  const f = pbAirFrame(t);
+  camOffset();
+  const ox = camOX, oy = camOY, still = f.still, tS = f.tS;
+  const c0x = Math.floor(minX / PB_AIR_CH), c1x = Math.floor(maxX / PB_AIR_CH), c0y = Math.floor(minY / PB_AIR_CH), c1y = Math.floor(maxY / PB_AIR_CH);
+  const lightOn = f.sun > 0.04;
+  const glowGain = 0.26 + 0.74 * Math.max(f.na, f.dusk * 0.9);       // faint by day, strong at dusk and night
+  pbAirNDap.fill(0);
+  const amp = WIND.amp;
+  /* the light itself: warm, going amber as the sun goes down; the Dark Forest's, rare, is cold */
+  const warm = Math.min(1, f.low * 0.45 + f.dusk * 0.8);
+  const wr = 255, wg = Math.round(240 - 40 * warm), wb = Math.round(158 - 46 * warm);
+  let dn = 0;
+  for (let cy = c0y; cy <= c1y; cy++) for (let cx = c0x; cx <= c1x; cx++) {
+    const C = pbAirChunk(cx, cy);
+    if (!C) continue;
+    if (lightOn) {
+      const L = C.dap;
+      for (let i = 0; i < L.length && dn < PB_AIR_DAPPLE_CAP; i += 4) {
+        const tx = L[i], ty = L[i + 1], dark = L[i + 2] === 1;
+        if (dark ? !wantD : !wantF) continue;
+        const sx0 = ox + (tx - ty) * IW2;
+        if (sx0 < -50 || sx0 > w + 50) continue;
+        const sy0 = oy + (tx + ty + 1) * IH2 - L[i + 3];
+        if (sy0 < -30 || sy0 > h + 40) continue;
+        const np = hash2(tx, ty, 3303) < 0.3 ? 2 : 1;
+        for (let k = 0; k < np && dn < PB_AIR_DAPPLE_CAP; k++) {
+          const u = 0.2 + 0.6 * hash2(tx, ty, 3305 + k * 4), v = 0.2 + 0.6 * hash2(tx, ty, 3307 + k * 4);
+          const X = tx + u, Y = ty + v, ph = hash2(tx, ty, 3309 + k * 4);
+          let sx = ox + (X - Y) * IW2, sy = oy + (X + Y) * IH2 - L[i + 3];
+          let a = 0.6 + 0.4 * (1 - f.low);                   // strongest with the sun high, when it comes straight down
+          if (!still) {
+            const g = windGust(X, Y) * amp;
+            sx += windLean(X, Y) * 2.6 + Math.sin(tS * 0.55 + ph * 40) * 0.8;       // the canopy moves, the light moves with it
+            sy += Math.sin(tS * 0.47 + ph * 31) * 0.35;
+            a *= 0.8 + 0.12 * Math.sin(tS * (1.1 + ph * 0.9) + ph * 17) + 0.4 * g;   // shimmer, and a gust through the leaves
+          }
+          a *= f.sun * (dark ? 0.55 : 1);
+          const lv = a < 0.2 ? -1 : Math.min(3, Math.floor(a * 3.2));
+          if (lv < 0) continue;
+          const o = pbAirNDap[lv] * 3;
+          if (pbAirNDap[lv] >= PB_AIR_DAPPLE_CAP) continue;
+          const bufD = pbAirDap[lv];
+          bufD[o] = sx; bufD[o + 1] = sy; bufD[o + 2] = (dark ? 7 : 5 + 6 * hash2(tx, ty, 3319 + k)) * (0.9 + 0.2 * ph);
+          pbAirNDap[lv]++; dn++;
+        }
+      }
+    }
+    if (wantD) {                                              // glow mushrooms
+      const L = C.glow;
+      for (let i = 0; i < L.length; i += 4) {
+        const tx = L[i], ty = L[i + 1];
+        const ex = (hash2(tx, ty, 1939) - 0.5) * IW2 * 0.5, ey = (hash2(tx, ty, 1941) - 0.5) * IH2 * 0.4;
+        const sx = ox + (tx - ty) * IW2 + ex, sy = oy + (tx + ty + 1) * IH2 - L[i + 2] + ey;
+        if (sx < -40 || sx > w + 40 || sy < -30 || sy > h + 40) continue;
+        if (pbAirGlowN >= PB_AIR_GLOW_CAP) break;
+        const p = still ? 0.6 : 0.5 + 0.5 * Math.sin(tS * 0.9 + L[i + 3] * 6.2832 + hash2(tx, ty, 3335) * 3);   // a slow breath per mushroom patch
+        const g = glowGain * (0.4 + 0.6 * p);
+        /* the three flat rings, largest first, on the ground the mushrooms stand on */
+        ctx.fillStyle = "rgba(64,214,186," + (0.11 * g).toFixed(3) + ")";
+        ctx.beginPath(); ctx.ellipse(sx, sy, 17, 8.5, 0, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = "rgba(96,232,204," + (0.14 * g).toFixed(3) + ")";
+        ctx.beginPath(); ctx.ellipse(sx, sy - 0.5, 10.5, 5.2, 0, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = "rgba(176,252,230," + (0.22 * g).toFixed(3) + ")";
+        ctx.beginPath(); ctx.ellipse(sx, sy - 1.5, 5, 2.5, 0, 0, 6.2832); ctx.fill();
+        /* the world position of the cap, for the night's lights (see pbAirLights) */
+        const k = pbAirGlowN++;
+        pbAirGlowX[k] = tx + 0.5 + (ex / IW2 + ey / IH2) * 0.5; pbAirGlowY[k] = ty + 0.5 + (ey / IH2 - ex / IW2) * 0.5;
+        pbAirGlowZ[k] = L[i + 2] + 3; pbAirGlowP[k] = 0.35 + 0.65 * p;
+      }
+    }
+  }
+  st.glow = pbAirGlowN;
+  if (dn) {
+    ctx.save();
+    for (let lv = 0; lv < 4; lv++) {
+      const n = pbAirNDap[lv];
+      if (!n) continue;
+      const a = pbAirDap[lv], al = (0.085 + 0.055 * lv).toFixed(3);
+      for (let ring = 0; ring < 2; ring++) {                   // an outer ellipse and a smaller one inside it
+        ctx.fillStyle = "rgba(" + wr + "," + wg + "," + wb + "," + al + ")";
+        ctx.beginPath();
+        for (let j = 0; j < n * 3; j += 3) {
+          const rx = a[j + 2] * (ring ? 0.52 : 1), ry = rx * (IH2 / IW2);
+          ctx.moveTo(a[j] + rx, a[j + 1]); ctx.ellipse(a[j], a[j + 1], rx, ry, 0, 0, 6.2832);
+        }
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+    st.dapples = dn;
+  }
+  pbAirTally(t0);
+}
+/* the glow mushrooms in view become small cool lights at night, in the
+   list collectLights() hands the night pass: the darkness is cut round them
+   and a little teal is added back, so they still glow when everything else is dark */
+function pbAirLights(lights) {
+  if (!pbAirGlowN || inInterior() || !PIXEL_BIOMES.darkforest) { pbAirSt.lights = 0; return 0; }
+  for (let i = 0; i < pbAirGlowN; i++) {
+    const L = pbAirLightPool[i];
+    L.x = pbAirGlowX[i]; L.y = pbAirGlowY[i]; L.z = pbAirGlowZ[i]; L.a = 0.34 + 0.3 * pbAirGlowP[i];
+    lights.push(L);
+  }
+  pbAirSt.lights = pbAirGlowN;
+  return pbAirGlowN;
+}
+
+/* ---------------------------------------------------------------------
+   AIR LIGHT: shafts of low sun through the forest, and the Dark Forest's
+   ground mist, which parts around you. After the particles and the birds,
+   before the cloud shadows and the night.
+   --------------------------------------------------------------------- */
+function pbAirWin(x, lo, hi) {                     // 0 outside [lo, hi], a plateau-topped hump inside
+  if (x <= lo || x >= hi) return 0;
+  return Math.pow(Math.sin((x - lo) / (hi - lo) * Math.PI), 0.6);
+}
+function pbDrawAirLight(minX, maxX, minY, maxY, t, w, h) {
+  const t0 = performance.now(), st = pbAirSt;
+  st.shafts = 0; st.mist = 0;
+  if (inInterior()) { pbAirFrame(t); pbAirTally(t0); return; }
+  const wantF = PIXEL_BIOMES.forest, wantD = PIXEL_BIOMES.darkforest;
+  if (!wantF && !wantD) { pbAirFrame(t); pbAirTally(t0); return; }
+  const f = pbAirFrame(t);
+  camOffset();
+  const ox = camOX, oy = camOY, still = f.still, tS = f.tS;
+  ctx.save();
+
+  /* ---- shafts: only while the sun is low, and only a few, near the camera ---- */
+  const kS = wantF ? Math.max(pbAirWin(f.dayT, 0.03, 0.14), pbAirWin(f.dayT, 0.38, 0.52)) * f.sun : 0;
+  if (kS > 0.04) {
+    const c0x = Math.floor(minX / PB_AIR_CH), c1x = Math.floor(maxX / PB_AIR_CH), c0y = Math.floor(minY / PB_AIR_CH), c1y = Math.floor(maxY / PB_AIR_CH);
+    let n = 0;
+    for (let cy = c0y; cy <= c1y; cy++) for (let cx = c0x; cx <= c1x; cx++) {
+      const C = pbAirChunk(cx, cy);
+      if (!C) continue;
+      const L = C.shaft;
+      for (let i = 0; i < L.length && n < 32; i += 3) {
+        const tx = L[i], ty = L[i + 1];
+        const d = Math.hypot(tx + 0.5 - cam.x, ty + 0.5 - cam.y);
+        if (d > 13) continue;
+        const o = n * 5;                                   // kept in order of distance, nearest first
+        let j = n;
+        while (j > 0 && pbAirShaftC[(j - 1) * 5 + 3] > d) { for (let q = 0; q < 5; q++) pbAirShaftC[j * 5 + q] = pbAirShaftC[(j - 1) * 5 + q]; j--; }
+        pbAirShaftC[j * 5] = tx; pbAirShaftC[j * 5 + 1] = ty; pbAirShaftC[j * 5 + 2] = L[i + 2]; pbAirShaftC[j * 5 + 3] = d; pbAirShaftC[j * 5 + 4] = hash2(tx, ty, 3341);
+        n++;
+      }
+    }
+    const lenS = Math.min(1.6, SUN.len) * 0.5, dxS = SUN.dx;
+    for (let k = 0; k < n && st.shafts < PB_AIR_SHAFT_CAP; k++) {
+      const tx = pbAirShaftC[k * 5], ty = pbAirShaftC[k * 5 + 1], z = pbAirShaftC[k * 5 + 2], d = pbAirShaftC[k * 5 + 3], ph = pbAirShaftC[k * 5 + 4];
+      const fade = Math.max(0, Math.min(1, (13 - d) / 5));            // a shaft fades in and out with distance: none pops
+      if (fade <= 0.02) continue;
+      const hh = 66 + 44 * hash2(tx, ty, 3343), ww = 14 + 12 * hash2(tx, ty, 3345);
+      const jx = (hash2(tx, ty, 3347) - 0.5) * 0.6, jy = (hash2(tx, ty, 3349) - 0.5) * 0.6;
+      const gx = ox + (tx - ty + jx - jy) * IW2;
+      const gy = oy + (tx + ty + 1 + jx + jy) * IH2 - z;
+      if (gx < -90 || gx > w + 90 || gy < -20 || gy > h + hh + 40) continue;
+      const lx = Math.max(-46, Math.min(46, dxS * hh * lenS));       // the light runs along the shadows' own direction
+      const br = still ? 0.9 : 0.78 + 0.22 * Math.sin(tS * 0.42 + ph * 40);
+      const a = kS * fade * br;
+      const warmK = Math.min(1, f.low * 0.5 + f.dusk * 0.8);
+      const col = "255," + Math.round(246 - 28 * warmK) + "," + Math.round(212 - 62 * warmK);
+      const tx0 = gx - lx;                                           // the top, up and back toward the sun
+      /* the wide beam in three flat steps, brightening toward the ground, then the narrow core over its lower part */
+      for (let step = 0; step < 3; step++) {
+        const y0 = gy - hh * (1 - step / 3), y1 = gy - hh * (1 - (step + 1) / 3);
+        const xa = gx - lx * (1 - step / 3), xb = gx - lx * (1 - (step + 1) / 3);
+        ctx.fillStyle = "rgba(" + col + "," + (a * (0.1 + 0.05 * step)).toFixed(3) + ")";
+        ctx.beginPath();
+        ctx.moveTo(xa - ww / 2, y0); ctx.lineTo(xa + ww / 2, y0); ctx.lineTo(xb + ww / 2, y1); ctx.lineTo(xb - ww / 2, y1); ctx.closePath();
+        ctx.fill();
+      }
+      for (let step = 1; step < 3; step++) {
+        const y0 = gy - hh * (1 - step / 3), y1 = gy - hh * (1 - (step + 1) / 3);
+        const xa = gx - lx * (1 - step / 3), xb = gx - lx * (1 - (step + 1) / 3);
+        ctx.fillStyle = "rgba(" + col + "," + (a * (0.075 + 0.05 * step)).toFixed(3) + ")";
+        ctx.beginPath();
+        ctx.moveTo(xa - ww * 0.2, y0); ctx.lineTo(xa + ww * 0.2, y0); ctx.lineTo(xb + ww * 0.2, y1); ctx.lineTo(xb - ww * 0.2, y1); ctx.closePath();
+        ctx.fill();
+      }
+      ctx.fillStyle = "rgba(" + col + "," + (a * 0.1).toFixed(3) + ")";   // where it lands
+      ctx.beginPath(); ctx.ellipse(gx, gy, ww * 0.9, ww * 0.45, 0, 0, 6.2832); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(gx, gy, ww * 0.45, ww * 0.22, 0, 0, 6.2832); ctx.fill();
+      st.shafts++;
+    }
+  }
+
+  /* ---- ground mist in the Dark Forest ---- */
+  if (wantD) {
+    const CELL = PB_AIR_MIST_CELL, CYC = PB_AIR_MIST_CYCLE;
+    const c0x = Math.floor(minX / CELL) - 1, c1x = Math.floor(maxX / CELL) + 1, c0y = Math.floor(minY / CELL) - 1, c1y = Math.floor(maxY / CELL) + 1;
+    const thick = 0.5 + 0.5 * Math.max(f.na, f.dusk);                // thicker at night and dawn
+    const spd = still ? 0 : 0.05 + 0.09 * WIND.s * WIND.amp;       // tiles a second, downwind
+    const mx = me ? me.x : -999, my = me ? me.y : -999;
+    let n = 0;
+    for (let cy = c0y; cy <= c1y && n < PB_AIR_MIST_CAP - 2; cy++) for (let cx = c0x; cx <= c1x && n < PB_AIR_MIST_CAP - 2; cx++) {
+      if (cx < 0 || cy < 0) continue;
+      const ckey = cx * 65536 + cy;
+      let cell = pbAirCells.get(ckey);
+      if (cell === undefined) {                                   // any Dark Forest in or round this cell at all?
+        let any = 0;
+        for (let q = 0; q < 5; q++) if (biomeAt(Math.floor(cx * CELL + PB_AIR_Q[q][0] * CELL), Math.floor(cy * CELL + PB_AIR_Q[q][1] * CELL)) === B.DARKFOREST) any = 1;
+        cell = { any, ph: hash2(cx, cy, 3801) * CYC };
+        pbAirCells.set(ckey, cell);
+        if (pbAirCells.size > 4000) pbAirCells.clear();
+      }
+      if (!cell.any) continue;
+      const age = still ? CYC * 0.5 : (tS + cell.ph) % CYC, k = still ? 0 : Math.floor((tS + cell.ph) / CYC) & 255;
+      const u = age / CYC, env = Math.sin(Math.PI * u);
+      if (env < 0.06) continue;
+      const bx = cx * CELL + hash2(cx, cy, 3811 + k * 7) * CELL, by = cy * CELL + hash2(cx, cy, 3813 + k * 7) * CELL;
+      const dr = (u - 0.5) * CYC * spd;
+      const X0 = bx + WIND.dx * dr, Y0 = by + WIND.dy * dr;
+      /* how much of the bank is over Dark Forest: it thins to nothing at the forest's edge instead of crossing it */
+      let over = 0;
+      for (let q = 0; q < 5; q++) {
+        const sx2 = q === 0 ? X0 : X0 + (q & 1 ? 2.2 : -2.2), sy2 = q === 0 ? Y0 : Y0 + (q & 2 ? 2.2 : -2.2);
+        if (biomeAt(Math.floor(sx2), Math.floor(sy2)) === B.DARKFOREST) over++;
+      }
+      if (!over) continue;
+      const bank = env * Math.pow(over / 5, 1.5);
+      for (let i = 0; i < 3 && n < PB_AIR_MIST_CAP; i++) {
+        const X = X0 + (hash2(cx, cy, 3821 + i * 5 + k * 11) - 0.5) * 4.2, Y = Y0 + (hash2(cx, cy, 3823 + i * 5 + k * 11) - 0.5) * 4.2;
+        const pr = 1.2 + 0.7 * hash2(cx, cy, 3825 + i * 5 + k * 11);
+        const sx = ox + (X - Y) * IW2, sy = oy + (X + Y) * IH2 - groundZ(X, Y) - 2;
+        const rx = pr * IW2 * 1.414, ry = pr * IH2 * 1.414;
+        if (sx + rx < 0 || sx - rx > w || sy + ry < 0 || sy - ry > h) continue;
+        /* the mist parts: within about 2.5 tiles of the local player it thins to nothing */
+        const dd = Math.hypot(X - mx, Y - my) - pr * 0.45;
+        const part = Math.max(0, Math.min(1, (dd - 0.7) / 1.8));
+        const a = bank * thick * part;
+        const lv = Math.min(5, Math.ceil(a * 5.4));
+        if (lv < 1) continue;
+        pbAirMistX[n] = sx; pbAirMistY[n] = sy; pbAirMistRX[n] = rx; pbAirMistRY[n] = ry; pbAirMistL[n] = lv; n++;
+      }
+    }
+    if (n) {
+      for (let lv = 1; lv <= 5; lv++) {
+        for (let ring = 0; ring < 4; ring++) {                  // four flat rings, largest first: the soft edge
+          const sc = ring === 0 ? 1 : ring === 1 ? 0.78 : ring === 2 ? 0.54 : 0.3;
+          let any = false;
+          for (let i = 0; i < n; i++) {
+            if (pbAirMistL[i] !== lv) continue;
+            if (!any) { ctx.fillStyle = PB_AIR_MIST[lv - 1]; ctx.beginPath(); any = true; }
+            const rx = pbAirMistRX[i] * sc, ry = pbAirMistRY[i] * sc;
+            ctx.moveTo(pbAirMistX[i] + rx, pbAirMistY[i]); ctx.ellipse(pbAirMistX[i], pbAirMistY[i], rx, ry, 0, 0, 6.2832);
+          }
+          if (any) ctx.fill();
+        }
+      }
+    }
+    st.mist = n;
+  }
+  ctx.restore();
+  pbAirTally(t0);
+}
+
+/* ---------------------------------------------------------------------
+   WIND-BORNE PARTICLES. The three small spawners and the wind they ride
+   are called from the existing particle spawner and update loops (see
+   the patch); the particles live in the same `particles` array under the
+   same cap as the leaves, and Reduce motion stops the spawner before any
+   of this is reached.
+   --------------------------------------------------------------------- */
+const PB_AIR_PETAL_COLS = ["#f2b4cf", "#f6f1e6", "#f4dc7a", "#f2b4cf", "#f6f1e6"];
+const PB_AIR_PETAL_CAP = 16, PB_AIR_STREAK_CAP = 14, PB_AIR_PART_LIMIT = 159;   // the ambient spawner itself only runs below 160
+function pbAirCount(kind) { let n = 0; for (let i = 0; i < particles.length; i++) if (particles[i].kind === kind) n++; return n; }
+/* called by the ambient spawner for each tile it samples */
+function pbAirSpawn(tx, ty, b, isNight) {
+  if (!WIND.amp || particles.length > PB_AIR_PART_LIMIT || inInterior()) return;
+  if (b === B.MEADOW && PIXEL_BIOMES.meadow && !isNight && WIND.kind !== "rain" && WIND.kind !== "fog") {
+    /* a gust crossing the meadow shakes petals loose and carries them downwind */
+    const g = windGust(tx + 0.5, ty + 0.5) * WIND.amp;
+    if (g > 0.3 && Math.random() < 0.05 + 0.25 * g && pbAirCount("petal") < PB_AIR_PETAL_CAP && !arenaFloorAt(tx, ty, b)) {
+      const n = 1 + (Math.random() < 0.5 ? 1 : 0);
+      for (let i = 0; i < n; i++) {
+        particles.push({ x: tx + Math.random(), y: ty + Math.random(), z: 3 + Math.random() * 8,
+          vx: 0, vy: 0, vz: -(0.8 + Math.random() * 1.6), life: 2.6 + Math.random() * 2, maxLife: 4.6,
+          col: PB_AIR_PETAL_COLS[(Math.random() * PB_AIR_PETAL_COLS.length) | 0], size: 1.5, kind: "petal", ph: Math.random() * 9, pbAir: 1 });
+        pbAirSt.petalSpawns++;
+      }
+    }
+  } else if (b === B.SAND && PIXEL_BIOMES.sand && WIND.kind !== "rain" && WIND.kind !== "fog") {
+    /* strong wind (gusts raise it), dry sand: thin pale streaks sliding low over the ground */
+    const k = WIND.s * WIND.amp * (0.7 + 0.6 * windGust(tx + 0.5, ty + 0.5));
+    if (k > 0.42 && Math.random() < 0.45 && pbAirCount("sandstreak") < PB_AIR_STREAK_CAP && !arenaFloorAt(tx, ty, b)) {
+      const sp = 2.6 + 3.2 * k + Math.random() * 1.2;
+      particles.push({ x: tx + Math.random(), y: ty + Math.random(), z: 0.6 + Math.random() * 2.2,
+        vx: WIND.dx * sp, vy: WIND.dy * sp, vz: 0, life: 0.7 + Math.random() * 0.7, maxLife: 1.4,
+        col: "#efe4bc", size: 1, kind: "sandstreak", ph: Math.random() * 9, pbAir: 1 });
+      pbAirSt.streakSpawns++;
+    }
+  }
+}
+/* one step of a petal or a sand streak (the update loop's own dt and clock) */
+function pbAirStep(p, dt, t) {
+  if (p.kind === "petal") {
+    const k = WIND.s * WIND.amp * (0.5 + windGust(p.x, p.y)) * 2.2;       // a petal is carried faster than a leaf
+    p.x += (WIND.dx * k + Math.sin(t / 430 + p.ph) * 0.3) * dt;
+    p.y += (WIND.dy * k + Math.cos(t / 510 + p.ph) * 0.3) * dt;
+    p.z += (p.vz + Math.sin(t / 260 + p.ph * 2) * 2.6) * dt;
+    if (p.z < 0.5) p.z = 0.5;
+  } else {
+    p.x += p.vx * dt; p.y += p.vy * dt;
+  }
+}
+function pbAirDrawParticle(p, px, py, a, t) {
+  const fin = Math.min(1, (p.maxLife - p.life) / 0.3);
+  if (p.kind === "petal") {
+    const fl = Math.abs(Math.sin(t / 150 + p.ph * 4));                      // it tumbles
+    ctx.globalAlpha = Math.min(1, a * 1.8) * fin;
+    ctx.fillStyle = p.col;
+    ctx.fillRect(px - (1 + fl * 1.6) / 2, py - 0.6, 1 + fl * 1.6, 1.3);
+    ctx.globalAlpha = 1;
+  } else {                                                                  // a sand streak: a short thin line along its drift
+    const sx = (p.vx - p.vy) * IW2, sy = (p.vx + p.vy) * IH2, len = Math.hypot(sx, sy) || 1;
+    const L = 3 + len * 0.045;
+    ctx.globalAlpha = Math.min(1, a * 2) * fin * 0.55;
+    ctx.strokeStyle = p.col; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px - sx / len * L, py - sy / len * L); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+}
+/* the wind a falling leaf feels, tiles a second (0 where the forest is off or the wind is) */
+function pbAirLeafWind(x, y) {
+  if (!WIND.amp) return 0;
+  if (!pbOn(biomeAt(Math.floor(x), Math.floor(y)))) return 0;
+  return 0.8 * WIND.s * WIND.amp * (0.5 + windGust(x, y));
+}
+/* the screen-x drift the weather particles pick up from the wind, CSS px a second:
+   modest for rain (it falls fast), more for snow and ash (they hang in the air) */
+function pbAirWeatherDrift(kind) {
+  if (!WIND.amp) return 0;
+  const K = kind === "rain" ? 34 : kind === "snow" ? 28 : kind === "ash" ? 34 : 0;
+  return WIND.sx * WIND.s * WIND.amp * K;
+}
+
+/* ---------------------------------------------------------------------
+   HARNESS: what was drawn last frame, by feature
+   --------------------------------------------------------------------- */
+function debugPbAirInfo() {
+  const st = pbAirSt;
+  return {
+    foamSE: st.foamSE, foamNW: st.foamNW, wetBands: st.wet, glints: st.glints, glintCandidates: st.glintCands,
+    dapples: st.dapples, shafts: st.shafts, mistPuffs: st.mist, glowShrooms: st.glow, glowLights: st.lights,
+    petals: pbAirCount("petal"), sandStreaks: pbAirCount("sandstreak"), petalSpawns: st.petalSpawns, streakSpawns: st.streakSpawns,
+    caps: { glints: PB_AIR_GLINT_CAP, dapples: PB_AIR_DAPPLE_CAP, shafts: PB_AIR_SHAFT_CAP, mist: PB_AIR_MIST_CAP, glow: PB_AIR_GLOW_CAP, petals: PB_AIR_PETAL_CAP, sandStreaks: PB_AIR_STREAK_CAP },
+    tide: { periodS: PB_AIR_TIDE_S, swash: PB_AIR_TIDE_A, now: pbAirTide(0, 0, 0) },
+    ms: { last: +st.ms.toFixed(3), avg: +st.msAvg.toFixed(3), max: +st.msMax.toFixed(3) },
+    frame: { dayT: pbAirF.dayT, sun: pbAirF.sun, low: pbAirF.low, moon: pbAirF.moon, still: pbAirF.still },
+    chunks: pbAirChunks.size, chunkBuilds: st.builds, frames: st.frames,
+  };
+}
+
 function drawPlayerEntity(p, name, t, isMe) {
   const z = groundZ(p.x, p.y);
   const [sx, sy] = worldToScreen(p.x, p.y, z);
@@ -23583,15 +24293,15 @@ function render(t) {
           const wEnd = heightAt(tx, ty + 1) >= 0 ? FOAM_FRONT_T : 1;
           ctx.strokeStyle = `rgba(238,248,250,${0.72 * pulse})`;
           ctx.lineWidth = 2.4;
-          const zw = -HZ;
+          const zw = -HZ, td = pbAirTide(tx, ty, 0), td2 = pbAirTide(tx, ty, 0.6);   // Living World S4: the tide
           if (landN) {   // land to the north edge
-            const [ax, ay] = worldToScreen(tx, ty + 0.08, zw);
-            const [bx2, by2] = worldToScreen(tx + nEnd, ty + 0.08, zw);
+            const [ax, ay] = worldToScreen(tx, ty + 0.08 - td, zw);
+            const [bx2, by2] = worldToScreen(tx + nEnd, ty + 0.08 - td, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
           if (landW) {   // land to the west edge
-            const [ax, ay] = worldToScreen(tx + 0.08, ty, zw);
-            const [bx2, by2] = worldToScreen(tx + 0.08, ty + wEnd, zw);
+            const [ax, ay] = worldToScreen(tx + 0.08 - td, ty, zw);
+            const [bx2, by2] = worldToScreen(tx + 0.08 - td, ty + wEnd, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
           /* Gauntlet S2 R3: no foam on the SOUTH or EAST edge any more. Land
@@ -23605,13 +24315,13 @@ function render(t) {
           ctx.strokeStyle = `rgba(238,248,250,${0.3 * pulse})`;
           ctx.lineWidth = 1.6;
           if (landN) {
-            const [ax, ay] = worldToScreen(tx, ty + 0.26, zw);
-            const [bx2, by2] = worldToScreen(tx + nEnd, ty + 0.26, zw);
+            const [ax, ay] = worldToScreen(tx, ty + 0.26 - td2, zw);
+            const [bx2, by2] = worldToScreen(tx + nEnd, ty + 0.26 - td2, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
           if (landW) {
-            const [ax, ay] = worldToScreen(tx + 0.26, ty, zw);
-            const [bx2, by2] = worldToScreen(tx + 0.26, ty + wEnd, zw);
+            const [ax, ay] = worldToScreen(tx + 0.26 - td2, ty, zw);
+            const [bx2, by2] = worldToScreen(tx + 0.26 - td2, ty + wEnd, zw);
             ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
           }
           }
@@ -24185,6 +24895,8 @@ function render(t) {
       ctx.closePath();
       ctx.fill();
       ctx.globalAlpha = 1;
+    } else if (p.pbAir) {                     // Living World S4: petals, sand streaks
+      pbAirDrawParticle(p, px, py, a, t);
     } else if (p.kind === "leaf") {           // Gauntlet S2 R1: a tumbling leaf, flat fill
       const fl = Math.abs(Math.sin(t / 170 + p.ph * 4));
       ctx.globalAlpha = Math.min(1, a * 1.6);
@@ -24590,6 +25302,7 @@ function collectLights() {
     }
   }
   for (const [, o] of others) if (!o.dead) lights.push({ x: o.x, y: o.y, z: 8, r: 130, a: 0.72, col: "rgba(255,190,120,A)" });
+  if (typeof pbAirLights === "function" && pbOn(B.DARKFOREST)) pbAirLights(lights);   // Living World S4: glow mushrooms
   return lights;
 }
 
