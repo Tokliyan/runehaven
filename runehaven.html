@@ -1117,6 +1117,16 @@
           brief hit-stop on heavy blows stay either way.</span></span>
         <span class="ctl"><button class="set-btn set-toggle" id="setScreenShake">ON</button></span>
       </div>
+      <div class="set-row">
+        <span class="lab">Wind motion
+          <br><span class="note">Grass, flowers and trees leaning as the wind gusts across the land.
+          Reduce motion turns it off too.</span></span>
+        <span class="ctl">
+          <button class="set-btn" id="setWindOff">OFF</button>
+          <button class="set-btn" id="setWindLow">LOW</button>
+          <button class="set-btn" id="setWindFull">FULL</button>
+        </span>
+      </div>
     </div>
 
     <div class="set-sec" id="secAccess">
@@ -7983,6 +7993,8 @@ function drawGroundTile(c, tx, ty) {
      THE COLOSSEUM AS A SET PIECE). 0 everywhere else, after one compare. */
   const arenaK = arenaFloorAt(tx, ty, b);
   if (arenaK) top = arenaK === 1 ? ARENA_TONES.sand[alt] : arenaK === 2 ? ARENA_TONES.slab[alt] : ARENA_TONES.pave[alt];
+  const pbT = !arenaK && pbOn(b);                     // Living World S4: this biome is forged
+  if (pbT) top = pbTone(b, tx, ty, top);
 
   // World edge treatment: deep water darkens toward the map border (stays dark)
   if (b === B.DEEP) {
@@ -8142,6 +8154,7 @@ function drawGroundTile(c, tx, ty) {
   c.lineTo(cx - IW2, cy);
   c.closePath();
   c.fill();
+  if (pbT) pbGroundTex(c, b, cx, cy);                              // Living World S4: the forged surface
   if (arenaK) drawArenaFloorDetail(c, arenaK, tx, ty, cx, cy);   // Gauntlet S2 R1
   else drawBiomeSeams(c, tx, ty, b, h, cx, cy);                   // RT pass: transitions
 
@@ -8583,6 +8596,7 @@ function drawGroundTile(c, tx, ty) {
     c.lineTo(cx + IW2 / 2, cy + IH2 / 2);
     c.stroke();
   }
+  if (pbT) pbGroundProps(c, tx, ty, b, cx, cy);                    // Living World S4: stones, logs, shells
 }
 
 /* =========================================================
@@ -21677,6 +21691,765 @@ function debugCreatureInfo() {
            measured: crMeasureCache.size, creatureBakes: forgeStats.creatureBakes, petHappyAt };
 }
 
+/* =====================================================================
+   Living World S4 — THE BREATHING LAND (README "Session 4 design")
+   One wind for the whole world, and the six home biomes through the
+   Pixel Forge: textured ground, tufts that lean as each gust passes,
+   pixel-art trees that bend with it, and small props baked into the
+   ground. Each biome is its OWN switch (PIXEL_BIOMES), so a biome the
+   owner does not sign off on stays exactly as it was — every hook below
+   returns early for a biome that is off.
+   Rules kept from the art skill: no gradients (flat fills and flat
+   pixel textures only); light from the top-left; tree placement and
+   density untouched (only how a tree is DRAWN changes); sprites use the
+   forge finish (own-hue outline, never black); everything snapped to
+   whole backing pixels.
+   ===================================================================== */
+const PIXEL_BIOMES = { plains: true, meadow: true, forest: true, darkforest: true, sand: true, coast: true };
+function pbKeyOfB(b) {
+  return b === B.PLAINS ? "plains" : b === B.MEADOW ? "meadow" : b === B.FOREST ? "forest"
+    : b === B.DARKFOREST ? "darkforest" : b === B.SAND ? "sand"
+    : (b === B.SHALLOW || b === B.WATER || b === B.DEEP) ? "coast" : null;
+}
+function pbOn(b) { const k = pbKeyOfB(b); return !!(k && PIXEL_BIOMES[k]); }
+
+/* ---------------------------------------------------------------------
+   THE WIND. One field for the whole world, a pure function of the shared
+   world clock (Date.now() - worldEpoch) and the weather, so every client
+   sees the same gust cross the same field at the same moment with nothing
+   sent over the network. Direction drifts over minutes; gust crests are
+   bands that travel downwind at WIND_GUST_SPEED tiles a second. Anything
+   that leans reads windLean(x, y): a signed SCREEN-x lean, + to the right,
+   about -1..1. The setting scales it (Full 1 / Low 0.5 / Off 0) and Reduce
+   motion turns it off; at 0 nothing reads time, so two frames are equal.
+   --------------------------------------------------------------------- */
+const WIND_GUST_LEN = 11;          // TUNABLE: tiles between gust crests
+const WIND_GUST_SPEED = 3.4;       // TUNABLE: tiles a second the crests travel
+const WIND_WEATHER = { clear: 0.55, rain: 0.95, fog: 0.14, snow: 0.75, ash: 0.6 };   // TUNABLE: strength 0..1
+const WIND_AMP = { full: 1, low: 0.5, off: 0 };
+const WIND_MODES = ["off", "low", "full"];
+const WIND = { dx: 1, dy: 0, sx: 1, s: 0.55, amp: 1, tS: 0, kind: "clear" };
+function windAmpNow() {
+  if (typeof SETTINGS === "undefined") return 1;
+  if (SETTINGS.reduceMotion) return 0;
+  const a = WIND_AMP[SETTINGS.wind];
+  return a === undefined ? 1 : a;          // an unknown stored value reads as Full, never as an error
+}
+function windFrame(ms, kind) {
+  const tS = (ms / 1000) - (worldEpoch || 0);
+  const ang = hash2(worldSeed | 0, 17, 9931) * 6.2832 + 0.9 * Math.sin(tS / 240 + 1.3) + 0.35 * Math.sin(tS / 71 + 0.4);
+  WIND.dx = Math.cos(ang); WIND.dy = Math.sin(ang);
+  const sx = (WIND.dx - WIND.dy) * 0.70711;            // the wind's share of screen x
+  WIND.sx = sx >= 0 ? 0.4 + 0.6 * sx : -0.4 + 0.6 * sx; // never zero: a wind "into" the screen still leans things
+  const w = WIND_WEATHER[kind] !== undefined ? WIND_WEATHER[kind] : WIND_WEATHER.clear;
+  WIND.s = w * (0.82 + 0.18 * Math.sin(tS / 37 + 2.1));
+  WIND.amp = windAmpNow();
+  WIND.tS = tS; WIND.kind = kind || "clear";
+  return WIND;
+}
+/* the gust alone, 0..1 — a sharpened travelling wave, wobbled across its
+   front so a crest is a ragged band, not a ruled line */
+function windGust(x, y) {
+  const tS = WIND.tS, dx = WIND.dx, dy = WIND.dy;
+  const along = x * dx + y * dy, cross = y * dx - x * dy;
+  const k = 6.2832 / WIND_GUST_LEN;
+  let g = 0.5 + 0.5 * Math.sin(along * k - tS * WIND_GUST_SPEED * k + 0.9 * Math.sin(cross * 0.19 + tS * 0.11));
+  g = g * g * g;
+  const env = 0.6 + 0.4 * Math.sin(along * 0.043 - tS * 0.17 + cross * 0.061);
+  return g * env;
+}
+function windLean(x, y) {
+  if (!WIND.amp) return 0;
+  const flut = 0.07 * Math.sin(WIND.tS * 5.1 + x * 1.73 + y * 2.31);
+  return WIND.amp * WIND.sx * WIND.s * (0.3 + 0.95 * windGust(x, y) + flut);
+}
+/* a lean as one of the five baked frames, -2..2 */
+function pbLeanFrame(l) { const k = Math.round(l * 2); return k < -2 ? -2 : k > 2 ? 2 : k; }
+
+/* ---------------------------------------------------------------------
+   THE GENERIC FORGE BAKE. The S3 creature bake, without the creature:
+   a box in logical px about an anchor, and a draw function that paints
+   into `ctx` at that anchor. Supersampled, box-filtered, quantised to
+   the cap, given the finish (own-hue outline, top-left light), trimmed.
+   Sprites live in the shared forge cache, so they count against
+   FORGE_CACHE_MAX / FORGE_CACHE_PX like every hero and creature.
+   --------------------------------------------------------------------- */
+let pbHi = null, pbHiCtx = null, pbFrameNo = 0, pbForceLeft = 0;
+const PB_FORCE_PER_FRAME = 40;     // ground props bake inside a chunk bake, outside the 4-a-frame budget, up to this many
+const pbStats = { bakes: 0, fails: 0, ms: 0, maxMs: 0, hits: 0, misses: 0, texGen: 0, texMs: 0,
+                  tufts: 0, trees: 0, treeFallbacks: 0, props: 0, tuftLists: 0, propBakes: 0 };
+function pbBake(box, px, draw, opts) {
+  const fin = !opts || opts.finish !== false;
+  const pad = fin ? px : 0;
+  const L = box.l - pad, T = box.t - pad, R = box.r + pad, Bt = box.b + pad;
+  const W = Math.max(1, Math.ceil((R - L) / px)), H = Math.max(1, Math.ceil((Bt - T) / px));
+  const SSc = FORGE_SS, HW = W * SSc, HH = H * SSc;
+  if (!pbHi) { pbHi = document.createElement("canvas"); try { pbHiCtx = pbHi.getContext("2d", { willReadFrequently: true }); } catch (e) { pbHiCtx = null; } }
+  const hc = pbHiCtx;
+  if (!hc || typeof hc.getImageData !== "function") return null;
+  if (pbHi.width < HW || pbHi.height < HH) { pbHi.width = Math.max(pbHi.width, HW); pbHi.height = Math.max(pbHi.height, HH); }
+  const t0 = performance.now();
+  hc.setTransform(1, 0, 0, 1, 0, 0); hc.globalAlpha = 1; hc.globalCompositeOperation = "source-over";
+  hc.clearRect(0, 0, HW, HH);
+  const sc = SSc / px;
+  hc.setTransform(sc, 0, 0, sc, -L * sc, -T * sc);
+  const was = ctx;
+  ctx = hc;
+  try { draw(hc); } finally { ctx = was; }
+  hc.setTransform(1, 0, 0, 1, 0, 0); hc.globalAlpha = 1;
+  const img = hc.getImageData(0, 0, HW, HH);
+  if (!img || !img.data || img.data.length !== HW * HH * 4) return null;
+  const out = forgeDownsample(img.data, HW, W, H, SSc, opts && opts.cut || FORGE_ALPHA_CUT);
+  forgeQuantize(out, FORGE_MAX_COLORS);
+  if (fin) forgeFinish(out, W, H, 0);
+  const colors = forgeQuantize(out, FORGE_MAX_COLORS);
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (out[(y * W + x) * 4 + 3]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (x1 < 0) { x0 = 0; y0 = 0; x1 = 0; y1 = 0; }
+  const TW = x1 - x0 + 1, TH = y1 - y0 + 1;
+  const cv = document.createElement("canvas"); cv.width = TW; cv.height = TH;
+  const oc = cv.getContext("2d");
+  if (!oc || typeof oc.createImageData !== "function") return null;
+  const id = oc.createImageData(TW, TH);
+  if (!id || !id.data || id.data.length !== TW * TH * 4) return null;
+  for (let y = 0; y < TH; y++) id.data.set(out.subarray(((y + y0) * W + x0) * 4, ((y + y0) * W + x0 + TW) * 4), y * TW * 4);
+  oc.putImageData(id, 0, 0);
+  const ms = performance.now() - t0;
+  pbStats.bakes++; pbStats.ms += ms; if (ms > pbStats.maxMs) pbStats.maxMs = ms;
+  if (colors > forgeStats.maxColors) forgeStats.maxColors = colors;
+  return { cv, W: TW, H: TH, ax: -L / px - x0, ay: -T / px - y0, px, colors, pb: true };
+}
+/* the sprite for a key at a grid, or null (the caller then skips or draws the old way) */
+function pbSprite(key, px, box, draw, opts) {
+  if (!FORGE_ON) return null;
+  const k = "pb|" + key + "|" + px.toFixed(5);
+  let e = forgeCache.get(k);
+  if (e) {
+    if (e.__pbF !== pbFrameNo) { forgeCache.delete(k); forgeCache.set(k, e); e.__pbF = pbFrameNo; }   // LRU touch once a frame
+    pbStats.hits++;
+    return e;
+  }
+  const now = performance.now();
+  const force = !!(opts && opts.force) && pbForceLeft > 0;
+  if (now < forgeBackoffUntil) { pbStats.misses++; return null; }
+  if (!force && !(forgeBakesLeft > 0 && forgeBakeMsLeft > 0)) { pbStats.misses++; return null; }
+  if (force) pbForceLeft--; else forgeBakesLeft--;
+  const t0 = performance.now();
+  try { e = pbBake(box, px, draw, opts); } catch (err) { e = null; }
+  if (!force) forgeBakeMsLeft -= performance.now() - t0;
+  if (!e) {
+    pbStats.fails++; forgeStats.failures++;
+    if (forgeStats.bakes === 0 && pbStats.bakes === 0) FORGE_ON = false;   // a context that cannot be read back: no forge here
+    else forgeBackoffUntil = now + FORGE_BACKOFF_MS;
+    return null;
+  }
+  e.__pbF = pbFrameNo;
+  forgeCacheAdd(k, e);
+  return e;
+}
+/* draw a pb sprite with its anchor at (sx, sy), snapped to a whole backing pixel */
+function pbDraw(c, e, sx, sy, S) {
+  let x = sx - e.ax * e.px, y = sy - e.ay * e.px;
+  if (c === ctx) {
+    x = Math.round((x + renderShX) * VIEW_SCALE) / VIEW_SCALE - renderShX;
+    y = Math.round((y + renderShY) * VIEW_SCALE) / VIEW_SCALE - renderShY;
+  } else if (S) {                                   // a ground chunk: snap in the chunk's own backing grid
+    x = camOX + Math.round((x - camOX) * S) / S;
+    y = camOY + Math.round((y - camOY) * S) / S;
+  }
+  const was = c.imageSmoothingEnabled;
+  if (was) c.imageSmoothingEnabled = false;
+  c.drawImage(e.cv, x, y, e.W * e.px, e.H * e.px);
+  if (was) c.imageSmoothingEnabled = true;
+}
+function pbFrameStart() { pbFrameNo++; pbForceLeft = PB_FORCE_PER_FRAME; }
+/* the grid sprites are baked at: the zoom TARGET, as S2 does for heroes, so easing reuses and never re-bakes */
+function pbPx() { return forgeGrid(RENDER_DPR * zoomTarget).px; }
+
+/* ---------------------------------------------------------------------
+   PALETTES. Every colour is the biome's own locked PAL hue moved in value
+   (and a little in warmth), so a forged biome is still unmistakably the
+   biome the skill locked — only now it has a surface.
+   --------------------------------------------------------------------- */
+function pbRGB(hex) { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function pbMix(hex, f, warm) {          // value f, plus a warm (+) or cool (-) push
+  const c = pbRGB(hex), w = warm || 0;
+  return [Math.max(0, Math.min(255, c[0] * f + w * 10)), Math.max(0, Math.min(255, c[1] * f + w * 4)), Math.max(0, Math.min(255, c[2] * f - w * 8))];
+}
+function pbCss(rgb) { return "rgb(" + (rgb[0] | 0) + "," + (rgb[1] | 0) + "," + (rgb[2] | 0) + ")"; }
+
+/* ---------------------------------------------------------------------
+   GROUND TEXTURE. One tileable PB_TEX-art-pixel texture per biome, laid
+   over the tile's flat top as a CanvasPattern anchored to the WORLD (not
+   the screen and not the chunk), so a blade, a ripple or a leaf crosses a
+   tile edge without a seam and two chunks baked under different cameras
+   meet exactly. Only marks are painted; between them the tile's own flat
+   top (checker, tone patch, deep-water darkening) shows through, so the
+   locked palette is still the ground. The texture is flat pixels — no
+   gradient anywhere.
+   --------------------------------------------------------------------- */
+const PB_TEX = 192;                      // art px, tileable (TUNABLE; a multiple of 48)
+const pbTexCache = new Map();            // biome -> { cv, pat } (pat null where patterns cannot be made)
+function pbTn(x, y, cell, salt) {        // tileable value noise, 0..1
+  const P = PB_TEX / cell, fx = x / cell, fy = y / cell;
+  const ix = Math.floor(fx), iy = Math.floor(fy), u = fx - ix, v = fy - iy;
+  const a = hash2(ix % P, iy % P, salt), b = hash2((ix + 1) % P, iy % P, salt);
+  const c = hash2(ix % P, (iy + 1) % P, salt), d = hash2((ix + 1) % P, (iy + 1) % P, salt);
+  const su = u * u * (3 - 2 * u), sv = v * v * (3 - 2 * v);
+  return a + (b - a) * su + (c - a) * sv + (a - b - c + d) * su * sv;
+}
+function pbTexGen(b) {
+  const T = PB_TEX, buf = new Uint8ClampedArray(T * T * 4);
+  const put = (x, y, rgb) => { x = ((x % T) + T) % T; y = ((y % T) + T) % T; const i = (y * T + x) * 4; buf[i] = rgb[0]; buf[i + 1] = rgb[1]; buf[i + 2] = rgb[2]; buf[i + 3] = 255; };
+  const base = PAL[b][0];
+  let seed = 7 + b * 131;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed & 0xffffff) / 0x1000000; };
+  const patch = (x, y) => pbTn(x, y, 48, 11 + b) * 0.62 + pbTn(x, y, 24, 23 + b) * 0.38;
+  const blades = (n, hMin, hMax, dk, md, lt, tip) => {
+    for (let i = 0; i < n; i++) {
+      const x = (rnd() * T) | 0, y = (rnd() * T) | 0, p = patch(x, y);
+      const h = hMin + ((rnd() * (hMax - hMin + 1)) | 0);
+      const col = p > 0.58 ? dk : p < 0.4 ? lt : md;
+      const lean = rnd() < 0.3 ? (rnd() < 0.5 ? -1 : 1) : 0;
+      for (let k = 0; k < h; k++) put(x + (k === h - 1 ? lean : 0), y - k, k === h - 1 ? tip : col);
+    }
+  };
+  if (b === B.PLAINS || b === B.MEADOW || b === B.FOREST) {
+    const dk = pbMix(base, 0.8, -0.2), md = pbMix(base, 0.9), lt = pbMix(base, 1.1, 0.4), tip = pbMix(base, 1.2, 0.6);
+    blades(b === B.FOREST ? 520 : b === B.MEADOW ? 1000 : 820, 2, 3, dk, md, lt, tip);
+    /* clumps: little fans of three blades, dark where the patch runs deep and
+       sunlit where it runs thin — the shape of grass, never a per-pixel speckle */
+    for (let i = 0; i < 260; i++) {
+      const x = (rnd() * T) | 0, y = (rnd() * T) | 0, p = patch(x, y);
+      if (p > 0.3 && p < 0.62) continue;
+      const c1 = p >= 0.62 ? pbMix(base, 0.78, -0.3) : pbMix(base, 1.1, 0.5), c2 = p >= 0.62 ? pbMix(base, 0.86, -0.2) : pbMix(base, 1.18, 0.6);
+      put(x, y, c1); put(x, y - 1, c1); put(x, y - 2, c2); put(x - 1, y, c1); put(x - 2, y - 1, c2); put(x + 1, y, c1); put(x + 2, y - 1, c2);
+    }
+    if (b === B.PLAINS) for (let i = 0; i < 60; i++) {               // pebbles: lit top, shaded foot
+      const x = (rnd() * T) | 0, y = (rnd() * T) | 0;
+      put(x, y, [176, 164, 140]); put(x + 1, y, [160, 148, 124]); put(x, y + 1, [118, 110, 92]); put(x + 1, y + 1, [118, 110, 92]);
+    }
+    if (b === B.MEADOW) {
+      const cols = [[248, 246, 236], [246, 214, 92], [232, 128, 160], [176, 150, 224]];
+      for (let i = 0; i < 150; i++) {                                // clover and flower specks
+        const x = (rnd() * T) | 0, y = (rnd() * T) | 0;
+        if (rnd() < 0.55) { const c = pbMix(base, 1.14, 0.2); put(x, y, c); put(x + 1, y, c); put(x, y + 1, c); }
+        else put(x, y, cols[(rnd() * cols.length) | 0]);
+      }
+    }
+    if (b === B.FOREST) {
+      const litter = [[138, 112, 62], [112, 90, 50], [156, 124, 66]];
+      for (let i = 0; i < 420; i++) {                                // leaf litter
+        const x = (rnd() * T) | 0, y = (rnd() * T) | 0, c = litter[(rnd() * 3) | 0];
+        put(x, y, c); if (rnd() < 0.6) put(x + 1, y, c);
+      }
+      for (let i = 0; i < 34; i++) {                                 // twigs
+        let x = (rnd() * T) | 0, y = (rnd() * T) | 0; const d = rnd() < 0.5 ? 1 : -1;
+        for (let k = 0; k < 4; k++) { put(x, y, [92, 70, 42]); x += d; if (k & 1) y++; }
+      }
+      for (let y = 0; y < T; y++) for (let x = 0; x < T; x++)        // moss
+        if (pbTn(x, y, 24, 61) > 0.7 && hash2(x, y, 63) > 0.35) put(x, y, pbMix(base, 0.84, -0.4));
+    }
+  } else if (b === B.DARKFOREST) {
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {
+      const p = patch(x, y);
+      if (p > 0.6 && hash2(x, y, 71) > 0.2) put(x, y, [44, 42, 32]);         // bare black soil
+      else if (p > 0.52 && hash2(x, y, 72) > 0.6) put(x, y, [52, 54, 38]);
+      else if (p < 0.34 && hash2(x, y, 73) > 0.62) put(x, y, pbMix(base, 1.22, -0.2));   // moss
+    }
+    for (let i = 0; i < 26; i++) {                                   // roots: sinuous dark-brown lines
+      let x = rnd() * T, y = rnd() * T, a = rnd() * 6.28;
+      const len = 10 + rnd() * 18;
+      for (let k = 0; k < len; k++) { put(x | 0, y | 0, [58, 42, 28]); put((x | 0), (y | 0) + 1, [36, 28, 20]); a += (rnd() - 0.5) * 0.7; x += Math.cos(a); y += Math.sin(a) * 0.5; }
+    }
+    for (let i = 0; i < 40; i++) { const x = (rnd() * T) | 0, y = (rnd() * T) | 0; put(x, y, [96, 86, 66]); }   // needles and grit
+  } else if (b === B.SAND) {
+    const dk = pbMix(base, 0.86, 0.3), lt = pbMix(base, 1.05, 0.2);
+    for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {        // wind ripples, wobbled; period divides the tile
+      const w = (x * 2 + y * 4 + pbTn(x, y, 48, 81) * 22) / 12;
+      const f = w - Math.floor(w);
+      if (f < 0.11) put(x, y, dk); else if (f > 0.9 && hash2(x, y, 83) > 0.3) put(x, y, lt);
+    }
+    for (let i = 0; i < 260; i++) { const x = (rnd() * T) | 0, y = (rnd() * T) | 0; put(x, y, rnd() < 0.5 ? pbMix(base, 0.8, 0.4) : [248, 240, 214]); }
+  } else if (b === B.SHALLOW || b === B.WATER || b === B.DEEP) {
+    const lt = pbMix(base, b === B.DEEP ? 1.12 : 1.1, -0.3), dk = pbMix(base, 0.9, -0.2);
+    for (let i = 0; i < (b === B.DEEP ? 70 : 120); i++) {             // wavelets: a lit crest over a dark trough
+      const x = (rnd() * T) | 0, y = (rnd() * T) | 0, n = 3 + ((rnd() * 4) | 0);
+      for (let k = 0; k < n; k++) { put(x + k, y, lt); put(x + k + 1, y + 1, dk); }
+    }
+    if (b === B.SHALLOW) for (let y = 0; y < T; y++) for (let x = 0; x < T; x++)   // the floor you can see through
+      if (pbTn(x, y, 24, 91) > 0.68 && hash2(x, y, 93) > 0.55) put(x, y, pbMix(base, 0.93, 0.3));
+  }
+  return buf;
+}
+function pbTexture(b) {
+  let t = pbTexCache.get(b);
+  if (t) return t;
+  const t0 = performance.now();
+  t = { cv: null, pat: null };
+  try {
+    const cv = document.createElement("canvas"); cv.width = PB_TEX; cv.height = PB_TEX;
+    const c = cv.getContext("2d");
+    if (c && typeof c.createImageData === "function" && typeof c.createPattern === "function") {
+      const id = c.createImageData(PB_TEX, PB_TEX);
+      if (id && id.data && id.data.length === PB_TEX * PB_TEX * 4) {
+        id.data.set(pbTexGen(b)); c.putImageData(id, 0, 0);
+        t.cv = cv; t.pat = c.createPattern(cv, "repeat") || null;
+        if (t.pat && typeof t.pat.setTransform !== "function") t.pat = null;
+      }
+    }
+  } catch (e) { t.pat = null; }
+  pbTexCache.set(b, t);
+  pbStats.texGen++; pbStats.texMs += performance.now() - t0;
+  return t;
+}
+/* a tile's tone patch: the flat top moved one small step lighter or darker by
+   slow world noise, so a field reads in broad rolling patches, not a grid */
+function pbTone(b, tx, ty, top) {
+  if (b === B.DEEP || b === B.WATER) return top;
+  const v = valueNoise(tx / 7.5, ty / 7.5, worldSeed + 1907) * 0.65 + valueNoise(tx / 3.1, ty / 3.1, worldSeed + 1913) * 0.35;
+  return v > 0.62 ? shade(top, 0.972) : v < 0.36 ? shade(top, 1.025) : top;
+}
+let PB_TEX_ON = true;     // flipped only by the harness, to compare the textured and flat ground
+/* the texture over one tile top: called by drawGroundTile right after the flat top fill */
+function pbGroundTex(c, b, cx, cy) {
+  if (!PB_TEX_ON) return;
+  const t = pbTexture(b);
+  if (!t.pat) return;
+  const S = c === ctx ? VIEW_SCALE : gcBakeScale();
+  const a = forgeGrid(S).px;               // logical px per art px at this context's scale
+  try {
+    t.pat.setTransform(new DOMMatrix([a, 0, 0, a, camOX, camOY]));   // world-anchored: art px (0,0) at the iso origin
+  } catch (e) { return; }
+  const was = c.imageSmoothingEnabled;
+  c.imageSmoothingEnabled = false;
+  c.fillStyle = t.pat;
+  c.beginPath();
+  c.moveTo(cx, cy - IH2); c.lineTo(cx + IW2, cy); c.lineTo(cx, cy + IH2); c.lineTo(cx - IW2, cy);
+  c.closePath();
+  c.fill();
+  c.imageSmoothingEnabled = was;
+}
+
+/* ---------------------------------------------------------------------
+   GROUND PROPS — small forged things baked INTO the ground chunk (they do
+   not move, so they cost nothing per frame): stones, stumps, logs,
+   mushrooms, roots, bones, shells, driftwood, starfish. Placed by tile
+   hash inside the diamond's middle so nothing pokes past the tile edge.
+   --------------------------------------------------------------------- */
+const PB_PROP_P = { plains: 0.035, meadow: 0.03, forest: 0.1, darkforest: 0.13, sand: 0.06 };
+const PB_PROPS = {
+  plains:     ["stones", "clover", "molehill", "clover"],
+  meadow:     ["stones", "clover", "clover"],
+  forest:     ["mushrooms", "stump", "log", "mossrock", "mushrooms", "roots"],
+  darkforest: ["roots", "glowshrooms", "bones", "roots", "thorns", "deadlog"],
+  sand:       ["shells", "driftwood", "starfish", "shells", "pebbles"],
+};
+function pbPropDraw(kind, v) {
+  return (c) => {
+    const r = (s) => hash2(v, s, 777);
+    const poly = (col, pts) => { c.fillStyle = col; c.beginPath(); c.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) c.lineTo(pts[i], pts[i + 1]); c.closePath(); c.fill(); };
+    const ell = (col, x, y, rx, ry) => { c.fillStyle = col; c.beginPath(); c.ellipse(x, y, rx, ry, 0, 0, 6.2832); c.fill(); };
+    if (kind === "stones" || kind === "pebbles") {
+      const n = kind === "pebbles" ? 4 : 3;
+      for (let i = 0; i < n; i++) { const x = (r(i) - 0.5) * 9, y = (r(i + 9) - 0.5) * 4, s = 1.2 + r(i + 20) * 1.6;
+        ell("#7c7466", x + 0.4, y + 0.5, s * 1.1, s * 0.7); ell("#a59c88", x, y, s, s * 0.62); ell("#c8bfaa", x - s * 0.3, y - s * 0.25, s * 0.45, s * 0.3); }
+    } else if (kind === "molehill") {
+      ell("#5e4630", 0, 0.5, 4.2, 2.2); ell("#7a5c3c", -0.4, -0.3, 3.4, 1.8); ell("#94704a", -1, -0.8, 1.6, 0.8);
+    } else if (kind === "clover") {
+      for (let i = 0; i < 5; i++) { const x = (r(i) - 0.5) * 8, y = (r(i + 7) - 0.5) * 3.5;
+        ell("#4f7c34", x, y, 1.6, 1); ell("#78a84c", x - 0.4, y - 0.3, 1, 0.6); }
+      if (r(30) > 0.5) ell("#f4f0e4", (r(31) - 0.5) * 6, -1, 0.9, 0.9);
+    } else if (kind === "mushrooms" || kind === "glowshrooms") {
+      const glow = kind === "glowshrooms";
+      const n = 2 + ((r(1) * 3) | 0);
+      for (let i = 0; i < n; i++) { const x = (r(i + 2) - 0.5) * 8, y = (r(i + 12) - 0.5) * 3, h = 2 + r(i + 22) * 2.4, w = 1.6 + r(i + 32) * 1.2;
+        poly(glow ? "#b8d8c8" : "#e8dcc4", [x - 0.5, y, x + 0.5, y, x + 0.4, y - h, x - 0.4, y - h]);
+        ell(glow ? "#4fb8a4" : (r(40 + i) > 0.5 ? "#c4442e" : "#9a6a3c"), x, y - h, w, w * 0.6);
+        ell(glow ? "#a8f4dc" : (r(40 + i) > 0.5 ? "#e8664a" : "#b88a54"), x - w * 0.3, y - h - w * 0.2, w * 0.5, w * 0.3);
+        if (!glow && r(40 + i) > 0.5) ell("#f8f0e0", x + w * 0.2, y - h - w * 0.1, 0.4, 0.3); }
+    } else if (kind === "stump") {
+      poly("#5c3e24", [-3.6, 0, 3.6, 0, 3.2, -4, -3.2, -4]);
+      ell("#4a301c", 0, 0, 3.6, 1.6); ell("#b08a5c", 0, -4, 3.2, 1.5); ell("#8a6a44", 0, -4, 2, 0.9); ell("#b08a5c", 0, -4, 0.8, 0.4);
+      poly("#5c3e24", [-3.6, -0.2, -5.6, 0.8, -3.2, 0.6]);
+    } else if (kind === "log" || kind === "deadlog") {
+      const dead = kind === "deadlog", bark = dead ? "#3e3226" : "#6b4a2c", lit = dead ? "#5a4a36" : "#87603a", end = dead ? "#6e604a" : "#c49a66";
+      poly(bark, [-8, -1, 6, -4.5, 7, -1.5, -7, 2]); poly(lit, [-8, -1, 6, -4.5, 6.4, -3.6, -7.6, -0.1]);
+      ell(end, 6.6, -3, 1.6, 1.8); ell(bark, 6.6, -3, 0.7, 0.8);
+      if (!dead) ell("#5d8a3c", -2, -1.6, 2.2, 0.9);
+    } else if (kind === "mossrock") {
+      ell("#6a6658", 0.5, 0.3, 4.8, 2.6); ell("#8e8a7a", 0, -0.6, 4.2, 2.3); ell("#5f8c3e", -0.8, -2, 3.2, 1.1); ell("#7cab50", -1.4, -2.4, 1.6, 0.6);
+    } else if (kind === "roots") {
+      c.strokeStyle = "#4a3422"; c.lineWidth = 1.3; c.beginPath();
+      for (let i = 0; i < 3; i++) { const a = (r(i) - 0.5) * 2.4; c.moveTo(0, -1); c.quadraticCurveTo(Math.cos(a) * 4, Math.sin(a) * 2 + 0.5, Math.cos(a) * 8, Math.sin(a) * 3 + 1); }
+      c.stroke();
+      c.strokeStyle = "#6a4c32"; c.lineWidth = 0.6; c.beginPath(); c.moveTo(0, -1.4); c.quadraticCurveTo(2.6, -0.6, 5, 0.2); c.stroke();
+    } else if (kind === "bones") {
+      ell("#d8d0bc", -2, 0, 2.2, 1.6); ell("#2a261e", -2.7, -0.2, 0.5, 0.45); ell("#2a261e", -1.3, -0.2, 0.5, 0.45);
+      poly("#cfc6b0", [0.6, 0.6, 6, -1, 6.3, -0.2, 0.9, 1.4]); ell("#e4dccb", 6.2, -0.6, 0.9, 0.7);
+    } else if (kind === "thorns") {
+      c.strokeStyle = "#3a2e22"; c.lineWidth = 0.9; c.beginPath();
+      for (let i = 0; i < 4; i++) { const x = (r(i) - 0.5) * 8; c.moveTo(x, 0.5); c.quadraticCurveTo(x + 2, -3, x + (r(i + 5) - 0.5) * 6, -5 - r(i + 9) * 3); }
+      c.stroke(); for (let i = 0; i < 4; i++) ell("#5a2a2a", (r(i + 20) - 0.5) * 7, -2 - r(i + 30) * 3, 0.6, 0.6);
+    } else if (kind === "shells") {
+      for (let i = 0; i < 3; i++) { const x = (r(i) - 0.5) * 9, y = (r(i + 9) - 0.5) * 4;
+        ell(r(i + 3) > 0.5 ? "#f2e6d8" : "#e8b8a4", x, y, 1.3, 0.9); ell("#c8a890", x + 0.3, y + 0.3, 0.5, 0.3); }
+    } else if (kind === "driftwood") {
+      poly("#9a8466", [-7, 0.5, 5, -2.5, 6, -1, -6, 2]); poly("#c0ab88", [-7, 0.5, 5, -2.5, 5.2, -1.9, -6.6, 1.1]);
+      poly("#9a8466", [1, -1.6, 4, -4.6, 4.7, -4, 2, -0.8]);
+    } else if (kind === "starfish") {
+      c.fillStyle = "#e0784a"; c.beginPath();
+      for (let i = 0; i < 10; i++) { const a = -1.5708 + i * 0.6283, rr = i & 1 ? 1.1 : 3; c.lineTo(Math.cos(a) * rr, Math.sin(a) * rr * 0.6); }
+      c.closePath(); c.fill(); ell("#f4a070", -0.5, -0.4, 0.9, 0.5);
+    }
+  };
+}
+const PB_PROP_BOX = { l: -11, r: 11, t: -9, b: 4 };
+function pbPropSprite(kind, v, px, force) {
+  return pbSprite("prop|" + kind + "|" + v, px, PB_PROP_BOX, pbPropDraw(kind, v), { force });
+}
+/* called by drawGroundTile after the tile's own detail */
+function pbGroundProps(c, tx, ty, b, cx, cy) {
+  const key = pbKeyOfB(b), p = PB_PROP_P[key];
+  if (!p || !PIXEL_BIOMES[key]) return;
+  if (hash2(tx, ty, 1931) > p) return;
+  if (distToSeg(tx + 0.5, ty + 0.5, SPAWN.x, SPAWN.y, SPAWN_FORGE.x, SPAWN_FORGE.y) < 1.2) return;   // keep the spawn trail clean
+  const list = PB_PROPS[key], kind = list[(hash2(tx, ty, 1933) * list.length) | 0];
+  const v = (hash2(tx, ty, 1937) * 3) | 0;
+  const S = c === ctx ? VIEW_SCALE : gcBakeScale();
+  const e = pbPropSprite(kind, v, forgeGrid(S).px, true);
+  if (!e) return;
+  const ox = (hash2(tx, ty, 1939) - 0.5) * IW2 * 0.5, oy = (hash2(tx, ty, 1941) - 0.5) * IH2 * 0.4;
+  pbDraw(c, e, cx + ox, cy + oy, c === ctx ? 0 : S);
+  pbStats.props++;
+}
+
+/* ---------------------------------------------------------------------
+   TUFTS — the grass that breathes. Per ground chunk, a fixed list of
+   tufts (where, what kind) built once from tile hashes; each frame every
+   visible tuft picks one of five baked lean frames from windLean, plus a
+   push away from the local player wading through it. Five frames, not a
+   per-frame redraw: a screen of 600+ tufts is 600 drawImage calls. At the
+   two strongest frames the blade tips catch the light, so a gust shows as
+   a pale band rolling across the field.
+   --------------------------------------------------------------------- */
+const PB_TUFT_KINDS = ["grass", "tallgrass", "flowers", "fern", "deadgrass", "dunegrass", "reeds", "lily"];
+const PB_TUFT_CHUNK = 16, PB_TUFT_LISTS_MAX = 160, PB_TUFT_BUILDS_PER_FRAME = 3;
+const pbTuftLists = new Map();
+function pbTuftPlan(tx, ty, b) {      // [count, kind index, variant base]
+  const h = hash2(tx, ty, 2011), patch = valueNoise(tx / 5.3, ty / 5.3, worldSeed + 2017);
+  if (b === B.PLAINS) { if (patch > 0.64) return [1 + (h > 0.55 ? 1 : 0), 1]; return [h > 0.8 ? 1 : 0, 0]; }
+  if (b === B.MEADOW) { const drift = valueNoise(tx / 4.1, ty / 4.1, worldSeed + 2027); return drift > 0.58 ? [1 + (h > 0.5 ? 1 : 0), 2] : [h > 0.7 ? 1 : 0, 0]; }
+  if (b === B.FOREST) return [h > 0.72 ? 1 : 0, h > 0.86 ? 3 : 0];
+  if (b === B.DARKFOREST) return [h > 0.82 ? 1 : 0, 4];
+  if (b === B.SAND) {
+    let grassN = false;
+    for (let k = 0; k < 4; k++) { const nb = biomeAt(tx + (k === 0) - (k === 1), ty + (k === 2) - (k === 3)); if (nb === B.PLAINS || nb === B.MEADOW || nb === B.FOREST) grassN = true; }
+    return [(grassN ? h > 0.55 : h > 0.95) ? 1 : 0, 5];
+  }
+  if (b === B.SHALLOW) {
+    let land = false;
+    for (let k = 0; k < 4; k++) { const nh = heightAt(tx + (k === 0) - (k === 1), ty + (k === 2) - (k === 3)); if (nh >= 0) land = true; }
+    if (land) return [h > 0.5 ? 1 + (h > 0.8 ? 1 : 0) : 0, 6];
+    return [h > 0.965 ? 1 : 0, 7];
+  }
+  return [0, 0];
+}
+function pbBuildTufts(cx, cy) {
+  const out = [];
+  const x0 = cx * PB_TUFT_CHUNK, y0 = cy * PB_TUFT_CHUNK;
+  for (let ty = y0; ty < y0 + PB_TUFT_CHUNK; ty++) for (let tx = x0; tx < x0 + PB_TUFT_CHUNK; tx++) {
+    if (tx < 0 || ty < 0 || tx >= N || ty >= N) continue;
+    const b = biomeAt(tx, ty);
+    if (!pbOn(b)) continue;
+    if (arenaFloorAt(tx, ty, b)) continue;
+    if (distToSeg(tx + 0.5, ty + 0.5, SPAWN.x, SPAWN.y, SPAWN_FORGE.x, SPAWN_FORGE.y) < 0.9) continue;   // the trail stays a trail
+    const plan = pbTuftPlan(tx, ty, b);
+    for (let i = 0; i < plan[0]; i++) {
+      const gx = tx + 0.18 + hash2(tx, ty, 2031 + i * 7) * 0.64, gy = ty + 0.18 + hash2(tx, ty, 2033 + i * 7) * 0.64;
+      const kind = plan[1] === 0 && b === B.FOREST && i > 0 ? 3 : plan[1];
+      out.push(gx, gy, groundZ(gx, gy), kind, (hash2(tx, ty, 2037 + i * 7) * 3) | 0, b);
+    }
+  }
+  pbStats.tuftLists++;
+  return Float32Array.from(out);
+}
+const PB_TUFT_BOX = { l: -9, r: 9, t: -18, b: 2 };
+function pbTuftColors(b) {
+  const base = PAL[b] ? PAL[b][0] : "#8fb562";
+  return { dk: pbCss(pbMix(base, 0.74, -0.2)), md: pbCss(pbMix(base, 0.86)), lt: pbCss(pbMix(base, 1.04, 0.3)), tip: pbCss(pbMix(base, 1.2, 0.8)) };
+}
+function pbTuftDraw(kind, v, k, b) {
+  return (c) => {
+    const r = (s) => hash2(v * 31 + kind, s, 2099);
+    const bend = k * 1.35;                                 // tip offset in logical px at this frame
+    const sheen = Math.abs(k) === 2;
+    const g = b === B.SHALLOW ? pbTuftColors(B.MEADOW) : b === B.SAND ? pbTuftColors(B.PLAINS) : pbTuftColors(b);
+    const blade = (x0, h, w, col, tipCol, extra) => {
+      const tx = x0 + bend * (0.8 + (extra || 0)), ty = -h;
+      c.fillStyle = col; c.beginPath();
+      c.moveTo(x0 - w, 0); c.quadraticCurveTo(x0 - w * 0.3 + bend * 0.25, -h * 0.55, tx, ty);
+      c.quadraticCurveTo(x0 + w * 0.3 + bend * 0.25, -h * 0.55, x0 + w, 0); c.closePath(); c.fill();
+      if (tipCol) { c.fillStyle = tipCol; c.beginPath(); c.moveTo(tx, ty); c.lineTo(tx - w * 0.6 + bend * 0.1, ty + h * 0.3); c.lineTo(tx + w * 0.6 + bend * 0.1, ty + h * 0.3); c.closePath(); c.fill(); }
+    };
+    const head = (x0, h, col, rr) => { const hx = x0 + bend * 0.95, hy = -h;
+      c.strokeStyle = g.md; c.lineWidth = 0.55; c.beginPath(); c.moveTo(x0, 0); c.quadraticCurveTo(x0 + bend * 0.2, -h * 0.5, hx, hy); c.stroke();
+      c.fillStyle = col; c.beginPath(); c.ellipse(hx, hy, rr, rr * 0.85, 0, 0, 6.2832); c.fill(); };
+    if (kind === 0 || kind === 1 || kind === 2) {             // grass / tall grass / flowers
+      const tall = kind === 1, n = tall ? 6 : 4;
+      for (let i = 0; i < n; i++) {
+        const x0 = (r(i) - 0.5) * (tall ? 7 : 5), h = (tall ? 6.5 : 3.5) + r(i + 10) * (tall ? 3.5 : 2);
+        blade(x0, h, 0.55, i % 3 === 0 ? g.dk : i % 3 === 1 ? g.md : g.lt, sheen ? g.tip : null, r(i + 20) * 0.4);
+      }
+      if (tall && r(40) > 0.5) head((r(41) - 0.5) * 4, 10 + r(43) * 2, "#c8b46a", 0.7);
+      if (kind === 2) {
+        const pal = [["#e83a3a", "#ffd0c0"], ["#f6f2e8", "#f4d04a"], ["#9a74d8", "#d8c8f8"], ["#5a8ae8", "#c8dcff"], ["#f6cc3a", "#fff2a8"]];
+        const n2 = 2 + ((r(50) * 3) | 0);
+        for (let i = 0; i < n2; i++) { const p = pal[(r(51 + i) * pal.length) | 0]; const x0 = (r(60 + i) - 0.5) * 8, h = 6 + r(70 + i) * 4;
+          head(x0, h, p[0], 1.35); c.fillStyle = p[1]; c.beginPath(); c.ellipse(x0 + bend * 0.95 - 0.35, -h - 0.35, 0.5, 0.45, 0, 0, 6.2832); c.fill(); }
+      }
+    } else if (kind === 3) {                                  // fern: arched fronds with leaflets
+      for (let i = 0; i < 5; i++) {
+        const a = -2.6 + i * 0.52 + (r(i) - 0.5) * 0.2, L = 6 + r(i + 5) * 3;
+        const ex = Math.cos(a) * L + bend * (0.6 + 0.3 * Math.abs(Math.sin(a))), ey = Math.sin(a) * L * 0.75;
+        c.strokeStyle = g.dk; c.lineWidth = 0.7; c.beginPath(); c.moveTo(0, 0); c.quadraticCurveTo(ex * 0.45, ey - 2.4, ex, ey); c.stroke();
+        for (let j = 1; j < 5; j++) { const f = j / 5, px2 = ex * f, py2 = ey * f - 2.4 * 4 * f * (1 - f) * 0.5;
+          c.fillStyle = j & 1 ? g.md : g.lt; c.beginPath(); c.ellipse(px2, py2, 1.2 * (1 - f * 0.5), 0.55, a + 1.2, 0, 6.2832); c.fill(); }
+      }
+    } else if (kind === 4) {                                  // dark forest: dead grass and thorn shoots
+      for (let i = 0; i < 5; i++) blade((r(i) - 0.5) * 7, 4 + r(i + 10) * 4, 0.6, i & 1 ? "#4a4632" : "#3a3a2a", sheen ? "#6a6648" : null, 0.2);
+      c.strokeStyle = "#2e261c"; c.lineWidth = 0.7; c.beginPath(); c.moveTo(1, 0); c.quadraticCurveTo(2 + bend * 0.3, -4, 3 + bend, -8); c.stroke();
+    } else if (kind === 5) {                                  // dune grass: long pale blades
+      for (let i = 0; i < 6; i++) blade((r(i) - 0.5) * 7, 6 + r(i + 10) * 5, 0.6, i & 1 ? "#a8a660" : "#c4be78", sheen ? "#ece2a4" : null, 0.5);
+    } else if (kind === 6) {                                  // reeds with cattail heads
+      for (let i = 0; i < 4; i++) {
+        const x0 = (r(i) - 0.5) * 7, h = 11 + r(i + 10) * 5, hx = x0 + bend * 0.9;
+        blade(x0, h, 0.55, i & 1 ? "#5c7a3a" : "#7a9a48", null, 0);
+        if (r(i + 20) > 0.4) { c.fillStyle = "#6a4426"; c.beginPath(); c.ellipse(hx, -h + 2.2, 0.85, 2, bend * 0.05, 0, 6.2832); c.fill(); }
+      }
+    } else if (kind === 7) {                                  // a lily pad (no lean: it floats)
+      c.fillStyle = "#3e7a3a"; c.beginPath(); c.ellipse(0, 0, 4.2, 2.1, 0, 0.35, 6.0); c.lineTo(0, 0); c.closePath(); c.fill();
+      c.fillStyle = "#5e9a48"; c.beginPath(); c.ellipse(-0.8, -0.4, 2.4, 1.1, 0, 0, 6.2832); c.fill();
+      if (r(9) > 0.5) { c.fillStyle = "#f4b8d0"; c.beginPath(); c.ellipse(1.4, -1, 1.2, 0.9, 0, 0, 6.2832); c.fill(); c.fillStyle = "#f8e88a"; c.fillRect(1.1, -1.3, 0.6, 0.6); }
+    }
+  };
+}
+function pbTuftSprite(kind, v, k, b, px) {
+  const kk = kind === 7 ? 0 : k;
+  return pbSprite("tuft|" + kind + "|" + v + "|" + kk + "|" + b, px, PB_TUFT_BOX, pbTuftDraw(kind, v, kk, b), { finish: false });
+}
+/* the tile keys under base pieces, rebuilt once a frame (pieces come and go) */
+const pbBaseTiles = new Set();
+function pbCollectBaseTiles() {
+  pbBaseTiles.clear();
+  for (const p of basePieces.values()) { const x = Math.floor(p.x), y = Math.floor(p.y);
+    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) pbBaseTiles.add((y + oy) * N + (x + ox)); }
+}
+/* the live tuft pass: render() calls it where the v8 proximity tufts used to be */
+function pbDrawTufts(minX, maxX, minY, maxY, w, h) {
+  if (inInterior() || !FORGE_ON) return 0;
+  const px = pbPx();
+  pbCollectBaseTiles();
+  const c0x = Math.floor(minX / PB_TUFT_CHUNK), c1x = Math.floor(maxX / PB_TUFT_CHUNK);
+  const c0y = Math.floor(minY / PB_TUFT_CHUNK), c1y = Math.floor(maxY / PB_TUFT_CHUNK);
+  let builds = 0, n = 0;
+  const mx = me ? me.x : -999, my = me ? me.y : -999;
+  camOffset();
+  const ox = camOX, oy = camOY;
+  const smooth = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
+  for (let cy = c0y; cy <= c1y; cy++) for (let cx = c0x; cx <= c1x; cx++) {
+    const key = cx * 65536 + cy;
+    let L = pbTuftLists.get(key);
+    if (!L) {
+      if (builds >= PB_TUFT_BUILDS_PER_FRAME) continue;
+      builds++; L = pbBuildTufts(cx, cy); pbTuftLists.set(key, L);
+      if (pbTuftLists.size > PB_TUFT_LISTS_MAX) pbTuftLists.delete(pbTuftLists.keys().next().value);
+    }
+    for (let i = 0; i < L.length; i += 6) {
+      const x = L[i], y = L[i + 1];
+      if (x < minX - 1 || x > maxX + 1 || y < minY - 1 || y > maxY + 1) continue;
+      const sx = ox + (x - y) * IW2, sy = oy + (x + y) * IH2 - L[i + 2];
+      if (sx < -20 || sx > w + 20 || sy < -10 || sy > h + 30) continue;
+      if (pbBaseTiles.size && pbBaseTiles.has(Math.floor(y) * N + Math.floor(x))) continue;
+      const kind = L[i + 3];
+      let lean = windLean(x, y);
+      const ddx = x - mx, ddy = y - my, d2 = ddx * ddx + ddy * ddy;
+      if (d2 < 2.25) { const prox = 1 - Math.sqrt(d2) / 1.5; lean += (ddx - ddy >= 0 ? 1 : -1) * prox * 1.4; }   // wading parts the grass
+      const e = pbTuftSprite(kind, L[i + 4], pbLeanFrame(lean), L[i + 5], px);
+      if (!e) continue;
+      pbDraw(ctx, e, sx, sy);
+      n++;
+    }
+  }
+  ctx.imageSmoothingEnabled = smooth;
+  pbStats.tufts = n;
+  return n;
+}
+
+/* ---------------------------------------------------------------------
+   TREES — the same trees in the same places (placement and density are
+   owner-locked), drawn as forged pixel trees: lobed oaks with light on
+   the sun side, white birches, tiered pines, and the Dark Forest's
+   gnarled black trees with a faint glow in their knots. Five lean frames
+   per tree; the canopy BENDS (offset grows with height, the trunk base
+   never moves) and takes its frame from the same windLean as the grass,
+   so a gust visibly passes from tree to tree.
+   --------------------------------------------------------------------- */
+const PB_TREE_STIFF = 0.75;            // TUNABLE: a tree leans this share of what the grass does
+function pbTreeKind(f, b) {
+  const wide = hash2(f.tx, f.ty, 427) > 0.62, alt = hash2(f.tx, f.ty, 425);
+  if (b === B.PLAINS) return wide ? "oak" : alt > 0.72 ? "birch" : "elm";
+  if (b === B.MEADOW) return wide ? "oak" : alt > 0.4 ? "birch" : "elm";
+  if (b === B.FOREST) return wide ? "broad" : "pine";
+  if (b === B.DARKFOREST) return wide ? "gnarl" : "darkpine";
+  return null;
+}
+function pbTreeSize(f) { return f.h < 0.45 ? 0 : f.h < 0.75 ? 1 : 2; }
+const PB_TREE_SCALE = [0.86, 1.08, 1.32];
+function pbTreeBox(kind, s) {
+  const tall = kind === "pine" || kind === "darkpine" || kind === "birch";
+  return { l: -24 * s, r: 24 * s, t: -(tall ? 52 : 44) * s, b: 4 * s };
+}
+function pbTreeDraw(kind, s, v, k) {
+  return (c) => {
+    const r = (q) => hash2(v * 13 + kind.length, q, 2207);
+    const lean = k * 1.25 * s;                       // apex offset in logical px at this frame
+    const at = (fy) => lean * Math.pow(Math.max(0, fy), 1.35);
+    const ell = (col, x, y, rx, ry) => { c.fillStyle = col; c.beginPath(); c.ellipse(x, y, rx, ry, 0, 0, 6.2832); c.fill(); };
+    const poly = (col, pts) => { c.fillStyle = col; c.beginPath(); c.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) c.lineTo(pts[i], pts[i + 1]); c.closePath(); c.fill(); };
+    const trunk = (th, w0, w1, col, lit, dk, top) => {
+      const tl = at(top);
+      poly(col, [-w0, 0, w0, 0, w1 + tl, -th, -w1 + tl, -th]);
+      poly(lit, [-w0, 0, -w0 * 0.2, 0, -w1 * 0.2 + tl, -th, -w1 + tl, -th]);
+      poly(dk, [w0 * 0.5, 0, w0, 0, w1 + tl, -th, w1 * 0.55 + tl, -th]);
+      ell(dk, 0, 0.2, w0 * 1.5, w0 * 0.45);           // root flare
+    };
+    /* a lobed canopy: every lobe drawn dark, then mid offset up-left, then lit smaller further up-left */
+    const canopy = (cy0, hw, hh, n, cols, airy) => {
+      const lobes = [];
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * 6.2832 + r(i) * 0.8, rr = 0.35 + r(i + 20) * 0.6;
+        const lx = Math.cos(a) * hw * rr * 0.75, ly = cy0 + Math.sin(a) * hh * rr * 0.6;
+        const fy = Math.min(1, Math.max(0, (-ly - (-cy0 - hh)) / (hh * 2) ));
+        lobes.push([lx + at(1 - fy * 0.7 + 0.15), ly, (airy ? 4.2 : 5.4) * s * (0.8 + r(i + 40) * 0.45)]);
+      }
+      lobes.push([at(0.8), cy0 - hh * 0.25, (airy ? 5 : 6.6) * s]);
+      for (const L of lobes) ell(cols[0], L[0] + 0.6 * s, L[1] + 0.7 * s, L[2], L[2] * 0.88);
+      for (const L of lobes) ell(cols[1], L[0] - 0.2 * s, L[1] - 0.3 * s, L[2] * 0.86, L[2] * 0.76);
+      for (const L of lobes) ell(cols[2], L[0] - L[2] * 0.32, L[1] - L[2] * 0.36, L[2] * 0.5, L[2] * 0.42);
+      for (let i = 0; i < 9; i++) { const L = lobes[(r(i + 60) * lobes.length) | 0]; ell(cols[3], L[0] - L[2] * 0.4 + r(i + 70) * 2, L[1] - L[2] * 0.5 + r(i + 80) * 2, 0.7 * s, 0.6 * s); }
+      if (!airy) for (let i = 0; i < 5; i++) { const L = lobes[(r(i + 90) * lobes.length) | 0]; ell(cols[0], L[0] + L[2] * 0.35, L[1] + L[2] * 0.3, 0.9 * s, 0.7 * s); }
+    };
+    if (kind === "oak" || kind === "elm" || kind === "broad") {
+      const th = (kind === "elm" ? 13 : 10) * s;
+      trunk(th + 3 * s, 2.3 * s, 1.5 * s, "#6b4a2c", "#87603a", "#4a3220", 0.15);
+      if (kind !== "elm") poly("#5c3e24", [at(0.2) - 1 * s, -th + 1 * s, at(0.3) - 6 * s, -th - 3 * s, at(0.3) - 5.4 * s, -th - 4 * s, at(0.2), -th - 1 * s]);
+      const cols = kind === "broad" ? ["#2f5422", "#447a30", "#5f9644", "#86b65c"] : kind === "elm" ? ["#3c6428", "#4f8038", "#6aa04a", "#94c46a"] : ["#3a6226", "#507f36", "#6c9e48", "#9cc86c"];
+      if (kind === "elm") canopy(-th - 11 * s, 9 * s, 12 * s, 9, cols, false);
+      else canopy(-th - 9 * s, 14 * s, 9 * s, 10, cols, false);
+    } else if (kind === "birch") {
+      const th = 15 * s;
+      trunk(th + 8 * s, 1.5 * s, 1 * s, "#e6e2d6", "#f6f4ec", "#b8b2a2", 0.25);
+      for (let i = 0; i < 5; i++) { const y = -2 * s - r(i) * (th + 4 * s); poly("#3a3632", [-1.5 * s + at(-y / (th + 8 * s) * 0.25), y, 0.4 * s + at(-y / (th + 8 * s) * 0.25), y - 0.6 * s, 0.4 * s, y + 0.2, -1.5 * s, y + 0.5]); }
+      canopy(-th - 9 * s, 8 * s, 11 * s, 8, ["#5a8a3a", "#7fae52", "#a2cc6e", "#cce49a"], true);
+    } else if (kind === "pine" || kind === "darkpine") {
+      const dark = kind === "darkpine";
+      trunk(7 * s, 1.6 * s, 1.2 * s, dark ? "#3e2c1c" : "#5c4028", dark ? "#4e3a26" : "#74522f", dark ? "#2a1c12" : "#3e2a18", 0.05);
+      const cols = dark ? ["#132a14", "#1d3a1c", "#2c4c28", "#3e6236"] : ["#25462a", "#2f5a32", "#45784a", "#6a9c62"];
+      const tiers = 4, H = 40 * s, base = -5 * s;
+      for (let i = 0; i < tiers; i++) {
+        const f0 = i / tiers, f1 = (i + 1.35) / tiers;
+        const yb = base - H * f0 * 0.85, yt = base - H * Math.min(1, f1);
+        const hw = (11 - i * 2.2) * s * (dark ? 1.08 : 1);
+        const lb = at(f0 * 0.9), lt2 = at(Math.min(1, f1));
+        const jag = dark ? 2.2 * s : 0.8 * s;
+        poly(cols[0], [lb - hw, yb + 1.2 * s, lb - hw * 0.55, yb + (dark ? jag : 0), lb, yb + 2 * s, lb + hw * 0.55, yb + (dark ? jag : 0), lb + hw, yb + 1.2 * s, lt2, yt]);
+        poly(cols[1], [lb - hw * 0.92, yb + 0.6 * s, lb - hw * 0.3, yb + 0.2 * s, lt2, yt]);
+        poly(cols[2], [lb - hw * 0.8, yb - 0.2 * s, lb - hw * 0.5, yb - 0.6 * s, lt2 - 0.4 * s, yt + 1.2 * s]);
+        ell(cols[3], lb - hw * 0.45 + (lt2 - lb) * 0.5, (yb + yt) * 0.5 + 1 * s, 0.9 * s, 0.6 * s);
+      }
+      if (dark && r(5) > 0.4) ell("#9fe8c4", at(0.4) + 1.5 * s, base - H * 0.32, 0.7 * s, 0.6 * s);   // a faint knot-glow
+    } else if (kind === "gnarl") {
+      const th = 14 * s;
+      const tl = at(0.4);
+      poly("#3a2818", [-3 * s, 0, 3 * s, 0, 1.8 * s + tl, -th * 0.5, 2.6 * s + tl * 1.6, -th, -0.4 * s + tl * 1.6, -th - 1 * s, -1.2 * s + tl, -th * 0.5]);
+      poly("#4e3826", [-3 * s, 0, -1 * s, 0, -0.6 * s + tl, -th * 0.5, -0.4 * s + tl * 1.6, -th - 1 * s, -1.2 * s + tl, -th * 0.5]);
+      c.strokeStyle = "#2e2014"; c.lineWidth = 1.1 * s; c.beginPath();
+      c.moveTo(tl * 1.4, -th * 0.8); c.quadraticCurveTo(-7 * s + at(0.6), -th - 2 * s, -11 * s + at(0.8), -th - 1 * s);
+      c.moveTo(tl * 1.5, -th * 0.9); c.quadraticCurveTo(7 * s + at(0.7), -th - 5 * s, 12 * s + at(0.9), -th - 2 * s);
+      c.stroke();
+      canopy(-th - 7 * s, 13 * s, 7 * s, 9, ["#14261a", "#20381f", "#2f4a2a", "#4a6a3a"], false);
+      for (let i = 0; i < 4; i++) { const x = (r(i + 3) - 0.5) * 20 * s + at(0.7), y = -th - 4 * s + r(i + 7) * 6 * s;   // drooping moss
+        poly("#4a5a3a", [x - 0.5 * s, y, x + 0.5 * s, y, x + 0.3 * s, y + 4 * s + r(i + 11) * 3 * s, x - 0.3 * s, y + 4 * s]); }
+      if (r(9) > 0.3) ell("#9fe8c4", -0.6 * s + tl, -th * 0.55, 0.8 * s, 0.7 * s);
+      if (r(10) > 0.6) ell("#9fe8c4", 1.2 * s + tl, -th * 0.3, 0.6 * s, 0.5 * s);
+    }
+  };
+}
+function pbTreeSprite(kind, sb, v, k, px) {
+  const s = PB_TREE_SCALE[sb];
+  return pbSprite("tree|" + kind + "|" + sb + "|" + v + "|" + k, px, pbTreeBox(kind, s), pbTreeDraw(kind, s, v, k));
+}
+const pbTreeLast = new Map();          // per tree, the last frame drawn: a lean frame not baked yet shows that one
+/* render()'s tree dispatch calls this first; false means "draw it the old way" */
+function pbDrawTree(f, t) {
+  const b = biomeAt(f.tx, f.ty);
+  if (!pbOn(b)) return false;
+  const kind = pbTreeKind(f, b);
+  if (!kind) return false;
+  const px = pbPx(), sb = pbTreeSize(f), v = (hash2(f.tx, f.ty, 421) * 3) | 0;
+  const k = pbLeanFrame(windLean(f.x, f.y) * PB_TREE_STIFF);
+  let e = pbTreeSprite(kind, sb, v, k, px);
+  const tk = f.tx * 65536 + f.ty;
+  if (!e) {
+    const last = pbTreeLast.get(tk);
+    if (last && last.px === px && forgeCache.has(last.key)) e = last.e;
+    else if (k !== 0) e = pbTreeSprite(kind, sb, v, 0, px);
+  } else {
+    pbTreeLast.set(tk, { e, px, key: "pb|tree|" + kind + "|" + sb + "|" + v + "|" + k + "|" + px.toFixed(5) });
+    if (pbTreeLast.size > 4000) pbTreeLast.delete(pbTreeLast.keys().next().value);
+  }
+  if (!e) { pbStats.treeFallbacks++; return false; }
+  const z = groundZ(f.x, f.y);
+  const [sx, sy] = worldToScreen(f.x, f.y, z);
+  const s = PB_TREE_SCALE[sb];
+  const tall = kind === "pine" || kind === "darkpine" || kind === "birch";
+  drawShadow(sx, sy, (tall ? 14 : 22) * s, (tall ? 46 : 36) * s);
+  const hw = e.W * e.px * 0.5;
+  if (occProbe !== null && occProbe.armed && !occProbe.hit) occTest(sx - hw - 2, sy - e.ay * e.px - 2, sx + hw + 2, sy + 2);
+  pbDraw(ctx, e, sx, sy);
+  pbStats.trees++;
+  return true;
+}
+
+/* ---------------------------------------------------------------------
+   HARNESS
+   --------------------------------------------------------------------- */
+function debugPbInfo() {
+  return { PIXEL_BIOMES: Object.assign({}, PIXEL_BIOMES), WIND: Object.assign({}, WIND), stats: Object.assign({}, pbStats),
+           WIND_GUST_LEN, WIND_GUST_SPEED, WIND_WEATHER: Object.assign({}, WIND_WEATHER), WIND_AMP: Object.assign({}, WIND_AMP),
+           PB_TEX, PB_TREE_STIFF, PB_FORCE_PER_FRAME, tuftLists: pbTuftLists.size, texCached: pbTexCache.size,
+           forgeCacheSize: forgeCache.size, forgeCachePx, FORGE_CACHE_MAX, FORGE_CACHE_PX, FORGE_ON, PB_TEX_ON };
+}
+function debugSetPb(patch) {
+  patch = patch || {};
+  let reset = false;
+  if (patch.biomes) for (const k in patch.biomes) if (k in PIXEL_BIOMES) { PIXEL_BIOMES[k] = !!patch.biomes[k]; reset = true; }
+  if ("tex" in patch) { PB_TEX_ON = !!patch.tex; reset = true; }
+  if (reset) { groundCacheReset(); pbTuftLists.clear(); pbTreeLast.clear(); }
+  return debugPbInfo();
+}
+/* pure wind probe: the lean at (x, y) at world-clock ms under a weather kind and setting */
+function debugWindAt(x, y, ms, kind, mode) {
+  const was = SETTINGS.wind;
+  if (mode !== undefined) SETTINGS.wind = mode;
+  try { windFrame(ms, kind || "clear"); return { lean: windLean(x, y), gust: windGust(x, y), frame: pbLeanFrame(windLean(x, y)), W: Object.assign({}, WIND) }; }
+  finally { SETTINGS.wind = was; windFrame(Date.now(), curWeather); }
+}
+
+/*@@S4_LIFE@@*/
+/*@@S4_AIR@@*/
 function drawPlayerEntity(p, name, t, isMe) {
   const z = groundZ(p.x, p.y);
   const [sx, sy] = worldToScreen(p.x, p.y, z);
@@ -22511,6 +23284,7 @@ function render(t) {
   ctx.setTransform(RENDER_DPR, 0, 0, RENDER_DPR, 0, 0);
   const w = viewW(), h = viewH();
   SUN = sunShadow(getDayT());
+  windFrame(Date.now(), curWeather); pbFrameStart();             // Living World S4: one wind for the world
   // v8: passing high cloud occasionally dims the sun (daytime only)
   const cloudDim = nightAlpha(getDayT()) < 0.1
     ? Math.max(0, Math.sin(t / 41000 * Math.PI * 2 + (worldSeed % 10)) - 0.62) / 0.38 * 0.5
@@ -22969,6 +23743,10 @@ function render(t) {
   ctx.stroke();
   ctx.setLineDash([]);
 
+  if (typeof pbDrawWaterExtras === "function") pbDrawWaterExtras(minX, maxX, minY, maxY, t, w, h);   // Living World S4: foam, tide, glints
+  if (typeof pbDrawLifeWater === "function") pbDrawLifeWater(minX, maxX, minY, maxY, t, w, h);       // Living World S4: fish under the surface
+  pbDrawTufts(minX, maxX, minY, maxY, w, h);                      // Living World S4: the grass that breathes
+  if (typeof pbDrawGroundLight === "function") pbDrawGroundLight(minX, maxX, minY, maxY, t, w, h);   // Living World S4: dappled light
   // v8: grass tufts near the player sway gently
   if (!dead) {
     const ptx = Math.floor(me.x), pty = Math.floor(me.y);
@@ -22979,6 +23757,7 @@ function render(t) {
         if (b !== B.PLAINS && b !== B.MEADOW && b !== B.FOREST &&
             b !== B.ENCHFOREST && b !== B.SACMEADOW) continue;   // v17
         if (arenaFloorAt(tx, ty, b)) continue;                    // S2 R1: no grass on sand or paving
+        if (pbOn(b) && FORGE_ON) continue;                        // Living World S4: the forged tufts have this tile
         if (hash2(tx, ty, 881) < 0.7) continue;
         const gx = tx + 0.2 + hash2(tx, ty, 883) * 0.6;
         const gy = ty + 0.2 + hash2(tx, ty, 887) * 0.6;
@@ -23025,6 +23804,7 @@ function render(t) {
     if (cr.hx < minX - 3 || cr.hx > maxX + 3 || cr.hy < minY - 3 || cr.hy > maxY + 3) continue;
     ents.push({ s: cr.hx + cr.hy, kind: "critter", cr });
   }
+  if (typeof pbLifeCollect === "function" && !inInterior()) pbLifeCollect(minX, maxX, minY, maxY, t, ents);   // Living World S4: small life
   /* Gauntlet S2 R1: the meadow rabbits at the world's scale (see LIFE). */
   if (!inInterior()) for (const cr of localRabbits(minX, maxX, minY, maxY)) {
     ents.push({ s: cr.hx + cr.hy, kind: "critter", cr });
@@ -23188,7 +23968,8 @@ function render(t) {
   occProbe = null; meGhost = null;          // Gauntlet S2 R1: set again when the local player draws
   for (const e of ents) {
     if (occProbe) occProbe.armed = OCCLUDER_KINDS.has(e.kind);
-    if (e.kind === "tree") drawTree(e.f, t);
+    if (e.kind === "tree") { if (!pbDrawTree(e.f, t)) drawTree(e.f, t); }   // Living World S4: forged trees
+    else if (e.kind === "pblife") { if (typeof pbDrawLifeEnt === "function") pbDrawLifeEnt(e, t); }   // Living World S4
     else if (e.kind === "rock") drawRockNode(e.f);
     else if (e.kind === "iron") drawIronNode(e.f);
     else if (e.kind === "runic") drawRunicNode(e.f, t);
@@ -23468,6 +24249,8 @@ function render(t) {
     }
   }
 
+  if (typeof pbDrawLifeAir === "function" && !inInterior()) pbDrawLifeAir(minX, maxX, minY, maxY, t, w, h);   // Living World S4: gulls, crows
+  if (typeof pbDrawAirLight === "function" && !inInterior()) pbDrawAirLight(minX, maxX, minY, maxY, t, w, h);  // Living World S4: shafts, mist
   // Cloud shadows
   ctx.globalCompositeOperation = "multiply";
   for (let i = 0; i < 2; i++) {
@@ -24520,6 +25303,7 @@ let kbCapture = null;           // action awaiting a keypress, or null
 const SETTINGS_DEFAULTS = {
   reduceMotion: false, fullscreen: false,                    // Graphics
   screenShake: true,                                         // S8: Graphics — the shake's off switch
+  wind: (typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches) ? "low" : "full",   // Living World S4: Wind motion, off / low / full
   textSize: "medium", colorblind: false,                     // Accessibility
   volMaster: 80, volMusic: 70, volSfx: 80,                   // Audio, 0-100
   muteMaster: false, muteMusic: false, muteSfx: false,
@@ -25344,6 +26128,7 @@ const VOL_ROWS = [
   ["sldSfx", "valSfx", "volSfx", "btnMuteSfx", "muteSfx"],
 ];
 const TEXT_SIZES = [["setTextSmall", "small"], ["setTextMedium", "medium"], ["setTextLarge", "large"]];
+const WIND_ROWS = [["setWindOff", "off"], ["setWindLow", "low"], ["setWindFull", "full"]];   // Living World S4
 
 function refreshKeybindList() {
   const list = document.getElementById("keybindList");
@@ -25379,6 +26164,10 @@ function refreshSettingsUI() {
   for (const pair of TEXT_SIZES) {
     const el = $(pair[0]);
     if (el) el.classList.toggle("on", SETTINGS.textSize === pair[1]);
+  }
+  for (const pair of WIND_ROWS) {                       // Living World S4
+    const el = $(pair[0]);
+    if (el) el.classList.toggle("on", (WIND_MODES.includes(SETTINGS.wind) ? SETTINGS.wind : "full") === pair[1]);
   }
   for (const r of VOL_ROWS) {
     const s = $(r[0]), v = $(r[1]), m = $(r[3]);
@@ -25479,6 +26268,10 @@ function wireSettingsUI() {
   for (const pair of TEXT_SIZES) {
     const el = $(pair[0]);
     if (el) el.onclick = () => setSetting("textSize", pair[1]);
+  }
+  for (const pair of WIND_ROWS) {                       // Living World S4
+    const el = $(pair[0]);
+    if (el) el.onclick = () => setSetting("wind", pair[1]);
   }
   for (const r of VOL_ROWS) {
     const s = $(r[0]);
