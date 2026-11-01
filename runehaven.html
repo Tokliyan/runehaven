@@ -21776,6 +21776,12 @@ function pbLeanFrame(l) { const k = Math.round(l * 2); return k < -2 ? -2 : k > 
    FORGE_CACHE_MAX / FORGE_CACHE_PX like every hero and creature.
    --------------------------------------------------------------------- */
 let pbHi = null, pbHiCtx = null, pbFrameNo = 0, pbForceLeft = 0, pbTreeLeft = 0, pbTreeMsLeft = 0;
+/* The scenery forge has its OWN budget, back-off and on-switch, and shares
+   only the cache with the heroes and creatures: a screen of grass and trees
+   must never take a frame's bakes from a player's sprite, and a scenery bake
+   that fails must never pause the heroes' forge. */
+let pbForgeOk = true, pbBackoffUntil = 0, pbLeft = 0, pbMsLeft = 0;
+const PB_BAKES_PER_FRAME = 4, PB_MS_PER_FRAME = 4;
 const PB_FORCE_PER_FRAME = 40;     // ground props bake inside a chunk bake, outside the 4-a-frame budget, up to this many
 /* Trees have their OWN small budget: a forest is hundreds of trees in a few
    dozen looks, and on the shared 4-a-frame budget (heroes first) walking into
@@ -21828,7 +21834,7 @@ function pbBake(box, px, draw, opts) {
 }
 /* the sprite for a key at a grid, or null (the caller then skips or draws the old way) */
 function pbSprite(key, px, box, draw, opts) {
-  if (!FORGE_ON) return null;
+  if (!FORGE_ON || !pbForgeOk) return null;
   const k = "pb|" + key + "|" + px.toFixed(5);
   let e = forgeCache.get(k);
   if (e) {
@@ -21839,18 +21845,18 @@ function pbSprite(key, px, box, draw, opts) {
   const now = performance.now();
   const force = !!(opts && opts.force) && pbForceLeft > 0;
   const tree = !!(opts && opts.tree);
-  if (now < forgeBackoffUntil) { pbStats.misses++; return null; }
+  if (now < pbBackoffUntil) { pbStats.misses++; return null; }
   if (opts && opts.peek) { pbStats.misses++; return null; }          // look in the cache only
-  if (tree ? !(pbTreeLeft > 0 && pbTreeMsLeft > 0) : (!force && !(forgeBakesLeft > 0 && forgeBakeMsLeft > 0))) { pbStats.misses++; return null; }
-  if (tree) pbTreeLeft--; else if (force) pbForceLeft--; else forgeBakesLeft--;
+  if (tree ? !(pbTreeLeft > 0 && pbTreeMsLeft > 0) : (!force && !(pbLeft > 0 && pbMsLeft > 0))) { pbStats.misses++; return null; }
+  if (tree) pbTreeLeft--; else if (force) pbForceLeft--; else pbLeft--;
   const t0 = performance.now();
   try { e = pbBake(box, px, draw, opts); } catch (err) { e = null; }
   if (tree) pbTreeMsLeft -= performance.now() - t0;
-  else if (!force) forgeBakeMsLeft -= performance.now() - t0;
+  else if (!force) pbMsLeft -= performance.now() - t0;
   if (!e) {
-    pbStats.fails++; forgeStats.failures++;
-    if (forgeStats.bakes === 0 && pbStats.bakes === 0) FORGE_ON = false;   // a context that cannot be read back: no forge here
-    else forgeBackoffUntil = now + FORGE_BACKOFF_MS;
+    pbStats.fails++;
+    if (pbStats.bakes === 0) pbForgeOk = false;      // a context that cannot be read back (a harness stub): no scenery forge here
+    else pbBackoffUntil = now + FORGE_BACKOFF_MS;
     return null;
   }
   e.__pbF = pbFrameNo;
@@ -21872,7 +21878,7 @@ function pbDraw(c, e, sx, sy, S) {
   c.drawImage(e.cv, x, y, e.W * e.px, e.H * e.px);
   if (was) c.imageSmoothingEnabled = true;
 }
-function pbFrameStart() { pbFrameNo++; pbForceLeft = PB_FORCE_PER_FRAME; pbTreeLeft = PB_TREE_BAKES_PER_FRAME; pbTreeMsLeft = PB_TREE_MS_PER_FRAME; }
+function pbFrameStart() { pbFrameNo++; pbForceLeft = PB_FORCE_PER_FRAME; pbTreeLeft = PB_TREE_BAKES_PER_FRAME; pbTreeMsLeft = PB_TREE_MS_PER_FRAME; pbLeft = PB_BAKES_PER_FRAME; pbMsLeft = PB_MS_PER_FRAME; }
 /* the grid sprites are baked at: the zoom TARGET, as S2 does for heroes, so easing reuses and never re-bakes */
 function pbPx() { return forgeGrid(RENDER_DPR * zoomTarget).px; }
 
@@ -22261,7 +22267,7 @@ function pbCollectBaseTiles() {
 }
 /* the live tuft pass: render() calls it where the v8 proximity tufts used to be */
 function pbDrawTufts(minX, maxX, minY, maxY, w, h) {
-  if (inInterior() || !FORGE_ON) return 0;
+  if (inInterior() || !FORGE_ON || !pbForgeOk) return 0;
   const px = pbPx();
   pbCollectBaseTiles();
   const c0x = Math.floor(minX / PB_TUFT_CHUNK), c1x = Math.floor(maxX / PB_TUFT_CHUNK);
@@ -22495,7 +22501,8 @@ function debugPbInfo() {
   return { PIXEL_BIOMES: Object.assign({}, PIXEL_BIOMES), WIND: Object.assign({}, WIND), stats: Object.assign({}, pbStats),
            WIND_GUST_LEN, WIND_GUST_SPEED, WIND_WEATHER: Object.assign({}, WIND_WEATHER), WIND_AMP: Object.assign({}, WIND_AMP),
            PB_TEX, PB_TREE_STIFF, PB_FORCE_PER_FRAME, tuftLists: pbTuftLists.size, texCached: pbTexCache.size,
-           forgeCacheSize: forgeCache.size, forgeCachePx, FORGE_CACHE_MAX, FORGE_CACHE_PX, FORGE_ON, PB_TEX_ON };
+           forgeCacheSize: forgeCache.size, forgeCachePx, FORGE_CACHE_MAX, FORGE_CACHE_PX, FORGE_ON, PB_TEX_ON, pbForgeOk,
+           PB_BAKES_PER_FRAME, PB_MS_PER_FRAME, PB_TREE_BAKES_PER_FRAME, PB_TREE_MS_PER_FRAME };
 }
 function debugSetPb(patch) {
   patch = patch || {};
@@ -23822,7 +23829,7 @@ function render(t) {
         if (b !== B.PLAINS && b !== B.MEADOW && b !== B.FOREST &&
             b !== B.ENCHFOREST && b !== B.SACMEADOW) continue;   // v17
         if (arenaFloorAt(tx, ty, b)) continue;                    // S2 R1: no grass on sand or paving
-        if (pbOn(b) && FORGE_ON) continue;                        // Living World S4: the forged tufts have this tile
+        if (pbOn(b) && FORGE_ON && pbForgeOk) continue;           // Living World S4: the forged tufts have this tile
         if (hash2(tx, ty, 881) < 0.7) continue;
         const gx = tx + 0.2 + hash2(tx, ty, 883) * 0.6;
         const gy = ty + 0.2 + hash2(tx, ty, 887) * 0.6;
