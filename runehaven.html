@@ -22526,6 +22526,928 @@ function debugWindAt(x, y, ms, kind, mode) {
 }
 
 /*@@S4_LIFE@@*/
+/* =====================================================================
+   Living World S4 — SMALL LIFE (README "Session 4 design")
+   Seven kinds of ambient animal that never fight and never need a hit
+   box: deer at dawn and dusk, crabs on the tideline, crows in the Dark
+   Forest, gulls over the coast, fish shadows under the water,
+   dragonflies over the shallows, bees over the meadow.
+
+   Deterministic and network-free. The world is cut into PB_LIFE_CELL-tile
+   cells; each cell, in each PB_LIFE_WIN-second window of the WORLD clock
+   (Date.now()/1000 - worldEpoch, with a hashed phase per cell so the
+   cells do not all turn over at once), rolls a few "trials". A trial picks
+   a hashed tile, reads the biome there and the time of day, and may seed
+   one small group of creatures with a path that is a pure function of
+   the time inside the window. Two clients that agree on the clock agree
+   on every animal. Only a SCARE is local: a deer's bolt, a fish's dart
+   and a crow's lift-off live in one small Map keyed by creature id, each
+   entry decaying on its own and the Map capped.
+
+   Drawing: ground animals are depth-sorted entities (kind "pblife"),
+   fish are drawn right after the water pass, and everything that flies
+   (gulls, lifted crows, dragonflies, bees) is drawn after the particles
+   and the bird flocks. All sprites are forged through pbSprite from small
+   ASCII pixel grids authored on a 0.625 logical px art pixel (the 1.6x
+   default), so a creature keeps the same SIZE at any zoom and gets the
+   forge's own-hue outline and top-left light for free. Flat fills only.
+
+   Rules kept: no gradients; no network; Reduce motion draws none and
+   clears the scares; an interior draws none; a biome switched off in
+   PIXEL_BIOMES gets none of it (every plan and every frame ask pbOn);
+   at most PB_LIFE_CAP creatures a frame, the nearest to the camera first;
+   no allocation per frame in the cell loops (candidates are pooled, the
+   only objects made are a scare entry when a scare begins and a plan
+   once per cell per window).
+   ===================================================================== */
+const PB_LIFE_CAP = 24;              // TUNABLE: creatures drawn a frame, all kinds together
+const PB_LIFE_CELL = 12;             // tiles a side
+const PB_LIFE_WIN = 48;              // s of world clock a plan lives
+const PB_LIFE_FADE = 2.4;            // s to fade in and out at the ends of a window
+const PB_LIFE_SEARCH = 10;           // hashed tiles tried in a cell to find a kind's habitat
+const PB_LIFE_MAXG = 3;              // groups per cell and window
+const PB_LIFE_PLANS_MAX = 480;       // plans kept
+const PB_LIFE_BUILDS = 6;            // plans built in one frame (the rest appear a frame later)
+const PB_LIFE_CAND_MAX = 120;        // candidates before the cap
+const PB_LIFE_LOCAL_MAX = 96;        // scare entries kept
+const PB_LIFE_U = 0.625;             // logical px of one authored art pixel
+const PB_LIFE_DEER = 0, PB_LIFE_CRAB = 1, PB_LIFE_CROW = 2, PB_LIFE_GULL = 3, PB_LIFE_FISH = 4, PB_LIFE_DRAGON = 5, PB_LIFE_BEE = 6;
+const PB_LIFE_NAMES = ["deer", "crab", "crow", "gull", "fish", "dragonfly", "bee"];
+/* chance a cell that has a kind's habitat seeds a group of it in one window, at the best hour (a second group in the
+   same cell follows at a third of that). deer, crab, crow, gull, fish, dragonfly, bee */
+const PB_LIFE_P = [0.66, 0.62, 0.85, 0.34, 0.5, 0.4, 0.55];
+const PB_LIFE_DEER_FLEE = 4.0, PB_LIFE_DEER_CLEAR = 8.0;     // tiles: the bolt starts inside the first, ends outside the second
+const PB_LIFE_CROW_SCARE = 3.0;                              // tiles: a crow lifts off inside this
+const PB_LIFE_FISH_SCARE = 3.0, PB_LIFE_FISH_CLEAR = 5.5;    // tiles
+/* the scare timelines (s) */
+const PB_LIFE_CROW_OUT = 5.5, PB_LIFE_CROW_GONE = 12, PB_LIFE_CROW_BACK = 18;
+
+/* ---------------------------------------------------------------------
+   PIXEL GRIDS. A sprite is a little ASCII grid; '.' is empty. Authored
+   facing RIGHT; the left-facing sprite is the same grid mirrored about
+   the anchor. ax/ay are the anchor on the grid's pixel boundaries (the
+   ground point under the creature).
+   --------------------------------------------------------------------- */
+function pbLifeGrid(w, h, ax, ay) {
+  const r = [];
+  for (let y = 0; y < h; y++) r.push(new Array(w).fill("."));
+  return { w, h, ax, ay, r };
+}
+function pbLifePut(g, x, y, ch) { x = Math.round(x); y = Math.round(y); if (x >= 0 && y >= 0 && x < g.w && y < g.h) g.r[y][x] = ch; }
+function pbLifeRect(g, x, y, w, h, ch) { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) pbLifePut(g, x + i, y + j, ch); }
+function pbLifeLine(g, x0, y0, x1, y1, ch) {
+  x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (let n = 0; n < 200; n++) {
+    pbLifePut(g, x0, y0, ch);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+/* a line `th` pixels thick (sideways), for necks */
+function pbLifeThick(g, x0, y0, x1, y1, th, ch) { for (let i = 0; i < th; i++) pbLifeLine(g, x0 + i, y0, x1 + i, y1, ch); }
+function pbLifeEll(g, cx, cy, rx, ry, ch) {
+  for (let y = 0; y < g.h; y++) for (let x = 0; x < g.w; x++) {
+    const a = (x + 0.5 - cx) / rx, b = (y + 0.5 - cy) / ry;
+    if (a * a + b * b <= 1) g.r[y][x] = ch;
+  }
+}
+function pbLifeStamp(g, x, y, rows) {
+  for (let j = 0; j < rows.length; j++) { const s = rows[j]; for (let i = 0; i < s.length; i++) if (s[i] !== "." && s[i] !== " ") pbLifePut(g, x + i, y + j, s[i]); }
+}
+/* paint a grid into c: one fillRect per horizontal run, art px = U logical px */
+function pbLifeBlit(c, g, pal, flip) {
+  const U = PB_LIFE_U, ax = flip ? g.w - g.ax : g.ax;
+  for (let y = 0; y < g.h; y++) {
+    const row = g.r[y];
+    let x = 0;
+    while (x < g.w) {
+      const ch = row[x];
+      if (ch === ".") { x++; continue; }
+      let x2 = x + 1;
+      while (x2 < g.w && row[x2] === ch) x2++;
+      c.fillStyle = pal[ch] || "#ff00ff";
+      c.fillRect((flip ? g.w - x2 - ax : x - ax) * U, (y - g.ay) * U, (x2 - x) * U, U);
+      x = x2;
+    }
+  }
+}
+
+/* ---- palettes (each hue is the biome's own, moved in value; none is black) ---- */
+const PB_LIFE_PAL = {
+  deer: { B: "#b98b5c", L: "#d6ac7a", D: "#976c43", F: "#85603d", W: "#eddfc7", K: "#2e231a", H: "#4a382b", T: "#f8f5ec", E: "#d6a48c", A: "#cbb680", a: "#8f7c54" },
+  crab: { R: "#d9553a", S: "#b23f2a", L: "#f08a5c", K: "#2a1c18", C: "#e5663f", l: "#c24a30" },
+  crow: { K: "#2b2933", S: "#4d6196", B: "#5b4f46", L: "#4a3a30", G: "#6a6a78", H: "#38363f" },
+  gull: { W: "#f6f6f2", G: "#a9b1bb", g: "#cfd4da", D: "#4b525e", Y: "#e8b43a", K: "#2b2933" },
+  dragon: { H: "#2f6fb8", E: "#1f4c8a", T: "#2aa7b5", B: "#3d78d6", b: "#2a5fb0", P: "#e6f7fa", p: "#bfe4ec" },
+};
+
+/* ---- DEER: ~28 art px nose to tail (~17 logical px), a small pony's size ---- */
+function pbLifeDeerGrid(fr, buck) {
+  const g = pbLifeGrid(36, 38, 13, 35);
+  const by = (fr === 5 ? -2 : 0) + 2;           // the leap lifts the whole body; the +2 sets the leg length
+  const LEG = [
+    [[0, 0], [0, 0], [0, 0], [0, 0]],            // 0 stand
+    [[0, 0], [0, 0], [0, 0], [0, 0]],            // 1 graze
+    [[-3, 0], [2, 1], [3, 1], [-2, 0]],          // 2 walk 1
+    [[0, 2], [0, 0], [0, 2], [0, 0]],            // 3 walk 2 (passing)
+    [[2, 1], [-3, 0], [-3, 0], [3, 1]],          // 4 walk 3
+    [[-6, 3], [-4, 4], [6, 3], [4, 4]],          // 5 leap
+  ][fr];
+  const leg = (hx, spec, ch, hind, thick) => {
+    const hy = 21 + by, fy = 34 - spec[1], fx = hx + spec[0];
+    const kx = hx + (hind ? -1 : 0) + Math.round(spec[0] * 0.4), ky = hy + 5;
+    pbLifeLine(g, hx, hy, kx, ky, ch); if (thick) pbLifeLine(g, hx + 1, hy, kx + 1, ky - 1, ch);
+    pbLifeLine(g, kx, ky, fx, fy - 1, ch);
+    pbLifePut(g, fx, fy, "H"); pbLifePut(g, fx + 1, fy, "H");
+    if (fy - 1 > ky) pbLifePut(g, fx, fy - 1, ch);
+  };
+  leg(12, LEG[1], "F", true, false);  leg(14, LEG[3], "F", false, false);       // far legs, behind the body
+  /* the body */
+  const top = [], bot = [];
+  for (let x = 0; x < g.w; x++) { top[x] = -1; bot[x] = -1; }
+  for (let y = 0; y < g.h; y++) for (let x = 0; x < g.w; x++) {
+    const a = (x + 0.5 - 13) / 8, b = (y + 0.5 - (19.2 + by)) / 3.7;
+    if (a * a + b * b <= 1) { g.r[y][x] = "B"; if (top[x] < 0) top[x] = y; bot[x] = y; }
+  }
+  for (let x = 0; x < g.w; x++) {
+    if (top[x] < 0) continue;
+    g.r[top[x]][x] = "L";
+    if (x >= 9 && x <= 19) { g.r[bot[x]][x] = "W"; if (bot[x] - top[x] > 3) g.r[bot[x] - 1][x] = "W"; }
+    else g.r[bot[x]][x] = "D";
+  }
+  pbLifeStamp(g, 7, 18 + by, ["D", "DD", ".D"]);                    // haunch shade
+  leg(8, LEG[0], "B", true, true);  leg(17, LEG[2], "B", false, true);          // near legs, over the body
+  /* tail */
+  if (fr === 5) { pbLifePut(g, 4, 14 + by, "T"); pbLifePut(g, 4, 15 + by, "T"); pbLifePut(g, 3, 13 + by, "T"); pbLifePut(g, 5, 16 + by, "B"); }
+  else if (fr === 1) { pbLifePut(g, 4, 16 + by, "T"); pbLifePut(g, 3, 15 + by, "T"); pbLifePut(g, 4, 17 + by, "T"); pbLifePut(g, 5, 16 + by, "B"); }
+  else { pbLifePut(g, 5, 17 + by, "T"); pbLifePut(g, 4, 18 + by, "T"); pbLifePut(g, 5, 18 + by, "T"); pbLifePut(g, 5, 16 + by, "B"); }
+  /* neck and head */
+  if (fr === 1) {                                                   // graze: head to the grass
+    pbLifeThick(g, 17, 18 + by, 21, 27, 3, "B");
+    for (let y = 22; y <= 27; y++) pbLifePut(g, 17 + Math.round((y - 18 - by) * 4 / (9 - by)) + 3, y, "W");
+    pbLifeRect(g, 21, 27, 4, 3, "B"); pbLifeRect(g, 23, 30, 3, 3, "B"); pbLifePut(g, 25, 32, "K"); pbLifePut(g, 24, 32, "W"); pbLifePut(g, 25, 31, "W");
+    pbLifePut(g, 23, 28, "K"); pbLifePut(g, 20, 26, "B"); pbLifePut(g, 20, 25, "B"); pbLifePut(g, 21, 26, "E");
+    if (buck) { pbLifeLine(g, 24, 27, 26, 24, "A"); pbLifeLine(g, 26, 24, 27, 21, "A"); pbLifePut(g, 25, 22, "A"); pbLifePut(g, 28, 24, "A"); }
+  } else {                                                          // head up, a little forward in the leap
+    const hx = fr === 5 ? 24 : 22, hy = 9 + by + (fr === 3 ? 1 : 0);
+    pbLifeThick(g, 17, 18 + by, hx - 1, hy + 2, 3, "B");
+    for (let y = hy + 3; y <= 17 + by; y++) pbLifePut(g, Math.round(hx + 1 - (y - hy) * 0.5) + 1, y, "W");
+    pbLifeRect(g, hx, hy, 4, 3, "B"); pbLifeRect(g, hx + 4, hy + 1, 2, 2, "B"); pbLifePut(g, hx + 5, hy + 1, "K"); pbLifePut(g, hx + 5, hy + 2, "W"); pbLifePut(g, hx + 4, hy + 2, "W");
+    pbLifePut(g, hx + 2, hy, "K");
+    pbLifePut(g, hx, hy - 1, "B"); pbLifePut(g, hx, hy - 2, "B"); pbLifePut(g, hx + 1, hy - 1, "E");
+    pbLifePut(g, hx - 1, hy - 1, "D");
+    if (buck) { pbLifeLine(g, hx + 2, hy - 1, hx + 2, hy - 4, "A"); pbLifeLine(g, hx + 2, hy - 4, hx + 4, hy - 6, "A"); pbLifePut(g, hx + 3, hy - 3, "A"); pbLifePut(g, hx + 1, hy - 5, "A"); pbLifeLine(g, hx + 1, hy - 1, hx, hy - 4, "a"); pbLifePut(g, hx - 1, hy - 5, "a"); }
+  }
+  return g;
+}
+
+/* ---- CRAB: ~10 art px wide, three leg/claw poses ---- */
+function pbLifeCrabGrid(fr) {
+  const g = pbLifeGrid(13, 9, 6.5, 9);
+  const rows = [
+    [".C.........C.", "CCC.k...k.CCC", ".CCRRRRRRRCC.", "..RLRRRRRRR..", "..SRRRRRRRS..", ".l.SSSSSSS.l.", "l.l.......l.l", ".............", "............."],
+    [".C.........C.", "CCC.k...k.CCC", ".CCRRRRRRRCC.", "..RLRRRRRRR..", "..SRRRRRRRS..", "l..SSSSSSS..l", ".l.l.....l.l.", ".............", "............."],
+    ["CC.........C.", "CCC.k...k.CCC", ".CCRRRRRRRCC.", "..RLRRRRRRR..", "..SRRRRRRRS..", ".l.SSSSSSS.l.", "l.l.......l.l", ".............", "............."],
+  ][fr];
+  for (let j = 0; j < rows.length; j++) for (let i = 0; i < 13; i++) { const ch = rows[j][i]; if (ch !== ".") pbLifePut(g, i, j + 1, ch === "k" ? "K" : ch); }
+  return g;
+}
+
+/* ---- CROW on the ground (standing, pecking) ---- */
+function pbLifeCrowGrid(fr) {
+  const g = pbLifeGrid(16, 14, 7, 13);
+  const peck = fr === 1;
+  pbLifeEll(g, 6.5, 7.2, 4.6, 3.1, "K");                           // body
+  pbLifePut(g, 5, 5, "S"); pbLifePut(g, 6, 5, "S"); pbLifePut(g, 7, 6, "S");   // the blue sheen
+  pbLifeStamp(g, 0, peck ? 4 : 6, ["KK.", ".KKK", "..K"]);          // tail wedge
+  if (peck) {
+    pbLifeThick(g, 9, 6, 11, 9, 2, "K"); pbLifeEll(g, 12, 9.5, 2.1, 1.7, "K");
+    pbLifePut(g, 13, 10, "B"); pbLifePut(g, 14, 11, "B"); pbLifePut(g, 15, 11, "B");
+  } else {
+    pbLifeThick(g, 9, 5, 10, 3, 2, "K"); pbLifeEll(g, 11, 3.2, 2.2, 1.9, "K");
+    pbLifePut(g, 13, 3, "B"); pbLifePut(g, 14, 4, "B"); pbLifePut(g, 13, 4, "B");
+    pbLifePut(g, 11, 2, "G");
+  }
+  pbLifePut(g, 6, 10, "L"); pbLifePut(g, 6, 11, "L"); pbLifePut(g, 8, 10, "L"); pbLifePut(g, 8, 11, "L");   // legs
+  pbLifeRect(g, 5, 12, 3, 1, "L"); pbLifeRect(g, 8, 12, 3, 1, "L");
+  return g;
+}
+
+/* ---- the winged ones: symmetric spread wings (the same read as the game's own bird glyph),
+        the head and tail on opposite sides tell the way it is facing ---- */
+function pbLifeWingGrid(kind, fr) {                 // kind 0 crow, 1 gull
+  const W = kind ? 30 : 24, H = kind ? 12 : 11, cx = W / 2;
+  const g = pbLifeGrid(W, H, cx, kind ? 7 : 6);
+  const by = kind ? 6 : 5;
+  const span = kind ? 13 : 10;                      // root to tip
+  const rise = [kind ? 2.2 : 1.4, 4.8, -2][fr], drop = [kind ? 3 : 2, 0, 3][fr], wr = span * 0.52;
+  const body = kind ? "W" : "K", wing = kind ? "G" : "K", edge = kind ? "g" : "H", tip = kind ? "D" : "K";
+  for (const s of [-1, 1]) {
+    const x0 = cx + s * 2.2, y0 = by, x1 = cx + s * wr, y1 = by - rise, x2 = cx + s * span, y2 = by - rise + drop;
+    pbLifeLine(g, x0, y0, x1, y1, wing); pbLifeLine(g, x0, y0 + 1, x1, y1 + 1, wing); pbLifeLine(g, x0, y0 + 1, x1, y1 + 2, wing);
+    pbLifeLine(g, x1, y1, x2, y2, wing); pbLifeLine(g, x1, y1 + 1, x2, y2 + 1, wing);
+    pbLifeLine(g, x0, y0 - 1, x1, y1 - 1, edge);
+    pbLifeLine(g, cx + s * (span - 3.5), y2 - 0.6, x2, y2, tip); pbLifePut(g, x2, y2 + 1, tip);
+  }
+  pbLifeEll(g, cx, by + 0.6, 3.2, 2.1, body);                       // body
+  pbLifeEll(g, cx + 3.1, by - 1.1, 1.8, 1.5, body);                 // head, forward (right)
+  pbLifePut(g, cx + 5, by - 1, kind ? "Y" : "B"); pbLifePut(g, cx + 5, by, kind ? "Y" : "B");
+  pbLifePut(g, cx + 3, by - 2, kind ? "K" : "G");
+  pbLifeStamp(g, cx - 6, by + 1, kind ? ["WWW", ".WW"] : ["KKK", ".KK"]);   // tail
+  if (!kind) { pbLifePut(g, cx - 1, by - 1, "S"); pbLifePut(g, cx, by - 1, "S"); }
+  return g;
+}
+
+/* ---- DRAGONFLY ---- */
+function pbLifeDragonGrid(fr) {
+  const g = pbLifeGrid(15, 10, 7, 7);
+  pbLifeLine(g, 0, 6, 7, 6, "B"); pbLifePut(g, 0, 7, "b"); pbLifePut(g, 1, 6, "b");   // long abdomen
+  pbLifeRect(g, 8, 5, 2, 2, "T"); pbLifeRect(g, 10, 5, 3, 2, "H"); pbLifePut(g, 12, 5, "E"); pbLifePut(g, 11, 5, "E");   // thorax and head
+  if (fr === 0) {                                                  // wings up and back
+    pbLifeStamp(g, 3, 0, ["pP", ".PP", ".PP", "..PP", "..PP"]);   // near
+    pbLifeStamp(g, 6, 0, ["pp", ".pp", ".pp", "..p"]);              // far
+  } else {                                                         // wings out flat and back
+    pbLifeStamp(g, 2, 2, [".ppppp", "PPPPPPP", "PPPPPPP"]); pbLifeStamp(g, 3, 7, ["..PPPP", "...PPP"]);
+  }
+  return g;
+}
+
+/* ---- the sprite definitions: one per (species, frame, face, variant), built on first use ----
+   key = life|<name>|<frame>|<face>|<variant>; fish are vector shapes, everything else a grid */
+const pbLifeDefs = [];
+function pbLifeFishDraw(fr, face, v) {
+  return (c) => {
+    const U = PB_LIFE_U * 1.22, ang = (v - 1) * 0.6;
+    c.save(); c.scale(face ? 1 : -1, 1); c.rotate(ang);
+    const tw = fr ? 1.5 : -1.5;
+    c.fillStyle = "#16424f"; c.beginPath(); c.moveTo(-3.6 * U, 0); c.lineTo(-7.8 * U, (tw - 1.6) * U); c.lineTo(-7.2 * U, (tw + 0.2) * U); c.lineTo(-7.8 * U, (tw + 1.8) * U); c.closePath(); c.fill();
+    c.fillStyle = "#0b2733"; c.beginPath(); c.ellipse(0, 0, 5 * U, 2 * U, 0, 0, 6.2832); c.fill();
+    c.fillStyle = "#16424f"; c.beginPath(); c.moveTo(-1.2 * U, -1.6 * U); c.lineTo(1.2 * U, -3 * U); c.lineTo(2.6 * U, -1.4 * U); c.closePath(); c.fill();
+    c.restore();
+  };
+}
+function pbLifeMakeDef(sp, fr, face, v) {
+  const key = "life|" + PB_LIFE_NAMES[sp] + "|" + fr + "|" + face + "|" + v, U = PB_LIFE_U;
+  if (sp === PB_LIFE_FISH) return { key, box: { l: -12 * U, r: 12 * U, t: -12 * U, b: 12 * U }, opts: { finish: false }, draw: pbLifeFishDraw(fr, face, v) };
+  let g, pal, flip = !face, opts;
+  if (sp === PB_LIFE_DEER) { g = pbLifeDeerGrid(fr, v === 1); pal = PB_LIFE_PAL.deer; }
+  else if (sp === PB_LIFE_CRAB) { g = pbLifeCrabGrid(fr); pal = PB_LIFE_PAL.crab; flip = false; }
+  else if (sp === PB_LIFE_CROW) { if (fr < 2) { g = pbLifeCrowGrid(fr); } else g = pbLifeWingGrid(0, fr - 2); pal = PB_LIFE_PAL.crow; }
+  else if (sp === PB_LIFE_GULL) { g = pbLifeWingGrid(1, fr); pal = PB_LIFE_PAL.gull; }
+  else { g = pbLifeDragonGrid(fr); pal = PB_LIFE_PAL.dragon; opts = { finish: false }; }
+  const ax = flip ? g.w - g.ax : g.ax;
+  return { key, box: { l: -ax * U, r: (g.w - ax) * U, t: -g.ay * U, b: (g.h - g.ay) * U }, opts, draw: (c) => pbLifeBlit(c, g, pal, flip) };
+}
+function pbLifeSprite(sp, fr, face, v) {
+  const idx = ((sp * 8 + fr) * 2 + (face > 0 ? 1 : 0)) * 4 + v;
+  let d = pbLifeDefs[idx];
+  if (!d) { d = pbLifeMakeDef(sp, fr, face > 0 ? 1 : 0, v); pbLifeDefs[idx] = d; }
+  return pbSprite(d.key, pbLifePx, d.box, d.draw, d.opts);
+}
+/* the sprite for a frame, or — while that frame is still waiting for its bake — the resting frame of the same
+   creature, so an animal never blinks out mid-stride */
+function pbLifeSpriteOr(sp, fr, face, v) {
+  const s = pbLifeSprite(sp, fr, face, v);
+  if (s) return s;
+  const rest = (sp === PB_LIFE_CROW && fr >= 2) ? 2 : 0;
+  return fr === rest ? null : pbLifeSprite(sp, rest, face, v);
+}
+
+/* ---------------------------------------------------------------------
+   WHERE EACH KIND LIVES — pure functions of the world, no clock
+   --------------------------------------------------------------------- */
+function pbLifeH(a, b, win, salt) { return hash2(a + (win % 4093) * 977, b + ((win / 4093) | 0) * 1013, salt); }
+function pbLifeRng(seed) { let s = (seed >>> 0) || 1; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }; }
+function pbLifeIsWater(b) { return b === B.SHALLOW || b === B.WATER; }
+const PB_LIFE_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+function pbLifeRing(tx, ty, r, fn) {                 // any of 16 tiles on two rings, radius r and r/2
+  const r2 = Math.max(1, r >> 1);
+  for (let k = 0; k < 8; k++) {
+    const d = PB_LIFE_DIRS[k];
+    if (fn(biomeAt(tx + d[0] * r, ty + d[1] * r)) || fn(biomeAt(tx + d[0] * r2, ty + d[1] * r2))) return true;
+  }
+  return false;
+}
+function pbLifeWaterAny(b) { return b === B.SHALLOW || b === B.WATER || b === B.DEEP; }
+function pbLifeLandAny(b) { return b !== B.SHALLOW && b !== B.WATER && b !== B.DEEP && b !== B.UWCAVE && b !== B.ABYSSAL; }
+function pbLifeForestNear(tx, ty) { return pbLifeRing(tx, ty, 2, (b) => b === B.FOREST); }
+function pbLifeWaterNear2(tx, ty) {
+  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (pbLifeWaterAny(biomeAt(tx + dx, ty + dy))) return true;
+  return false;
+}
+/* does this tile (already known to be biome b, switched on) fit the kind's habitat? */
+function pbLifeFits(sp, tx, ty, b) {
+  switch (sp) {
+    case PB_LIFE_DEER: return b === B.FOREST || (b === B.PLAINS && pbOn(B.FOREST) && !arenaFloorAt(tx, ty, b) && pbLifeForestNear(tx, ty));
+    case PB_LIFE_CRAB: return b === B.SAND && !arenaFloorAt(tx, ty, b) && pbLifeWaterNear2(tx, ty);
+    case PB_LIFE_CROW: return b === B.DARKFOREST;
+    case PB_LIFE_GULL: return b === B.SAND ? pbLifeRing(tx, ty, 6, pbLifeWaterAny) : (b === B.SHALLOW || b === B.WATER) ? pbLifeRing(tx, ty, 5, pbLifeLandAny) : false;
+    case PB_LIFE_FISH: return b === B.SHALLOW || b === B.WATER;
+    case PB_LIFE_DRAGON: return b === B.SHALLOW;
+    default: return b === B.MEADOW;
+  }
+}
+/* how willing the hour is for a kind, 0..1 (d = dayT; day is 0..0.5) */
+function pbLifeDayW(sp, d) {
+  if (sp === PB_LIFE_DEER) return ((d >= 0 && d <= 0.12) || (d >= 0.44 && d <= 0.62)) ? 1 : 0;
+  const na = nightAlpha(d);
+  if (sp === PB_LIFE_CROW) return na > 0.5 ? 0.35 : na > 0.05 ? 0.6 : 1;     // fewer at night
+  if (sp === PB_LIFE_FISH) return na > 0.5 ? 0.7 : 1;
+  if (d >= 0.5) return 0;                                                    // the rest are creatures of the day
+  return Math.min(1, d / 0.05 + 0.2, (0.5 - d) / 0.05);
+}
+/* is this tile free of anything that grows, and are the tiles in FRONT of it (the ones whose crowns would hide it)? */
+const PB_LIFE_FRONT = [[0, 0], [1, 0], [0, 1], [1, 1], [2, 1], [1, 2]];
+function pbLifeOpen(tx, ty) {
+  for (let i = 0; i < 6; i++) if (featureTypeAt(tx + PB_LIFE_FRONT[i][0], ty + PB_LIFE_FRONT[i][1]) !== null) return false;
+  return true;
+}
+function pbLifeBare(x, y) { return featureTypeAt(Math.floor(x), Math.floor(y)) === null; }
+/* ground a deer, a crab, a crow may stand on, at one level */
+function pbLifeDeerOk(x, y, lvl) {
+  const tx = Math.floor(x), ty = Math.floor(y), b = biomeAt(tx, ty);
+  return (b === B.FOREST || b === B.PLAINS || b === B.MEADOW) && pbOn(b) && heightAt(tx, ty) === lvl && !arenaFloorAt(tx, ty, b);
+}
+function pbLifeSandOk(x, y, lvl) {
+  const tx = Math.floor(x), ty = Math.floor(y), b = biomeAt(tx, ty);
+  return b === B.SAND && pbOn(b) && heightAt(tx, ty) === lvl && !arenaFloorAt(tx, ty, b);
+}
+function pbLifeDarkOk(x, y, lvl) { const tx = Math.floor(x), ty = Math.floor(y); return biomeAt(tx, ty) === B.DARKFOREST && pbOn(B.DARKFOREST) && heightAt(tx, ty) === lvl; }
+/* open water with a margin, so a shadow never lies across a shore tile in front of it */
+function pbLifeWaterOk(x, y) {
+  const m = 0.3;
+  return pbOn(B.WATER) && pbLifeIsWater(biomeAt(Math.floor(x - m), Math.floor(y - m))) && pbLifeIsWater(biomeAt(Math.floor(x + m), Math.floor(y - m))) &&
+         pbLifeIsWater(biomeAt(Math.floor(x - m), Math.floor(y + m))) && pbLifeIsWater(biomeAt(Math.floor(x + m), Math.floor(y + m)));
+}
+function pbLifeOkAt(kind, x, y, lvl) { return kind === 0 ? pbLifeDeerOk(x, y, lvl) : pbLifeWaterOk(x, y); }
+
+/* ---------------------------------------------------------------------
+   PLANS — what a cell holds in one window. Built once, cached, dropped.
+   --------------------------------------------------------------------- */
+function pbLifeGroup(sp, n, K, beat, id, b, cx, cy) {
+  return { sp, n, K, beat, id, b, x: cx, y: cy,
+    P: K ? new Float32Array(n * (K + 1) * 2) : null, M: K ? new Uint8Array(n * K) : null, F: K ? new Int8Array(n * K) : null,
+    ph: new Float32Array(n * 4), v: new Uint8Array(n), lvl: 0, ma: 0, mb: 1, stag: 0, w: 0, a: 0, bb: 0, rho: 1 };
+}
+/* a walker's beats: mode 0 rest, 1 look, 2 move; positions at each beat start; facing carried */
+function pbLifeMakeDeer(tx, ty, b, id, rnd) {
+  const lvl = heightAt(tx, ty);
+  if (!pbLifeDeerOk(tx + 0.5, ty + 0.5, lvl) || !pbLifeOpen(tx, ty)) return null;
+  const want = 1 + (rnd() > 0.45 ? 1 : 0) + (rnd() > 0.8 ? 1 : 0), K = 8;
+  const g = pbLifeGroup(PB_LIFE_DEER, want, K, 6, id, b, tx + 0.5, ty + 0.5);
+  g.lvl = lvl; g.ma = 0.08; g.mb = 0.92; g.stag = 0.07;
+  const fx = [0, 0, 0], fy = [0, 0, 0];
+  let n = 1;
+  for (let i = 1; i < want; i++) {
+    const a = rnd() * 6.2832, r = 0.9 + rnd() * 0.6;
+    let ox = Math.cos(a) * r, oy = Math.sin(a) * r;
+    for (let k = 0; k < 3 && !(pbLifeDeerOk(g.x + ox, g.y + oy, lvl) && pbLifeBare(g.x + ox, g.y + oy)); k++) { ox *= 0.65; oy *= 0.65; }
+    if (!(pbLifeDeerOk(g.x + ox, g.y + oy, lvl) && pbLifeBare(g.x + ox, g.y + oy))) continue;
+    fx[n] = ox; fy[n] = oy; n++;
+  }
+  g.n = n;
+  let cx = g.x, cy = g.y, face = rnd() < 0.5 ? 1 : -1;
+  for (let k = 0; k < K; k++) {
+    let mode = rnd() < 0.2 ? 1 : 0, nx = cx, ny = cy;
+    if (k > 0 && rnd() < 0.55) {
+      for (let at = 0; at < 4; at++) {
+        const a = rnd() * 6.2832 + at * 1.57, len = 1.2 + rnd() * 1.3, x2 = cx + Math.cos(a) * len, y2 = cy + Math.sin(a) * len;
+        let ok = true;
+        for (let i = 0; i < n && ok; i++) if (!pbLifeDeerOk(x2 + fx[i], y2 + fy[i], lvl) || !pbLifeBare(x2 + fx[i], y2 + fy[i]) || !pbLifeDeerOk((cx + x2) / 2 + fx[i], (cy + y2) / 2 + fy[i], lvl)) ok = false;
+        if (ok) { nx = x2; ny = y2; mode = 2; break; }
+      }
+    }
+    if (mode === 2) { const sdx = (nx - cx) - (ny - cy); if (Math.abs(sdx) > 0.2) face = sdx > 0 ? 1 : -1; }
+    for (let i = 0; i < n; i++) { g.P[(i * (K + 1) + k) * 2] = cx + fx[i]; g.P[(i * (K + 1) + k) * 2 + 1] = cy + fy[i]; g.M[i * K + k] = mode; g.F[i * K + k] = face; }
+    cx = nx; cy = ny;
+  }
+  for (let i = 0; i < n; i++) { g.P[(i * (K + 1) + K) * 2] = cx + fx[i]; g.P[(i * (K + 1) + K) * 2 + 1] = cy + fy[i]; g.ph[i * 4] = rnd(); g.ph[i * 4 + 1] = rnd(); }
+  g.v[0] = rnd() > 0.45 ? 1 : 0;                                   // at most one buck, the leader
+  return g;
+}
+function pbLifeMakeCrab(tx, ty, b, id, rnd) {
+  const lvl = heightAt(tx, ty), K = 20;
+  const n = 1 + (rnd() > 0.5 ? 1 : 0) + (rnd() > 0.85 ? 1 : 0);
+  const g = pbLifeGroup(PB_LIFE_CRAB, n, K, 2.4, id, b, tx + 0.5, ty + 0.5);
+  g.lvl = lvl; g.ma = 0; g.mb = 0.34;
+  for (let i = 0; i < n; i++) {
+    let x = tx + 0.5 + (rnd() - 0.5) * 1.5, y = ty + 0.5 + (rnd() - 0.5) * 1.5, face = 1;
+    if (!pbLifeSandOk(x, y, lvl)) { x = tx + 0.5; y = ty + 0.5; }
+    for (let k = 0; k < K; k++) {
+      let mode = 0, nx = x, ny = y;
+      if (rnd() < 0.5) {
+        const s0 = rnd() < 0.5 ? -1 : 1, d = 0.12 + rnd() * 0.3;
+        for (let q = 0; q < 2; q++) {
+          const a = d * (q ? -s0 : s0), x2 = x + a, y2 = y - a;      // world (+1,-1) is straight along the screen
+          if (pbLifeSandOk(x2, y2, lvl) && pbLifeSandOk((x + x2) / 2, (y + y2) / 2, lvl)) { nx = x2; ny = y2; mode = 2; face = a > 0 ? 1 : -1; break; }
+        }
+      }
+      g.P[(i * (K + 1) + k) * 2] = x; g.P[(i * (K + 1) + k) * 2 + 1] = y; g.M[i * K + k] = mode; g.F[i * K + k] = face;
+      x = nx; y = ny;
+    }
+    g.P[(i * (K + 1) + K) * 2] = x; g.P[(i * (K + 1) + K) * 2 + 1] = y; g.ph[i * 4] = rnd();
+  }
+  return g;
+}
+function pbLifeMakeCrow(tx, ty, b, id, rnd) {
+  const lvl = heightAt(tx, ty), K = 12;
+  if (!pbLifeDarkOk(tx + 0.5, ty + 0.5, lvl) || !pbLifeOpen(tx, ty)) return null;
+  const n = 1 + (rnd() > 0.4 ? 1 : 0) + (rnd() > 0.8 ? 1 : 0);
+  const g = pbLifeGroup(PB_LIFE_CROW, n, K, 4, id, b, tx + 0.5, ty + 0.5);
+  g.lvl = lvl; g.ma = 0.2; g.mb = 0.45;
+  for (let i = 0; i < n; i++) {
+    let x = tx + 0.5 + (rnd() - 0.5) * 1.8, y = ty + 0.5 + (rnd() - 0.5) * 1.8, face = rnd() < 0.5 ? 1 : -1;
+    if (!(pbLifeDarkOk(x, y, lvl) && pbLifeBare(x, y))) { x = tx + 0.5; y = ty + 0.5; }
+    for (let k = 0; k < K; k++) {
+      const r = rnd();
+      let mode = r < 0.55 ? 0 : r < 0.78 ? 1 : 2, nx = x, ny = y;
+      if (mode === 2) {
+        mode = 1;
+        for (let at = 0; at < 3; at++) {
+          const a = rnd() * 6.2832, len = 0.3 + rnd() * 0.4, x2 = x + Math.cos(a) * len, y2 = y + Math.sin(a) * len;
+          if (pbLifeDarkOk(x2, y2, lvl) && pbLifeBare(x2, y2)) { nx = x2; ny = y2; mode = 2; const sdx = (x2 - x) - (y2 - y); if (Math.abs(sdx) > 0.05) face = sdx > 0 ? 1 : -1; break; }
+        }
+      } else if (rnd() < 0.2) face = -face;
+      g.P[(i * (K + 1) + k) * 2] = x; g.P[(i * (K + 1) + k) * 2 + 1] = y; g.M[i * K + k] = mode; g.F[i * K + k] = face;
+      x = nx; y = ny;
+    }
+    g.P[(i * (K + 1) + K) * 2] = x; g.P[(i * (K + 1) + K) * 2 + 1] = y; g.ph[i * 4] = rnd();
+  }
+  return g;
+}
+function pbLifeMakeGull(tx, ty, b, id, rnd) {
+  const n = 1 + (rnd() > 0.7 ? 1 : 0);
+  const g = pbLifeGroup(PB_LIFE_GULL, n, 0, 0, id, b, tx + 0.5, ty + 0.5);
+  g.w = (0.15 + rnd() * 0.11) * (rnd() < 0.5 ? -1 : 1);
+  const R = 3 + rnd() * 3, th = rnd() * 6.2832;
+  for (let i = 0; i < n; i++) { g.ph[i * 4] = th + i * 2.6; g.ph[i * 4 + 1] = R * (1 + 0.14 * i); g.ph[i * 4 + 2] = 0.7 + rnd() * 0.3; g.ph[i * 4 + 3] = 64 + rnd() * 28; }
+  return g;
+}
+function pbLifeMakeFish(tx, ty, b, id, rnd) {
+  if (!pbLifeWaterOk(tx + 0.5, ty + 0.5)) return null;
+  const want = 1 + ((rnd() * 4) | 0);
+  const g = pbLifeGroup(PB_LIFE_FISH, want, 0, 0, id, b, tx + 0.5, ty + 0.5);
+  let a = 1.0 + rnd() * 1.4;
+  const cx = g.x, cy = g.y;
+  const ring = (A, Bq) => {
+    for (let k = 0; k < 8; k++) {
+      const an = k * 0.7854;
+      for (const s of [1, 0.55]) {
+        const u = Math.cos(an) * A * s, w = Math.sin(an) * Bq * s;
+        if (!pbLifeWaterOk(cx + (u + w) * 0.70711, cy + (-u + w) * 0.70711)) return false;
+      }
+    }
+    return true;
+  };
+  let bq = a * (0.35 + rnd() * 0.3), tries = 0;
+  while (tries < 4 && !ring(a * 1.18, bq * 1.18)) { a *= 0.7; bq *= 0.7; tries++; }
+  if (tries >= 4 || a < 0.3) { if (!pbLifeWaterOk(cx, cy)) return null; a = 0.25; bq = 0.15; }
+  g.a = a; g.bb = bq; g.w = (0.32 + rnd() * 0.3) * (rnd() < 0.5 ? -1 : 1); g.rho = [1, 1, 2, 0.5][(rnd() * 4) | 0];
+  for (let i = 0; i < want; i++) { g.ph[i * 4] = i * (0.5 + rnd() * 0.3) + rnd() * 0.4; g.ph[i * 4 + 1] = 1 + (rnd() - 0.5) * 0.18; g.ph[i * 4 + 2] = rnd() * 6.28; g.ph[i * 4 + 3] = 0.25 + rnd() * 0.12; }
+  return g;
+}
+function pbLifeMakeDragon(tx, ty, b, id, rnd) {
+  const K = 14, n = 1 + (rnd() > 0.6 ? 1 : 0);
+  const g = pbLifeGroup(PB_LIFE_DRAGON, n, K, 3.4, id, b, tx + 0.5, ty + 0.5);
+  g.ma = 0; g.mb = 0.1;
+  const sh = (x, y) => biomeAt(Math.floor(x), Math.floor(y)) === B.SHALLOW;
+  for (let i = 0; i < n; i++) {
+    let x = tx + 0.5 + (i ? (rnd() - 0.5) : 0), y = ty + 0.5 + (i ? (rnd() - 0.5) : 0), face = 1;
+    if (!sh(x, y)) { x = tx + 0.5; y = ty + 0.5; }
+    for (let k = 0; k < K; k++) {
+      let mode = 0, nx = x, ny = y;
+      if (rnd() < 0.8) {
+        for (let at = 0; at < 4; at++) {
+          const a = rnd() * 6.2832, len = 1 + rnd() * 2, x2 = x + Math.cos(a) * len, y2 = y + Math.sin(a) * len;
+          if (sh(x2, y2)) { nx = x2; ny = y2; mode = 2; const sdx = (x2 - x) - (y2 - y); if (Math.abs(sdx) > 0.1) face = sdx > 0 ? 1 : -1; break; }
+        }
+      }
+      g.P[(i * (K + 1) + k) * 2] = x; g.P[(i * (K + 1) + k) * 2 + 1] = y; g.M[i * K + k] = mode; g.F[i * K + k] = face;
+      x = nx; y = ny;
+    }
+    g.P[(i * (K + 1) + K) * 2] = x; g.P[(i * (K + 1) + K) * 2 + 1] = y; g.ph[i * 4] = rnd(); g.ph[i * 4 + 1] = rnd() * 6.28;
+  }
+  return g;
+}
+function pbLifeMakeBee(tx, ty, b, id, rnd) {
+  const n = 2 + (rnd() > 0.5 ? 1 : 0);
+  const g = pbLifeGroup(PB_LIFE_BEE, n, 0, 0, id, b, tx + 0.5, ty + 0.5);
+  for (let i = 0; i < n; i++) { g.ph[i * 4] = rnd() * 6.28; g.ph[i * 4 + 1] = 0.16 + rnd() * 0.26; g.ph[i * 4 + 2] = 2.1 + rnd() * 1.4; g.ph[i * 4 + 3] = rnd() * 6.28; }
+  return g;
+}
+const PB_LIFE_MAKERS = [pbLifeMakeDeer, pbLifeMakeCrab, pbLifeMakeCrow, pbLifeMakeGull, pbLifeMakeFish, pbLifeMakeDragon, pbLifeMakeBee];
+
+function pbLifeBuild(cx, cy, win, off, key) {
+  const midT = win * PB_LIFE_WIN - off + PB_LIFE_WIN * 0.5;
+  const dayMid = (((midT % DAY_LENGTH) + DAY_LENGTH) % DAY_LENGTH) / DAY_LENGTH, C = PB_LIFE_CELL;
+  let groups = null;
+  for (let sp = 0; sp < 7; sp++) {
+    const w = PB_LIFE_P[sp] * pbLifeDayW(sp, dayMid);
+    if (w <= 0) continue;
+    for (let gi = 0; gi < 2; gi++) {
+      if (groups && groups.length >= PB_LIFE_MAXG) break;
+      const s = 3300 + sp * 61 + gi * 13;
+      if (pbLifeH(cx, cy, win, s) >= (gi ? w * 0.34 : w)) break;
+      for (let a = 0; a < PB_LIFE_SEARCH; a++) {
+        const tx = cx * C + Math.min(C - 1, (pbLifeH(cx, cy, win, s + 1 + a * 2) * C) | 0), ty = cy * C + Math.min(C - 1, (pbLifeH(cx, cy, win, s + 2 + a * 2) * C) | 0);
+        if (tx < 2 || ty < 2 || tx >= N - 2 || ty >= N - 2) continue;
+        const b = biomeAt(tx, ty);
+        if (!pbOn(b) || !pbLifeFits(sp, tx, ty, b)) continue;
+        const g = PB_LIFE_MAKERS[sp](tx, ty, b, key * 8 + sp, pbLifeRng((pbLifeH(cx, cy, win, s + 50) * 4294967295) >>> 0));
+        if (g) { (groups || (groups = [])).push(g); break; }
+      }
+    }
+  }
+  return groups ? { g: groups } : 0;
+}
+
+/* ---------------------------------------------------------------------
+   THE FRAME. One pass a frame (stamped by pbFrameNo, whichever of the
+   three hooks runs first does it): walk the visible cells, step every
+   creature of every live plan, cull to the screen, cap, and sort the
+   survivors into the ground list (depth-sorted entities), the water list
+   and the air list. The three draw hooks only draw those lists.
+   --------------------------------------------------------------------- */
+const pbLifePlans = new Map();
+const pbLifeLocal = new Map();                       // creature id -> scare entry
+const pbLifePool = [], pbLifeLive = [];
+const pbLifeGroundL = [], pbLifeWaterL = [], pbLifeAirL = [];
+const pbLifeCount = new Int32Array(7);
+let pbLifeFrameSeen = -1, pbLifeNLive = 0, pbLifeDrawn = 0, pbLifeCandLast = 0, pbLifeLastT = 0, pbLifePx = 0.625;
+let pbLifeShStyle = "rgba(20,32,44,0.2)", pbLifeShA = 0.2, pbLifeMsAcc = 0, pbLifeMsEMA = 0, pbLifeMsLast = 0, pbLifeBuildsLast = 0;
+let pbLifeSwitchSig = -1;
+let pbLife_W = 0, pbLife_H = 0, pbLife_OX = 0, pbLife_OY = 0, pbLife_Ts = 0, pbLife_Dt = 0, pbLife_T = 0, pbLife_Mx = 0, pbLife_My = 0, pbLife_Alive = true, pbLife_Day = 0, pbLife_Night = 0;
+let pbLife_X = 0, pbLife_Y = 0, pbLife_Mode = 0, pbLife_Fc = 1, pbLife_Move = 0, pbLife_E = 0, pbLife_F = 0, pbLife_Al = 1;
+
+function pbLifeNewCand() { return { s: 0, kind: "pblife", sp: 0, lay: 0, x: 0, y: 0, z: 0, alt: 0, fr: 0, fc: 1, v: 0, al: 1, d2: 0, sx: 0, sy: 0, aux: 0 }; }
+function pbLifeAdd(lay, sp, x, y, zs, alt, fr, fc, v, al, aux) {
+  const sx = pbLife_OX + (x - y) * IW2, sy = pbLife_OY + (x + y) * IH2 - zs - alt;
+  if (sx < -48 || sx > pbLife_W + 48 || sy < -72 || sy > pbLife_H + 56 || pbLifeNLive >= PB_LIFE_CAND_MAX) return;
+  let c = pbLifePool[pbLifeNLive];
+  if (!c) { c = pbLifeNewCand(); pbLifePool.push(c); }
+  pbLifeLive[pbLifeNLive++] = c;
+  const dx = x - cam.x, dy = y - cam.y;
+  c.sp = sp; c.lay = lay; c.x = x; c.y = y; c.z = zs; c.alt = alt; c.fr = fr; c.fc = fc; c.v = v; c.al = al; c.d2 = dx * dx + dy * dy;
+  c.sx = sx; c.sy = sy; c.s = x + y; c.aux = aux;
+}
+function pbLifeCmp(a, b) { return a.d2 - b.d2; }
+/* a scare entry: made only when a scare begins */
+function pbLifeNewLocal(id, kind, t) {
+  if (pbLifeLocal.size >= PB_LIFE_LOCAL_MAX) pbLifeLocal.delete(pbLifeLocal.keys().next().value);
+  const L = { kind, ox: 0, oy: 0, fl: 0, mv: 0, ux: 0, uy: 0, exp: t + 20000, t0: t, dl: 0 };
+  pbLifeLocal.set(id, L);
+  return L;
+}
+/* a bolt (deer) or a dart (fish): while the player is inside `trig` (or inside `clear` once it has begun) the
+   creature is pushed away at `speed`; afterwards it walks home at `back` — but only once home is clear of the player */
+function pbLifeFlee(id, bx, by, kind, lvl, trig, clear, speed, back, maxOff) {
+  let L = pbLifeLocal.get(id);
+  const ex = bx + (L ? L.ox : 0), ey = by + (L ? L.oy : 0);
+  const dx = ex - pbLife_Mx, dy = ey - pbLife_My, d2 = dx * dx + dy * dy, lim = (L && L.fl) ? clear : trig;
+  if (pbLife_Alive && d2 < lim * lim) {
+    if (!L) L = pbLifeNewLocal(id, kind, pbLife_T);
+    L.fl = 1; L.exp = pbLife_T + 15000;
+    const d = Math.sqrt(d2) || 0.001, ux = dx / d, uy = dy / d, st = speed * pbLife_Dt;
+    let nx = L.ox + ux * st, ny = L.oy + uy * st;
+    const m = Math.sqrt(nx * nx + ny * ny);
+    if (m > maxOff) { nx *= maxOff / m; ny *= maxOff / m; }
+    L.mv = 0;
+    if (pbLifeOkAt(kind, bx + nx, by + ny, lvl)) { L.ox = nx; L.oy = ny; L.mv = 1; }
+    else if (pbLifeOkAt(kind, bx + nx, by + L.oy, lvl)) { L.ox = nx; L.mv = 1; }
+    else if (pbLifeOkAt(kind, bx + L.ox, by + ny, lvl)) { L.oy = ny; L.mv = 1; }
+    L.ux = ux; L.uy = uy;
+  } else if (L) {
+    L.fl = 0; L.mv = 0; L.exp = pbLife_T + 15000;
+    const hx = bx - pbLife_Mx, hy = by - pbLife_My;
+    const m = Math.sqrt(L.ox * L.ox + L.oy * L.oy);
+    if (hx * hx + hy * hy > (trig + 1.6) * (trig + 1.6)) {
+      const st = back * pbLife_Dt;
+      if (m <= st + 0.03) { pbLifeLocal.delete(id); return undefined; }
+      L.ox -= L.ox / m * st; L.oy -= L.oy / m * st; L.mv = 2;
+    }
+  }
+  return L;
+}
+/* a walker's place at window time u: sets pbLife_X/pbLife_Y/pbLife_Mode/pbLife_Fc/pbLife_Move/pbLife_E/pbLife_F */
+function pbLifeWalkPos(g, i, u) {
+  const K = g.K;
+  let k = (u / g.beat) | 0;
+  if (k >= K) k = K - 1;
+  const f = u / g.beat - k, pi = (i * (K + 1) + k) * 2, mi = i * K + k, x0 = g.P[pi], y0 = g.P[pi + 1], mode = g.M[mi];
+  pbLife_Mode = mode; pbLife_Fc = g.F[mi]; pbLife_F = f; pbLife_Move = 0; pbLife_E = 0; pbLife_X = x0; pbLife_Y = y0;
+  if (mode === 2) {
+    const a = g.ma + g.stag * i;
+    let e = (f - a) / (g.mb - a);
+    e = e < 0 ? 0 : e > 1 ? 1 : e;
+    pbLife_Move = (e > 0 && e < 1) ? 1 : 0;
+    pbLife_E = e;
+    e = e * e * (3 - 2 * e);
+    pbLife_X = x0 + (g.P[pi + 2] - x0) * e; pbLife_Y = y0 + (g.P[pi + 3] - y0) * e;
+  }
+}
+function pbLifeSurfZ(x, y) { const tx = Math.floor(x), ty = Math.floor(y); return heightAt(tx, ty) < 0 ? -HZ : heightAt(tx, ty) * HZ; }
+
+const PB_LIFE_WALK = [2, 3, 4];
+const PB_LIFE_FLAP = [3, 2, 4, 2];                  // crow frames in the air: up, level, down, level
+function pbLifeStepDeer(g, u) {
+  for (let i = 0; i < g.n; i++) {
+    pbLifeWalkPos(g, i, u);
+    let x = pbLife_X, y = pbLife_Y, fc = pbLife_Fc, fr = 0, hop = 0;
+    const L = pbLifeFlee(g.id * 4 + i, x, y, 0, g.lvl, PB_LIFE_DEER_FLEE, PB_LIFE_DEER_CLEAR, 4.6, 0.55, 10);
+    if (L) { x += L.ox; y += L.oy; }
+    if (L && L.mv === 1) {                              // the bolt: gather and leap
+      fr = (((pbLife_T / 95) | 0) & 1) ? 5 : 3; hop = fr === 5 ? 2.4 : 0;
+      const sdx = L.ux - L.uy; if (Math.abs(sdx) > 0.05) fc = sdx > 0 ? 1 : -1;
+    } else if (L && L.mv === 2) {                       // walking home
+      fr = PB_LIFE_WALK[((pbLife_Ts * 4.4 + i) | 0) % 3];
+      const sdx = -(L.ox - L.oy); if (Math.abs(sdx) > 0.05) fc = sdx > 0 ? 1 : -1;
+    } else if (L) fr = 0;                                // scared and held off: head up, watching
+    else if (pbLife_Move) fr = PB_LIFE_WALK[((pbLife_Ts * 4.4 + i) | 0) % 3];
+    else {
+      const dx = x - pbLife_Mx, dy = y - pbLife_My;
+      if (dx * dx + dy * dy < 49 || pbLife_Mode === 1) fr = 0;                     // head up, watching you
+      else fr = (((pbLife_Ts * 0.21 + g.ph[i * 4]) % 1) < 0.64) ? 1 : 0;            // graze, now and then a look up
+    }
+    pbLifeAdd(0, PB_LIFE_DEER, x, y, pbLifeSurfZ(x, y), hop, fr, fc, g.v[i], pbLife_Al, 0);
+  }
+}
+function pbLifeStepCrab(g, u) {
+  for (let i = 0; i < g.n; i++) {
+    pbLifeWalkPos(g, i, u);
+    let fr = 0;
+    if (pbLife_Move) fr = ((pbLife_Ts * 13 + i * 3) | 0) & 1;
+    else if (pbLife_Mode === 0 && ((pbLife_Ts * 0.6 + g.ph[i * 4]) % 1) < 0.22) fr = 2;     // a claw waved at the sea
+    pbLifeAdd(0, PB_LIFE_CRAB, pbLife_X, pbLife_Y, pbLifeSurfZ(pbLife_X, pbLife_Y), 0, fr, 1, 0, pbLife_Al, 0);
+  }
+}
+function pbLifeStepCrow(g, u) {
+  for (let i = 0; i < g.n; i++) {
+    pbLifeWalkPos(g, i, u);
+    const x = pbLife_X, y = pbLife_Y, id = g.id * 4 + i, zs = pbLifeSurfZ(x, y);
+    let L = pbLifeLocal.get(id);
+    if (!L && pbLife_Alive && pbLife_Al > 0.5) {
+      const dx = x - pbLife_Mx, dy = y - pbLife_My, d2 = dx * dx + dy * dy;
+      if (d2 < PB_LIFE_CROW_SCARE * PB_LIFE_CROW_SCARE) {
+        L = pbLifeNewLocal(id, 2, pbLife_T);
+        const d = Math.sqrt(d2) || 0.001; L.ux = dx / d; L.uy = dy / d; L.dl = (i * 0.15 + g.ph[i * 4] * 0.35) * 1000; L.exp = pbLife_T + 26000; L.t0 = pbLife_T + L.dl;
+        if (L.ux === 0 && L.uy === 0) { L.ux = 0.7; L.uy = 0.7; }
+      }
+    }
+    if (L) {
+      const age = (pbLife_T - L.t0) / 1000;
+      if (age < 0) { pbLifeAdd(0, PB_LIFE_CROW, x, y, zs, 0, 0, pbLife_Fc, 0, pbLife_Al, 0); continue; }                // alarmed, not yet gone
+      if (age >= PB_LIFE_CROW_BACK) { pbLifeLocal.delete(id); }
+      else if (age < PB_LIFE_CROW_GONE) {
+        if (age < PB_LIFE_CROW_OUT) {
+          const D = age * 4.6, alt = 82 * (1 - Math.exp(-age / 1.15)) + 3, ax = x + L.ux * D, ay = y + L.uy * D;
+          const sdx = L.ux - L.uy;
+          pbLifeAdd(1, PB_LIFE_CROW, ax, ay, zs, alt, PB_LIFE_FLAP[(((pbLife_T / 95) | 0) + i) & 3], sdx >= 0 ? 1 : -1, 0, pbLife_Al, 0);
+        }
+        continue;
+      } else {
+        const r = (age - PB_LIFE_CROW_GONE) / (PB_LIFE_CROW_BACK - PB_LIFE_CROW_GONE), q = 1 - r * r * (3 - 2 * r), D = 25 * q, alt = 82 * q + 2 * (1 - q);
+        const ax = x + L.ux * D, ay = y + L.uy * D, sdx = -(L.ux - L.uy);
+        pbLifeAdd(1, PB_LIFE_CROW, ax, ay, zs, alt, PB_LIFE_FLAP[(((pbLife_T / 95) | 0) + i) & 3], sdx >= 0 ? 1 : -1, 0, pbLife_Al, 0);
+        continue;
+      }
+    }
+    /* on the ground: peck, look, hop */
+    let fr = 0, hop = 0;
+    if (pbLife_Mode === 0) fr = (((pbLife_Ts * 1.15 + g.ph[i * 4]) % 1) < 0.42) ? 1 : 0;
+    else if (pbLife_Move) hop = 2.6 * Math.sin(pbLife_E * 3.1416);
+    pbLifeAdd(0, PB_LIFE_CROW, x, y, zs, hop, fr, pbLife_Fc, 0, pbLife_Al, 0);
+  }
+}
+function pbLifeStepGull(g, u) {
+  for (let i = 0; i < g.n; i++) {
+    const th = g.ph[i * 4] + g.w * u, R = g.ph[i * 4 + 1], rt = g.ph[i * 4 + 2], c = Math.cos(th), s = Math.sin(th);
+    const x = g.x + R * c, y = g.y + R * rt * s;
+    const vx = -R * s * g.w, vy = R * rt * c * g.w, sdx = vx - vy;
+    const cyc = (u + g.ph[i * 4] * 1.9 + i * 3.1) % 8.5, flap = cyc < 1.4;
+    const alt = g.ph[i * 4 + 3] + 6 * Math.sin(u * 0.45 + g.ph[i * 4]) + (flap ? cyc * 2 : 0);
+    const fr = flap ? 1 + ((((pbLife_Ts * 5.5 + i) | 0)) & 1) : 0;
+    pbLifeAdd(1, PB_LIFE_GULL, x, y, pbLifeSurfZ(x, y), alt, fr, sdx >= 0 ? 1 : -1, 0, pbLife_Al, 0);
+  }
+}
+function pbLifeStepFish(g, u) {
+  const SQ = 31.1, SY = 15.56;
+  for (let i = 0; i < g.n; i++) {
+    const a = g.a * g.ph[i * 4 + 1], bq = g.bb * g.ph[i * 4 + 1], ang = g.w * u + g.ph[i * 4], ang2 = g.rho * ang + g.ph[i * 4 + 2];
+    const uu = a * Math.cos(ang), vv = bq * Math.sin(ang2);
+    let x = g.x + (uu + vv) * 0.70711, y = g.y + (-uu + vv) * 0.70711;
+    const du = -a * Math.sin(ang) * g.w, dv = bq * g.rho * Math.cos(ang2) * g.w;
+    let svx = du * SQ, svy = dv * SY, spd = Math.sqrt(du * du + dv * dv), dart = 0;
+    const L = pbLifeFlee(g.id * 4 + i, x, y, 1, 0, PB_LIFE_FISH_SCARE, PB_LIFE_FISH_CLEAR, 4.2, 0.9, 5);
+    if (L) { x += L.ox; y += L.oy; if (L.mv === 1) { dart = 1; svx = (L.ux - L.uy) * SQ; svy = (L.ux + L.uy) * SY; spd = 2.6; } }
+    const slope = Math.abs(svx) > 0.01 ? svy / Math.abs(svx) : (svy > 0 ? 9 : -9);
+    const pitch = slope > 0.32 ? 2 : slope < -0.32 ? 0 : 1, face = svx >= 0 ? 1 : -1;
+    const fr = ((pbLife_Ts * (2.6 + spd * 4.2) + i * 0.7) | 0) & 1;
+    pbLifeAdd(2, PB_LIFE_FISH, x, y, -HZ, 0, fr, face, pitch, pbLife_Al * (dart ? 1.15 : 1), g.ph[i * 4 + 3]);
+  }
+}
+function pbLifeStepDragon(g, u) {
+  for (let i = 0; i < g.n; i++) {
+    pbLifeWalkPos(g, i, u);
+    const alt = 9 + 3 * g.ph[i * 4] + 1.4 * Math.sin(pbLife_Ts * 2.3 + g.ph[i * 4 + 1]) + (pbLife_Move ? 2 : 0);
+    const jx = 0.05 * Math.sin(pbLife_Ts * 3.1 + g.ph[i * 4 + 1]), jy = 0.05 * Math.cos(pbLife_Ts * 2.7 + g.ph[i * 4 + 1]);
+    pbLifeAdd(1, PB_LIFE_DRAGON, pbLife_X + jx, pbLife_Y + jy, -HZ, alt, ((pbLife_T / 52) | 0) & 1, pbLife_Fc, 0, pbLife_Al, 0);
+  }
+}
+function pbLifeStepBee(g, u) {
+  for (let i = 0; i < g.n; i++) {
+    const ph = g.ph[i * 4], r = g.ph[i * 4 + 1], wv = g.ph[i * 4 + 2], p3 = g.ph[i * 4 + 3], an = ph + u * wv;
+    const x = g.x + Math.sin(u * 0.37 + p3) * 0.45 + r * Math.cos(an), y = g.y + Math.cos(u * 0.29 + ph) * 0.45 + r * Math.sin(an) * 0.8;
+    const alt = 6.5 + 2.4 * Math.sin(an * 2 + p3);
+    pbLifeAdd(1, PB_LIFE_BEE, x, y, pbLifeSurfZ(x, y), alt, ((pbLife_T / 38) | 0) & 1, 1, 0, pbLife_Al, 0);
+  }
+}
+
+function pbLifeEnsure(minX, maxX, minY, maxY, t) {
+  if (pbLifeFrameSeen === pbFrameNo) return;
+  pbLifeFrameSeen = pbFrameNo;
+  pbLifeMsEMA += (pbLifeMsAcc - pbLifeMsEMA) * 0.05; pbLifeMsLast = pbLifeMsAcc; pbLifeMsAcc = 0;
+  pbLifeNLive = 0; pbLifeLive.length = 0; pbLifeGroundL.length = 0; pbLifeWaterL.length = 0; pbLifeAirL.length = 0; pbLifeCount.fill(0);
+  pbLifeDrawn = 0; pbLifeCandLast = 0; pbLifeBuildsLast = 0;
+  if (typeof SETTINGS !== "undefined" && SETTINGS.reduceMotion) { if (pbLifeLocal.size) pbLifeLocal.clear(); return; }     // Reduce motion: no small life at all
+  if (!me || inInterior() || !FORGE_ON || !pbForgeOk) return;
+  const w = viewW(), h = viewH();
+  camOffset();
+  pbLife_W = w; pbLife_H = h; pbLife_OX = camOX; pbLife_OY = camOY;
+  pbLife_T = t; pbLife_Dt = Math.min(0.1, Math.max(0, (t - pbLifeLastT) / 1000)); pbLifeLastT = t;
+  pbLifePx = pbPx();
+  pbLife_Ts = Date.now() / 1000 - worldEpoch;
+  pbLife_Mx = me.x; pbLife_My = me.y; pbLife_Alive = !me.dead;
+  pbLife_Day = getDayT(); pbLife_Night = nightAlpha(pbLife_Day);
+  pbLifeShA = SUN.alpha; pbLifeShStyle = "rgba(20,32,44," + (SUN.alpha * 0.85).toFixed(3) + ")";
+  if ((pbFrameNo & 31) === 0 && pbLifeLocal.size) for (const [k, L] of pbLifeLocal) if (L.exp < t) pbLifeLocal.delete(k);
+  const sig = (PIXEL_BIOMES.plains ? 1 : 0) | (PIXEL_BIOMES.meadow ? 2 : 0) | (PIXEL_BIOMES.forest ? 4 : 0) | (PIXEL_BIOMES.darkforest ? 8 : 0) | (PIXEL_BIOMES.sand ? 16 : 0) | (PIXEL_BIOMES.coast ? 32 : 0);
+  if (sig !== pbLifeSwitchSig) { pbLifeSwitchSig = sig; pbLifePlans.clear(); pbLifeLocal.clear(); }      // a biome switched on or off: every plan is asked again
+  const C = PB_LIFE_CELL, c0x = Math.floor(minX / C), c1x = Math.floor(maxX / C), c0y = Math.floor(minY / C), c1y = Math.floor(maxY / C);
+  const WIN = PB_LIFE_WIN, FADE = PB_LIFE_FADE;
+  let builds = 0;
+  for (let cy = c0y; cy <= c1y; cy++) for (let cx = c0x; cx <= c1x; cx++) {
+    const x0 = cx * C, y0 = cy * C;
+    const cl = pbLife_OX + (x0 - y0 - C) * IW2, cr = pbLife_OX + (x0 - y0 + C) * IW2, ct = pbLife_OY + (x0 + y0) * IH2, cb = ct + 2 * C * IH2;
+    if (cr < -160 || cl > w + 160 || cb < -60 || ct > h + 150) continue;
+    const off = pbLifeH(cx, cy, 0, 3001) * WIN, win = Math.floor((pbLife_Ts + off) / WIN), key = (win * 1024 + cx) * 1024 + cy;
+    let plan = pbLifePlans.get(key);
+    if (plan === undefined) {
+      if (builds >= PB_LIFE_BUILDS) continue;
+      builds++;
+      plan = pbLifeBuild(cx, cy, win, off, key);
+      if (pbLifePlans.size >= PB_LIFE_PLANS_MAX) { let k = 0; for (const kk of pbLifePlans.keys()) { pbLifePlans.delete(kk); if (++k >= 96) break; } }
+      pbLifePlans.set(key, plan);
+    }
+    if (plan === 0) continue;
+    const u = pbLife_Ts + off - win * WIN;
+    const al = Math.min(1, u / FADE, (WIN - u) / FADE);
+    pbLife_Al = al < 0 ? 0 : al;
+    const gs = plan.g;
+    for (let gi = 0; gi < gs.length; gi++) {
+      const g = gs[gi];
+      if (!pbOn(g.b)) continue;
+      switch (g.sp) {
+        case 0: pbLifeStepDeer(g, u); break;
+        case 1: pbLifeStepCrab(g, u); break;
+        case 2: pbLifeStepCrow(g, u); break;
+        case 3: pbLifeStepGull(g, u); break;
+        case 4: pbLifeStepFish(g, u); break;
+        case 5: pbLifeStepDragon(g, u); break;
+        default: pbLifeStepBee(g, u);
+      }
+    }
+  }
+  pbLifeBuildsLast = builds;
+  pbLifeCandLast = pbLifeNLive;
+  let n = pbLifeNLive;
+  if (n > PB_LIFE_CAP) { pbLifeLive.sort(pbLifeCmp); n = PB_LIFE_CAP; }
+  for (let i = 0; i < n; i++) {
+    const c = pbLifeLive[i];
+    if (c.lay === 0) pbLifeGroundL.push(c); else if (c.lay === 2) pbLifeWaterL.push(c); else pbLifeAirL.push(c);
+  }
+}
+
+/* ---------------------------------------------------------------------
+   THE FOUR HOOKS
+   --------------------------------------------------------------------- */
+function pbLifeCountOne(c) { pbLifeCount[c.sp]++; pbLifeDrawn++; }
+function pbLifeShadow(sx, sy, rx, ry, a) {
+  ctx.fillStyle = pbLifeShStyle;
+  const was = ctx.globalAlpha;
+  ctx.globalAlpha = was * a;
+  ctx.beginPath(); ctx.ellipse(sx, sy, rx, ry, 0, 0, 6.2832); ctx.fill();
+  ctx.globalAlpha = was;
+}
+function pbLifeCollect(minX, maxX, minY, maxY, t, ents) {
+  const t0 = performance.now();
+  pbLifeEnsure(minX, maxX, minY, maxY, t);
+  for (let i = 0; i < pbLifeGroundL.length; i++) ents.push(pbLifeGroundL[i]);
+  pbLifeMsAcc += performance.now() - t0;
+}
+const PB_LIFE_GSH = [[8.5, 2.7], [3.6, 1.3], [4.2, 1.5]];       // ground shadow rx, ry by kind (deer, crab, crow)
+function pbDrawLifeEnt(e, t) {
+  const t0 = performance.now();
+  const spr = pbLifeSpriteOr(e.sp, e.fr, e.fc, e.v);
+  if (spr) {
+    const was = ctx.globalAlpha;
+    if (e.al < 1) ctx.globalAlpha = was * e.al;
+    const sh = PB_LIFE_GSH[e.sp];
+    const lift = e.alt > 0 ? Math.min(1, e.alt / 8) : 0;
+    pbLifeShadow(e.sx + 1.5, e.sy + e.alt + 0.5, sh[0] * (1 - 0.25 * lift), sh[1] * (1 - 0.25 * lift), 1 - 0.3 * lift);
+    pbDraw(ctx, spr, e.sx, e.sy);
+    ctx.globalAlpha = was;
+    pbLifeCountOne(e);
+  }
+  pbLifeMsAcc += performance.now() - t0;
+}
+function pbDrawLifeWater(minX, maxX, minY, maxY, t, w, h) {
+  const t0 = performance.now();
+  pbLifeEnsure(minX, maxX, minY, maxY, t);
+  const L = pbLifeWaterL;
+  if (L.length) {
+    const was = ctx.globalAlpha, base = 0.34 * (1 - 0.4 * pbLife_Night);
+    for (let i = 0; i < L.length; i++) {
+      const c = L[i], spr = pbLifeSpriteOr(PB_LIFE_FISH, c.fr, c.fc, c.v);
+      if (!spr) continue;
+      ctx.globalAlpha = Math.min(0.5, base * c.al);
+      pbDraw(ctx, spr, c.sx, c.sy);
+      pbLifeCountOne(c);
+    }
+    ctx.globalAlpha = was;
+  }
+  pbLifeMsAcc += performance.now() - t0;
+}
+function pbDrawLifeAir(minX, maxX, minY, maxY, t, w, h) {
+  const t0 = performance.now();
+  pbLifeEnsure(minX, maxX, minY, maxY, t);
+  const L = pbLifeAirL;
+  if (L.length) {
+    const was = ctx.globalAlpha, smooth = ctx.imageSmoothingEnabled;
+    /* shadows first, so no bird's shadow lies over another bird */
+    for (let i = 0; i < L.length; i++) {
+      const c = L[i];
+      if (c.sp === PB_LIFE_BEE) continue;
+      const high = c.sp === PB_LIFE_GULL || c.sp === PB_LIFE_CROW, k = high ? Math.min(1, 0.55 + c.alt / 220) : 0.5;
+      const gx = c.sx + 2 + SUN.dx * c.alt * 0.12, gy = c.sy + c.alt + SUN.dy * c.alt * 0.06;
+      ctx.globalAlpha = was * c.al;
+      pbLifeShadow(gx, gy, high ? 7 / k : 3.2, high ? 2.6 / k : 1.2, high ? 0.8 : 0.5);
+      if (high) pbLifeShadow(gx, gy, 4 / k, 1.5 / k, 0.7);
+    }
+    ctx.globalAlpha = was;
+    ctx.imageSmoothingEnabled = false;
+    const q = pbLifePx;
+    for (let i = 0; i < L.length; i++) {
+      const c = L[i];
+      if (c.sp === PB_LIFE_BEE) {
+        /* a bee is three art pixels and a wing: a flat draw, snapped to the art grid */
+        let x = Math.round((c.sx + renderShX) * VIEW_SCALE) / VIEW_SCALE - renderShX, y = Math.round((c.sy + renderShY) * VIEW_SCALE) / VIEW_SCALE - renderShY;
+        x = Math.round(x / q) * q; y = Math.round(y / q) * q;
+        ctx.globalAlpha = was * c.al;
+        ctx.fillStyle = "rgba(20,32,44,0.16)"; ctx.fillRect(x - q, y + c.alt + q, q * 3, q);
+        ctx.fillStyle = c.fr ? "#eef6f8" : "#c9dde4"; ctx.fillRect(x - q * (c.fr ? 1 : 0), y - q, q, q); ctx.fillRect(x + q, y - q, q, q);
+        ctx.fillStyle = "#f2c22a"; ctx.fillRect(x - q, y, q, q); ctx.fillRect(x + q, y, q, q); ctx.fillRect(x, y + q, q, q);
+        ctx.fillStyle = "#2a2018"; ctx.fillRect(x, y, q, q); ctx.fillRect(x - q, y + q, q, q); ctx.fillRect(x + q, y + q, q, q);
+        ctx.globalAlpha = was;
+        pbLifeCountOne(c);
+        continue;
+      }
+      const spr = pbLifeSpriteOr(c.sp, c.fr, c.fc, c.v);
+      if (!spr) continue;
+      if (c.al < 1) ctx.globalAlpha = was * c.al;
+      pbDraw(ctx, spr, c.sx, c.sy);
+      ctx.globalAlpha = was;
+      pbLifeCountOne(c);
+    }
+    ctx.imageSmoothingEnabled = smooth;
+  }
+  pbLifeMsAcc += performance.now() - t0;
+}
+
+/* ---------------------------------------------------------------------
+   HARNESS
+   --------------------------------------------------------------------- */
+function debugPbLifeInfo() {
+  const by = {};
+  for (let i = 0; i < 7; i++) by[PB_LIFE_NAMES[i]] = pbLifeCount[i];
+  let fl = 0, fleeNow = 0;
+  for (const L of pbLifeLocal.values()) { fl++; if (L.fl || L.kind === 2) fleeNow++; }
+  const list = [];
+  for (let i = 0; i < pbLifeLive.length && i < 40; i++) { const c = pbLifeLive[i]; list.push({ sp: PB_LIFE_NAMES[c.sp], x: +c.x.toFixed(2), y: +c.y.toFixed(2), alt: +c.alt.toFixed(1), fr: c.fr, lay: c.lay, d2: +c.d2.toFixed(1) }); }
+  return { cap: PB_LIFE_CAP, drawnLastFrame: pbLifeDrawn, bySpecies: by, fleeing: fl, fleeingNow: fleeNow,
+           candidates: pbLifeCandLast, plans: pbLifePlans.size, local: pbLifeLocal.size, defs: pbLifeDefs.filter(Boolean).length, builds: pbLifeBuildsLast,
+           msFrame: +pbLifeMsLast.toFixed(3), msAvg: +pbLifeMsEMA.toFixed(3), list };
+}
+/* test hook: where a creature of a kind is right now in the live list (never used by the game) */
+function debugPbLifeFind(name) {
+  const k = PB_LIFE_NAMES.indexOf(name), out = [];
+  for (let i = 0; i < pbLifeLive.length; i++) if (pbLifeLive[i].sp === k) out.push({ x: pbLifeLive[i].x, y: pbLifeLive[i].y, alt: pbLifeLive[i].alt });
+  return out;
+}
+
 /*@@S4_AIR@@*/
 /* =====================================================================
    Living World S4 — WATER, LIGHT AND AIR
