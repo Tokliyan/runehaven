@@ -2010,6 +2010,7 @@ function groundCacheReset() {
   for (const ch of gcChunks.values()) gcRelease(ch);
   gcChunks.clear();
   gcStats.resets++;
+  pbOnGroundReset();                 // Living World S4: the tuft lists are ground too (a new world, a new seed)
 }
 {
   const clearTiles = tileCache.clear.bind(tileCache);
@@ -8185,10 +8186,10 @@ function drawGroundTile(c, tx, ty) {
       c.closePath();
       c.fill();
     }
-    // wind-blown dune ripples
+    // wind-blown dune ripples (Living World S4: a forged beach has them in its texture, crossing tile edges)
     c.strokeStyle = "rgba(178,155,110,0.55)";
     c.lineWidth = 1;
-    for (let k = 0; k < 2; k++) {
+    for (let k = 0; k < (pbT ? 0 : 2); k++) {
       const ry = cy - IH2 * 0.4 + (hash2(tx, ty, 92 + k) * IH2 * 1.2);
       const rx0 = cx - IW2 * 0.55, rx1 = cx + IW2 * 0.55;
       c.beginPath();
@@ -8203,7 +8204,7 @@ function drawGroundTile(c, tx, ty) {
        gives the eye something to read INSIDE a sand tile, which is the other
        half of why a beach reads as banded: two near-identical shades with no
        texture between them leave the tile edges as the only thing to see. */
-    for (let s = 0; s < 4; s++) {
+    for (let s = 0; s < (pbT ? 0 : 4); s++) {          // Living World S4: the forged texture carries the grain
       const gh = hash2(tx, ty, 100 + s * 3);
       if (gh < 0.34) continue;
       const gu = (hash2(tx, ty, 101 + s * 3) - 0.5) * 1.3;   // tile-local u,v in [-0.65,0.65]
@@ -22012,6 +22013,10 @@ function pbTexture(b) {
   pbStats.texGen++; pbStats.texMs += performance.now() - t0;
   return t;
 }
+/* a world rebuild (new seed, reset) drops the tuft lists with the ground
+   chunks. A declared function so the ground reset can call it before this
+   module's consts exist (the first world build); the TDZ is caught. */
+function pbOnGroundReset() { try { pbTuftLists.clear(); } catch (e) { /* not initialised yet: nothing to drop */ } }
 /* a tile's tone patch: the flat top moved one small step lighter or darker by
    slow world noise, so a field reads in broad rolling patches, not a grid */
 function pbTone(b, tx, ty, top) {
