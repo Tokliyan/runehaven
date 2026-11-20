@@ -21711,7 +21711,11 @@ function debugCreatureInfo() {
    forge finish (own-hue outline, never black); everything snapped to
    whole backing pixels.
    ===================================================================== */
-const PIXEL_BIOMES = { plains: true, meadow: true, forest: true, darkforest: true, sand: true, coast: true };
+/* Owner sign-off, one biome at a time (README "Batch approval"): a switch is
+   true only once the owner has approved that biome's before/after GIFs, or
+   while it is the one under review on the S4 branch. Every other biome draws
+   exactly as before Session 4. */
+const PIXEL_BIOMES = { plains: true, meadow: false, forest: false, darkforest: false, sand: false, coast: false };
 function pbKeyOfB(b) {
   return b === B.PLAINS ? "plains" : b === B.MEADOW ? "meadow" : b === B.FOREST ? "forest"
     : b === B.DARKFOREST ? "darkforest" : b === B.SAND ? "sand"
