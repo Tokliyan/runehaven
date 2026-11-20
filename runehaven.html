@@ -21773,8 +21773,13 @@ function windLean(x, y) {
   const flut = 0.07 * Math.sin(WIND.tS * 5.1 + x * 1.73 + y * 2.31);
   return WIND.amp * WIND.sx * WIND.s * (0.3 + 0.95 * windGust(x, y) + flut);
 }
-/* a lean as one of the five baked frames, -2..2 */
-function pbLeanFrame(l) { const k = Math.round(l * 2); return k < -2 ? -2 : k > 2 ? 2 : k; }
+/* a lean as one of the five baked frames, -2..2. PB_LEAN_GAIN sets how far an
+   ordinary clear-day gust bends things: at 2 the clear-weather crests barely
+   reached the first frame (measured: fewer pixels changed per frame than
+   before Session 4), at 3.2 a clear-day crest rolls the grass one to two
+   frames over and a storm holds it at two. */
+const PB_LEAN_GAIN = 3.2;          // TUNABLE
+function pbLeanFrame(l) { const k = Math.round(l * PB_LEAN_GAIN); return k < -2 ? -2 : k > 2 ? 2 : k; }
 
 /* ---------------------------------------------------------------------
    THE GENERIC FORGE BAKE. The S3 creature bake, without the creature:
@@ -22211,9 +22216,10 @@ function pbTuftColors(b) {
 function pbTuftDraw(kind, v, k, b) {
   return (c) => {
     const r = (s) => hash2(v * 31 + kind, s, 2099);
-    const bend = k * 1.35;                                 // tip offset in logical px at this frame
-    const sheen = Math.abs(k) === 2;
+    const bend = k * 1.7;                                  // tip offset in logical px at this frame
+    const sheen = Math.abs(k) >= 1;                        // a bent blade shows its paler side: the gust band
     const g = b === B.SHALLOW ? pbTuftColors(B.MEADOW) : b === B.SAND ? pbTuftColors(B.PLAINS) : pbTuftColors(b);
+    const tipC = Math.abs(k) === 2 ? g.tip : g.lt;
     const blade = (x0, h, w, col, tipCol, extra) => {
       const tx = x0 + bend * (0.8 + (extra || 0)), ty = -h;
       c.fillStyle = col; c.beginPath();
@@ -22228,7 +22234,7 @@ function pbTuftDraw(kind, v, k, b) {
       const tall = kind === 1, n = tall ? 6 : 4;
       for (let i = 0; i < n; i++) {
         const x0 = (r(i) - 0.5) * (tall ? 7 : 5), h = (tall ? 6.5 : 3.5) + r(i + 10) * (tall ? 3.5 : 2);
-        blade(x0, h, 0.55, i % 3 === 0 ? g.dk : i % 3 === 1 ? g.md : g.lt, sheen ? g.tip : null, r(i + 20) * 0.4);
+        blade(x0, h, 0.55, i % 3 === 0 ? g.dk : i % 3 === 1 ? g.md : g.lt, sheen ? tipC : null, r(i + 20) * 0.4);
       }
       if (tall && r(40) > 0.5) head((r(41) - 0.5) * 4, 10 + r(43) * 2, "#c8b46a", 0.7);
       if (kind === 2) {
@@ -22509,7 +22515,7 @@ function pbDrawDecor(d, t) {
 function debugPbInfo() {
   return { PIXEL_BIOMES: Object.assign({}, PIXEL_BIOMES), WIND: Object.assign({}, WIND), stats: Object.assign({}, pbStats),
            WIND_GUST_LEN, WIND_GUST_SPEED, WIND_WEATHER: Object.assign({}, WIND_WEATHER), WIND_AMP: Object.assign({}, WIND_AMP),
-           PB_TEX, PB_TREE_STIFF, PB_FORCE_PER_FRAME, tuftLists: pbTuftLists.size, texCached: pbTexCache.size,
+           PB_TEX, PB_TREE_STIFF, PB_LEAN_GAIN, PB_FORCE_PER_FRAME, tuftLists: pbTuftLists.size, texCached: pbTexCache.size,
            forgeCacheSize: forgeCache.size, forgeCachePx, FORGE_CACHE_MAX, FORGE_CACHE_PX, FORGE_ON, PB_TEX_ON, pbForgeOk,
            PB_BAKES_PER_FRAME, PB_MS_PER_FRAME, PB_TREE_BAKES_PER_FRAME, PB_TREE_MS_PER_FRAME };
 }
