@@ -15936,6 +15936,188 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
       } catch (e) { results.push(['Living World S3: the block runs without throwing (' + (e && e.message) + ')', false]); }
     }
 
+    /* ============ Living World S4 — THE BREATHING LAND (README "Session 4
+       design": "Gates added (they only ever rise)" and "Performance budget")
+       ===============================================================
+       Daily slice 1a writes these. Only PLAINS is built, so only Plains is
+       gated; the other five biomes get their own gates as each one is built.
+
+       jsdom has no canvas a bake can be read back from, so the scenery forge
+       switches itself off here (pbSprite sets pbForgeOk false on its first
+       failed bake, and the hero forge sets FORGE_ON false on its own), which
+       means nothing needing a real sprite — a tuft blit, an ambient creature,
+       a baked colour count — can be measured in this file. Those are run6's,
+       in a real browser. What IS proven here is everything the field itself
+       can be asked.
+
+       THE CLOCK IS PINNED for the whole block. WIND reads tS = ms / 1000 -
+       worldEpoch, and worldEpoch comes from the world row's created_at, i.e.
+       from the wall clock at boot — so an un-pinned gate measures a different
+       wind on every run. debugSetDayT(null, epoch) sets worldEpoch outright
+       and hands back the old one, so every figure below is reproducible; the
+       finally puts the world's own clock back. ======================== */
+    {
+      const W = window;
+      let s4Epoch = null;
+      try {
+        const s4Hooks = ['debugPbInfo', 'debugSetPb', 'debugWindAt', 'debugSetDayT', 'windFrame', 'windGust',
+          'windLean', 'pbLeanFrame', 'setSetting', 'debugSettingsInfo'];
+        const s4Missing = s4Hooks.filter(k => typeof W[k] !== 'function');
+        if (s4Missing.length) {
+          results.push([`Living World S4: the hooks exist (missing: ${s4Missing.join(', ')})`, false]);
+        } else {
+          const P4 = W.debugPbInfo();
+          const S4_EP = 1000000;                       // a fixed worldEpoch, in seconds
+          s4Epoch = W.debugSetDayT(null, S4_EP);
+          const at4 = (tS) => (S4_EP + tS) * 1000;     // the ms a gate hands debugWindAt for a wanted tS
+          /* a top-level function's source text (one-liners included, which a
+             plain scan to the next line-starting brace would overrun), and the
+             function a character offset falls inside */
+          const bal4 = (s) => { let d = 0; for (let i = 0; i < s.length; i++) { const c = s[i]; if (c === '{') d++; else if (c === '}') d--; } return d; };
+          const fn4 = (name) => {
+            const i = gameScript.indexOf('function ' + name + '(');
+            if (i < 0) return '';
+            const first = gameScript.slice(i, gameScript.indexOf('\n', i));
+            if (first.indexOf('{') >= 0 && bal4(first) === 0) return first;
+            return gameScript.slice(i, gameScript.indexOf('\n}', i) + 2);
+          };
+          const owner4 = (i) => { const j = gameScript.lastIndexOf('\nfunction ', i); return j < 0 ? '' : gameScript.slice(j + 10, gameScript.indexOf('(', j)); };
+          const line4 = (i) => gameScript.slice(gameScript.lastIndexOf('\n', i) + 1, gameScript.indexOf('\n', i)).trim();
+
+          /* ---- WIND 1: one deterministic field ------------------------- */
+          let detBad = 0, stuck = 0;
+          for (let i = 0; i < 300; i++) {
+            const x = 11 + i * 3.1, y = 23 + i * 1.7, tS = 200 + i * 0.977;
+            const a = W.debugWindAt(x, y, at4(tS), 'clear', 'full'), b = W.debugWindAt(x, y, at4(tS), 'clear', 'full');
+            if (a.lean !== b.lean || a.gust !== b.gust || a.frame !== b.frame || a.W.dx !== b.W.dx || a.W.dy !== b.W.dy || a.W.s !== b.W.s || a.W.sx !== b.W.sx) detBad++;
+            if (W.debugWindAt(x, y, at4(tS) + 17, 'clear', 'full').lean === a.lean) stuck++;
+          }
+          const windSrc = fn4('windFrame') + fn4('windGust') + fn4('windLean') + fn4('pbLeanFrame') + fn4('windAmpNow');
+          const impure4 = ['Math.random', 'Date.now', 'performance.now', 'hash2(x', 'hash2(y'].filter(k => windSrc.indexOf(k) >= 0);
+          results.push([`Living World S4 wind: ONE field, a pure function of the world clock and the seed — 300 probes repeat exactly (${detBad} off), 17 ms always moves it (${stuck} stuck), the direction is hashed off worldSeed, and nothing in windFrame/windGust/windLean/pbLeanFrame/windAmpNow reads a clock, a random or a per-object hash (${impure4.join(' ') || 'none'})`,
+            detBad === 0 && stuck === 0 && impure4.length === 0 && windSrc.indexOf('WIND.tS') > 0 &&
+            gameScript.indexOf('const ang = hash2(worldSeed | 0, 17, 9931) * 6.2832') > 0 &&
+            gameScript.indexOf('const tS = (ms / 1000) - (worldEpoch || 0);') > 0]);
+
+          /* ---- WIND 2: direction and speed bounds ---------------------- */
+          /* the screen share is 0.4 + 0.6 * ((dx - dy) * 0.70711), and that
+             0.70711 is a shade OVER 1 / sqrt(2), so |sx| reaches a hair past
+             1 — the bound is derived from the constant rather than rounded to
+             1, or the gate would fail on the field's own arithmetic. */
+          const SXMAX4 = 0.4 + 0.6 * Math.SQRT2 * 0.70711;
+          const WW4 = P4.WIND_WEATHER, kinds4 = Object.keys(WW4);
+          const LEAN_MAX4 = Math.max.apply(null, kinds4.map(k => WW4[k])) * SXMAX4 * (0.3 + 0.95 + 0.07);
+          let b4 = 0, maxLean4 = 0, loSx4 = 9, hiSx4 = 0, loG4 = 2, hiG4 = -1, dirErr4 = 0, frOut4 = 0;
+          const sBad4 = [];
+          for (const k of kinds4) {
+            let sLo = 9, sHi = -9;
+            for (let i = 0; i < 400; i++) {
+              const r = W.debugWindAt(40 + (i * 7) % 300, 70 + (i * 13) % 300, at4(200 + i * 0.311), k, 'full'), Wn = r.W, al = Math.abs(r.lean);
+              if (al > LEAN_MAX4 + 1e-12) b4++;
+              if (r.gust < 0 || r.gust > 1) b4++;
+              if (r.frame < -2 || r.frame > 2 || r.frame !== (r.frame | 0)) frOut4++;
+              if (al > maxLean4) maxLean4 = al;
+              const a = Math.abs(Wn.sx); if (a < loSx4) loSx4 = a; if (a > hiSx4) hiSx4 = a;
+              if (r.gust < loG4) loG4 = r.gust; if (r.gust > hiG4) hiG4 = r.gust;
+              const de = Math.abs(Wn.dx * Wn.dx + Wn.dy * Wn.dy - 1); if (de > dirErr4) dirErr4 = de;
+              if (Wn.s < sLo) sLo = Wn.s; if (Wn.s > sHi) sHi = Wn.s;
+            }
+            if (sLo < WW4[k] * 0.64 - 1e-9 || sHi > WW4[k] + 1e-9) sBad4.push(`${k} ${sLo.toFixed(3)}..${sHi.toFixed(3)} vs ${WW4[k]}`);
+          }
+          results.push([`Living World S4 wind: direction and speed stay in bounds over ${kinds4.length * 400} probes — unit direction (error ${dirErr4.toExponential(1)}), screen share |sx| ${loSx4.toFixed(3)}..${hiSx4.toFixed(3)}, never below 0.4 so a wind into the screen still leans things, strength always inside 0.64x..1x its own weather (${sBad4.join('; ') || 'all five in'}), gust ${loG4.toFixed(3)}..${hiG4.toFixed(3)} inside 0..1, |lean| up to ${maxLean4.toFixed(3)} under the ${LEAN_MAX4.toFixed(3)} the formula allows, lean frame always a whole -2..2 (${frOut4} out)`,
+            b4 === 0 && frOut4 === 0 && sBad4.length === 0 && dirErr4 < 1e-12 &&
+            loSx4 >= 0.4 - 1e-9 && hiSx4 <= SXMAX4 + 1e-12 && loG4 >= 0 && hiG4 <= 1 &&
+            maxLean4 > 0.35 && maxLean4 <= LEAN_MAX4 + 1e-12]);
+
+          /* ---- WIND 3: Off is nothing, Low is exactly half -------------- */
+          let offBad4 = 0, lowBad4 = 0;
+          for (let i = 0; i < 300; i++) {
+            const x = 7 + i * 2.3, y = 13 + i * 3.7, tS = 400 + i * 0.613;
+            const f = W.debugWindAt(x, y, at4(tS), 'rain', 'full'), o = W.debugWindAt(x, y, at4(tS), 'rain', 'off'), l = W.debugWindAt(x, y, at4(tS), 'rain', 'low');
+            if (o.lean !== 0 || o.frame !== 0 || o.W.amp !== 0) offBad4++;
+            if (Math.abs(l.lean - f.lean * P4.WIND_AMP.low) > 1e-12 || l.W.amp !== P4.WIND_AMP.low) lowBad4++;
+          }
+          /* every reader of the gust OUTSIDE the field itself scales it by
+             WIND.amp, or its own function bails when the amp is 0. That, plus
+             windLean's short circuit, is what makes Off a still frame. */
+          const gustSites4 = [];
+          for (let i = gameScript.indexOf('windGust('); i >= 0; i = gameScript.indexOf('windGust(', i + 1)) gustSites4.push(i);
+          const unscaled4 = [];
+          for (const i of gustSites4) {
+            const nm = owner4(i);
+            if (nm === 'windGust' || nm === 'windLean' || nm === 'debugWindAt') continue;
+            const ln = line4(i);
+            if (ln.indexOf('WIND.amp') < 0 && ln.indexOf('* amp') < 0 && fn4(nm).indexOf('if (!WIND.amp') < 0) unscaled4.push(nm + ': ' + ln.slice(0, 54));
+          }
+          const rmWas4 = W.debugSettingsInfo().SETTINGS.reduceMotion;
+          W.setSetting('reduceMotion', true);
+          W.windFrame(at4(600), 'clear');
+          const rmLean4 = W.windLean(100, 100), rmAmp4 = W.debugPbInfo().WIND.amp;
+          W.setSetting('reduceMotion', !!rmWas4);
+          W.windFrame(at4(600), 'clear');
+          results.push([`Living World S4 wind: "Wind motion: Off" is nothing moving — 300 probes at Off give lean 0 and frame 0 (${offBad4} off), Low is exactly half of Full (${lowBad4} off), Reduce motion forces amp ${rmAmp4} and lean ${rmLean4}, windLean short-circuits on amp 0, and all ${gustSites4.length} readers of the gust scale it by WIND.amp or bail without it (${unscaled4.join(' | ') || 'all scaled'})`,
+            offBad4 === 0 && lowBad4 === 0 && rmAmp4 === 0 && rmLean4 === 0 && unscaled4.length === 0 && gustSites4.length >= 6 &&
+            fn4('windLean').indexOf('if (!WIND.amp) return 0;') > 0 &&
+            fn4('windAmpNow').indexOf('if (SETTINGS.reduceMotion) return 0;') > 0 &&
+            P4.WIND_AMP.off === 0 && P4.WIND_AMP.low === 0.5 && P4.WIND_AMP.full === 1]);
+
+          /* ---- WIND 4: one band, crossing in order --------------------- */
+          /* Measured as the band itself, not as two lone points: a profile of
+             the gust taken ALONG the wind for 30 tiles. Its autocorrelation
+             peaks at WIND_GUST_LEN (the crests are a band with one spacing),
+             and the profile dt later is the SAME profile moved downwind by
+             WIND_GUST_SPEED * dt — matching far better than the unmoved one,
+             and better than the same move upwind. A per-object wobble could
+             not do that. The base point is near the world origin on purpose:
+             `along` is measured from the origin, so the direction's slow drift
+             turns into a phase error proportional to the distance from it. */
+          const SPEED4 = P4.WIND_GUST_SPEED, LEN4 = P4.WIND_GUST_LEN;
+          const NU4 = 300, DU4 = 0.1;
+          const prof4 = (dir, tS, shift) => {
+            const out = new Float64Array(NU4);
+            for (let i = 0; i < NU4; i++) { const u = i * DU4 + shift; out[i] = W.debugWindAt(6 + dir.dx * u, 9 + dir.dy * u, at4(tS), 'clear', 'full').gust; }
+            return out;
+          };
+          const rmsP4 = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += (a[i] - b[i]) * (a[i] - b[i]); return Math.sqrt(s / a.length); };
+          const bandBad4 = [], bandSay4 = [];
+          for (const tS0 of [300, 1000, 5000]) {
+            const dir = W.debugWindAt(0, 0, at4(tS0), 'clear', 'full').W;
+            for (const dt of [0.25, 1.0]) {
+              const later = prof4(dir, tS0 + dt, 0), back = prof4(dir, tS0, -SPEED4 * dt), same = prof4(dir, tS0, 0), fwd = prof4(dir, tS0, SPEED4 * dt);
+              const eGood = rmsP4(later, back), eOther = Math.min(rmsP4(later, same), rmsP4(later, fwd));
+              if (!(eGood <= 0.03 && eGood <= 0.25 * eOther)) bandBad4.push(`t${tS0}+${dt}s ${eGood.toFixed(4)} vs ${eOther.toFixed(4)}`);
+              if (dt === 1.0) bandSay4.push(`t${tS0}: ${eGood.toFixed(4)} moved vs ${eOther.toFixed(4)} not`);
+            }
+            const p = prof4(dir, tS0, 0);
+            let bestL4 = 0, bestC4 = -9;
+            for (let k = 20; k <= 200; k++) {
+              let ma = 0, mb = 0, n = 0;
+              for (let i = 0; i + k < NU4; i++) { ma += p[i]; mb += p[i + k]; n++; }
+              ma /= n; mb /= n;
+              let s = 0, va = 0, vb = 0;
+              for (let i = 0; i + k < NU4; i++) { s += (p[i] - ma) * (p[i + k] - mb); va += (p[i] - ma) * (p[i] - ma); vb += (p[i + k] - mb) * (p[i + k] - mb); }
+              const c = s / Math.sqrt(va * vb || 1);
+              if (c > bestC4) { bestC4 = c; bestL4 = k * DU4; }
+            }
+            bandSay4.push(`spacing ${bestL4.toFixed(1)}t (r ${bestC4.toFixed(3)})`);
+            if (Math.abs(bestL4 - LEN4) > 0.3 || bestC4 < 0.95) bandBad4.push(`spacing t${tS0} ${bestL4.toFixed(1)}`);
+          }
+          let signBad4 = 0, nSign4 = 0;
+          for (let i = 0; i < 400; i++) {
+            const g = W.debugWindAt(200 + i * 1.3, 300 + i * 0.7, at4(800 + i * 0.523), 'clear', 'full').lean, tr = g * P4.PB_TREE_STIFF;
+            if (Math.abs(g) > 1e-6) { nSign4++; if (Math.sign(tr) !== Math.sign(g) || Math.abs(tr) >= Math.abs(g)) signBad4++; }
+          }
+          results.push([`Living World S4 wind: a gust is ONE band crossing the world in order, not a per-object wobble — the gust profile along the wind keeps its shape and moves downwind by exactly ${SPEED4} tiles a second, its crests ${LEN4} tiles apart (${bandSay4.join('; ')}); a tree leans the same way as the grass at its feet and never further (PB_TREE_STIFF ${P4.PB_TREE_STIFF}, ${signBad4} of ${nSign4} wrong)`,
+            bandBad4.length === 0 && signBad4 === 0 && nSign4 > 300 &&
+            P4.PB_TREE_STIFF > 0 && P4.PB_TREE_STIFF < 1 &&
+            gameScript.indexOf('const k = pbLeanFrame(windLean(f.x, f.y) * PB_TREE_STIFF);') > 0 &&
+            gameScript.indexOf('let lean = windLean(x, y);') > 0 &&
+            (gameScript.match(/const along = x \* dx \+ y \* dy, cross = y \* dx - x \* dy;/g) || []).length === 1]);
+        }
+      } catch (e) { results.push(['Living World S4: the wind block runs without throwing (' + (e && e.message) + ')', false]); }
+      finally { if (s4Epoch !== null) try { W.debugSetDayT(null, s4Epoch); } catch (e) { /* the world clock was already back */ } }
+    }
+
     let allOk = true;
     for (const [n, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + ' - ' + n); if (!ok) allOk = false; }
     process.exit(allOk && !caught ? 0 : 1);
