@@ -21712,9 +21712,14 @@ function debugCreatureInfo() {
    whole backing pixels.
    ===================================================================== */
 /* Owner sign-off, one biome at a time (README "Batch approval"): a switch is
-   true only once the owner has approved that biome's before/after GIFs, or
-   while it is the one under review on the S4 branch. Every other biome draws
-   exactly as before Session 4. */
+   true only once the owner has approved that biome's before/after GIFs. It
+   used to say "or while it is the one under review on the S4 branch", which
+   is no longer the owner's rule: NEXT_BUILD.md override 2 and the daily
+   slices (LIVING_WORLD_DAILY.md 1a and 1b) say every switch stays exactly as
+   a slice says and Plains is to be left FALSE until the owner has seen its
+   GIFs and flips it himself. A night build that wants to see a biome drives
+   the switch through debugSetPb and puts it back, as the gates here do.
+   Every biome draws exactly as before Session 4 while its switch is false. */
 const PIXEL_BIOMES = { plains: false, meadow: false, forest: false, darkforest: false, sand: false, coast: false };
 function pbKeyOfB(b) {
   return b === B.PLAINS ? "plains" : b === B.MEADOW ? "meadow" : b === B.FOREST ? "forest"

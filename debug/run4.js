@@ -15965,7 +15965,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           'debugSetForge', 'debugSetCam', 'pbSprite', 'pbTuftSprite', 'pbTreeSprite', 'pbTexGen',
           'pbFrameStart', 'forgeQuantize', 'forgeCacheAdd', 'debugWorldSeedSet', 'debugSetPlayer',
           'debugPbLifeInfo', 'pbLifeBuild', 'pbLifeCmp', 'pbLifeNewCand', 'forgeSprite', 'creatureSprite',
-          'tryAttack', 'nearestHitDir', 'biomeAt', 'debugGroundCache', 'pbDrawTufts'];
+          'tryAttack', 'nearestHitDir', 'biomeAt', 'debugGroundCache', 'pbDrawTufts', 'worldToScreen',
+          'debugPbAirInfo'];
         const s4Missing = s4Hooks.filter(k => typeof W[k] !== 'function');
         if (s4Missing.length) {
           results.push([`Living World S4: the hooks exist (missing: ${s4Missing.join(', ')})`, false]);
@@ -16117,6 +16118,73 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             gameScript.indexOf('const k = pbLeanFrame(windLean(f.x, f.y) * PB_TREE_STIFF);') > 0 &&
             gameScript.indexOf('let lean = windLean(x, y);') > 0 &&
             (gameScript.match(/const along = x \* dx \+ y \* dy, cross = y \* dx - x \* dy;/g) || []).length === 1]);
+
+          /* ---- THE SURF REPAIR'S OWN GATE (slice 1a) ------------------
+             Why this exists. The two S2 surf gates match the foam block's
+             SOURCE TEXT: they pin the four stroke origins to the literals
+             `tx, ty + 0.08, zw` and so on. Slice 1a's repair put those
+             literals back and moved the tide onto each stroke's screen
+             points instead — the fix the slice itself proposed ("apply the
+             tide as a ctx translate around the block"). Either form has the
+             same cost: the literals no longer decide where the stroke LANDS,
+             because the offset comes from code those two gates never read.
+             Left there, any offset would pass them, including one that put
+             the surf back on the land in front of the water — the defect
+             they were written to catch.
+
+             So this gate reads the offset. It pins the four moveTo/lineTo
+             lines and the two lines that define the offsets, and then checks
+             NUMERICALLY, over a sweep of tiles and tide phases, that the
+             screen-space form draws the same points the world-space form
+             drew. Together with the S2 pair, the text and the picture are
+             tied back together: moving the surf now means editing a line one
+             of the three gates pins. */
+          {
+            const foamAt4 = gameScript.indexOf('// Foam where shallow water laps against land (2026-07-11)');
+            const foam4s = gameScript.slice(foamAt4, gameScript.indexOf('} else if (b === B.LAVA) {', foamAt4));
+            const OFF_DEF = 'const tdx = td * IW2, tdy = -td * IH2, t2x = td2 * IW2, t2y = -td2 * IH2;';
+            const TD_DEF = 'const td = pbAirTide(tx, ty, 0), td2 = pbAirTide(tx, ty, 0.6);';
+            const STROKES = [
+              'ctx.beginPath(); ctx.moveTo(ax + tdx, ay + tdy); ctx.lineTo(bx2 + tdx, by2 + tdy); ctx.stroke();',
+              'ctx.beginPath(); ctx.moveTo(ax - tdx, ay + tdy); ctx.lineTo(bx2 - tdx, by2 + tdy); ctx.stroke();',
+              'ctx.beginPath(); ctx.moveTo(ax + t2x, ay + t2y); ctx.lineTo(bx2 + t2x, by2 + t2y); ctx.stroke();',
+              'ctx.beginPath(); ctx.moveTo(ax - t2x, ay + t2y); ctx.lineTo(bx2 - t2x, by2 + t2y); ctx.stroke();',
+            ];
+            const strokeBad4 = STROKES.filter(s => (foam4s.match(new RegExp(s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length !== 1);
+            /* every moveTo/lineTo in the block is one of those four: no fifth
+               stroke has been slipped in beside them */
+            const allStrokes4 = (foam4s.match(/ctx\.moveTo\(/g) || []).length;
+            /* IW2 and IH2, read off the real projection rather than assumed */
+            const o00 = W.worldToScreen(0, 0, 0), o10 = W.worldToScreen(1, 0, 0);
+            const IW2x = o10[0] - o00[0], IH2x = o10[1] - o00[1];
+            let offBad4 = 0, offMax4 = 0, phases4 = 0;
+            for (let i = 0; i < 240; i++) {
+              const tx = 40 + (i * 7) % 900, ty = 70 + (i * 13) % 900;
+              const td = (i % 2 ? 1 : -1) * 0.12 * Math.sin(i * 0.37), nEnd = i % 3 ? 1 : 0.2727;
+              phases4++;
+              /* the world-space form the S2 gates' geometry was written against */
+              const wN0 = W.worldToScreen(tx, ty + 0.08 - td, -16), wN1 = W.worldToScreen(tx + nEnd, ty + 0.08 - td, -16);
+              const wW0 = W.worldToScreen(tx + 0.08 - td, ty, -16), wW1 = W.worldToScreen(tx + 0.08 - td, ty + nEnd, -16);
+              /* the screen-space form the file now draws */
+              const sN0 = W.worldToScreen(tx, ty + 0.08, -16), sN1 = W.worldToScreen(tx + nEnd, ty + 0.08, -16);
+              const sW0 = W.worldToScreen(tx + 0.08, ty, -16), sW1 = W.worldToScreen(tx + 0.08, ty + nEnd, -16);
+              const tdx = td * IW2x, tdy = -td * IH2x;
+              const pairs = [[wN0, [sN0[0] + tdx, sN0[1] + tdy]], [wN1, [sN1[0] + tdx, sN1[1] + tdy]],
+                             [wW0, [sW0[0] - tdx, sW0[1] + tdy]], [wW1, [sW1[0] - tdx, sW1[1] + tdy]]];
+              for (const [a, b] of pairs) {
+                const d = Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]));
+                if (d > offMax4) offMax4 = d;
+                if (d > 1e-9) offBad4++;
+              }
+            }
+            /* and the swash is still a real swash, not a dead constant */
+            const tideInfo4 = W.debugPbAirInfo ? W.debugPbAirInfo().tide : null;
+            results.push([`Living World S4 surf (slice 1a's own repair): the tide is the ONLY thing moved onto the foam's screen points, and it moves them exactly where the world-space form put them — the four stroke lines and the two offset definitions are pinned (${strokeBad4.length} off), the block draws those four strokes and no fifth (${allStrokes4}), and over ${phases4 * 4} tile-and-phase probes the screen-space offset lands on the world-space point to ${offMax4.toExponential(1)} px (${offBad4} over 1e-9); swash ${tideInfo4 ? tideInfo4.swash : '?'} tiles on a ${tideInfo4 ? tideInfo4.periodS : '?'} s period`,
+              foamAt4 > 0 && strokeBad4.length === 0 && allStrokes4 === 4 &&
+              foam4s.indexOf(OFF_DEF) > 0 && foam4s.indexOf(TD_DEF) > 0 &&
+              offBad4 === 0 && offMax4 < 1e-9 && phases4 === 240 &&
+              !!tideInfo4 && tideInfo4.swash > 0 && tideInfo4.periodS > 0]);
+          }
 
           /* ---- FORGE: stable keys, <= 40 colours, inside the cache budget
              ------------------------------------------------------------
