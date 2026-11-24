@@ -388,6 +388,83 @@ const STUB = `
     results.push([`Living World S3 forge (3): in the world a pet is drawn from the forge (pet sprite ${w.pet}, ${w.cb} creature bakes in 2.5 s, ${w.fail} failures, forge on ${w.on})`, w.on && w.pet && w.cb > 0 && w.fail === 0]);
   }
 
+
+  /* ---- 8. Living World S4: the Plains scenery through the REAL forge ------
+     Slice 1a. run4 proves the keys, the quantiser and the budgets without a
+     canvas; these are the two figures that need a real one: what a Plains
+     sprite actually comes out as, and what a bake actually costs. Only
+     Plains is gated — the other five biomes get theirs as each is built. */
+  {
+    const r = await p.evaluate(() => {
+      const out = { n: 0, nulls: [], bad: [], ms: [], maxC: 0, minSolid: 1e9, cache: null, gc: null, keys: [] };
+      const scan = (e) => { const d = e.cv.getContext('2d').getImageData(0, 0, e.W, e.H).data, cols = new Set(); let bad = 0, solid = 0;
+        for (let i = 0; i < d.length; i += 4) { if (d[i + 3] && d[i + 3] !== 255) bad++; if (d[i + 3] === 255) { solid++; cols.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]); } } return { bad, solid, cols: cols.size }; };
+      const freeBudget = () => { pbLeft = 1e9; pbMsLeft = 1e9; pbTreeLeft = 1e9; pbTreeMsLeft = 1e9; pbForceLeft = 1e9; pbBackoffUntil = 0; };
+      const take = (name, mk) => { freeBudget(); const t0 = performance.now(); const e = mk(); out.ms.push(performance.now() - t0); out.n++;
+        if (!e) { out.nulls.push(name); return; }
+        const q = scan(e); out.maxC = Math.max(out.maxC, q.cols); out.minSolid = Math.min(out.minSolid, q.solid);
+        if (q.bad || q.cols > FORGE_MAX_COLORS || q.solid < 4) out.bad.push(`${name}: ${q.bad} partial, ${q.cols} cols, ${q.solid} solid`); };
+      PIXEL_BIOMES.plains = true;
+      groundCacheReset(); pbTuftLists.clear(); forgeCache.clear(); forgeCachePx = 0;
+      const px = pbPx();
+      /* Plains tufts (grass, tall grass) x 3 variants x 5 lean frames */
+      for (const kind of [0, 1]) for (let v = 0; v < 3; v++) for (let k = -2; k <= 2; k++)
+        take(`tuft ${kind}/${v}/${k}`, () => pbTuftSprite(kind, v, k, B.PLAINS, px));
+      /* Plains trees (oak, birch, elm) x 3 sizes x 2 variants x 5 lean frames */
+      for (const kind of ['oak', 'birch', 'elm']) for (let sb = 0; sb < 3; sb++) for (let v = 0; v < 2; v++) for (let k = -2; k <= 2; k++)
+        take(`tree ${kind}/${sb}/${v}/${k}`, () => pbTreeSprite(kind, sb, v, k, px, false));
+      /* Plains ground props and decor */
+      for (const kind of PB_PROPS.plains) for (let v = 0; v < 6; v++)
+        take(`prop ${kind}/${v}`, () => pbPropSprite(kind, v, px, true));
+      for (const kind of ['bush', 'flowers', 'wildflowers', 'pebble']) for (let v = 0; v < 6; v++) for (let k = -1; k <= 1; k++)
+        take(`decor ${kind}/${v}/${k}`, () => pbSprite('decor|' + kind + '|' + v + '|' + k, px,
+          kind === 'wildflowers' ? { l: -14, r: 14, t: -11, b: 3 } : kind === 'bush' ? { l: -11, r: 11, t: -14, b: 3 } : { l: -8, r: 8, t: -10, b: 3 },
+          pbDecorDraw(kind, v, k), kind === 'bush' || kind === 'pebble' ? undefined : { finish: false }));
+      out.cache = { size: forgeCache.size, px: forgeCachePx, MAX: FORGE_CACHE_MAX, PX: FORGE_CACHE_PX, MAXC: FORGE_MAX_COLORS };
+      /* THE GROUND CHUNK BAKE, each one timed on its own rather than a whole
+         ground PASS divided by the chunks it happened to bake (which charges
+         every blit and every direct tile to the bake and reads ~10 ms). The
+         216 sprites above are already in the cache, so these are the warm
+         bakes the budget is about; the first one is reported separately
+         because a cold chunk also bakes whatever ground props it meets. */
+      let pc = null;
+      for (let r = 0; r < 9000 && !pc; r++) {
+        const tx = 60 + (r * 71) % (N - 120), ty = 60 + (r * 131) % (N - 120);
+        let n = 0;
+        for (let dy = -7; dy <= 7; dy++) for (let dx = -7; dx <= 7; dx++) if (biomeAt(tx + dx, ty + dy) === B.PLAINS) n++;
+        if (n >= 200) pc = [tx, ty];
+      }
+      out.gc = { chunks: 0, cold: -1, avg: -1, max: -1, tiles: GC_TILES, at: pc };
+      if (pc) {
+        debugSetPlayer({ x: pc[0], y: pc[1] }); debugSetCam(pc[0], pc[1]);
+        groundCacheReset(); camOffset();
+        const cx0 = Math.floor(pc[0] / GC_TILES), cy0 = Math.floor(pc[1] / GC_TILES);
+        let cv = null; const gms = [];
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          freeBudget();
+          const t0 = performance.now();
+          cv = gcBake(cx0 + dx, cy0 + dy, cv) || cv;
+          gms.push(performance.now() - t0);
+        }
+        const warm = gms.slice(1);
+        out.gc.chunks = gms.length; out.gc.cold = gms[0];
+        out.gc.avg = warm.reduce((a, b) => a + b, 0) / warm.length;
+        out.gc.max = Math.max.apply(null, warm);
+      }
+      PIXEL_BIOMES.plains = false;
+      groundCacheReset(); pbTuftLists.clear();
+      return out;
+    });
+    const avg = r.ms.reduce((a, b) => a + b, 0) / Math.max(1, r.ms.length);
+    const p95 = r.ms.slice().sort((a, b) => a - b)[Math.floor(r.ms.length * 0.95)] || 0;
+    console.log(`S4 Plains scenery bakes: ${r.n}, average ${avg.toFixed(2)} ms, p95 ${p95.toFixed(2)} ms, most colours ${r.maxC}; ground chunk warm ${r.gc.avg.toFixed(2)} ms (max ${r.gc.max.toFixed(2)}, cold ${r.gc.cold.toFixed(2)}) over ${r.gc.chunks} chunks at ${r.gc.at}`);
+    results.push([`Living World S4 forge (run6): every Plains scenery sprite bakes for real — ${r.n} tuft, tree, ground-prop and decor sprites into alpha 0 / 255 only, at most ${r.cache ? r.cache.MAXC : '?'} colours (most used ${r.maxC}), never empty (smallest ${r.minSolid === 1e9 ? 0 : r.minSolid} solid px) — ${r.nulls.length} null, ${r.bad.length} bad${r.bad.length ? ': ' + r.bad.slice(0, 3).join(' | ') : ''}`,
+      r.n >= 150 && r.nulls.length === 0 && r.bad.length === 0 && r.minSolid >= 4 && r.maxC <= (r.cache ? r.cache.MAXC : 40)]);
+    results.push([`Living World S4 perf (run6): a bake stays inside the 6 ms budget with Plains on — ${r.n} scenery sprite bakes average ${avg.toFixed(2)} ms (p95 ${p95.toFixed(2)}), and a whole ${r.gc.tiles}x${r.gc.tiles}-tile ground chunk at ${r.gc.at} bakes in ${r.gc.avg.toFixed(2)} ms on average and ${r.gc.max.toFixed(2)} ms at worst over ${r.gc.chunks - 1} warm chunks (the first, cold, which also bakes the ground props it meets: ${r.gc.cold.toFixed(2)} ms); the cache holds ${r.cache ? r.cache.size : '?'} sprites and ${r.cache ? (r.cache.px / 1e6).toFixed(2) : '?'}M pixels, inside ${r.cache ? r.cache.MAX : '?'} / ${r.cache ? (r.cache.PX / 1e6).toFixed(0) : '?'}M`,
+      avg < 6 && p95 < 6 && r.gc.chunks >= 9 && r.gc.avg >= 0 && r.gc.avg < 6 && r.gc.max < 6 &&
+      !!r.cache && r.cache.size <= r.cache.MAX && r.cache.px <= r.cache.PX]);
+  }
+
   if (errs.length) results.push(['S4 run6: no page errors (' + errs.slice(0, 3).join(' | ') + ')', false]);
   await b.close();
   let ok = true;
