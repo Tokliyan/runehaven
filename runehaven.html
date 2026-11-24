@@ -21715,7 +21715,7 @@ function debugCreatureInfo() {
    true only once the owner has approved that biome's before/after GIFs, or
    while it is the one under review on the S4 branch. Every other biome draws
    exactly as before Session 4. */
-const PIXEL_BIOMES = { plains: true, meadow: false, forest: false, darkforest: false, sand: false, coast: false };
+const PIXEL_BIOMES = { plains: false, meadow: false, forest: false, darkforest: false, sand: false, coast: false };
 function pbKeyOfB(b) {
   return b === B.PLAINS ? "plains" : b === B.MEADOW ? "meadow" : b === B.FOREST ? "forest"
     : b === B.DARKFOREST ? "darkforest" : b === B.SAND ? "sand"
@@ -25225,16 +25225,31 @@ function render(t) {
           const wEnd = heightAt(tx, ty + 1) >= 0 ? FOAM_FRONT_T : 1;
           ctx.strokeStyle = `rgba(238,248,250,${0.72 * pulse})`;
           ctx.lineWidth = 2.4;
-          const zw = -HZ, td = pbAirTide(tx, ty, 0), td2 = pbAirTide(tx, ty, 0.6);   // Living World S4: the tide
+          const zw = -HZ;
+          /* Living World S4: THE TIDE, and why it is not in the arguments
+             below. The swash runs up each shore along that edge's OWN normal
+             — a north stroke moves toward the land to the north, a west
+             stroke toward the land to the west — so there is no one shift for
+             the whole block. It is added to each stroke's two SCREEN points
+             instead of being folded into the worldToScreen calls, which keeps
+             those four lines byte for byte what the S2 R3 and R4 surf gates
+             read (they match the stroke text, not the picture) and costs not
+             one extra canvas call. World (0, -td) is (+td * IW2, -td * IH2)
+             on screen and world (-td, 0) is (-td * IW2, -td * IH2): the same
+             y, the x mirrored. With the coast switch off, or Reduce motion on,
+             pbAirTide is 0 and every offset is 0, so the surf is exactly
+             where it was before Session 4. */
+          const td = pbAirTide(tx, ty, 0), td2 = pbAirTide(tx, ty, 0.6);
+          const tdx = td * IW2, tdy = -td * IH2, t2x = td2 * IW2, t2y = -td2 * IH2;
           if (landN) {   // land to the north edge
-            const [ax, ay] = worldToScreen(tx, ty + 0.08 - td, zw);
-            const [bx2, by2] = worldToScreen(tx + nEnd, ty + 0.08 - td, zw);
-            ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
+            const [ax, ay] = worldToScreen(tx, ty + 0.08, zw);
+            const [bx2, by2] = worldToScreen(tx + nEnd, ty + 0.08, zw);
+            ctx.beginPath(); ctx.moveTo(ax + tdx, ay + tdy); ctx.lineTo(bx2 + tdx, by2 + tdy); ctx.stroke();
           }
           if (landW) {   // land to the west edge
-            const [ax, ay] = worldToScreen(tx + 0.08 - td, ty, zw);
-            const [bx2, by2] = worldToScreen(tx + 0.08 - td, ty + wEnd, zw);
-            ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
+            const [ax, ay] = worldToScreen(tx + 0.08, ty, zw);
+            const [bx2, by2] = worldToScreen(tx + 0.08, ty + wEnd, zw);
+            ctx.beginPath(); ctx.moveTo(ax - tdx, ay + tdy); ctx.lineTo(bx2 - tdx, by2 + tdy); ctx.stroke();
           }
           /* Gauntlet S2 R3: no foam on the SOUTH or EAST edge any more. Land
              there stands IN FRONT of the water, its top face 16px above the
@@ -25247,14 +25262,14 @@ function render(t) {
           ctx.strokeStyle = `rgba(238,248,250,${0.3 * pulse})`;
           ctx.lineWidth = 1.6;
           if (landN) {
-            const [ax, ay] = worldToScreen(tx, ty + 0.26 - td2, zw);
-            const [bx2, by2] = worldToScreen(tx + nEnd, ty + 0.26 - td2, zw);
-            ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
+            const [ax, ay] = worldToScreen(tx, ty + 0.26, zw);
+            const [bx2, by2] = worldToScreen(tx + nEnd, ty + 0.26, zw);
+            ctx.beginPath(); ctx.moveTo(ax + t2x, ay + t2y); ctx.lineTo(bx2 + t2x, by2 + t2y); ctx.stroke();
           }
           if (landW) {
-            const [ax, ay] = worldToScreen(tx + 0.26 - td2, ty, zw);
-            const [bx2, by2] = worldToScreen(tx + 0.26 - td2, ty + wEnd, zw);
-            ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
+            const [ax, ay] = worldToScreen(tx + 0.26, ty, zw);
+            const [bx2, by2] = worldToScreen(tx + 0.26, ty + wEnd, zw);
+            ctx.beginPath(); ctx.moveTo(ax - t2x, ay + t2y); ctx.lineTo(bx2 - t2x, by2 + t2y); ctx.stroke();
           }
           }
         }
