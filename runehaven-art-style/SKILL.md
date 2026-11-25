@@ -53,6 +53,70 @@ Flat-face shading formula: side faces are the top colour darkened by a multiplie
 
 ## Known visual problems flagged by the user (running list — check new builds against this before shipping)
 
+### 2026-11-25 (Living World S4 — PLAINS, the breathing land) — ON BRANCH `s4/breathing-land`, NOT SHIPPED
+Nothing here is in `main` and nothing here is approved yet. `PIXEL_BIOMES.plains`
+ships **false**: the Plains you see in the game today is still exactly main's.
+Before/after GIFs for the owner are in `docs/nightly/plains-*.gif` (day, dusk,
+night, a wind closeup and a plains-forest border); the full slice report is
+`docs/nightly/1b.md`. The owner flips the switch after he has seen them.
+
+What the forged Plains is, with the switch on:
+- **One wind for the whole world.** `windFrame(ms, weather)` once a frame from
+  the shared world clock (`Date.now() - worldEpoch`) and the weather, so every
+  client sees the same gust cross the same field with nothing sent over the
+  network. Gust crests are bands `WIND_GUST_LEN` 11 tiles apart travelling
+  downwind at `WIND_GUST_SPEED` 3.4 tiles a second; `windLean(x, y)` is the
+  signed screen-x lean everything that bends reads. New Settings row **Wind
+  motion** Off / Low / Full (`WIND_AMP` 0 / 0.5 / 1, Low exactly half of Full),
+  phones default to Low, Reduce motion forces 0.
+- **Forged ground.** `pbTone` moves the flat top one step lighter or darker on
+  slow world noise, so a field reads as broad rolling patches and not a grid;
+  `pbGroundTex` lays a 192-art-px tileable flat-pixel texture (`pbTexGen`, no
+  canvas, 12 colours on Plains) anchored to the iso origin so it crosses tile
+  edges; `pbGroundProps` bakes stones and logs into the ground chunk at
+  `PB_PROP_P.plains` 0.035 a tile. All inside the tile's own diamond, all in
+  the ground cache, so none of it costs a frame.
+- **Tufts that lean.** Per 16x16 chunk a fixed list from tile hashes
+  (`pbBuildTufts`), drawn live as a sprite swap across **five baked lean
+  frames** (`pbLeanFrame`, -2..2, `PB_LEAN_GAIN` 3.2) — never a per-frame
+  redraw. Plains gets grass and, on the noise patches, tall grass.
+- **Trees.** Plains oaks, birches and elms (`pbTreeKind`), three sizes, two
+  variants, five lean frames, baked through the forge. **Placement and density
+  are untouched** — only how a tree is DRAWN changes. A tree leans
+  `PB_TREE_STIFF` 0.75 of what the grass at its feet does, never further.
+- Rules kept: no gradients, flat fills and flat pixel textures only; light from
+  the top-left; the locked palette (every tone is derived from `PAL[b]`, no new
+  entry); the forge finish's own-hue outline, never black; everything snapped
+  to whole backing pixels; the 40-colour cap per sprite.
+- **Cost.** Real frames per second at the Plains spot, interleaved on/off in one
+  session (run6's method, `debug/s4fps.js`): **x1.021–x1.039**, limit 1.15. In
+  deterministic canvas operations (run4): x0.337 baked — forged scenery is
+  *cheaper* than the live art it replaces — and x1.035 worst case with the forge
+  off. A warm ground chunk bakes in 1.26–2.49 ms against the 6 ms budget.
+- **Known problems, none of them fixed in this slice** (all are in
+  `docs/nightly/1b.md` with measurements): the wind's screen-x share `WIND.sx`
+  has a deliberate ±0.4 dead zone and so is **discontinuous at zero** — four to
+  twelve times every two hours of world clock the whole field's lean flips sign
+  in one frame, up to two baked lean frames at once; the wading push that parts
+  grass around you is not scaled by `WIND.amp`, so grass still parts with Wind
+  motion Off and under Reduce motion (main's v8 grass does the same, so this is
+  parity, not a regression); forged tufts are skipped on the 3x3 ring under
+  every base piece and along the spawn trail while the old v8 tufts are
+  suppressed there, so those tiles keep the forged ground texture but carry no
+  blades; `pbTuftSprite` has no `k = 0` fallback on a bake-budget miss, unlike
+  the tree and decor paths, so a tuft can drop out for a frame; ground props
+  baked into a chunk during a forge backoff are gone until that chunk is
+  re-baked.
+- **Not Plains, but on this branch and dormant:** the tide's swash
+  (`PB_AIR_TIDE_A` 0.12 against the foam line's 0.08 inset) would put ~2 px of
+  surf on the bank for 26.8% of every cycle once `coast` is true — the fixed
+  defect "foam on the grass of vertical shores", see below — and the air
+  module draws foam on the south and east shores, which the locked rule says
+  carry none. Both wait on the coast slice and an owner decision.
+- Do not reintroduce: a per-object random wobble instead of one wind field;
+  per-frame tuft redraws instead of baked lean frames; changing where trees
+  stand during an art pass; a gradient anywhere in the forged ground.
+
 ### 2026-10-25 (Living World S3 — creatures that live)
 Owner approved the design ("approve") and saw the in-game GIFs. What shipped:
 - **Finer grid for everything:** FORGE_ART_LOGICAL 0.625 (one art px = one screen px at 1.6x) with FORGE_SS 2; heroes and creatures share it.
