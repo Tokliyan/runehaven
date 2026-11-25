@@ -21747,7 +21747,17 @@ const WIND = { dx: 1, dy: 0, sx: 1, s: 0.55, amp: 1, tS: 0, kind: "clear" };
 function windAmpNow() {
   if (typeof SETTINGS === "undefined") return 1;
   if (SETTINGS.reduceMotion) return 0;
-  const a = WIND_AMP[SETTINGS.wind];
+  /* Membership, not a plain lookup: WIND_AMP is an object literal, so
+     WIND_AMP["__proto__"], ["constructor"], ["toString"], ["valueOf"] and
+     ["hasOwnProperty"] are all NOT undefined, and loadSettings accepts any
+     persisted STRING for this key (it checks typeof against the default, not
+     the value). A save holding one of those five would have made WIND.amp an
+     object or a function, which is truthy, so windLean would return NaN,
+     pbLeanFrame(NaN) is NaN, every forge key would carry "NaN", every bake
+     would draw nothing and cache a 1x1 transparent sprite, and the weather
+     particles would take x = NaN and never be recycled. Found by the slice 1b
+     review; the five keys are reachable from localStorage alone. */
+  const a = WIND_MODES.indexOf(SETTINGS.wind) >= 0 ? WIND_AMP[SETTINGS.wind] : undefined;
   return a === undefined ? 1 : a;          // an unknown stored value reads as Full, never as an error
 }
 function windFrame(ms, kind) {

@@ -16476,7 +16476,8 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             W.forgeSprite = function (spec, px) { return pstub4(px); };
             W.creatureSprite = function (key, look, owner, mkSpec, px) { return pstub4(px); };
             W.debugSetForge(true);
-            const offBaked4 = cost4(false), onBaked4 = cost4(true);
+            const offBaked4 = cost4(false), offSt4 = W.debugPbInfo().stats;
+            const onBaked4 = cost4(true), onSt4 = W.debugPbInfo().stats;
             /* and the worst case: the forge off, so every scenery sprite
                misses and the old live art is drawn instead */
             W.pbSprite = perfBakeWas4.pb; W.forgeSprite = perfBakeWas4.fs; W.creatureSprite = perfBakeWas4.cs;
@@ -16485,6 +16486,20 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
             const rBaked4 = onBaked4 / offBaked4, rLive4 = onLive4 / offLive4;
             results.push([`Living World S4 perf: a Plains screen with the pixel biome ON costs no more than 1.15x the same screen with it OFF — ${onBaked4.toFixed(0)} against ${offBaked4.toFixed(0)} canvas operations a frame once the art is baked (x${rBaked4.toFixed(3)}: baked scenery is CHEAPER than the live art it replaces), and ${onLive4.toFixed(0)} against ${offLive4.toFixed(0)} in the worst case with the forge off and every tree falling back to live drawing (x${rLive4.toFixed(3)}); measured at the Plains cell ${pcell4 ? pcell4.join(',') : '?'} on seed ${LIFE_SEED} at a fixed hour and a frozen world clock. The frame RATE and the 6 ms bake are run6's, in a real browser.`,
               !!pcell4 && offBaked4 > 500 && offLive4 > 500 && rBaked4 <= 1.15 && rLive4 <= 1.15]);
+
+            /* The cost gate above compares two numbers and neither of them
+               says the layer DREW anything. Slice 1b's gate review found the
+               hole: make pbDrawTree return false for every tree (or kill
+               pbDrawDecor) and the world loses its forged trees while the
+               ratio goes to ~1.000 and the budget gate PASSES. The still-
+               frame gate below does not cover it either — it is satisfied by
+               the tuft keys alone. So the ON measurement has to show its
+               work. tufts is a per-frame count (the last frame's), trees and
+               props are cumulative, so those two are read as deltas across
+               the ON run. */
+            const drewTufts4 = onSt4.tufts, drewTrees4 = onSt4.trees - offSt4.trees, drewProps4 = onSt4.props - offSt4.props;
+            results.push([`Living World S4 perf: the ON measurement really drew the Plains layer, so a layer that silently drew nothing could not pass the cost gate above — ${drewTufts4} tufts on the last frame, ${drewTrees4} forged trees and ${drewProps4} baked ground props over the ON run, against ${offSt4.tufts} tufts and no trees or props with the switch OFF`,
+              drewTufts4 > 0 && drewTrees4 > 0 && drewProps4 > 0 && offSt4.tufts === 0]);
 
             /* ---- Wind motion: Off is a still frame ---------------------- */
             /* the strongest form of "pixel-identical between two timestamps"
