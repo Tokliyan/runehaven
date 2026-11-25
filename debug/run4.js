@@ -15958,7 +15958,7 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
        finally puts the world's own clock back. ======================== */
     {
       const W = window;
-      let s4Epoch = null;
+      let s4Epoch = null, s4Seed = null;
       try {
         const s4Hooks = ['debugPbInfo', 'debugSetPb', 'debugWindAt', 'debugSetDayT', 'windFrame', 'windGust',
           'windLean', 'pbLeanFrame', 'setSetting', 'debugSettingsInfo', 'debugWorldInfo', 'debugForgeInfo',
@@ -15974,6 +15974,23 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           const P4 = W.debugPbInfo();
           const S4_EP = 1000000;                       // a fixed worldEpoch, in seconds
           s4Epoch = W.debugSetDayT(null, S4_EP);
+          /* Slice 1b: the SEED has to be pinned here for the same reason 1a
+             pinned the clock, and pinning only half of it was the bug. The
+             wind's direction is hash2(worldSeed, 17, 9931) * 6.2832 plus a
+             drift in tS, so the base angle is the world's. Earlier blocks in
+             this file leave the world on whatever seed they finished with,
+             and the band gate below has an ABSOLUTE residual cap (0.03) that
+             is calibrated against one seed's envelope amplitude — the
+             scale-free half of that test (eGood <= 0.25 * eOther) holds at
+             any angle, but the absolute half does not. Measured on the run
+             of 2026-11-25: the block ran at a base angle of 6.268 rad
+             (hash2 0.9976, no seed this file sets), where the band moves
+             correctly — residual 0.0447 against 0.5292 unmoved, a ratio of
+             0.084, and crests 11.0 tiles apart at r 0.998 — and the gate
+             still FAILED on 0.0447 > 0.03. Pinning the seed makes the figure
+             reproducible; no threshold is touched. */
+          const S4_SEED = 123456789;                   // the harness world's own seed, as the LIFE and perf blocks use
+          s4Seed = W.debugWorldSeedSet(S4_SEED);
           const at4 = (tS) => (S4_EP + tS) * 1000;     // the ms a gate hands debugWindAt for a wanted tS
           /* a top-level function's source text (one-liners included, which a
              plain scan to the next line-starting brace would overrun), and the
@@ -16562,7 +16579,10 @@ window.addEventListener('error', e => { if (!caught) caught = e.error || e.messa
           }
         }
       } catch (e) { results.push(['Living World S4: the block runs without throwing (' + (e && e.message) + ')', false]); }
-      finally { if (s4Epoch !== null) try { W.debugSetDayT(null, s4Epoch); } catch (e) { /* the world clock was already back */ } }
+      finally {
+        if (s4Epoch !== null) try { W.debugSetDayT(null, s4Epoch); } catch (e) { /* the world clock was already back */ }
+        if (s4Seed !== null) try { W.debugWorldSeedSet(s4Seed); } catch (e) { /* the world was already back */ }
+      }
     }
 
     let allOk = true;
