@@ -1,6 +1,6 @@
 /* S4 world capture (for the owner's before/after GIFs): node debug/s4cap.js <outdir> <html> <spot> <dayT> <frames> <pb:on|off> [weather] [gapMs]
    spot: plains | meadow | forest | darkforest | sand | coast | border:<a>:<b> (a tile of biome a with biome b in view)
-   pb: plains = ONLY the Plains switch on (the "after" look while the shipped switch is still false); off = every S4 biome
+   pb: a biome key or comma list (plains, meadow, forest, darkforest, sand, coast, plains,meadow) = ONLY those switches on (the "after" look while the shipped switch is still false); off = every S4 biome
    switch off (the "before" look, same as main); on = the build's own switches; all = every switch on.
    dayT: 0..1 world clock (0.25 morning, 0.45 golden dusk; pick a night value where nightAlpha(dayT) >= 0.6).
    Enters the real world (stubbed Supabase), stands there, warms up, saves canvas frames. */
@@ -24,7 +24,9 @@ const STUB = fs.readFileSync(path.join(__dirname, 'shot.js'), 'utf8').match(/con
   const info = await p.evaluate(async ({ SPOT, DAYT, NF, PB, WX, GAP }) => {
     const BN = { plains: B.PLAINS, meadow: B.MEADOW, forest: B.FOREST, darkforest: B.DARKFOREST, sand: B.SAND, coast: B.SAND };
     if (PB === 'off' && typeof debugSetPb === 'function') debugSetPb({ biomes: { plains: false, meadow: false, forest: false, darkforest: false, sand: false, coast: false } });
-    if (PB === 'plains' && typeof debugSetPb === 'function') debugSetPb({ biomes: { plains: true, meadow: false, forest: false, darkforest: false, sand: false, coast: false } });
+    if (!['on', 'off', 'all'].includes(PB) && typeof debugSetPb === 'function') {   // any comma list of biome keys: ONLY those switches on (plains | meadow | plains,meadow | ...)
+      const keys = String(PB).split(','), bi = { plains: false, meadow: false, forest: false, darkforest: false, sand: false, coast: false };
+      for (const k of keys) if (k in bi) bi[k] = true; debugSetPb({ biomes: bi }); }
     if (PB === 'all' && typeof debugSetPb === 'function') debugSetPb({ biomes: { plains: true, meadow: true, forest: true, darkforest: true, sand: true, coast: true } });
     window.updateMob = function () {}; window.drawPlayerPlate = () => {}; window.queueWorldLabel = () => {};
     let want, other = null;
