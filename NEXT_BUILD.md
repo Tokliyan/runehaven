@@ -1,6 +1,6 @@
 # NEXT_BUILD — Living World v2, daily slices (owner-set Mon 2026-11-23)
 
-Build the FIRST slice in `LIVING_WORLD_DAILY.md` whose owner is NIGHT and whose status is QUEUED, and only if every slice above it is APPROVED, DONE or DAY-DONE. If the first unfinished slice above it is owned by DAY, or is AWAITING approval, report "idle: waiting on <slice>" and stop. That is a normal night, not a failure.
+Build the FIRST slice in `LIVING_WORLD_DAILY.md` whose owner is NIGHT, whose status is QUEUED and whose "Needs" are all met (a needed slice counts as met only when its status is APPROVED or DONE). Skip slices whose needs are not met. If none qualifies, report "idle: waiting on <what>" and stop. That is a normal night, not a failure.
 
 Overrides of the README standard process for these slices (owner decision, they win over README):
 1. Work on the branch named in the slice. NEVER merge or fast-forward to main. NEVER push to main. The owner approves before-and-after GIFs first, and the owner (day session) does the merge.
